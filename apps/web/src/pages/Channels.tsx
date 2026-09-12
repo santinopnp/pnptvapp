@@ -307,6 +307,7 @@ function ChannelDetailView({
 
   const [videoAiBusy, setVideoAiBusy] = useState<"title" | "description" | "tags" | null>(null);
   const [thumbErrors, setThumbErrors] = useState<Set<number>>(new Set());
+  const [selectedVideo, setSelectedVideo] = useState<ChannelVideo | null>(null);
 
   const [taggedCreators, setTaggedCreators] = useState<MentionUser[]>([]);
   const [creatorTagSearch, setCreatorTagSearch] = useState("");
@@ -767,6 +768,7 @@ function ChannelDetailView({
     const directusUrl = v.video_url || null;
     const playUrl = muxUrl || directusUrl;
     const fallbackUrl = muxUrl && directusUrl && muxUrl !== directusUrl ? directusUrl : null;
+    setSelectedVideo(v);
     setPlayingVideo({
       url: playUrl,
       fallbackUrl,
@@ -803,21 +805,450 @@ function ChannelDetailView({
     });
   }, [channel]);
 
-  // ── Video card renderer ──────────────────────────────────────────────────
-  // Extracted from inline JSX so the thumbnail logic, badge overlays, and
-  // metadata row are defined in one place only. Called from the videos.map
-  // below and not duplicated anywhere else in this file.
-  const renderVideoCard = (v: ChannelVideo) => {
+  // ── Inline video detail view ──────────────────────────────────────────────
+  const renderVideoDetail = (v: ChannelVideo) => {
+    if (!playingVideo) return null;
     const isEditing = editingVideoId === v.id;
     const isDeleting = deletingVideoId === v.id;
-    // Playable when Mux delivered a playback id OR the backend still holds a
-    // Directus/local source it can stream (video_url falls back to the /stream
-    // endpoint which 302s to Directus).
+    const MAX_TAGS = 5;
+    const visibleTags = (v.tags || []).slice(0, MAX_TAGS);
+    const overflowTagCount = (v.tags || []).length - MAX_TAGS;
+    const channelOwnerIds = new Set<string>();
+    if (channel?.creatorId) channelOwnerIds.add(String(channel.creatorId));
+    if (channel?.owner_id) channelOwnerIds.add(String(channel.owner_id));
+    const showUploaderChip =
+      !!v.uploader_id && !channelOwnerIds.has(String(v.uploader_id)) &&
+      (!!v.uploader_display_name || !!v.uploader_username);
+
+    return (
+      <div className="space-y-3">
+        {/* Back */}
+        <button
+          onClick={() => { setSelectedVideo(null); setPlayingVideo(null); setVideoPlayerError(false); setModalHypeOpen(false); }}
+          className="flex items-center gap-1.5 text-sm text-pnp-textSecondary hover:text-pnp-textPrimary transition-colors"
+        >
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+          </svg>
+          All videos
+        </button>
+
+        {/* Player */}
+        <div className="-mx-4 rounded-none overflow-hidden" style={{ background: "#0A0A14" }}>
+          {!playingVideo.url ? (
+            <div className="w-full flex flex-col items-center justify-center gap-3 py-10 px-6 text-center" style={{ minHeight: 200 }}>
+              <div className="w-14 h-14 rounded-full flex items-center justify-center"
+                style={channelIsPrime
+                  ? { background: "rgba(167,139,250,0.15)", border: "1px solid rgba(167,139,250,0.3)" }
+                  : { background: "rgba(212,0,122,0.15)", border: "1px solid rgba(212,0,122,0.3)" }
+                }>
+                <svg className="w-7 h-7" style={{ color: channelIsPrime ? "#A78BFA" : "#D4007A" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+                </svg>
+              </div>
+              {channelIsPrime ? (
+                <>
+                  <p className="text-white font-semibold text-base">PRIME Members Only</p>
+                  <p className="text-sm text-pnp-textSecondary max-w-xs">Upgrade to PRIME to watch this video.</p>
+                  <button
+                    onClick={() => { setSelectedVideo(null); setPlayingVideo(null); window.location.href = '/subscribe'; }}
+                    className="mt-1 px-5 py-2.5 rounded-xl text-sm font-semibold text-white"
+                    style={{ background: "linear-gradient(135deg, #A78BFA, #D4007A)" }}
+                  >Upgrade to PRIME</button>
+                </>
+              ) : (
+                <>
+                  <p className="text-white font-semibold text-base">Premium Channel</p>
+                  <p className="text-sm text-pnp-textSecondary max-w-xs">Subscribe to {channel.creatorName || "this creator"} to watch this video.</p>
+                  <p className="text-xs font-medium px-3 py-1.5 rounded-full" style={{ background: "rgba(230,145,56,0.15)", color: "#E69138", border: "1px solid rgba(230,145,56,0.3)" }}>
+                    &#128142; Incluye canal + perfil exclusivo — 2x1
+                  </p>
+                  <button
+                    onClick={() => { setSelectedVideo(null); setPlayingVideo(null); if (channel.creatorId) setShowSubscribeWizard(true); else window.location.href = '/subscribe'; }}
+                    className="mt-1 px-5 py-2.5 rounded-xl text-sm font-semibold text-white"
+                    style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+                  >Subscribe to Access</button>
+                </>
+              )}
+            </div>
+          ) : videoPlayerError ? (
+            <div className="w-full flex flex-col items-center justify-center gap-2 py-10 bg-black" style={{ minHeight: 200 }}>
+              <svg className="w-8 h-8 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" />
+              </svg>
+              <p className="text-xs text-white/40">Video unavailable</p>
+            </div>
+          ) : (() => {
+            const uploader = playingVideo.uploaderDisplayName || channel.creatorName || channel.creatorUsername || "Creator";
+            const featNames = (playingVideo.taggedCreators || []).map(t => t.first_name || t.username).filter(Boolean);
+            const performers = featNames.length > 0 ? `${uploader} feat. ${featNames.join(" y ")}` : uploader;
+            const eligible = (playingVideo.durationSec ?? 0) >= 30;
+            const eyebrow = channelIsPrime ? "PRIME" : `${channel.name} for PNPtv!`;
+            const intro = eligible ? { channel: eyebrow, title: playingVideo.title, performers } : null;
+            return (
+              <VideoPlayer
+                key={playingVideo.url}
+                src={playingVideo.url}
+                controls autoPlay playsInline
+                controlsList="nodownload"
+                creatorDisclaimer
+                viewCount={playingVideo.viewCount}
+                intro={intro}
+                onContextMenu={(e) => e.preventDefault()}
+                onError={() => {
+                  const fb = playingVideo.fallbackUrl;
+                  if (fb && fb !== playingVideo.url) {
+                    setPlayingVideo({ ...playingVideo, url: fb, fallbackUrl: null });
+                  } else {
+                    setVideoPlayerError(true);
+                  }
+                }}
+                onLoadedMetadata={(e) => {
+                  const vid = e.currentTarget;
+                  if (vid.videoWidth && vid.videoHeight) setVideoIsLandscape(vid.videoWidth > vid.videoHeight * 1.05);
+                }}
+                className="w-full bg-black"
+                style={{ maxHeight: "60vh" }}
+                preload="metadata"
+              />
+            );
+          })()}
+          {showPrimeUpsell && !primeUpsellDismissed && playingVideo.url && !videoPlayerError && (
+            <a href="/subscribe" onClick={() => { setSelectedVideo(null); setPlayingVideo(null); }}
+              className="flex items-center gap-2 px-4 py-2.5 text-xs font-semibold text-white transition-opacity hover:opacity-90"
+              style={{ background: "linear-gradient(90deg, #D4007A 0%, #FF6B9D 100%)" }}
+            >
+              <span className="flex-1">Unlock everything {channel?.creatorName || channel?.creatorUsername || "this creator"} makes — go PRIME</span>
+              <span aria-hidden="true">→</span>
+              <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); dismissPrimeUpsell(); }}
+                aria-label="Dismiss" className="w-5 h-5 flex items-center justify-center rounded-full text-white/80 hover:text-white hover:bg-white/15 transition-colors -mr-1">×</button>
+            </a>
+          )}
+          {showCreatorSubscribeUpsell && !creatorUpsellDismissed && playingVideo.url && !videoPlayerError && (
+            <button type="button"
+              onClick={() => { setSelectedVideo(null); setPlayingVideo(null); if (channel?.creatorId) setShowSubscribeWizard(true); }}
+              className="flex items-center gap-2 px-4 py-2.5 text-xs font-semibold transition-opacity hover:opacity-90 text-left w-full"
+              style={{ background: "linear-gradient(90deg, #5ED1C4 0%, #2DD4BF 100%)", color: "#04252b" }}
+            >
+              <span className="flex-1">Subscribe to {channel?.creatorName || channel?.creatorUsername || "this creator"} for exclusive content</span>
+              <span aria-hidden="true">→</span>
+              <span role="button" tabIndex={0} onClick={(e) => { e.preventDefault(); e.stopPropagation(); dismissCreatorUpsell(); }}
+                aria-label="Dismiss" className="w-5 h-5 flex items-center justify-center rounded-full hover:bg-black/10 transition-colors -mr-1 cursor-pointer" style={{ color: "#04252b" }}>×</span>
+            </button>
+          )}
+        </div>
+
+        {/* Info + actions */}
+        <div className="space-y-2 pt-1">
+          <div className="flex items-start gap-2 justify-between">
+            <h2 className="text-base font-semibold text-pnp-textPrimary leading-snug flex-1 min-w-0">{v.title || "Untitled"}</h2>
+            {user && (
+              <div className="flex items-center gap-0.5 flex-shrink-0">
+                {v.promo_post_id && (() => {
+                  const likeState = videoLikes[v.id] ?? { liked: v.liked_by_me ?? false, count: v.likes_count ?? 0 };
+                  return (
+                    <button onClick={() => handleVideoLike(v)} title={likeState.liked ? "Unlike" : "Like"}
+                      className="flex items-center gap-0.5 p-2 rounded-lg transition-colors min-h-[44px] min-w-[44px] justify-center"
+                      style={{ color: likeState.liked ? "#D4007A" : "rgba(255,255,255,0.35)", background: likeState.liked ? "rgba(212,0,122,0.1)" : "transparent" }}>
+                      <svg className="w-4 h-4" fill={likeState.liked ? "currentColor" : "none"} stroke="currentColor" strokeWidth={likeState.liked ? 0 : 2} viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12z" />
+                      </svg>
+                      {(videoLikes[v.id]?.count ?? v.likes_count ?? 0) > 0 && (
+                        <span className="text-[11px] tabular-nums">{videoLikes[v.id]?.count ?? v.likes_count}</span>
+                      )}
+                    </button>
+                  );
+                })()}
+                <button
+                  onClick={() => { if (v.promo_post_id) handleVideoHypeToggle(v); else openHypeModal(v); }}
+                  title={(videoHypeToggles[v.id] ?? v.hype_posted_by_me) ? "Hyped!" : "Hype this video"}
+                  className="p-2 rounded-lg transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
+                  style={(videoHypeToggles[v.id] ?? v.hype_posted_by_me) || modalHypeOpen
+                    ? { color: "#FF9500", background: "rgba(255,149,0,0.15)" }
+                    : { color: "rgba(255,255,255,0.35)", background: "transparent" }}
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M10.34 15.84c-.688-.06-1.386-.09-2.09-.09H7.5a4.5 4.5 0 110-9h.75c.704 0 1.402-.03 2.09-.09m0 9.18c.253.962.584 1.892.985 2.783.247.55.06 1.21-.463 1.511l-.657.38c-.551.318-1.26.117-1.527-.461a20.845 20.845 0 01-1.44-4.282m3.102.069a18.03 18.03 0 01-.59-4.59c0-1.586.205-3.124.59-4.59m0 9.18a23.848 23.848 0 018.835 2.535M10.34 6.66a23.847 23.847 0 008.835-2.535m0 0A23.74 23.74 0 0018.795 3m.38 1.125a23.91 23.91 0 011.014 5.395m-1.014 8.855c-.118.38-.245.754-.38 1.125m.38-1.125a23.91 23.91 0 001.014-5.395m0-3.46c.495.413.811 1.035.811 1.73 0 .695-.316 1.317-.811 1.73m0-3.46a24.347 24.347 0 010 3.46" />
+                  </svg>
+                </button>
+                {(() => {
+                  const uploaderId = v.uploader_id ?? channel.creatorId;
+                  const uploaderName = v.uploader_username ?? channel.creatorUsername ?? undefined;
+                  const uploaderCrystal = v.uploader_id ? v.uploader_crystal === true : channel.creatorCrystal === true;
+                  if (!uploaderId || String(user?.id ?? "") === String(uploaderId)) return null;
+                  return <TipButton creatorId={String(uploaderId)} creatorUsername={uploaderName} isCrystalCreator={uploaderCrystal} />;
+                })()}
+                {(channel?.isOwner || channel?.isCollaborator) && (
+                  <>
+                    <button onClick={() => openVideoEdit(v)}
+                      className="p-2 rounded-lg text-pnp-textSecondary hover:text-pnp-textPrimary hover:bg-white/8 transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
+                      title="Edit video">
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125" />
+                      </svg>
+                    </button>
+                    <button onClick={() => setDeletingVideoId(v.id)}
+                      className="p-2 rounded-lg text-red-400/50 hover:text-red-400 hover:bg-red-500/10 transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
+                      title="Delete video">
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                      </svg>
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Meta */}
+          <div className="flex items-center gap-3 flex-wrap">
+            {v.view_count > 0 && (
+              <span className="flex items-center gap-1 text-xs text-pnp-textSecondary">
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                {formatViewCount(v.view_count)}
+              </span>
+            )}
+            {showUploaderChip && (
+              <span className="text-xs text-pnp-textSecondary">
+                by <span className="text-pnp-textPrimary font-medium">{v.uploader_display_name || (v.uploader_username ? `@${v.uploader_username}` : "unknown")}</span>
+              </span>
+            )}
+          </div>
+
+          {v.description && (
+            <p className="text-sm text-pnp-textSecondary leading-relaxed">{v.description}</p>
+          )}
+
+          {visibleTags.length > 0 && (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {visibleTags.map((t) => (
+                <span key={t} className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: "rgba(255,255,255,0.07)", color: "rgba(255,255,255,0.5)" }}>{t}</span>
+              ))}
+              {overflowTagCount > 0 && (
+                <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.35)" }}>+{overflowTagCount}</span>
+              )}
+            </div>
+          )}
+
+          {playingVideo.taggedCreators.length > 0 && (
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs text-white/40">With:</span>
+              {playingVideo.taggedCreators.map((c) => (
+                <a key={c.id} href={`/profile/${c.id}`}
+                  className="flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium hover:opacity-80 transition-opacity"
+                  style={{ background: "rgba(212,0,122,0.12)", color: "#D4007A", border: "1px solid rgba(212,0,122,0.2)" }}>
+                  {c.avatar_url && <img src={c.avatar_url} alt="" className="w-4 h-4 rounded-full object-cover flex-shrink-0" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />}
+                  @{c.username}
+                </a>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Hype compose */}
+        {modalHypeOpen && (
+          <div className="rounded-xl p-3 space-y-2" style={{ background: "rgba(255,149,0,0.04)", border: "1px solid rgba(255,149,0,0.2)" }}>
+            <p className="text-[10px] text-orange-400/70 font-medium tracking-wide uppercase">Hype Post</p>
+            <textarea id="pnp-channels-12" rows={2} value={hypeText} onChange={(e) => setHypeText(e.target.value)} maxLength={280}
+              className="w-full px-2.5 py-1.5 rounded-lg text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-orange-400 resize-none placeholder-white/25"
+              placeholder="Write your hype post…" />
+            <div className="flex gap-2">
+              <button onClick={() => submitHype(playingVideo.videoId)} disabled={hypePosting || !hypeText.trim()}
+                className="flex-1 py-1.5 rounded-lg text-xs font-semibold text-white disabled:opacity-40 transition-opacity"
+                style={{ background: "linear-gradient(135deg,#FF9500,#E69138)" }}>
+                {hypePosting ? "Posting…" : "🔥 Post Hype"}
+              </button>
+              <button onClick={() => setModalHypeOpen(false)} className="px-3 py-1.5 rounded-lg text-xs text-white/50 border border-white/10 hover:bg-white/5">Cancel</button>
+            </div>
+          </div>
+        )}
+
+        {/* Inline edit form */}
+        {isEditing && (
+          <div className="rounded-xl border border-white/8 p-3 space-y-2">
+            <div>
+              <div className="flex items-center justify-between mb-0.5">
+                <label className="text-[10px] text-white/40">Title</label>
+                <button type="button" onClick={() => saveAndRunAi("title")} disabled={videoAiBusy !== null} className="text-[10px] text-white/50 hover:text-white disabled:opacity-40 transition-colors">
+                  {videoAiBusy === "title" ? "…" : "✨ AI title"}
+                </button>
+              </div>
+              <input id="pnp-channels-1" value={videoEditForm.title} onChange={(e) => setVideoEditForm((p) => ({ ...p, title: e.target.value }))} maxLength={255}
+                className="w-full px-2.5 py-1.5 rounded-lg text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-pnp-accent" />
+            </div>
+            <div>
+              <div className="flex items-center justify-between mb-0.5">
+                <label className="text-[10px] text-white/40">Description</label>
+                <button type="button" onClick={() => saveAndRunAi("description")} disabled={videoAiBusy !== null} className="text-[10px] text-white/50 hover:text-white disabled:opacity-40 transition-colors">
+                  {videoAiBusy === "description" ? "…" : "✨ AI description"}
+                </button>
+              </div>
+              <textarea id="pnp-channels-2" rows={2} value={videoEditForm.description} onChange={(e) => setVideoEditForm((p) => ({ ...p, description: e.target.value }))}
+                className="w-full px-2.5 py-1.5 rounded-lg text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-pnp-accent resize-none" />
+            </div>
+            <div>
+              <div className="flex items-center justify-between mb-0.5">
+                <label className="text-[10px] text-white/40">Tags (comma-separated)</label>
+                <button type="button" onClick={() => saveAndRunAi("tags")} disabled={videoAiBusy !== null} className="text-[10px] text-white/50 hover:text-white disabled:opacity-40 transition-colors">
+                  {videoAiBusy === "tags" ? "…" : "✨ AI tags"}
+                </button>
+              </div>
+              <input id="pnp-channels-3" value={videoEditForm.tags} onChange={(e) => setVideoEditForm((p) => ({ ...p, tags: e.target.value }))}
+                className="w-full px-2.5 py-1.5 rounded-lg text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-pnp-accent" />
+            </div>
+            <div>
+              <label className="block text-[10px] text-white/40 mb-1">Tag Creators (max 5)</label>
+              {taggedCreators.length > 0 && (
+                <div className="flex flex-wrap gap-1 mb-2">
+                  {taggedCreators.map((c) => (
+                    <span key={c.id} className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/10 text-xs text-white/80">
+                      @{c.username}
+                      <button type="button" onClick={() => setTaggedCreators((prev) => prev.filter((x) => x.id !== c.id))} className="text-white/40 hover:text-white ml-0.5">×</button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              {taggedCreators.length < 5 && (
+                <div className="relative">
+                  <input id="pnp-channels-4" type="text" value={creatorTagSearch}
+                    onChange={async (e) => {
+                      setCreatorTagSearch(e.target.value);
+                      if (e.target.value.trim().length < 2) { setCreatorTagResults([]); return; }
+                      setCreatorTagSearching(true);
+                      try {
+                        const res = await searchCreators(e.target.value.trim());
+                        setCreatorTagResults((res.users || []).filter((c) => !taggedCreators.some((t) => t.id === c.id)));
+                      } catch { /* ignore */ } finally { setCreatorTagSearching(false); }
+                    }}
+                    placeholder={creatorTagSearching ? "Searching…" : "Search creators to tag…"}
+                    className="w-full px-3 py-1.5 rounded-lg text-xs text-white bg-white/5 border border-white/10 focus:outline-none focus:border-pnp-accent placeholder-white/25" />
+                  {creatorTagResults.length > 0 && (
+                    <div className="absolute top-full left-0 right-0 z-10 mt-1 rounded-lg border border-white/10 bg-pnp-surface overflow-hidden">
+                      {creatorTagResults.slice(0, 5).map((c) => (
+                        <button key={c.id} type="button"
+                          onClick={() => { setTaggedCreators((prev) => [...prev, c]); setCreatorTagSearch(""); setCreatorTagResults([]); }}
+                          className="w-full flex items-center gap-2 px-3 py-2 hover:bg-white/5 text-left">
+                          <span className="text-xs text-white/80">@{c.username}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+            {videoEditError && <p className="text-xs text-red-400">{videoEditError}</p>}
+            <div className="flex gap-2">
+              <button onClick={saveVideoEdit} disabled={videoEditSaving} className="flex-1 py-1.5 rounded-lg text-xs font-semibold text-white disabled:opacity-50" style={{ background: "linear-gradient(135deg,#D4007A,#E69138)" }}>
+                {videoEditSaving ? "Saving…" : "Save"}
+              </button>
+              <button onClick={() => setEditingVideoId(null)} className="px-3 py-1.5 rounded-lg text-xs text-white/50 border border-white/10 hover:bg-white/5">Cancel</button>
+            </div>
+          </div>
+        )}
+
+        {/* Delete confirm */}
+        {isDeleting && (
+          <div className="rounded-xl border border-red-500/20 p-3 space-y-2">
+            <p className="text-xs text-red-300">Delete this video? This cannot be undone.</p>
+            <div className="flex gap-2">
+              <button onClick={confirmVideoDelete} disabled={videoDeleteLoading} className="flex-1 py-1.5 rounded-lg text-xs font-semibold text-white bg-red-500 hover:bg-red-600 disabled:opacity-50 transition-colors">
+                {videoDeleteLoading ? "Deleting…" : "Yes, Delete"}
+              </button>
+              <button onClick={() => setDeletingVideoId(null)} className="px-3 py-1.5 rounded-lg text-xs text-white/50 border border-white/10 hover:bg-white/5">Cancel</button>
+            </div>
+          </div>
+        )}
+
+        {/* Comments */}
+        <div className="pt-2 space-y-3" style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+          <div className="flex gap-2">
+            <input id="pnp-channels-13" type="text" value={commentInput}
+              onChange={(e) => setCommentInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submitComment(); } }}
+              placeholder="Add a comment…" maxLength={500}
+              className="flex-1 px-3 py-2 rounded-xl text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-pnp-accent placeholder-white/25" />
+            <button onClick={submitComment} disabled={commentPosting || !commentInput.trim()}
+              className="px-3 py-2 rounded-xl text-sm font-semibold text-white disabled:opacity-40 transition-opacity"
+              style={{ background: "linear-gradient(135deg,#D4007A,#E69138)" }}>
+              {commentPosting ? "…" : "Post"}
+            </button>
+          </div>
+          <div className="space-y-3">
+            {commentsLoading && videoComments.length === 0 ? (
+              <div className="py-4 text-center text-xs text-white/30">Loading comments…</div>
+            ) : videoComments.length === 0 ? (
+              <div className="py-4 text-center text-xs text-white/30">No comments yet — be the first!</div>
+            ) : (
+              videoComments.map((c) => {
+                const cReactions = commentReactions[c.id] ?? [];
+                const visibleReactions = cReactions.filter((r) => r.count > 0);
+                return (
+                  <div key={c.id} className="flex gap-2.5">
+                    <div className="w-7 h-7 rounded-full bg-white/10 flex-shrink-0 overflow-hidden">
+                      {isValidPhotoUrl(c.author_photo) ? (
+                        <img src={c.author_photo} alt="" className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-xs text-white/40">
+                          {(c.author_first_name || c.author_username || "?")[0].toUpperCase()}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-white/70">{c.author_first_name || c.author_username || "User"}</p>
+                      <p className="text-sm text-white/90 mt-0.5 break-words">{c.content}</p>
+                      {visibleReactions.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {visibleReactions.map((r) => (
+                            <button key={r.emoji} onClick={() => handleCommentReaction(c.id, r.emoji)}
+                              className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[11px] transition-colors"
+                              style={r.reactedByMe ? { background: "rgba(212,0,122,0.15)", border: "1px solid rgba(212,0,122,0.35)", color: "#D4007A" } : { background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.6)" }}>
+                              {r.emoji} {r.count}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      <div className="relative mt-1">
+                        <button
+                          onClick={() => { if (commentReactionPickerOpen === c.id) setCommentReactionPickerOpen(null); else { loadCommentReactions(c.id); setCommentReactionPickerOpen(c.id); } }}
+                          className="text-[11px] text-white/30 hover:text-white/60 transition-colors">
+                          {commentReactionPickerOpen === c.id ? "✕" : "😀"}
+                        </button>
+                        {commentReactionPickerOpen === c.id && (
+                          <div className="absolute left-0 top-5 z-10 flex flex-wrap gap-1 p-2 rounded-xl border border-white/10 shadow-xl" style={{ background: "#111118", minWidth: 220 }}>
+                            {REACTION_EMOJIS.map((emoji) => (
+                              <button key={emoji} onClick={() => handleCommentReaction(c.id, emoji)}
+                                className="text-lg p-1 rounded-lg hover:bg-white/10 transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center">
+                                {emoji}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+            {commentsHasMore && (
+              <button onClick={() => loadComments(playingVideo.channelId, playingVideo.videoId, playingVideo.promoPostId, commentsCursor ?? undefined)}
+                className="w-full py-2 text-xs text-white/40 hover:text-white/70 transition-colors">
+                Load more comments
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // ── Video grid card ───────────────────────────────────────────────────────
+  const renderVideoCard = (v: ChannelVideo) => {
     const muxReady = !!v.mux_playback_id && v.mux_status !== "errored" && v.mux_status !== "cancelled";
     const hasDirectusFallback = !!v.directus_file_id;
     const hasPlayableSource = muxReady || hasDirectusFallback || !!v.video_url;
-    // A Mux ingest failure is only a real dead-end when there is no Directus
-    // fallback — otherwise the /stream endpoint will still deliver the file.
     const muxFailed = v.mux_status === "errored" || v.mux_status === "cancelled";
     const isFailed = v.status === "failed" || (muxFailed && !hasDirectusFallback);
     const isProcessing = !isFailed && (v.status === "processing"
@@ -845,22 +1276,16 @@ function ChannelDetailView({
     const overflowTagCount = (v.tags || []).length - MAX_TAGS;
 
     return (
-      <div key={`cv-${v.id}`} className="bg-pnp-surface">
-        {/* ── Thumbnail — full device width, 16:9 ── */}
-        <div
-          className="relative w-full aspect-video bg-pnp-surfaceHover group cursor-pointer overflow-hidden"
-          onClick={() => {
-            if (isProcessing || isUnavailable) return;
-            openVideoInPlayer(v);
-          }}
-        >
-          {/* Thumbnail image with hover-to-gif swap */}
+      <div key={`cv-${v.id}`}
+        className="rounded-xl overflow-hidden bg-pnp-surface border border-pnp-border cursor-pointer group"
+        onClick={() => { if (isProcessing || isUnavailable) return; setSelectedVideo(v); openVideoInPlayer(v); }}
+      >
+        <div className="relative w-full aspect-video bg-pnp-surfaceHover overflow-hidden">
           {hasThumb ? (
             <img
               src={staticThumb || animatedThumb!}
               alt={v.title}
-              className={[
-                "w-full h-full object-cover transition-transform duration-200",
+              className={["w-full h-full object-cover transition-transform duration-200",
                 isProcessing || isUnavailable ? "saturate-0 opacity-60" : "group-hover:scale-105",
               ].join(" ")}
               onMouseEnter={(e) => { if (animatedThumb && !isProcessing && !isUnavailable) (e.currentTarget as HTMLImageElement).src = animatedThumb; }}
@@ -868,336 +1293,37 @@ function ChannelDetailView({
               onError={() => setThumbErrors((prev) => new Set(prev).add(v.id))}
             />
           ) : (
-            // Film-icon placeholder when both thumbnail and gif are null
             <div className="w-full h-full flex items-center justify-center" style={{ background: "rgba(255,255,255,0.04)" }}>
-              <svg className="w-10 h-10 opacity-20 text-pnp-textSecondary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 01-1.125-1.125M3.375 19.5h7.5c.621 0 1.125-.504 1.125-1.125m-9.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-7.5A1.125 1.125 0 0112 18.375m9.75-12.75c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125m19.5 0v1.5c0 .621-.504 1.125-1.125 1.125M2.25 5.625v1.5c0 .621.504 1.125 1.125 1.125m0 0h17.25m-17.25 0h7.5c.621 0 1.125.504 1.125 1.125M3.375 8.25c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375z" />
+              <svg className="w-8 h-8 opacity-20 text-pnp-textSecondary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 01-1.125-1.125M3.375 19.5h7.5c.621 0 1.125-.504 1.125-1.125m-9.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-7.5A1.125 1.125 0 0112 18.375m9.75-12.75c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125m19.5 0v1.5c0 .621.504 1.125 1.125 1.125M2.25 5.625v1.5c0 .621.504 1.125 1.125 1.125m0 0h17.25m-17.25 0h7.5c.621 0 1.125.504 1.125 1.125M3.375 8.25c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375z" />
               </svg>
             </div>
           )}
-
-          {/* Play overlay — hidden during processing or unavailable */}
           {!isProcessing && !isUnavailable && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/40 transition-colors pointer-events-none">
-              <div className="w-12 h-12 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity" style={{ background: "rgba(0,0,0,0.55)", backdropFilter: "blur(4px)" }}>
-                <svg className="w-6 h-6 text-white drop-shadow ml-1" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M8 5v14l11-7z" />
-                </svg>
+            <div className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover:bg-black/30 transition-colors pointer-events-none">
+              <div className="w-10 h-10 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity" style={{ background: "rgba(0,0,0,0.55)", backdropFilter: "blur(4px)" }}>
+                <svg className="w-5 h-5 text-white drop-shadow ml-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
               </div>
             </div>
           )}
-
-          {/* Duration badge — bottom-right */}
           {duration && !isProcessing && !isUnavailable && (
-            <span className="absolute bottom-2 right-2 px-1.5 py-0.5 rounded text-[11px] font-semibold text-white tabular-nums pointer-events-none" style={{ background: "rgba(0,0,0,0.72)" }}>
-              {duration}
-            </span>
+            <span className="absolute bottom-1.5 right-1.5 px-1 py-0.5 rounded text-[10px] font-semibold text-white tabular-nums pointer-events-none" style={{ background: "rgba(0,0,0,0.72)" }}>{duration}</span>
           )}
-
-          {/* Processing badge — bottom-left (amber, pulsing) */}
           {isProcessing && (
-            <span className="absolute bottom-2 left-2 flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold text-white animate-pulse pointer-events-none" style={{ background: "rgba(234,179,8,0.85)" }}>
-              <span className="w-1.5 h-1.5 rounded-full bg-white" />
-              Processing…
+            <span className="absolute bottom-1.5 left-1.5 flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-semibold text-white animate-pulse pointer-events-none" style={{ background: "rgba(234,179,8,0.85)" }}>
+              <span className="w-1.5 h-1.5 rounded-full bg-white" />Processing…
             </span>
           )}
-
-          {/* Unavailable badge — bottom-left (red) */}
           {isUnavailable && (
-            <span className="absolute bottom-2 left-2 flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold text-white pointer-events-none" style={{ background: "rgba(220,38,38,0.9)" }}>
-              <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
-              </svg>
-              Unavailable
-            </span>
-          )}
-
-          {/* Mirrored badge — top-left */}
-          {v.is_mirrored && (
-            <span className="absolute top-2 left-2 flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium text-white pointer-events-none" style={{ background: "rgba(255,255,255,0.15)", backdropFilter: "blur(4px)", border: "1px solid rgba(255,255,255,0.15)" }}>
-              <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
-              </svg>
-              From feed
-            </span>
+            <span className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 rounded-full text-[9px] font-semibold text-white pointer-events-none" style={{ background: "rgba(220,38,38,0.9)" }}>Unavailable</span>
           )}
         </div>
-
-        {/* ── Info row ── */}
-        <div className="px-4 py-2.5 flex items-start justify-between gap-2">
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-pnp-textPrimary line-clamp-1">{v.title || "Untitled"}</p>
-            {v.description && (
-              <p className="text-xs text-pnp-textSecondary mt-0.5 line-clamp-2">{v.description}</p>
-            )}
-
-            {/* Uploader chip — only when a different person uploaded this video */}
-            {showUploaderChip && (
-              <p className="text-[10px] text-pnp-textSecondary mt-0.5">
-                by{" "}
-                <span className="text-pnp-textPrimary font-medium">
-                  {v.uploader_display_name || (v.uploader_username ? `@${v.uploader_username}` : "unknown")}
-                </span>
-              </p>
-            )}
-
-            {/* Meta row: view count + tags + overflow */}
-            <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-              {v.view_count > 0 && (
-                <span className="flex items-center gap-0.5 text-[10px]" style={{ color: "rgba(255,255,255,0.4)" }}>
-                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                  </svg>
-                  {formatViewCount(v.view_count)}
-                </span>
-              )}
-              {visibleTags.map((t) => (
-                <span key={t} className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.5)" }}>
-                  {t}
-                </span>
-              ))}
-              {overflowTagCount > 0 && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.35)" }}>
-                  +{overflowTagCount}
-                </span>
-              )}
-            </div>
-
-            {/* Tagged creators */}
-            {v.tagged_creators && v.tagged_creators.length > 0 && (
-              <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-                <span className="text-[10px]" style={{ color: "rgba(255,255,255,0.35)" }}>with</span>
-                {v.tagged_creators.map((c) => (
-                  <a
-                    key={c.id}
-                    href={`/profile/${c.id}`}
-                    onClick={(e) => e.stopPropagation()}
-                    className="flex items-center gap-1 text-[10px] font-medium hover:underline"
-                    style={{ color: "#D4007A" }}
-                  >
-                    {c.avatar_url && (
-                      <img src={c.avatar_url} alt="" className="w-4 h-4 rounded-full object-cover flex-shrink-0" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
-                    )}
-                    @{c.username}
-                  </a>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Action buttons */}
-          <div className="flex items-center gap-1 flex-shrink-0">
-            {user && (() => {
-              const likeState = videoLikes[v.id] ?? { liked: v.liked_by_me ?? false, count: v.likes_count ?? 0 };
-              const hyped = videoHypeToggles[v.id] ?? v.hype_posted_by_me ?? false;
-              return (
-                <>
-                  {v.promo_post_id && (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); handleVideoLike(v); }}
-                      title={likeState.liked ? "Unlike" : "Like"}
-                      aria-label={likeState.liked ? "Unlike" : "Like"}
-                      className="flex items-center gap-0.5 p-1.5 rounded-lg transition-colors min-h-[44px] min-w-[44px] justify-center"
-                      style={{ color: likeState.liked ? "#D4007A" : "rgba(255,255,255,0.35)", background: likeState.liked ? "rgba(212,0,122,0.1)" : "transparent" }}
-                    >
-                      <svg className="w-3.5 h-3.5" fill={likeState.liked ? "currentColor" : "none"} stroke="currentColor" strokeWidth={likeState.liked ? 0 : 2} viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12z" />
-                      </svg>
-                      {likeState.count > 0 && <span className="text-[10px] tabular-nums">{likeState.count}</span>}
-                    </button>
-                  )}
-                  {/* Hype — shown for all videos. Toggles via promo_post_id when available; opens compose panel otherwise. */}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (v.promo_post_id) handleVideoHypeToggle(v);
-                      else { openVideoInPlayer(v); setTimeout(() => openHypeModal(v), 120); }
-                    }}
-                    title={hyped ? "Hyped!" : "Hype this video"}
-                    aria-label={hyped ? "Hyped!" : "Hype this video"}
-                    className="p-1.5 rounded-lg transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
-                    style={hyped ? { color: "#FF9500", background: "rgba(255,149,0,0.12)" } : { color: "rgba(255,255,255,0.35)", background: "transparent" }}
-                  >
-                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M10.34 15.84c-.688-.06-1.386-.09-2.09-.09H7.5a4.5 4.5 0 110-9h.75c.704 0 1.402-.03 2.09-.09m0 9.18c.253.962.584 1.892.985 2.783.247.55.06 1.21-.463 1.511l-.657.38c-.551.318-1.26.117-1.527-.461a20.845 20.845 0 01-1.44-4.282m3.102.069a18.03 18.03 0 01-.59-4.59c0-1.586.205-3.124.59-4.59m0 9.18a23.848 23.848 0 018.835 2.535M10.34 6.66a23.847 23.847 0 008.835-2.535m0 0A23.74 23.74 0 0018.795 3m.38 1.125a23.91 23.91 0 011.014 5.395m-1.014 8.855c-.118.38-.245.754-.38 1.125m.38-1.125a23.91 23.91 0 001.014-5.395m0-3.46c.495.413.811 1.035.811 1.73 0 .695-.316 1.317-.811 1.73m0-3.46a24.347 24.347 0 010 3.46" />
-                    </svg>
-                  </button>
-                </>
-              );
-            })()}
-            {(channel?.isOwner || channel?.isCollaborator) && (
-              <>
-                <button
-                  onClick={() => openVideoEdit(v)}
-                  className="p-1.5 rounded-lg text-pnp-textSecondary hover:text-pnp-textPrimary hover:bg-white/8 transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
-                  title="Edit video"
-                  aria-label="Edit video"
-                >
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125" />
-                  </svg>
-                </button>
-                <button
-                  onClick={() => setDeletingVideoId(v.id)}
-                  className="p-1.5 rounded-lg text-red-400/50 hover:text-red-400 hover:bg-red-500/10 transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
-                  title="Delete video"
-                  aria-label="Delete video"
-                >
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
-                  </svg>
-                </button>
-              </>
-            )}
-          </div>
+        <div className="px-2.5 py-2">
+          <p className="text-xs font-medium text-pnp-textPrimary line-clamp-2 leading-snug">{v.title || "Untitled"}</p>
+          {v.view_count > 0 && (
+            <p className="text-[10px] text-pnp-textSecondary mt-0.5">{formatViewCount(v.view_count)} views</p>
+          )}
         </div>
-
-        {/* Inline edit form */}
-        {isEditing && (
-          <div className="px-3 pb-3 space-y-2 border-t border-white/8 pt-2">
-            <div>
-              <div className="flex items-center justify-between mb-0.5">
-                <label className="text-[10px] text-white/40">Title</label>
-                <button type="button" onClick={() => saveAndRunAi("title")} disabled={videoAiBusy !== null}
-                  className="text-[10px] text-white/50 hover:text-white disabled:opacity-40 transition-colors">
-                  {videoAiBusy === "title" ? "…" : "✨ AI title"}
-                </button>
-              </div>
-              <input id="pnp-channels-1"
-                value={videoEditForm.title}
-                onChange={(e) => setVideoEditForm((p) => ({ ...p, title: e.target.value }))}
-                maxLength={255}
-                className="w-full px-2.5 py-1.5 rounded-lg text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-pnp-accent"
-              />
-            </div>
-            <div>
-              <div className="flex items-center justify-between mb-0.5">
-                <label className="text-[10px] text-white/40">Description</label>
-                <button type="button" onClick={() => saveAndRunAi("description")} disabled={videoAiBusy !== null}
-                  className="text-[10px] text-white/50 hover:text-white disabled:opacity-40 transition-colors">
-                  {videoAiBusy === "description" ? "…" : "✨ AI description"}
-                </button>
-              </div>
-              <textarea id="pnp-channels-2"
-                rows={2}
-                value={videoEditForm.description}
-                onChange={(e) => setVideoEditForm((p) => ({ ...p, description: e.target.value }))}
-                className="w-full px-2.5 py-1.5 rounded-lg text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-pnp-accent resize-none"
-              />
-            </div>
-            <div>
-              <div className="flex items-center justify-between mb-0.5">
-                <label className="text-[10px] text-white/40">Tags (comma-separated)</label>
-                <button type="button" onClick={() => saveAndRunAi("tags")} disabled={videoAiBusy !== null}
-                  className="text-[10px] text-white/50 hover:text-white disabled:opacity-40 transition-colors">
-                  {videoAiBusy === "tags" ? "…" : "✨ AI tags"}
-                </button>
-              </div>
-              <input id="pnp-channels-3"
-                value={videoEditForm.tags}
-                onChange={(e) => setVideoEditForm((p) => ({ ...p, tags: e.target.value }))}
-                className="w-full px-2.5 py-1.5 rounded-lg text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-pnp-accent"
-              />
-            </div>
-            {/* Tag Creators */}
-            <div>
-              <label className="block text-[10px] text-white/40 mb-1">Tag Creators (max 5)</label>
-              {taggedCreators.length > 0 && (
-                <div className="flex flex-wrap gap-1 mb-2">
-                  {taggedCreators.map((c) => (
-                    <span key={c.id} className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/10 text-xs text-white/80">
-                      @{c.username}
-                      <button
-                        type="button"
-                        onClick={() => setTaggedCreators((prev) => prev.filter((x) => x.id !== c.id))}
-                        className="text-white/40 hover:text-white ml-0.5"
-                      >
-                        ×
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              )}
-              {taggedCreators.length < 5 && (
-                <div className="relative">
-                  <input id="pnp-channels-4"
-                    type="text"
-                    value={creatorTagSearch}
-                    onChange={async (e) => {
-                      setCreatorTagSearch(e.target.value);
-                      if (e.target.value.trim().length < 2) { setCreatorTagResults([]); return; }
-                      setCreatorTagSearching(true);
-                      try {
-                        const res = await searchCreators(e.target.value.trim());
-                        setCreatorTagResults((res.users || []).filter((c) => !taggedCreators.some((t) => t.id === c.id)));
-                      } catch { /* ignore */ } finally { setCreatorTagSearching(false); }
-                    }}
-                    placeholder={creatorTagSearching ? "Searching…" : "Search creators to tag…"}
-                    className="w-full px-3 py-1.5 rounded-lg text-xs text-white bg-white/5 border border-white/10 focus:outline-none focus:border-pnp-accent placeholder-white/25"
-                  />
-                  {creatorTagResults.length > 0 && (
-                    <div className="absolute top-full left-0 right-0 z-10 mt-1 rounded-lg border border-white/10 bg-pnp-surface overflow-hidden">
-                      {creatorTagResults.slice(0, 5).map((c) => (
-                        <button
-                          key={c.id}
-                          type="button"
-                          onClick={() => {
-                            setTaggedCreators((prev) => [...prev, c]);
-                            setCreatorTagSearch("");
-                            setCreatorTagResults([]);
-                          }}
-                          className="w-full flex items-center gap-2 px-3 py-2 hover:bg-white/5 text-left"
-                        >
-                          <span className="text-xs text-white/80">@{c.username}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-            {videoEditError && <p className="text-xs text-red-400">{videoEditError}</p>}
-            <div className="flex gap-2">
-              <button
-                onClick={saveVideoEdit}
-                disabled={videoEditSaving}
-                className="flex-1 py-1.5 rounded-lg text-xs font-semibold text-white disabled:opacity-50"
-                style={{ background: "linear-gradient(135deg,#D4007A,#E69138)" }}
-              >
-                {videoEditSaving ? "Saving…" : "Save"}
-              </button>
-              <button
-                onClick={() => setEditingVideoId(null)}
-                className="px-3 py-1.5 rounded-lg text-xs text-white/50 border border-white/10 hover:bg-white/5"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Delete confirm */}
-        {isDeleting && (
-          <div className="px-3 pb-3 pt-2 border-t border-red-500/20 space-y-2">
-            <p className="text-xs text-red-300">Delete this video? This cannot be undone.</p>
-            <div className="flex gap-2">
-              <button
-                onClick={confirmVideoDelete}
-                disabled={videoDeleteLoading}
-                className="flex-1 py-1.5 rounded-lg text-xs font-semibold text-white bg-red-500 hover:bg-red-600 disabled:opacity-50 transition-colors"
-              >
-                {videoDeleteLoading ? "Deleting…" : "Yes, Delete"}
-              </button>
-              <button
-                onClick={() => setDeletingVideoId(null)}
-                className="px-3 py-1.5 rounded-lg text-xs text-white/50 border border-white/10 hover:bg-white/5"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        )}
       </div>
     );
   };
@@ -1687,10 +1813,12 @@ function ChannelDetailView({
         <div className="py-12 text-center text-pnp-textSecondary text-sm">
           No content in this channel yet
         </div>
+      ) : selectedVideo && playingVideo ? (
+        renderVideoDetail(selectedVideo)
       ) : (
         <>
         {videos.length > 0 && (
-          <div className="-mx-4 divide-y divide-pnp-border/40">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
             {videos.map((v) => renderVideoCard(v))}
           </div>
         )}
@@ -1767,398 +1895,6 @@ function ChannelDetailView({
           </div>
         )}
         </>
-      )}
-      {/* Video Player Modal */}
-      {playingVideo && (
-        <div
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
-          onClick={() => setPlayingVideo(null)}
-        >
-          <div
-            className={`relative w-full rounded-2xl overflow-hidden flex flex-col ${videoIsLandscape ? "max-w-6xl" : "max-w-2xl"}`}
-            style={{ background: "#0A0A14", maxHeight: "92vh" }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Header */}
-            <div className="flex items-center justify-between px-4 py-3 flex-shrink-0" style={{ borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
-              <p className="text-sm font-semibold text-white truncate flex-1 mr-2">
-                {playingVideo.title || "Video"}
-              </p>
-              {user && (() => {
-                const pv = videos.find(x => x.id === playingVideo.videoId);
-                const likeState = pv ? (videoLikes[pv.id] ?? { liked: pv.liked_by_me ?? false, count: pv.likes_count ?? 0 }) : { liked: false, count: 0 };
-                return (
-                  <>
-                    {pv?.promo_post_id && (
-                      <button
-                        onClick={() => handleVideoLike(pv)}
-                        title={likeState.liked ? "Unlike" : "Like"}
-                        className="w-11 h-11 rounded-full flex items-center justify-center transition-all flex-shrink-0"
-                        style={{ color: likeState.liked ? "#D4007A" : "rgba(255,255,255,0.35)", background: likeState.liked ? "rgba(212,0,122,0.12)" : "transparent" }}
-                      >
-                        <svg className="w-4 h-4" fill={likeState.liked ? "currentColor" : "none"} stroke="currentColor" strokeWidth={likeState.liked ? 0 : 2} viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12z" />
-                        </svg>
-                      </button>
-                    )}
-                    <button
-                      onClick={() => { if (pv) openHypeModal(pv); }}
-                      title={hypePosted.has(playingVideo.videoId) || videoHypeToggles[playingVideo.videoId] ? "Hyped!" : "Hype this video"}
-                      className="w-11 h-11 rounded-full flex items-center justify-center transition-all flex-shrink-0"
-                      style={hypePosted.has(playingVideo.videoId) || videoHypeToggles[playingVideo.videoId] || modalHypeOpen
-                        ? { color: "#FF9500", background: "rgba(255,149,0,0.15)" }
-                        : { color: "rgba(255,255,255,0.35)", background: "transparent" }
-                      }
-                    >
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M10.34 15.84c-.688-.06-1.386-.09-2.09-.09H7.5a4.5 4.5 0 110-9h.75c.704 0 1.402-.03 2.09-.09m0 9.18c.253.962.584 1.892.985 2.783.247.55.06 1.21-.463 1.511l-.657.38c-.551.318-1.26.117-1.527-.461a20.845 20.845 0 01-1.44-4.282m3.102.069a18.03 18.03 0 01-.59-4.59c0-1.586.205-3.124.59-4.59m0 9.18a23.848 23.848 0 018.835 2.535M10.34 6.66a23.847 23.847 0 008.835-2.535m0 0A23.74 23.74 0 0018.795 3m.38 1.125a23.91 23.91 0 011.014 5.395m-1.014 8.855c-.118.38-.245.754-.38 1.125m.38-1.125a23.91 23.91 0 001.014-5.395m0-3.46c.495.413.811 1.035.811 1.73 0 .695-.316 1.317-.811 1.73m0-3.46a24.347 24.347 0 010 3.46" />
-                      </svg>
-                    </button>
-                    {/* Tip the uploader — collab channels may have a video
-                        uploaded by someone other than the channel owner, so
-                        we prefer uploader_* fields with a channel-owner
-                        fallback. Only shown when the uploader is an active
-                        Crystal Creator (SQL-computed on backend). */}
-                    {(() => {
-                      const uploaderId = pv?.uploader_id ?? channel.creatorId;
-                      const uploaderName = pv?.uploader_username ?? channel.creatorUsername ?? undefined;
-                      const uploaderCrystal = pv?.uploader_id
-                        ? pv?.uploader_crystal === true
-                        : channel.creatorCrystal === true;
-                      // Never tip yourself
-                      if (!uploaderId || String(user?.id ?? "") === String(uploaderId)) return null;
-                      return (
-                        <TipButton
-                          creatorId={String(uploaderId)}
-                          creatorUsername={uploaderName ?? undefined}
-                          isCrystalCreator={uploaderCrystal}
-                        />
-                      );
-                    })()}
-                  </>
-                );
-              })()}
-              <button
-                onClick={() => setPlayingVideo(null)}
-                className="w-11 h-11 rounded-full flex items-center justify-center text-white/50 hover:text-white hover:bg-white/10 transition-all flex-shrink-0"
-              >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-            {/* Video */}
-            {!playingVideo.url ? (
-              /* Per-video paywall — same lock card pattern as the full-channel overlay */
-              <div className="w-full flex flex-col items-center justify-center gap-3 py-10 px-6 text-center" style={{ minHeight: 200, background: "#0A0A14" }}>
-                <div className="w-14 h-14 rounded-full flex items-center justify-center"
-                  style={channelIsPrime
-                    ? { background: "rgba(167,139,250,0.15)", border: "1px solid rgba(167,139,250,0.3)" }
-                    : { background: "rgba(212,0,122,0.15)", border: "1px solid rgba(212,0,122,0.3)" }
-                  }>
-                  <svg className="w-7 h-7" style={{ color: channelIsPrime ? "#A78BFA" : "#D4007A" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
-                  </svg>
-                </div>
-                {channelIsPrime ? (
-                  <>
-                    <p className="text-white font-semibold text-base">PRIME Members Only</p>
-                    <p className="text-sm text-pnp-textSecondary max-w-xs">Upgrade to PRIME to watch this video.</p>
-                    <button
-                      onClick={() => { setPlayingVideo(null); window.location.href = '/subscribe'; }}
-                      className="mt-1 px-5 py-2.5 rounded-xl text-sm font-semibold text-white"
-                      style={{ background: "linear-gradient(135deg, #A78BFA, #D4007A)" }}
-                    >
-                      Upgrade to PRIME
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <p className="text-white font-semibold text-base">Premium Channel</p>
-                    <p className="text-sm text-pnp-textSecondary max-w-xs">Subscribe to {channel.creatorName || "this creator"} to watch this video.</p>
-                    <p className="text-xs font-medium px-3 py-1.5 rounded-full" style={{ background: "rgba(230,145,56,0.15)", color: "#E69138", border: "1px solid rgba(230,145,56,0.3)" }}>
-                      &#128142; Incluye canal + perfil exclusivo — 2x1
-                    </p>
-                    <button
-                      onClick={() => {
-                        setPlayingVideo(null);
-                        if (channel.creatorId) setShowSubscribeWizard(true);
-                        else window.location.href = '/subscribe';
-                      }}
-                      className="mt-1 px-5 py-2.5 rounded-xl text-sm font-semibold text-white"
-                      style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
-                    >
-                      Subscribe to Access
-                    </button>
-                  </>
-                )}
-              </div>
-
-            ) : videoPlayerError ? (
-              <div className="w-full flex flex-col items-center justify-center gap-2 py-10 bg-black" style={{ minHeight: 200 }}>
-                <svg className="w-8 h-8 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" />
-                </svg>
-                <p className="text-xs text-white/40">Video unavailable</p>
-              </div>
-            ) : (() => {
-              // Product spec: 16s branded intro curtain plays before creator
-              // channel videos ≥ 30s. Uploader is always the primary credit;
-              // tagged collaborators are joined with "feat.". Channel eyebrow
-              // is "{Channel name} for PNPtv!".
-              const uploader = playingVideo.uploaderDisplayName || channel.creatorName || channel.creatorUsername || "Creator";
-              const featNames = (playingVideo.taggedCreators || [])
-                .map(t => t.first_name || t.username)
-                .filter(Boolean);
-              const performers = featNames.length > 0
-                ? `${uploader} feat. ${featNames.join(" y ")}`
-                : uploader;
-              const eligible = (playingVideo.durationSec ?? 0) >= 30;
-              // PRIME (official) channel gets a plain "PRIME" eyebrow — no
-              // "for PNPtv!" suffix. All other creator channels use the full
-              // "{Channel} for PNPtv!" form.
-              const eyebrow = channelIsPrime ? "PRIME" : `${channel.name} for PNPtv!`;
-              const intro = eligible ? {
-                channel: eyebrow,
-                title: playingVideo.title,
-                performers,
-              } : null;
-              return (
-                <VideoPlayer
-                  key={playingVideo.url}
-                  src={playingVideo.url}
-                  controls
-                  autoPlay
-                  playsInline
-                  controlsList="nodownload"
-                  creatorDisclaimer
-                  viewCount={playingVideo.viewCount}
-                  intro={intro}
-                  onContextMenu={(e) => e.preventDefault()}
-                  onError={() => {
-                    // If the primary source (usually Mux HLS) fails and we
-                    // have a Directus fallback we haven't tried yet, swap and
-                    // retry once before surfacing "Video unavailable".
-                    const fb = playingVideo.fallbackUrl;
-                    if (fb && fb !== playingVideo.url) {
-                      setPlayingVideo({ ...playingVideo, url: fb, fallbackUrl: null });
-                    } else {
-                      setVideoPlayerError(true);
-                    }
-                  }}
-                  onLoadedMetadata={(e) => {
-                    // Landscape source → widen the modal + expand the player
-                    // to semi-fullscreen. Portrait/square stays compact.
-                    const v = e.currentTarget;
-                    if (v.videoWidth && v.videoHeight) {
-                      setVideoIsLandscape(v.videoWidth > v.videoHeight * 1.05);
-                    }
-                  }}
-                  className="w-full flex-shrink-0 bg-black"
-                  style={{ maxHeight: videoIsLandscape ? "80vh" : "50vh" }}
-                  preload="metadata"
-                />
-              );
-            })()}
-            {showPrimeUpsell && !primeUpsellDismissed && playingVideo.url && !videoPlayerError && (
-              <a
-                href="/subscribe"
-                onClick={() => setPlayingVideo(null)}
-                className="flex items-center gap-2 px-4 py-2.5 text-xs font-semibold text-white flex-shrink-0 transition-opacity hover:opacity-90"
-                style={{ background: "linear-gradient(90deg, #D4007A 0%, #FF6B9D 100%)" }}
-              >
-                <span className="flex-1">Unlock everything {channel?.creatorName || channel?.creatorUsername || "this creator"} makes — go PRIME</span>
-                <span aria-hidden="true">→</span>
-                <button
-                  type="button"
-                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); dismissPrimeUpsell(); }}
-                  aria-label="Dismiss"
-                  className="w-5 h-5 flex items-center justify-center rounded-full text-white/80 hover:text-white hover:bg-white/15 transition-colors -mr-1"
-                >
-                  ×
-                </button>
-              </a>
-            )}
-            {showCreatorSubscribeUpsell && !creatorUpsellDismissed && playingVideo.url && !videoPlayerError && (
-              <button
-                type="button"
-                onClick={() => { setPlayingVideo(null); if (channel?.creatorId) setShowSubscribeWizard(true); }}
-                className="flex items-center gap-2 px-4 py-2.5 text-xs font-semibold flex-shrink-0 transition-opacity hover:opacity-90 text-left w-full"
-                style={{ background: "linear-gradient(90deg, #5ED1C4 0%, #2DD4BF 100%)", color: "#04252b" }}
-              >
-                <span className="flex-1">Subscribe to {channel?.creatorName || channel?.creatorUsername || "this creator"} for exclusive content</span>
-                <span aria-hidden="true">→</span>
-                <span
-                  role="button"
-                  tabIndex={0}
-                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); dismissCreatorUpsell(); }}
-                  aria-label="Dismiss"
-                  className="w-5 h-5 flex items-center justify-center rounded-full hover:bg-black/10 transition-colors -mr-1 cursor-pointer"
-                  style={{ color: "#04252b" }}
-                >
-                  ×
-                </span>
-              </button>
-            )}
-            {/* Tagged creators */}
-            {playingVideo.taggedCreators.length > 0 && (
-              <div className="px-4 py-2.5 flex items-center gap-2 flex-wrap flex-shrink-0" style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }}>
-                <span className="text-xs text-white/40">With:</span>
-                {playingVideo.taggedCreators.map((c) => (
-                  <a
-                    key={c.id}
-                    href={`/profile/${c.id}`}
-                    className="flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium hover:opacity-80 transition-opacity"
-                    style={{ background: "rgba(212,0,122,0.12)", color: "#D4007A", border: "1px solid rgba(212,0,122,0.2)" }}
-                  >
-                    {c.avatar_url && (
-                      <img src={c.avatar_url} alt="" className="w-4 h-4 rounded-full object-cover flex-shrink-0" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
-                    )}
-                    @{c.username}
-                  </a>
-                ))}
-              </div>
-            )}
-            {/* Hype compose panel in modal */}
-            {modalHypeOpen && (
-              <div className="px-4 py-3 flex-shrink-0 space-y-2" style={{ borderTop: "1px solid rgba(255,149,0,0.2)", background: "rgba(255,149,0,0.04)" }}>
-                <p className="text-[10px] text-orange-400/70 font-medium tracking-wide uppercase">Hype Post</p>
-                <textarea id="pnp-channels-12"
-                  rows={2}
-                  value={hypeText}
-                  onChange={(e) => setHypeText(e.target.value)}
-                  maxLength={280}
-                  className="w-full px-2.5 py-1.5 rounded-lg text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-orange-400 resize-none placeholder-white/25"
-                  placeholder="Write your hype post…"
-                />
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => submitHype(playingVideo.videoId)}
-                    disabled={hypePosting || !hypeText.trim()}
-                    className="flex-1 py-1.5 rounded-lg text-xs font-semibold text-white disabled:opacity-40 transition-opacity"
-                    style={{ background: "linear-gradient(135deg,#FF9500,#E69138)" }}
-                  >
-                    {hypePosting ? "Posting…" : "🔥 Post Hype"}
-                  </button>
-                  <button
-                    onClick={() => setModalHypeOpen(false)}
-                    className="px-3 py-1.5 rounded-lg text-xs text-white/50 border border-white/10 hover:bg-white/5"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Comments — always shown for all channel videos */}
-            {(
-              <div className="flex flex-col flex-1 min-h-0">
-                {/* Comment input */}
-                <div className="px-4 py-3 flex-shrink-0" style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }}>
-                  <div className="flex gap-2">
-                    <input id="pnp-channels-13"
-                      type="text"
-                      value={commentInput}
-                      onChange={(e) => setCommentInput(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submitComment(); } }}
-                      placeholder="Add a comment…"
-                      maxLength={500}
-                      className="flex-1 px-3 py-2 rounded-xl text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-pnp-accent placeholder-white/25"
-                    />
-                    <button
-                      onClick={submitComment}
-                      disabled={commentPosting || !commentInput.trim()}
-                      className="px-3 py-2 rounded-xl text-sm font-semibold text-white disabled:opacity-40 transition-opacity"
-                      style={{ background: "linear-gradient(135deg,#D4007A,#E69138)" }}
-                    >
-                      {commentPosting ? "…" : "Post"}
-                    </button>
-                  </div>
-                </div>
-                {/* Comment list */}
-                <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-3 space-y-3">
-                  {commentsLoading && videoComments.length === 0 ? (
-                    <div className="py-4 text-center text-xs text-white/30">Loading comments…</div>
-                  ) : videoComments.length === 0 ? (
-                    <div className="py-4 text-center text-xs text-white/30">No comments yet — be the first!</div>
-                  ) : (
-                    videoComments.map((c) => {
-                      const cReactions = commentReactions[c.id] ?? [];
-                      const visibleReactions = cReactions.filter((r) => r.count > 0);
-                      return (
-                        <div key={c.id} className="flex gap-2.5">
-                          <div className="w-7 h-7 rounded-full bg-white/10 flex-shrink-0 overflow-hidden">
-                            {isValidPhotoUrl(c.author_photo) ? (
-                              <img src={c.author_photo} alt="" className="w-full h-full object-cover" />
-                            ) : (
-                              <div className="w-full h-full flex items-center justify-center text-xs text-white/40">
-                                {(c.author_first_name || c.author_username || "?")[0].toUpperCase()}
-                              </div>
-                            )}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs font-medium text-white/70">{c.author_first_name || c.author_username || "User"}</p>
-                            <p className="text-sm text-white/90 mt-0.5 break-words">{c.content}</p>
-                            {visibleReactions.length > 0 && (
-                              <div className="flex flex-wrap gap-1 mt-1">
-                                {visibleReactions.map((r) => (
-                                  <button
-                                    key={r.emoji}
-                                    onClick={() => handleCommentReaction(c.id, r.emoji)}
-                                    className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[11px] transition-colors"
-                                    style={r.reactedByMe ? { background: "rgba(212,0,122,0.15)", border: "1px solid rgba(212,0,122,0.35)", color: "#D4007A" } : { background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.6)" }}
-                                  >
-                                    {r.emoji} {r.count}
-                                  </button>
-                                ))}
-                              </div>
-                            )}
-                            <div className="relative mt-1">
-                              <button
-                                onClick={() => {
-                                  if (commentReactionPickerOpen === c.id) {
-                                    setCommentReactionPickerOpen(null);
-                                  } else {
-                                    loadCommentReactions(c.id);
-                                    setCommentReactionPickerOpen(c.id);
-                                  }
-                                }}
-                                className="text-[11px] text-white/30 hover:text-white/60 transition-colors"
-                              >
-                                {commentReactionPickerOpen === c.id ? "✕" : "😀"}
-                              </button>
-                              {commentReactionPickerOpen === c.id && (
-                                <div className="absolute left-0 top-5 z-10 flex flex-wrap gap-1 p-2 rounded-xl border border-white/10 shadow-xl" style={{ background: "#111118", minWidth: 220 }}>
-                                  {REACTION_EMOJIS.map((emoji) => (
-                                    <button
-                                      key={emoji}
-                                      onClick={() => handleCommentReaction(c.id, emoji)}
-                                      className="text-lg p-1 rounded-lg hover:bg-white/10 transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
-                                    >
-                                      {emoji}
-                                    </button>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
-                  {commentsHasMore && (
-                    <button
-                      onClick={() => loadComments(playingVideo.channelId, playingVideo.videoId, playingVideo.promoPostId, commentsCursor ?? undefined)}
-                      className="w-full py-2 text-xs text-white/40 hover:text-white/70 transition-colors"
-                    >
-                      Load more comments
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
       )}
 
       {shareTarget && (
