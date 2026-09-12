@@ -1501,13 +1501,16 @@ class CreatorService {
 
     const user = subscriberRes.rows[0] || {};
     const crystalUntilRaw = user.crystal_creator_active_until || null;
-    const crystalActiveUntil = crystalUntilRaw
-      ? (crystalUntilRaw instanceof Date ? crystalUntilRaw.toISOString() : String(crystalUntilRaw))
-      : null;
+    // pg returns 'infinity'::timestamptz as the JS number Infinity (not string).
+    const _isInfCrystal = crystalUntilRaw === Infinity ||
+      (typeof crystalUntilRaw === 'string' && crystalUntilRaw.toLowerCase() === 'infinity');
+    const crystalActiveUntil = _isInfCrystal
+      ? 'infinity'
+      : (crystalUntilRaw instanceof Date ? crystalUntilRaw.toISOString() : (crystalUntilRaw ? String(crystalUntilRaw) : null));
     const crystalCreator =
-      crystalActiveUntil === 'infinity' ||
+      _isInfCrystal ||
       (!!crystalUntilRaw && crystalUntilRaw instanceof Date && crystalUntilRaw.getTime() > Date.now()) ||
-      (typeof crystalUntilRaw === 'string' && crystalUntilRaw !== 'infinity' && new Date(crystalUntilRaw).getTime() > Date.now());
+      (typeof crystalUntilRaw === 'string' && !_isInfCrystal && new Date(crystalUntilRaw).getTime() > Date.now());
     return {
       subscriberCount: user.creator_subscriber_count || 0,
       creatorStatus: user.creator_status || 'none',
