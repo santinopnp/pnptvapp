@@ -18,5 +18,15 @@
     "jose": "^6.2.12",
     "node-cron": "^4.6.0",
     "ws": "^8.21.3"
+  },
+  "overrides": {
+    "ws": "^8.21.3",
+    "qs": "^6.16.0",
+    "@walletconnect/utils": {
+      "ws": "^8.21.3"
+    },
+    "@walletconnect/universal-provider": {
+      "ws": "^8.21.3"
+    }
   }
 }
