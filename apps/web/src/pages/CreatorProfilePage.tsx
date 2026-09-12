@@ -33,6 +33,7 @@ import {
   Ticket,
   Bitcoin,
   Loader2,
+  Tv2,
 } from "lucide-react";
 import {
   getPublicCreatorProfile,
@@ -2238,29 +2239,6 @@ export default function CreatorProfilePage() {
             </div>
           )}
 
-          {/* Channel deep-link — takes subscribers straight to the videos in
-              the creator's canonical channel (skips the /channels landing).
-              Button label uses the actual channel name. PRIME-gated channels
-              (Santino) get a 💎 marker to signal the access tier. */}
-          {data.channels && data.channels[0] && (() => {
-            const ch = data.channels[0];
-            const isPrimeCh = ch.access_type === "prime";
-            return (
-              <button
-                onClick={() => navigate(`/channels?channel=${encodeURIComponent(ch.slug)}`)}
-                className="w-full lg:max-w-md py-2.5 rounded-xl text-sm font-semibold mb-4 flex items-center justify-center gap-2 transition-opacity hover:opacity-90"
-                style={{
-                  background: "rgba(212,0,122,0.10)",
-                  color: "#fff",
-                  border: "1px solid rgba(212,0,122,0.25)",
-                }}
-                aria-label={`Ver videos de ${ch.name}`}
-              >
-                <span>{isPrimeCh ? "💎" : "▶"}</span>
-                <span className="truncate">{ch.name}</span>
-              </button>
-            );
-          })()}
 
           {/* About me — collapsible card above the wall */}
           <div
@@ -2306,6 +2284,45 @@ export default function CreatorProfilePage() {
               </div>
             )}
           </div>
+
+          {/* Channel strip — all channels owned by this creator, shown above the wall */}
+          {data.channels && data.channels.length > 0 && (
+            <div className="mb-4">
+              <div className="flex gap-2.5 overflow-x-auto pb-1 scrollbar-none">
+                {data.channels.map((ch) => {
+                  const isPrimeCh = ch.access_type === "prime";
+                  return (
+                    <button
+                      key={ch.id}
+                      onClick={() => navigate(`/channels?channel=${encodeURIComponent(ch.slug)}`)}
+                      className="flex-shrink-0 flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-sm font-semibold text-white transition-opacity hover:opacity-90"
+                      style={{
+                        background: isPrimeCh
+                          ? "linear-gradient(135deg, rgba(212,0,122,0.18), rgba(230,145,56,0.18))"
+                          : "rgba(255,255,255,0.07)",
+                        border: isPrimeCh
+                          ? "1px solid rgba(212,0,122,0.40)"
+                          : "1px solid rgba(255,255,255,0.12)",
+                      }}
+                      aria-label={`Ver canal ${ch.name}`}
+                    >
+                      {ch.cover_image_url ? (
+                        <img
+                          src={ch.cover_image_url}
+                          alt=""
+                          className="w-6 h-6 rounded-md object-cover flex-shrink-0"
+                        />
+                      ) : (
+                        <Tv2 size={15} className="flex-shrink-0 opacity-70" />
+                      )}
+                      <span className="max-w-[120px] truncate">{ch.name}</span>
+                      {isPrimeCh && <span className="text-xs">💎</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Wall — Posts / Tagged tabs. */}
           <div className="space-y-3">

@@ -850,8 +850,7 @@ async function publishVideo({ videoId, userId, isAdmin }) {
       const promoContent = [
         `🔥 @${ch.creator_username} acaba de subir contenido exclusivo`,
         `📹 ${statsRow.video_count} videos · 📸 ${statsRow.exclusive_photo_count} fotos exclusivas`,
-        `💎 Suscríbete y accede a TODO — canal + perfil incluidos (Oferta de lanzamiento 2x1)`,
-        `→ pnptv.app/c/${encodeURIComponent(ch.creator_username || '')}`,
+        `💎 Suscríbete y accede a TODO — canal + perfil incluidos`,
       ].filter(Boolean).join('\n').slice(0, 1000);
       const metadata = {
         kind: 'channel_promo',
@@ -953,10 +952,11 @@ async function publishVideo({ videoId, userId, isAdmin }) {
     logger.warn('channel_videos: promo post creation failed (non-fatal)', { videoId, error: err.message });
   }
 
-  // Creator's own promo post — from creator's @username with the animated GIF preview
-  if (gifUrl && !final.creator_promo_post_id) {
+  // Creator's own promo post — always created on publish; uses animated GIF if
+  // available, falls back to the static thumbnail so no video is left post-less.
+  const creatorPostMedia = gifUrl || final.thumbnail_url || null;
+  if (creatorPostMedia && !final.creator_promo_post_id) {
     try {
-      const appUrl2 = (process.env.APP_PUBLIC_URL || 'https://pnptv.app').replace(/\/$/, '');
       const directusBase2 = (process.env.DIRECTUS_PUBLIC_URL || 'https://cms.pnptv.app').replace(/\/$/, '');
       const rawDesc2 = (final.description || '').trim();
       const creatorContent = [
@@ -979,7 +979,7 @@ async function publishVideo({ videoId, userId, isAdmin }) {
         video_url: final.mux_playback_id
           ? `https://stream.mux.com/${final.mux_playback_id}.m3u8`
           : (final.directus_file_id ? `${directusBase2}/assets/${final.directus_file_id}` : ''),
-        has_animated_gif: true,
+        has_animated_gif: !!gifUrl,
         is_creator_post: true,
       };
 
@@ -990,7 +990,7 @@ async function publishVideo({ videoId, userId, isAdmin }) {
          VALUES ($1, $2, $3, 'image', $4, false, 'free', $5, $6, $7, $8, NOW())
          RETURNING id`,
         [
-          String(ch.creator_id), creatorContent, gifUrl, JSON.stringify(creatorMetadata),
+          String(ch.creator_id), creatorContent, creatorPostMedia, JSON.stringify(creatorMetadata),
           ch.id,
           (final.title || '').toString().slice(0, 200) || null,
           (final.description || '').toString().slice(0, 2000) || null,

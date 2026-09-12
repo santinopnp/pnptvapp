@@ -363,6 +363,7 @@ export default function PostCard({
   // Creator-sub CTAs reveal the canonical CreatorSubscribeWizard inline —
   // same widget the creator-profile "Subscribe" pill opens.
   const [showCreatorSubWizard, setShowCreatorSubWizard] = useState(false);
+  const [showChannelPromoSubWizard, setShowChannelPromoSubWizard] = useState(false);
 
   const [translatedContent, setTranslatedContent] = useState<string | null>(
     null
@@ -1142,10 +1143,9 @@ export default function PostCard({
           )}
 
           {/* Channel-promo CTA — rendered in place of generic media for channel_promo posts.
-               Shows the GIF/thumbnail + a "Watch now" / "Subscribe to Watch" button.
-               For publish-flow posts the author is the system account (8552451957);
-               for hype posts the author is the creator themselves. Either way the
-               metadata carries the channel info needed to build this card. */}
+               Shows the GIF/thumbnail + a "Watch now" / "Subscribe" button.
+               Subscribers deep-link straight to the video; non-subscribers get an
+               inline wizard — no redirect to the creator profile. */}
           {(() => {
             const m = post.metadata as Record<string, unknown> | undefined | null;
             if (!m || m.kind !== "channel_promo") return null;
@@ -1153,93 +1153,126 @@ export default function PostCard({
             const channelName = (m.channel_name as string | undefined) || "";
             const accessType = (m.access_type as "free" | "prime" | "subscription" | "paid" | "bts" | undefined) || "free";
             const creatorUsername = (m.creator_username as string | undefined) || "";
+            const creatorIdMeta = (m.creator_id as string | undefined) || post.author_id;
             const priceUsd = m.price_usd as number | null | undefined;
-            const videoUrl = ((m.video_url as string | undefined) && (m.video_url as string).length > 10)
-              ? (m.video_url as string)
-              : ((m.video_directus_id as string | undefined) ? `https://cms.pnptv.app/assets/${m.video_directus_id}` : null);
-            const channelHref = channelSlug ? `/channels?channel=${channelSlug}` : "/channels";
+            const videoId = (m.video_id as string | number | undefined)?.toString();
+            const channelHref = channelSlug ? `/channels?channel=${encodeURIComponent(channelSlug)}` : "/channels";
+            // Deep link directly to the specific video within the channel
+            const channelVideoHref = videoId && channelSlug
+              ? `/channels?channel=${encodeURIComponent(channelSlug)}&video=${videoId}`
+              : channelHref;
 
-            // Per-tier gate — mirrors SocialPostCard.resolveChannelPromoCta so the
-            // profile-wall render matches the feed. PRIME videos NEVER open the
-            // raw asset URL for non-PRIME viewers; they route to /subscribe.
-            let canPlayInline = false;
-            let ctaLabel = "▶ Watch now";
-            let ctaHref: string = videoUrl ?? channelHref;
+            let canWatch = false;
             let locked = false;
+            let ctaLabel = "▶ Watch now";
+            // "subscribe" action opens a modal inline; "watch" navigates to the video
+            let ctaAction: "watch" | "prime-subscribe" | "creator-subscribe" = "watch";
+
             switch (accessType) {
               case "free":
-                canPlayInline = !!videoUrl;
-                ctaHref = videoUrl ?? channelHref;
+                canWatch = true;
                 break;
               case "prime":
                 if (isPrime) {
-                  canPlayInline = !!videoUrl;
-                  ctaHref = videoUrl ?? channelHref;
+                  canWatch = true;
                 } else {
-                  canPlayInline = false;
                   locked = true;
-                  ctaLabel = "🔒 Subscribe to PRIME →";
-                  ctaHref = `/subscribe?plan=prime&return=${encodeURIComponent(channelHref)}`;
+                  ctaLabel = "💎 Subscribe to PRIME →";
+                  ctaAction = "prime-subscribe";
                 }
                 break;
               case "subscription":
-                // Subscription channel: link to the creator's profile to subscribe.
-                // Existing subscribers hit the channel and get inline access there.
-                canPlayInline = false;
-                locked = true;
-                ctaLabel = creatorUsername
-                  ? `Subscribe to @${creatorUsername} →`
-                  : "Subscribe to Watch →";
-                ctaHref = creatorUsername
-                  ? `/profile/${creatorUsername}?action=subscribe`
-                  : channelHref;
+                if (isSubscribed) {
+                  canWatch = true;
+                } else {
+                  locked = true;
+                  ctaLabel = creatorUsername
+                    ? `Subscribe to @${creatorUsername} →`
+                    : "Subscribe to Watch →";
+                  ctaAction = "creator-subscribe";
+                }
                 break;
               case "paid":
-                canPlayInline = false;
                 locked = true;
                 ctaLabel = `Get pass — $${priceUsd ?? "?"}/mo →`;
-                ctaHref = `${channelHref}&action=purchase`;
+                ctaAction = "creator-subscribe";
                 break;
             }
+
+            const handleCta = (e: React.MouseEvent) => {
+              e.preventDefault();
+              if (ctaAction === "watch") {
+                navigate(channelVideoHref);
+              } else if (ctaAction === "prime-subscribe") {
+                setShowPrimePlanPicker(true);
+              } else {
+                // creator-subscribe: inline wizard (works in feed AND profile)
+                if (onSubscribeCta) {
+                  onSubscribeCta();
+                } else {
+                  setShowChannelPromoSubWizard(true);
+                }
+              }
+            };
+
+            const thumbnailContent = (
+              <>
+                <img
+                  src={post.media_url!}
+                  alt={channelName || "Channel promo"}
+                  className="absolute inset-0 w-full h-full object-cover"
+                  loading="lazy"
+                  decoding="async"
+                  onError={(e) => { (e.target as HTMLImageElement).parentElement!.style.display = "none"; }}
+                />
+                <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-black/10 group-hover:bg-black/30 transition-colors">
+                  <div className="w-12 h-12 rounded-full bg-black/60 flex items-center justify-center backdrop-blur-sm border border-white/20">
+                    {locked
+                      ? <span className="text-white text-lg">🔒</span>
+                      : <svg className="w-5 h-5 text-white ml-1" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
+                    }
+                  </div>
+                </div>
+                {channelName && (
+                  <div className="absolute bottom-2 left-2 px-2 py-0.5 rounded-full bg-black/70 text-white text-xs font-medium backdrop-blur-sm">
+                    📺 {channelName}
+                  </div>
+                )}
+              </>
+            );
 
             return (
               <div className="mt-3">
                 {post.media_url && (
-                  <a href={ctaHref} className="relative block rounded-xl overflow-hidden mb-2 cursor-pointer group aspect-video bg-white/5">
-                    <img
-                      src={post.media_url}
-                      alt={channelName || "Channel promo"}
-                      className="absolute inset-0 w-full h-full object-cover"
-                      loading="lazy"
-                      decoding="async"
-                      onError={(e) => { (e.target as HTMLImageElement).parentElement!.style.display = "none"; }}
-                    />
-                    <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-black/10 group-hover:bg-black/30 transition-colors">
-                      <div className="w-12 h-12 rounded-full bg-black/60 flex items-center justify-center backdrop-blur-sm border border-white/20">
-                        <svg className="w-5 h-5 text-white ml-1" fill="currentColor" viewBox="0 0 24 24">
-                          <path d="M8 5v14l11-7z" />
-                        </svg>
-                      </div>
-                    </div>
-                    {channelName && (
-                      <div className="absolute bottom-2 left-2 px-2 py-0.5 rounded-full bg-black/70 text-white text-xs font-medium backdrop-blur-sm">
-                        📺 PNP Channels · {channelName}
-                      </div>
-                    )}
-                    {locked && (
-                      <div className="absolute top-2 right-2 px-2 py-0.5 rounded-full bg-black/70 text-white text-xs font-medium backdrop-blur-sm">
-                        🔒
-                      </div>
-                    )}
-                  </a>
+                  <button
+                    onClick={handleCta}
+                    className="relative w-full rounded-xl overflow-hidden mb-2 cursor-pointer group aspect-video bg-white/5 block"
+                    aria-label={canWatch ? `Watch ${channelName}` : ctaLabel}
+                  >
+                    {thumbnailContent}
+                  </button>
                 )}
-                <a
-                  href={ctaHref}
-                  className="block w-full text-center text-sm font-semibold py-2.5 rounded-lg transition-opacity hover:opacity-90"
+                <button
+                  onClick={handleCta}
+                  className="w-full text-center text-sm font-semibold py-2.5 rounded-lg transition-opacity hover:opacity-90"
                   style={{ background: "linear-gradient(135deg, #D4007A, #E69138)", color: "#fff" }}
                 >
-                  {canPlayInline ? "▶ Watch now" : ctaLabel}
-                </a>
+                  {canWatch ? "▶ Watch now" : ctaLabel}
+                </button>
+                {showChannelPromoSubWizard && creatorIdMeta && (
+                  <div className="mt-3" onClick={(e) => e.stopPropagation()}>
+                    <CreatorSubscribeWizard
+                      creatorId={String(creatorIdMeta)}
+                      username={creatorUsername || undefined}
+                      priceUsd={Number(priceUsd) || 15}
+                      lang={userLang === "es" ? "es" : "en"}
+                      compact
+                      accessType={accessType === "prime" || accessType === "subscription" ? accessType : "subscription"}
+                      onSuccess={() => { setShowChannelPromoSubWizard(false); window.location.reload(); }}
+                      onClose={() => setShowChannelPromoSubWizard(false)}
+                    />
+                  </div>
+                )}
               </div>
             );
           })()}
