@@ -357,7 +357,7 @@ class NotificationDigestScheduler {
 
     try {
       const result = await emailService.transporters.pnptv.sendMail({
-        from:    '"PNPtv" <hello@pnptv.app>',
+        from:    process.env.PNPTV_FROM_EMAIL || '"PNPtv!" <noreply@pnptv.app>',
         to:      user.email,
         subject,
         html,
@@ -633,7 +633,7 @@ class NotificationDigestScheduler {
       }
 
       await emailService.transporters.pnptv.sendMail({
-        from: '"PNPtv" <hello@pnptv.app>',
+        from: process.env.PNPTV_FROM_EMAIL || '"PNPtv!" <noreply@pnptv.app>',
         to: user.email,
         subject,
         html,

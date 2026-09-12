@@ -421,7 +421,7 @@ async function onCallPaymentSuccess(paymentId) {
             const creatorTransporter = emailService.transporters.pnptv || emailService.transporters.easybots;
             if (creatorTransporter) {
               await creatorTransporter.sendMail({
-                from: '"PNPtv" <hello@pnptv.app>',
+                from: process.env.PNPTV_FROM_EMAIL || '"PNPtv!" <noreply@pnptv.app>',
                 to: cRows[0].email,
                 subject: '💰 Alguien compró tu paquete de llamada — PNPtv',
                 html: `
@@ -465,7 +465,7 @@ async function onCallPaymentSuccess(paymentId) {
           const transporter = emailService.transporters.pnptv || emailService.transporters.easybots;
           if (transporter) {
             await transporter.sendMail({
-              from: '"PNPtv" <hello@pnptv.app>',
+              from: process.env.PNPTV_FROM_EMAIL || '"PNPtv!" <noreply@pnptv.app>',
               to: buyerEmail,
               subject: 'Payment Confirmed — Call Credits Ready! — PNPtv',
               html: `

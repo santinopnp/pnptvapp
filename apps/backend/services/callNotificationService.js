@@ -126,7 +126,7 @@ async function sendBookingEmail({ to, subject, html }) {
 
   try {
     const result = await transporter.sendMail({
-      from: '"PNPtv" <hello@pnptv.app>',
+      from: process.env.PNPTV_FROM_EMAIL || '"PNPtv!" <noreply@pnptv.app>',
       to,
       subject,
       html,

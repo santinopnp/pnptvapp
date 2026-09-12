@@ -30,7 +30,7 @@ async function handleLanguageSelection(ctx) {
     // Update session
     ctx.session.language = lang;
     ctx.session.onboardingStep = 'ageVerification';
-    console.log(`[Onboarding] User ${ctx.from.id} selected language: ${lang}`);
+    logger.info(`[Onboarding] User ${ctx.from.id} selected language: ${lang}`);
 
     // Edit message to confirm language
     try {
@@ -149,7 +149,7 @@ async function handleTermsAcceptance(ctx) {
     ctx.session.termsAccepted = true;
     ctx.session.onboardingStep = 'privacy';
 
-    console.log(`[Onboarding] User ${ctx.from.id} accepted terms`);
+    logger.info(`[Onboarding] User ${ctx.from.id} accepted terms`);
 
     // Confirm and proceed to privacy
     try {
@@ -184,7 +184,7 @@ async function handleTermsDecline(ctx) {
 
     const lang = ctx.session.language || 'en';
 
-    console.log(`[Onboarding] User ${ctx.from.id} declined terms`);
+    logger.info(`[Onboarding] User ${ctx.from.id} declined terms`);
 
     await ctx.reply(t('termsDeclined', lang));
   } catch (error) {
@@ -227,7 +227,7 @@ async function handlePrivacyAcceptance(ctx) {
     ctx.session.privacyAccepted = true;
     ctx.session.onboardingStep = 'email';
 
-    console.log(`[Onboarding] User ${ctx.from.id} accepted privacy policy`);
+    logger.info(`[Onboarding] User ${ctx.from.id} accepted privacy policy`);
 
     // Confirm and proceed to email
     try {
@@ -262,7 +262,7 @@ async function handlePrivacyDecline(ctx) {
 
     const lang = ctx.session.language || 'en';
 
-    console.log(`[Onboarding] User ${ctx.from.id} declined privacy policy`);
+    logger.info(`[Onboarding] User ${ctx.from.id} declined privacy policy`);
 
     await ctx.reply(t('privacyDeclined', lang));
   } catch (error) {
@@ -301,7 +301,7 @@ async function handleEmailSubmission(ctx) {
     const email = ctx.message.text.trim().toLowerCase();
     const userId = ctx.from.id.toString();
 
-    console.log(`[Onboarding] User ${userId} submitted email: ${email}`);
+    logger.info(`[Onboarding] User ${userId} submitted email: ${email}`);
 
     // Validate email
     if (!isValidEmail(email)) {
@@ -369,7 +369,7 @@ async function generateFreeChannelInvite(ctx) {
     const freeChannelId = process.env.FREE_CHANNEL_ID || '-1003159260496';
     const freeGroupId = process.env.FREE_GROUP_ID || '-1003291737499';
 
-    console.log(`[Onboarding] Generating free channel invites for user ${userId}`);
+    logger.info(`[Onboarding] Generating free channel invites for user ${userId}`);
 
     let channelInviteUrl = null;
     let groupInviteUrl = null;
@@ -381,7 +381,7 @@ async function generateFreeChannelInvite(ctx) {
         name: `Free - User ${userId}`,
       });
       channelInviteUrl = channelInvite.invite_link;
-      console.log(`[Onboarding] Channel invite created: ${channelInviteUrl}`);
+      logger.info(`[Onboarding] Channel invite created: ${channelInviteUrl}`);
     } catch (channelError) {
       logger.error('Failed to create channel invite link:', channelError);
       // Non-blocking - continue flow
@@ -394,7 +394,7 @@ async function generateFreeChannelInvite(ctx) {
         name: `Free - User ${userId}`,
       });
       groupInviteUrl = groupInvite.invite_link;
-      console.log(`[Onboarding] Group invite created: ${groupInviteUrl}`);
+      logger.info(`[Onboarding] Group invite created: ${groupInviteUrl}`);
     } catch (groupError) {
       logger.error('Failed to create group invite link:', groupError);
       // Non-blocking - continue flow
@@ -435,7 +435,7 @@ async function completeOnboarding(ctx) {
     const lang = ctx.session.language || 'en';
     const userId = ctx.from.id.toString();
 
-    console.log(`[Onboarding] Completing onboarding for user ${userId}`);
+    logger.info(`[Onboarding] Completing onboarding for user ${userId}`);
 
     const now = new Date();
     const useEmail = ctx.session.emailDuplicate ? null : (ctx.session.email || null);
@@ -474,7 +474,7 @@ async function completeOnboarding(ctx) {
       userData.email = null;
       await UserModel.createOrUpdate(userData);
     }
-    console.log(`[Onboarding] User record created in PostgreSQL for user ${userId}`);
+    logger.info(`[Onboarding] User record created in PostgreSQL for user ${userId}`);
 
     // Business channel notification
     BusinessNotificationService.notifyNewUser({
@@ -486,7 +486,7 @@ async function completeOnboarding(ctx) {
 
     // Auto-activate free membership if enabled
     if (process.env.AUTO_ACTIVATE_FREE_USERS === 'true') {
-      console.log(`[Onboarding] Auto-activating Free membership for user ${userId}`);
+      logger.info(`[Onboarding] Auto-activating Free membership for user ${userId}`);
       await UserModel.updateSubscription(userId, {
         status: 'free',
         planId: 'free',
