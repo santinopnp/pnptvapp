@@ -46,7 +46,7 @@
     "geolib": "^3.3.4",
     "helmet": "^8.3.0",
     "i18next": "^23.7.16",
-    "imapflow": "^1.0.170",
+    "imapflow": "^2.0.0",
     "ioredis": "^5.11.1",
     "joi": "^17.13.4",
     "jsonwebtoken": "^9.0.3",
