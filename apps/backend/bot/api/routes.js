@@ -11329,7 +11329,16 @@ app.get('/api/webapp/channels/:channelId', softAuth, asyncHandler(async (req, re
           description: cv.description,
           tags,
           duration_sec: cv.duration_sec ?? 0,
-          thumbnail_url: cv.thumbnail_url,
+          // Null out thumbnail when it points to the video file itself (UUID matches directus_file_id).
+          // Directus ignores image-transform params on video files and returns raw video/mp4.
+          thumbnail_url: (() => {
+            if (!cv.thumbnail_url) return null;
+            if (cv.directus_file_id) {
+              const m = cv.thumbnail_url.match(/assets\/([a-f0-9-]{36})/i);
+              if (m && m[1] === cv.directus_file_id) return null;
+            }
+            return cv.thumbnail_url;
+          })(),
           gif_url: cv.gif_url,
           directus_file_id: cv.directus_file_id ?? null,
           directus_video_url: cv.directus_file_id ? `${directusBase}/assets/${cv.directus_file_id}` : null,
@@ -23490,7 +23499,7 @@ app.post(
   requireCrystalCreator,
   crystalReplayLimiter,
   asyncHandler(async (req, res) => {
-    const { title, sourceUrl, r2Key, thumbnailUrl, durationSeconds } = req.body || {};
+    const { title, sourceUrl, r2Key, thumbnailUrl, durationSeconds, hideBadge } = req.body || {};
     try {
       const show = await crystalReplayService.createShow({
         creatorUserId:   req.session.user.id,
@@ -23499,6 +23508,7 @@ app.post(
         r2Key:           r2Key || null,
         thumbnailUrl:    thumbnailUrl || null,
         durationSeconds: durationSeconds || null,
+        hideBadge:       !!hideBadge,
       });
       return res.status(201).json({ success: true, show });
     } catch (err) {

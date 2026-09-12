@@ -39,6 +39,7 @@ function UploadModal({ onClose, onCreated }: UploadModalProps) {
   const { creator: t } = useI18n();
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState("");
+  const [hideBadge, setHideBadge] = useState(false);
   const [progress, setProgress] = useState<ChunkUploadProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -113,6 +114,7 @@ function UploadModal({ onClose, onCreated }: UploadModalProps) {
       const { show } = await createReplayShow({
         videoUrl: playbackUrl,
         title: title.trim(),
+        hideBadge,
       });
       onCreated(show);
     } catch (err) {
@@ -204,6 +206,21 @@ function UploadModal({ onClose, onCreated }: UploadModalProps) {
               className="w-full px-3 py-2.5 rounded-xl bg-white/[0.05] border border-white/10 text-sm text-white placeholder:text-pnp-textSecondary focus:outline-none focus:ring-2 focus:ring-pnp-accent/50 focus:border-pnp-accent/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             />
           </div>
+
+          {/* Hide "Encore" badge toggle */}
+          <button
+            type="button"
+            onClick={() => setHideBadge((v) => !v)}
+            disabled={busy}
+            className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl border border-white/10 bg-white/[0.04] hover:bg-white/[0.07] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <span className="text-sm text-white text-left">
+              Appear as live <span className="text-xs text-pnp-textSecondary ml-1">(hides the "Encore" badge)</span>
+            </span>
+            <div className={`relative w-10 h-5 rounded-full transition-colors flex-shrink-0 ${hideBadge ? "bg-pnp-accent" : "bg-white/20"}`}>
+              <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${hideBadge ? "translate-x-5" : "translate-x-0.5"}`} />
+            </div>
+          </button>
 
           {/* Upload progress bar */}
           {isUploading && progress && (

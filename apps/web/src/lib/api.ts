@@ -10902,6 +10902,7 @@ export interface ReplayShow {
   videoUrl: string;
   thumbnailUrl: string | null;
   durationSeconds: number | null;
+  hideBadge: boolean;
   createdAt: string;
 }
 
@@ -10917,7 +10918,7 @@ export async function listMyReplayShows(): Promise<{ shows: ReplayShow[] }> {
   return request("/api/webapp/creator/replay-shows");
 }
 
-export async function createReplayShow(body: { videoUrl: string; title: string }): Promise<{ show: ReplayShow }> {
+export async function createReplayShow(body: { videoUrl: string; title: string; hideBadge?: boolean }): Promise<{ show: ReplayShow }> {
   return request("/api/webapp/creator/replay-shows", { method: "POST", body });
 }
 

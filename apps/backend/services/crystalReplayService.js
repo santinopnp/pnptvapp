@@ -89,7 +89,7 @@ async function isCrystalActive(userId) {
 async function listMyShows(creatorUserId) {
   const { rows } = await getPool().query(
     `SELECT id, creator_user_id, title, r2_key, source_url, thumbnail_url,
-            duration_seconds, is_active, created_at, updated_at
+            duration_seconds, is_active, hide_badge, created_at, updated_at
        FROM crystal_replay_shows
       WHERE creator_user_id = $1::text
         AND is_active = true
@@ -103,7 +103,7 @@ async function listMyShows(creatorUserId) {
  * Creates a new replay show record.
  * Returns the created row including its generated UUID.
  */
-async function createShow({ creatorUserId, title, sourceUrl, r2Key = null, thumbnailUrl = null, durationSeconds = null }) {
+async function createShow({ creatorUserId, title, sourceUrl, r2Key = null, thumbnailUrl = null, durationSeconds = null, hideBadge = false }) {
   if (!title || !title.trim()) {
     const err = new Error('Title is required');
     err.code = 'VALIDATION_ERROR';
@@ -123,10 +123,10 @@ async function createShow({ creatorUserId, title, sourceUrl, r2Key = null, thumb
 
   const { rows } = await getPool().query(
     `INSERT INTO crystal_replay_shows
-       (creator_user_id, title, source_url, r2_key, thumbnail_url, duration_seconds)
-     VALUES ($1::text, $2, $3, $4, $5, $6)
+       (creator_user_id, title, source_url, r2_key, thumbnail_url, duration_seconds, hide_badge)
+     VALUES ($1::text, $2, $3, $4, $5, $6, $7)
      RETURNING id, creator_user_id, title, r2_key, source_url, thumbnail_url,
-               duration_seconds, is_active, created_at, updated_at`,
+               duration_seconds, is_active, hide_badge, created_at, updated_at`,
     [
       String(creatorUserId),
       title.trim(),
@@ -134,6 +134,7 @@ async function createShow({ creatorUserId, title, sourceUrl, r2Key = null, thumb
       r2Key || null,
       thumbnailUrl || null,
       durationSeconds ? parseInt(durationSeconds, 10) : null,
+      !!hideBadge,
     ]
   );
   return rows[0];
@@ -216,6 +217,7 @@ async function _createLiveKitIngressForReplay(creatorUserId, show, displayName) 
         url:                 show.source_url,
         participantMetadata: JSON.stringify({
           replay:          true,
+          hide_badge:      !!show.hide_badge,
           creator_user_id: String(creatorUserId),
           show_id:         show.id,
           show_title:      show.title,
@@ -333,7 +335,7 @@ async function startReplay(creatorUserId, showId) {
 
   // 4. Load the show
   const { rows: showRows } = await getPool().query(
-    `SELECT id, creator_user_id, title, source_url, r2_key, thumbnail_url, duration_seconds
+    `SELECT id, creator_user_id, title, source_url, r2_key, thumbnail_url, duration_seconds, hide_badge
        FROM crystal_replay_shows
       WHERE id = $1
         AND creator_user_id = $2::text

@@ -18,6 +18,7 @@ const REPLAY_IDENTITY_PREFIX = "replay-";
 interface ReplayMeta {
   replay: true;
   creator_user_id: string;
+  hide_badge?: boolean;
 }
 
 function parseReplayMeta(raw: string | undefined | null): ReplayMeta | null {
@@ -53,7 +54,7 @@ function ReplayAwareParticipantTile() {
   return (
     <div className="relative w-full h-full">
       <ParticipantTile />
-      {isReplay && (
+      {isReplay && !replayMeta?.hide_badge && (
         <div
           className="absolute top-2 left-2 flex items-center gap-1 px-2 py-0.5 rounded-full pointer-events-none select-none"
           style={{
