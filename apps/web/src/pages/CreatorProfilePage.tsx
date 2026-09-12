@@ -34,6 +34,7 @@ import {
   Bitcoin,
   Loader2,
   Tv2,
+  Lock,
 } from "lucide-react";
 import {
   getPublicCreatorProfile,
@@ -1022,6 +1023,57 @@ export default function CreatorProfilePage() {
     return ` — ${vc} ${vc === 1 ? "video" : "videos"}`;
   })();
   const subscribeLabel = `Subscribe · ${formatPrice(creator.creator_price_usd)}/mo${videoSummary}`;
+
+  // Unauthenticated visitors: show name-only teaser, no bio/photos/posts
+  if (!isAuthenticated) {
+    const returnTo = encodeURIComponent(`/c/${creator.username || username}`);
+    return (
+      <div className="min-h-screen flex flex-col" style={{ background: "#121212", color: "#fff" }}>
+        <Helmet>
+          <title>{displayName} · PNPtv!</title>
+          <meta name="description" content={`Join PNPtv! to see ${displayName}'s full profile.`} />
+        </Helmet>
+        <div className="p-4">
+          <button
+            onClick={() => (window.history.length > 1 ? window.history.back() : navigate("/"))}
+            aria-label="Back"
+            className="w-9 h-9 rounded-full flex items-center justify-center"
+            style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.1)" }}
+          >
+            <ChevronLeft size={20} />
+          </button>
+        </div>
+        <div className="flex-1 flex flex-col items-center justify-center px-6 pb-16 text-center gap-4">
+          <div
+            className="w-24 h-24 rounded-full flex items-center justify-center mb-2"
+            style={{ background: "rgba(212,0,122,0.12)", border: "2px solid rgba(212,0,122,0.3)" }}
+          >
+            <Lock size={34} style={{ color: "rgba(212,0,122,0.8)" }} />
+          </div>
+          <h1 className="text-2xl font-bold text-white">{displayName}</h1>
+          <p className="text-sm max-w-xs" style={{ color: "rgba(255,255,255,0.45)", lineHeight: 1.6 }}>
+            {t.lang === "es"
+              ? "Este perfil es para miembros. Únete gratis para ver el contenido completo, publicaciones y más."
+              : "This profile is members-only. Join free to see the full content, posts, and more."}
+          </p>
+          <button
+            onClick={() => navigate(`/login?returnTo=${returnTo}`)}
+            className="mt-2 w-full max-w-xs py-3 rounded-xl font-bold text-white text-sm transition-opacity hover:opacity-90"
+            style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+          >
+            {t.lang === "es" ? "Unirse a PNPtv! — gratis" : "Join PNPtv! — free"}
+          </button>
+          <button
+            onClick={() => navigate(`/login?returnTo=${returnTo}`)}
+            className="w-full max-w-xs py-2.5 rounded-xl text-sm font-semibold"
+            style={{ color: "rgba(255,255,255,0.5)", border: "1px solid rgba(255,255,255,0.1)" }}
+          >
+            {t.lang === "es" ? "Ya tengo cuenta — Iniciar sesión" : "I have an account — Log in"}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <>

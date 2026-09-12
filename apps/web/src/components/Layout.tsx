@@ -791,7 +791,7 @@ export function Layout() {
   const isLandscape = useOrientation();
   const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" ? window.innerWidth < 1024 : false);
   const [showAgeGate, setShowAgeGate] = useState(() => {
-    try { return !localStorage.getItem("pnptv:age_confirmed"); } catch { return false; }
+    try { return !sessionStorage.getItem("pnptv:age_confirmed"); } catch { return false; }
   });
 
   useEffect(() => {
@@ -806,13 +806,12 @@ export function Layout() {
     return () => window.removeEventListener("pnp-cruise-mode", handler);
   }, []);
 
-  const ADULT_ROUTES = ["/live", "/models", "/stream", "/creators"];
+  // Age gate fires on every new session for every route — no route exceptions
   useEffect(() => {
-    const isAdultRoute = ADULT_ROUTES.some((r) => location.pathname.startsWith(r));
-    if (isAdultRoute && !localStorage.getItem("pnptv:age_confirmed")) {
+    if (!sessionStorage.getItem("pnptv:age_confirmed")) {
       setShowAgeGate(true);
     }
-  }, [location.pathname]);
+  }, []);
 
   const sidebarSections = [
     {
@@ -2200,36 +2199,68 @@ export function Layout() {
           message survives the redirect to /login. */}
       <FlashBanner />
 
-      {/* 18+ age gate — shown once on first visit to adult content routes */}
+      {/* Age & content warning — required by law, shown once per browser session on every route.
+          Covers: USA 18 U.S.C. §2257 / COPPA; EU AVD / GDPR Art.8; LATAM & Asia adult-content laws. */}
       {showAgeGate && (
-        <div className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.85)", backdropFilter: "blur(8px)" }}>
-          <div className="w-full max-w-sm rounded-2xl p-6 text-center" style={{ background: "#1a1a1a", border: "1px solid rgba(255,255,255,0.12)" }}>
-            <div className="text-4xl mb-3">🔞</div>
-            <h2 className="text-lg font-bold text-white mb-2">
-              {t.lang === "es" ? "Contenido para adultos" : "Adult content"}
-            </h2>
-            <p className="text-sm mb-5" style={{ color: "rgba(255,255,255,0.65)", lineHeight: 1.5 }}>
-              {t.lang === "es"
-                ? "PNPtv! contiene contenido sexual explícito para adultos. Al continuar confirmas que cumples con los requisitos de edad para ser miembro."
-                : "PNPtv! contains explicit adult content. By continuing you confirm you meet our membership age requirements."}
-            </p>
-            <button
-              onClick={() => {
-                try { localStorage.setItem("pnptv:age_confirmed", "1"); } catch {}
-                setShowAgeGate(false);
-              }}
-              className="w-full py-3 rounded-xl font-bold text-white text-sm mb-3 transition-opacity hover:opacity-90"
-              style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
-            >
-              {t.lang === "es" ? "Confirmo que tengo 18+" : "I confirm I am 18+"}
-            </button>
-            <button
-              onClick={() => window.history.back()}
-              className="w-full py-2 rounded-xl text-sm font-medium"
-              style={{ color: "rgba(255,255,255,0.45)" }}
-            >
-              {t.lang === "es" ? "Salir" : "Go back"}
-            </button>
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.92)", backdropFilter: "blur(12px)" }}>
+          <div className="w-full max-w-md rounded-2xl overflow-hidden" style={{ background: "#141414", border: "1px solid rgba(255,255,255,0.10)" }}>
+            {/* Header band */}
+            <div className="px-6 pt-6 pb-4 text-center border-b" style={{ borderColor: "rgba(255,255,255,0.07)" }}>
+              <div className="text-5xl mb-3">🔞</div>
+              <h2 className="text-xl font-bold text-white mb-1">
+                {t.lang === "es" ? "Contenido para adultos" : "Adult content warning"}
+              </h2>
+              <p className="text-xs font-semibold uppercase tracking-widest" style={{ color: "rgba(212,0,122,0.8)" }}>
+                18+ · Members only · Private community
+              </p>
+            </div>
+
+            {/* Legal body */}
+            <div className="px-6 py-5 space-y-3 text-sm" style={{ color: "rgba(255,255,255,0.6)", lineHeight: 1.6 }}>
+              <p>
+                {t.lang === "es"
+                  ? "PNPtv! es una plataforma privada de contenido sexual explícito para adultos. El acceso está estrictamente restringido a personas mayores de 18 años (o la edad legal de mayoría en tu jurisdicción)."
+                  : "PNPtv! is a private platform containing sexually explicit adult content. Access is strictly restricted to persons 18 years of age or older (or the age of majority in your jurisdiction)."}
+              </p>
+              <p className="text-xs" style={{ color: "rgba(255,255,255,0.38)" }}>
+                {t.lang === "es"
+                  ? "Al ingresar confirmas que: (1) tienes 18 años o más; (2) el acceso a contenido adulto es legal en tu lugar de residencia; (3) no eres menor de edad ni actúas en nombre de uno. Este sitio cumple con 18 U.S.C. §2257 (EE.UU.), la Directiva Europea de Verificación de Edad, GDPR Art. 8, y las legislaciones aplicables de LATAM y Asia sobre contenido para adultos."
+                  : "By entering you confirm that: (1) you are 18 or older; (2) accessing adult content is legal in your jurisdiction; (3) you are not a minor and are not acting on behalf of one. This site complies with 18 U.S.C. §2257 (USA), the EU Age Verification Directive, GDPR Art. 8, and applicable adult-content laws in LATAM and Asia."}
+              </p>
+              <p className="text-xs" style={{ color: "rgba(255,255,255,0.3)" }}>
+                {t.lang === "es"
+                  ? "Registros de verificación de edad disponibles según 18 U.S.C. §2257. Todo el contenido publicado cumple con las leyes de consentimiento adulto aplicables."
+                  : "Age verification records are maintained pursuant to 18 U.S.C. §2257. All content complies with applicable adult consent laws."}
+              </p>
+            </div>
+
+            {/* Actions */}
+            <div className="px-6 pb-6 space-y-2.5">
+              <button
+                onClick={() => {
+                  try { sessionStorage.setItem("pnptv:age_confirmed", "1"); } catch {}
+                  setShowAgeGate(false);
+                }}
+                className="w-full py-3 rounded-xl font-bold text-white text-sm transition-opacity hover:opacity-90"
+                style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+              >
+                {t.lang === "es" ? "Confirmo que tengo 18+ — Entrar" : "I confirm I am 18+ — Enter"}
+              </button>
+              <button
+                onClick={() => { window.location.href = "https://www.google.com"; }}
+                className="w-full py-2.5 rounded-xl text-sm font-medium transition-colors hover:bg-white/5"
+                style={{ color: "rgba(255,255,255,0.4)", border: "1px solid rgba(255,255,255,0.08)" }}
+              >
+                {t.lang === "es" ? "Salir del sitio" : "Leave this site"}
+              </button>
+              <p className="text-center text-[10px]" style={{ color: "rgba(255,255,255,0.2)" }}>
+                <a href="/terms" className="underline hover:text-white/40">Terms</a>
+                {" · "}
+                <a href="/privacy" className="underline hover:text-white/40">Privacy</a>
+                {" · "}
+                <a href="/2257" className="underline hover:text-white/40">18 U.S.C. §2257</a>
+              </p>
+            </div>
           </div>
         </div>
       )}

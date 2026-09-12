@@ -1,5 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
-import { PublicCreator } from "./FeaturedCreators";
+import React, { useEffect, useRef } from "react";
 
 export interface PublicStats {
   members_plus: string;
@@ -213,27 +212,11 @@ export function PublicHero({ lang, stats, statsLoading, onJoinFree, onExploreCli
   const c = pick(lang);
   const orb1Ref = useRef<HTMLDivElement>(null);
   const orb2Ref = useRef<HTMLDivElement>(null);
-  const [heroCreators, setHeroCreators] = useState<PublicCreator[]>([]);
   const isDesktop = useRef(false);
 
-  // Detect desktop for parallax and collage fetch
+  // Detect desktop for parallax
   useEffect(() => {
     isDesktop.current = window.matchMedia("(min-width: 1024px)").matches;
-  }, []);
-
-  // Fetch creators for hero collage (desktop only — lazy, non-blocking)
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/public/featured-creators")
-      .then((r) => r.json())
-      .then((data) => {
-        if (!cancelled) {
-          const list: PublicCreator[] = data?.creators ?? data ?? [];
-          setHeroCreators(list.slice(0, 5));
-        }
-      })
-      .catch(() => {/* silently degrade */});
-    return () => { cancelled = true; };
   }, []);
 
   // Subtle parallax — only on lg+ (mouse presence implies pointer device)
@@ -452,9 +435,32 @@ export function PublicHero({ lang, stats, statsLoading, onJoinFree, onExploreCli
           </div>
         </div>
 
-        {/* Right col — 5/12: floating creator collage */}
-        <div className="lg:col-span-5 relative h-[480px] xl:h-[560px]">
-          <HeroCollage creators={heroCreators} lang={lang} liveLabel={c.liveNow} />
+        {/* Right col — 5/12: abstract members-only visual (no real creator data) */}
+        <div className="lg:col-span-5 relative h-[480px] xl:h-[560px] flex items-center justify-center">
+          <div className="relative w-72 h-72">
+            {/* Ambient glow */}
+            <div className="absolute inset-0 rounded-full pointer-events-none" style={{ background: "radial-gradient(ellipse 80% 80% at 50% 50%, rgba(212,0,122,0.13) 0%, transparent 70%)", filter: "blur(30px)" }} />
+            {/* Decorative silhouette circles */}
+            {[
+              { top: "8%",  left: "10%", size: 100, opacity: 0.18 },
+              { top: "38%", left: "52%", size: 84,  opacity: 0.14 },
+              { top: "5%",  left: "55%", size: 74,  opacity: 0.12 },
+              { top: "60%", left: "8%",  size: 78,  opacity: 0.14 },
+              { top: "62%", left: "54%", size: 68,  opacity: 0.10 },
+            ].map((s, i) => (
+              <div key={i} className="absolute rounded-full" style={{ top: s.top, left: s.left, width: s.size, height: s.size, background: `rgba(212,0,122,${s.opacity})`, border: "1px solid rgba(212,0,122,0.2)" }} />
+            ))}
+            {/* Center lock badge */}
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+              <div className="w-16 h-16 rounded-full flex items-center justify-center" style={{ background: "rgba(212,0,122,0.15)", border: "1.5px solid rgba(212,0,122,0.4)" }}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="rgba(212,0,122,0.9)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-7 h-7">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                </svg>
+              </div>
+              <span className="text-xs font-bold uppercase tracking-widest" style={{ color: "rgba(212,0,122,0.7)" }}>Members Only</span>
+            </div>
+          </div>
         </div>
       </div>
 
