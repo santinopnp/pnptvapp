@@ -53,35 +53,8 @@ async function resolveTodaysFeatured(today) {
   );
   if (picked.rows[0]) return { ...picked.rows[0], _source: 'admin' };
 
-  // Fallback: rotate through active Crystal Creators (deterministic per day).
-  const fallback = await pool.query(
-    `SELECT id AS creator_id, username, first_name, cover_url
-       FROM users
-      WHERE EXISTS (SELECT 1 FROM crystal_entitlements ce
-                     WHERE ce.creator_id::text = users.id::text AND ce.is_active)
-        AND deleted_at IS NULL
-      ORDER BY id
-      OFFSET (
-        SELECT (EXTRACT(EPOCH FROM $1::date)::bigint / 86400)
-               % GREATEST((
-                 SELECT COUNT(*) FROM users
-                  WHERE EXISTS (SELECT 1 FROM crystal_entitlements ce
-                                 WHERE ce.creator_id::text = users.id::text AND ce.is_active)
-                    AND deleted_at IS NULL
-               ), 1)
-      )
-      LIMIT 1`,
-    [today]
-  );
-  if (!fallback.rows[0]) return null;
-  return {
-    ...fallback.rows[0],
-    pitch_en: null,
-    pitch_es: null,
-    media_url: null,
-    cta_intro_call: false,
-    _source: 'rotation',
-  };
+  // Auto-rotation disabled during beta — manual picks only.
+  return null;
 }
 
 /**
