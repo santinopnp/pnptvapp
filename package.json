@@ -17,15 +17,36 @@
     "cookie-signature": "^1.2.2",
     "jose": "^6.2.12",
     "node-cron": "^4.6.0",
+    "qs": "^6.16.0",
     "ws": "^8.21.3"
   },
   "overrides": {
     "ws": "^8.21.3",
     "qs": "^6.16.0",
+    "express": {
+      "qs": "^6.16.0"
+    },
+    "decode-uri-component": "^0.5.0",
     "@walletconnect/utils": {
       "ws": "^8.21.3"
     },
     "@walletconnect/universal-provider": {
+      "ws": "^8.21.3"
+    },
+    "@walletconnect/jsonrpc-ws-connection": {
+      "ws": "^8.21.3"
+    },
+    "jayson": {
+      "ws": "^8.21.3",
+      "uuid": "^11.1.1"
+    },
+    "@reown/appkit": {
+      "ws": "^8.21.3"
+    },
+    "@reown/appkit-utils": {
+      "ws": "^8.21.3"
+    },
+    "@reown/appkit-controllers": {
       "ws": "^8.21.3"
     }
   }
