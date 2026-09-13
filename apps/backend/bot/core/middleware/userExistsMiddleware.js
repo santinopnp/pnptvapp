@@ -90,7 +90,8 @@ const userExistsMiddleware = () => async (ctx, next) => {
       // can still update cleanly and we don't spam warn logs each message.
       const tgUsername = ctx.from.username || null;
       const tgFirstName = ctx.from.first_name || null;
-      if (tgUsername !== user.username) {
+      // Only sync when Telegram provides a username — never write NULL (NOT NULL constraint).
+      if (tgUsername && tgUsername !== user.username) {
         // Predicate matches idx_users_username_unique so the planner uses the
         // partial index (cost ~16 vs ~170 for a seq scan).
         query(

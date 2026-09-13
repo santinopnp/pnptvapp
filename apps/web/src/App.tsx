@@ -326,6 +326,11 @@ function PrivyAutoLogin() {
     if (!ready) return;             // Privy SDK still initializing
     if (authenticated) return;      // Already connected — nothing to do
     const flag = "__pnptv_privy_autologin";
+    // If a 409 was detected this session (Privy identity belongs to a different
+    // PNPtv account), don't auto-trigger Privy login — user would just loop back
+    // to the same 409. They can still open the wallet sheet manually.
+    const staleFlag = "__pnptv_privy_stale_409";
+    try { if (sessionStorage.getItem(staleFlag) === "1") return; } catch { /* ignore */ }
     try { if (sessionStorage.getItem(flag) === "1") return; } catch { /* ignore */ }
     try { sessionStorage.setItem(flag, "1"); } catch { /* ignore */ }
     // Small delay: let any in-flight Privy session restore finish before
@@ -337,34 +342,67 @@ function PrivyAutoLogin() {
 }
 
 function PrivyIdentitySync() {
-  const { authenticated, getAccessToken } = usePrivy();
+  const { authenticated, getAccessToken, logout: privyLogout } = usePrivy();
   const { wallets } = useWallets();
-  const embeddedWallet = wallets.find((w) => w.walletClientType === "privy") || wallets[0] || null;
+  const { isAuthenticated: isPnptvAuthenticated } = useAuth();
+  // In-memory fallback for private-mode where sessionStorage throws — prevents
+  // linkPrivyIdentity firing on every re-render when storage is unavailable.
+  const linkedRef = useRef<Set<string>>(new Set());
+
+  const { isLoading: isPnptvLoading } = useAuth();
+
+  // When the PNPtv user logs out, also clear Privy's localStorage session so
+  // the next user to log in on this browser doesn't inherit the previous
+  // user's embedded wallet (Privy persists per-origin, not per-cookie).
+  // Guard with isLoading: on cold page load useAuth starts false before
+  // checkAuthStatus resolves — without the guard we'd spuriously log out
+  // Privy during initialization if Privy restores faster than the backend.
   useEffect(() => {
-    if (!authenticated || !embeddedWallet) return;
-    const flag = "__pnptv_privy_linked";
-    try { if (sessionStorage.getItem(flag) === "1") return; } catch { /* private mode — retry every mount */ }
+    if (isPnptvLoading) return;
+    if (!isPnptvAuthenticated && authenticated) {
+      // Also clear the stale-409 flag so the next user gets a fresh auto-login.
+      try { sessionStorage.removeItem("__pnptv_privy_stale_409"); } catch { /* ignore */ }
+      try { sessionStorage.removeItem("__pnptv_privy_autologin"); } catch { /* ignore */ }
+      privyLogout().catch(() => {});
+    }
+  }, [isPnptvAuthenticated, isPnptvLoading, authenticated, privyLogout]);
+
+  useEffect(() => {
+    if (!authenticated || wallets.length === 0) return;
+    const walletKey = wallets.map((w) => w.address).sort().join(",");
+    const flag = `__pnptv_privy_linked:${walletKey}`;
+    let storageFailed = false;
+    try { if (sessionStorage.getItem(flag) === "1") return; } catch { storageFailed = true; }
+    if (storageFailed && linkedRef.current.has(walletKey)) return;
     let cancelled = false;
     (async () => {
       try {
         const token = await getAccessToken();
         if (!token || cancelled) return;
         await linkPrivyIdentity(token);
+        linkedRef.current.add(walletKey);
         try { sessionStorage.setItem(flag, "1"); } catch { /* ignore */ }
       } catch (err) {
-        // Non-fatal — user still has a working Privy session client-side. Log
-        // to Sentry so we can measure how often the backend link is failing
-        // (missing bug pre-fix). Cleared session flag lets the next mount retry.
+        const msg = err instanceof Error ? err.message : String(err);
+        // Privy session belongs to a different PNPtv account (e.g. shared
+        // browser). Clear it so this user gets a fresh Privy login prompt.
+        if (msg === "privy_id_already_linked") {
+          // Set a flag so PrivyAutoLogin doesn't re-trigger after the logout
+          // (would create an infinite loop: same X/email → same Privy ID → 409).
+          try { sessionStorage.setItem("__pnptv_privy_stale_409", "1"); } catch { /* ignore */ }
+          privyLogout().catch(() => {});
+          return;
+        }
         Sentry.addBreadcrumb({
           category: "privy",
           level: "warning",
           message: "linkPrivyIdentity failed",
-          data: { error: err instanceof Error ? err.message : String(err) },
+          data: { error: msg },
         });
       }
     })();
     return () => { cancelled = true; };
-  }, [authenticated, embeddedWallet?.address, getAccessToken]);
+  }, [authenticated, wallets.map((w) => w.address).join(","), getAccessToken, privyLogout]);
 
   // Cross-device seed for preferred wallet: if this browser has no localStorage
   // preference but the server row has one (set from another device), seed it

@@ -448,6 +448,12 @@ export default function CreatorProfilePage() {
         if (res.creator?.id) {
           setCreatorForYouId(String(res.creator.id));
         }
+        // Canonical URL correction: if the API resolved an old/redirect username,
+        // silently replace the URL so back-button and sharing use the current handle.
+        if (res.creator?.username &&
+            res.creator.username.toLowerCase() !== (username ?? '').toLowerCase()) {
+          navigate(`/c/${res.creator.username}`, { replace: true });
+        }
       })
       .catch((err) => {
         setError(err instanceof Error ? err.message : "Creator not found");

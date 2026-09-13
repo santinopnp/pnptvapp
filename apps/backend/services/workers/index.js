@@ -224,101 +224,10 @@ async function broadcastProcessor(job) {
 }
 
 // ─── compliance-checks processor ─────────────────────────────────────────────
+// AUTO-SUSPENSION DISABLED 2026-08-10 (Santino sign-off required for any suspension).
+// All enforcement jobs are no-ops — suspensions are human decisions only.
 async function complianceProcessor(job) {
-  // All logic is delegated back to the same cron handlers (via services).
-  // The cron.js blocks have been commented out (Wave 5) — this is now the executor.
-
-  if (job.name === '2257-enforcement') {
-    // Run the 2257 grace-period enforcement logic from scripts/cron.js (0 9 * * *)
-    // Extracted and called via services to avoid code duplication.
-    const { query: pgQuery } = require('../../config/postgres');
-    const { rows } = await pgQuery(`
-      SELECT id, username, first_name
-      FROM users
-      WHERE creator_status = 'active'
-        AND identity_verified = false
-        AND identity_verification_required_by IS NOT NULL
-        AND identity_verification_required_by < NOW()
-    `);
-
-    if (rows.length === 0) {
-      logger.info('[2257] Grace-period enforcement: no expired creators');
-      return;
-    }
-
-    const sendSystemDM = _safeRequire('../sendSystemDM');
-    const slackCreator = _safeRequire('../slackCreatorNotifyService');
-    const SYSTEM_SENDER_ID = process.env.SYSTEM_DM_SENDER_ID || '8552451957';
-
-    for (const creator of rows) {
-      try {
-        await pgQuery(
-          `UPDATE users SET creator_status = 'suspended', updated_at = NOW() WHERE id = $1`,
-          [creator.id]
-        );
-        await pgQuery(
-          `UPDATE social_posts SET deleted_at = NOW() WHERE user_id = $1 AND deleted_at IS NULL`,
-          [creator.id]
-        );
-        logger.warn('[2257] Grace period expired — creator suspended', {
-          userId: creator.id, username: creator.username,
-        });
-
-        const dmText = `Tu cuenta de creator fue pausada / Your creator account was paused\n\n`
-          + `Tu verificación 2257 no llegó antes del deadline — es requisito legal (18 U.S.C. § 2257) para publicar contenido en PNPtv.\n\n`
-          + `Your 2257 identity verification wasn't submitted before the deadline — it's a legal requirement (18 U.S.C. § 2257) to publish content on PNPtv.\n\n`
-          + `Para reactivar: sube tu ID + selfie en https://pnptv.app/creators/setup — aprobamos en 24-48h.\n`
-          + `To reactivate: upload your ID + selfie at https://pnptv.app/creators/setup — we approve within 24-48h.\n\n`
-          + `— PNPtv! Support`;
-
-        if (sendSystemDM) {
-          await sendSystemDM(SYSTEM_SENDER_ID, String(creator.id), dmText, pgQuery).catch(() => {});
-        }
-
-        if (slackCreator && typeof slackCreator.notify2257Expiring === 'function') {
-          slackCreator.notify2257Expiring(creator.id, {
-            daysUntilExpiry: 0,
-            renewLink: 'https://pnptv.app/settings/verification',
-          }).catch(() => {});
-        }
-      } catch (innerErr) {
-        logger.error('[2257] Enforcement error for creator', { userId: creator.id, error: innerErr.message });
-      }
-    }
-
-    try {
-      await pgQuery(
-        `INSERT INTO admin_alerts (alert_type, severity, title, message, details) VALUES ($1,$2,$3,$4,$5)`,
-        [
-          '2257_enforcement', 'high',
-          '2257 grace period enforcement fired',
-          `${rows.length} creator(s) auto-suspended for expired 2257 grace period`,
-          JSON.stringify({ count: rows.length, users: rows.map((r) => ({ id: r.id, username: r.username })) }),
-        ]
-      );
-    } catch (_) {}
-
-    return;
-  }
-
-  if (job.name === 'content-compliance-enforce') {
-    const ContentComplianceService = _safeRequire('../contentComplianceService');
-    if (!ContentComplianceService) {
-      logger.warn('[BullMQ] complianceProcessor: contentComplianceService not found');
-      return;
-    }
-    // The full enforcement logic lives in contentComplianceService.
-    // cron.js had inline code; delegate to the service's runEnforcement() if it exists,
-    // otherwise log and skip to avoid crashing the worker.
-    if (typeof ContentComplianceService.runEnforcement === 'function') {
-      await ContentComplianceService.runEnforcement();
-    } else {
-      logger.warn('[BullMQ] complianceProcessor: ContentComplianceService.runEnforcement not found — skipping');
-    }
-    return;
-  }
-
-  logger.warn(`[BullMQ] complianceProcessor: unhandled job name "${job.name}"`);
+  logger.info(`[BullMQ] complianceProcessor: job "${job.name}" received but enforcement is disabled — skipping`);
 }
 
 // ─── media-processing processor ───────────────────────────────────────────────

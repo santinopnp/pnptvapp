@@ -211,9 +211,9 @@ const handleTelegramAuth = async (req, res) => {
       const tgFirstName = telegramUser.first_name || null;
 
       // Sync username + first_name from Telegram on login — awaited so session reflects fresh values
-      if (tgUsername !== dbUser.username || (tgFirstName && tgFirstName !== dbUser.first_name)) {
+      if ((tgUsername && tgUsername !== dbUser.username) || (tgFirstName && tgFirstName !== dbUser.first_name)) {
         await query(
-          `UPDATE users SET username = $1, first_name = COALESCE($2, first_name), updated_at = NOW() WHERE id = $3`,
+          `UPDATE users SET username = COALESCE($1, username), first_name = COALESCE($2, first_name), updated_at = NOW() WHERE id = $3`,
           [tgUsername, tgFirstName, dbUser.id]
         ).catch(err => logger.warn('Username sync on login failed (non-blocking)', { userId: dbUser.id, error: err.message }));
         if (tgUsername) dbUser.username = tgUsername;

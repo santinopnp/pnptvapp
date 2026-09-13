@@ -813,11 +813,13 @@ const startCronJobs = async (bot = null) => {
     // Meru reservation cleanup — RETIRED 2026-08 (Meru removed)
     // cron.schedule kept as comment so schedule slot is not accidentally reused.
 
-    // ── 18 U.S.C. § 2257 grace-period enforcement — daily at 09:00 UTC ──────
-    // Suspends active creators whose grace deadline has passed and who have not
-    // completed identity verification. Soft-deletes their social posts and
-    // notifies the operator via Telegram.
-    cron.schedule('0 9 * * *', async () => {
+    // ── 18 U.S.C. § 2257 grace-period enforcement — DISABLED 2026-09-12 ──────
+    // Auto-suspension disabled per Santino sign-off 2026-08-10 (same policy that
+    // disabled content-compliance enforcement). The BullMQ complianceProcessor
+    // is also a no-op. Any suspension = human decision. Do NOT re-enable without
+    // explicit policy sign-off from Santino.
+    // eslint-disable-next-line no-unreachable, no-constant-condition
+    if (false) cron.schedule('0 9 * * *', async () => {
       try {
         const { query: pgQuery } = require(path.join(backendPath, 'config/postgres'));
         const { rows } = await pgQuery(`

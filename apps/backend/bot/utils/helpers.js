@@ -358,6 +358,15 @@ async function resolveUserId(userId) {
       [userId]
     );
     resolved = r.rows.length ? r.rows[0].id : null;
+
+    // Fallback: this may be a former username — check permanent redirect table
+    if (!resolved) {
+      const redir = await query(
+        'SELECT user_id FROM profile_username_redirects WHERE old_username = lower($1) LIMIT 1',
+        [userId]
+      );
+      resolved = redir.rows.length ? redir.rows[0].user_id : null;
+    }
   }
 
   // Cache result (store __null__ sentinel so we don't re-query for missing users)

@@ -711,7 +711,7 @@ const magicLinkConfirm = async (req, res) => {
 
     enforceDefaultFollows(user.id).catch(() => {});
     logger.info(`[magic-link] sign-in: user ${user.id}`);
-    return res.redirect(`${APP_URL}/login?magic_verified=1`);
+    return res.redirect(`${APP_URL}/login?magic_verified=1&returnTo=%2F`);
   } catch (error) {
     logger.error('[magic-link] confirm error', error);
     return fail('server_error');
@@ -2073,8 +2073,15 @@ const xLoginCallback = async (req, res) => {
     }
 
     const accessToken = tokenRes.data.access_token;
+    const grantedScopes = tokenRes.data.scope || null;
+    logger.info('X OAuth token exchange succeeded', {
+      tokenType: tokenRes.data.token_type,
+      grantedScopes,
+      hasRefreshToken: !!tokenRes.data.refresh_token,
+      expiresIn: tokenRes.data.expires_in,
+    });
 
-    // Fetch X user profile — try v2 API, then v1.1 fallback (no project enrollment required)
+    // Fetch X user profile via v2 API (requires app to be in an X Developer Project)
     let xData = null;
     try {
       const profileRes = await axios.get('https://api.twitter.com/2/users/me', {
@@ -2090,28 +2097,14 @@ const xLoginCallback = async (req, res) => {
         });
         xData = profileRes2.data?.data;
       } catch (err2) {
-        logger.warn('X v2 profile fetch failed, trying v1.1 fallback', {
+        // Log full response bodies so we can diagnose the 403 cause
+        logger.error('X v2 profile fetch failed on both hosts', {
           status1: err1.response?.status,
+          body1: err1.response?.data,
           status2: err2.response?.status,
+          body2: err2.response?.data,
+          grantedScopes,
         });
-      }
-    }
-
-    // Fallback: v1.1 verify_credentials (works without project enrollment)
-    if (!xData) {
-      try {
-        const v1Res = await axios.get('https://api.twitter.com/1.1/account/verify_credentials.json', {
-          headers: { Authorization: `Bearer ${accessToken}` },
-        });
-        const v1Data = v1Res.data;
-        xData = {
-          id: String(v1Data.id_str || v1Data.id),
-          username: v1Data.screen_name,
-          name: v1Data.name,
-        };
-        logger.info('X profile resolved via v1.1 verify_credentials', { username: xData.username });
-      } catch (v1Err) {
-        logger.error('X v1.1 profile fallback also failed:', { status: v1Err.response?.status, data: v1Err.response?.data });
       }
     }
 
@@ -2210,7 +2203,7 @@ const xLoginCallback = async (req, res) => {
       // X sign-ins. Users who linked X to an existing session may still lack
       // an email (e.g. an incognito test session created by a prior X login).
       const linkedAddEmailFlag = user.email ? '' : '&add_email=1';
-      return res.redirect(`https://pnptv.app/login?post_login=x${linkedAddEmailFlag}`);
+      return res.redirect(`https://pnptv.app/login?post_login=x${linkedAddEmailFlag}&returnTo=%2Ffeed`);
     }
 
     const [firstName, ...nameParts] = (xName || xHandle).split(' ');
@@ -2286,7 +2279,7 @@ const xLoginCallback = async (req, res) => {
     // The X OAuth scope doesn't return email, so many linked accounts never had
     // one on file. `add_email=1` gates the email step; passkey prompt runs after.
     const addEmailFlag = user.email ? '' : '&add_email=1';
-    return res.redirect(`https://pnptv.app/login?post_login=x${addEmailFlag}`);
+    return res.redirect(`https://pnptv.app/login?post_login=x${addEmailFlag}&returnTo=%2Ffeed`);
   } catch (error) {
     const status = error.response?.status;
     const logLevel = [401, 403].includes(status) ? 'warn' : 'error';
@@ -2751,6 +2744,22 @@ const updateProfile = async (req, res) => {
     } catch (cacheErr) {
       // Non-fatal — cache will expire naturally
       logger.warn(`Cache invalidation failed for user ${user.id}:`, cacheErr.message);
+    }
+
+    // Bust old-username resolve/tombstone caches so profile_username_redirects
+    // fallback is reachable immediately (the DB trigger persists the old handle).
+    if (identitySnapshot?.username &&
+        Object.prototype.hasOwnProperty.call(req.body, 'username') &&
+        String(req.body.username).trim().toLowerCase() !== identitySnapshot.username.toLowerCase()) {
+      try {
+        const { getRedis } = require('../../../config/redis');
+        const redis = getRedis();
+        const oldLower = identitySnapshot.username.toLowerCase();
+        await Promise.all([
+          redis.del(`resolve_uid:${oldLower}`),
+          redis.del(`profile:404:${oldLower}`),
+        ]);
+      } catch { /* non-fatal */ }
     }
 
     // Refresh session fields if changed

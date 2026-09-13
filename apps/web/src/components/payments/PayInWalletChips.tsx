@@ -226,6 +226,7 @@ import {
   getCctpAttestation,
   requestGasTopup,
   reportWalletClientError,
+  linkPrivyIdentity,
   type WalletCheckoutSurface,
 } from "@/lib/api";
 
@@ -357,7 +358,7 @@ export function WalletPayCard({
   // disabled below if amountUsd <= 0.
   const amountUsd = Number.isFinite(amountUsdRaw) && amountUsdRaw > 0 ? amountUsdRaw : 0;
   const priceReady = amountUsd > 0;
-  const { authenticated, login } = usePrivy();
+  const { authenticated, login, getAccessToken } = usePrivy();
   const { wallets } = useWallets();
   const recovery = usePrivyRecovery();
   const { addFunds } = useAddFunds();
@@ -365,7 +366,10 @@ export function WalletPayCard({
   const { connectWallet } = useConnectWallet({
     onSuccess: ({ wallet }) => {
       setConnectError(null);
-      if (wallet?.address) _setPreferredWallet(wallet.address);
+      if (wallet?.address) {
+        _setPreferredWallet(wallet.address);
+        getAccessToken().then((t) => { if (t) linkPrivyIdentity(t).catch(() => {}); }).catch(() => {});
+      }
     },
     onError: (err) => {
       const msg = typeof err === "string" ? err : String(err);
@@ -619,6 +623,7 @@ export function WalletPayCard({
         },
         fiat: {
           defaultAmount: grossUpForOnramp(amountUsd),
+          source: { defaultAsset: "usd" },
         },
       });
       // addFunds resolved — user closed the fund flow. Stripe settlement is
@@ -959,7 +964,7 @@ export function WalletPayCard({
 // on open + on drill-in return. Lazy-loaded from Layout.tsx.
 
 import { lazy as _lazy, Suspense as _Suspense } from "react";
-import { getWalletBalance as _getWalletBalance, getLinkedWallet as _getLinkedWallet } from "@/lib/api";
+import { getWalletBalance as _getWalletBalance, getLinkedWallet as _getLinkedWallet, linkPrivyIdentity as _linkPrivyIdentity } from "@/lib/api";
 const _LazyBuyTokensModal = _lazy(() =>
   import("@/components/BuyTokensModal").then((m) => ({ default: m.BuyTokensModal }))
 );
@@ -1040,7 +1045,7 @@ const _getPreferredWallet = getPreferredWallet;
 const _setPreferredWallet = setPreferredWallet;
 
 export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
-  const { authenticated, login, exportWallet } = usePrivy();
+  const { authenticated, login, exportWallet, getAccessToken } = usePrivy();
   const { wallets } = useWallets();
   const recovery = usePrivyRecovery();
   const { addFunds } = useAddFunds();
@@ -1052,6 +1057,7 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
       if (wallet?.address) {
         setActiveAddress(wallet.address);
         _setPreferredWallet(wallet.address);
+        getAccessToken().then((t) => { if (t) _linkPrivyIdentity(t).catch(() => {}); }).catch(() => {});
       }
     },
     onError: (err) => {
@@ -1133,6 +1139,9 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
       if (addr) {
         setActiveAddress(addr);
         _setPreferredWallet(addr);
+        // Immediately link server-side so gas-topup + balance endpoints
+        // recognize the new wallet without waiting for PrivyIdentitySync.
+        getAccessToken().then((t) => { if (t) _linkPrivyIdentity(t).catch(() => {}); }).catch(() => {});
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -1155,10 +1164,12 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
   _useEffect(() => {
     let cancelled = false;
     _getLinkedWallet()
-      .then((r) => { if (!cancelled) setSessionWalletAddress(r.walletAddress); })
+      .then((r) => { if (!cancelled) setSessionWalletAddress(r.preferredWalletAddress || r.walletAddress); })
       .catch(() => { /* non-fatal — falls back to Privy-only view */ });
     return () => { cancelled = true; };
-  }, []);
+  // Re-fetch when auth state changes so cross-device view updates after
+  // linkPrivyIdentity completes on a fresh login.
+  }, [authenticated]);
 
   // Effective address the wallet UI renders against — prefer live Privy wallet
   // (can sign) over session-linked address (read-only).
@@ -1278,7 +1289,7 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
     try {
       await addFunds({
         destination: { address, chain: _BASE_CAIP2, asset: _USDC_BASE },
-        fiat: { defaultAmount: "30" },
+        fiat: { defaultAmount: "30", source: { defaultAsset: "usd" } },
       });
       refresh();
     } catch (err: unknown) {

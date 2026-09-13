@@ -19,7 +19,7 @@ import { AdSlot } from "@/components/AdSlot";
 import { FeaturedModelInterstitial, PnpFamWelcomeGate } from "@/components/badges/PnpFamWelcomeGate";
 import { Toast } from "@/components/Toast";
 import { useNearbyToggle } from "@/components/NearbyBadge";
-import { getMessageThreads, getHangoutGroups, markThreadAsRead, getProfile, getForYouRecommendations, followUser, getCryptoGuideStatus, getPublicCreatorProfile, toggleSuperGod, getWalletUsdcBalance, getSubscriptionPlans, getWalletBalance, getTokenPackages, type MessageThread, type HangoutGroup, type ForYouRecommendations, type ForYouSuggestedCreator, type ForYouSuggestedFollow, type ForYouContextHint, type CryptoGuideStatus, type CreatorPublicProfile, type SubscriptionPlan, type TokenPackage } from "@/lib/api";
+import { getMessageThreads, getHangoutGroups, markThreadAsRead, getProfile, getForYouRecommendations, followUser, getCryptoGuideStatus, getPublicCreatorProfile, toggleSuperGod, getWalletUsdcBalance, getSubscriptionPlans, getWalletBalance, getTokenPackages, updateProfile, type MessageThread, type HangoutGroup, type ForYouRecommendations, type ForYouSuggestedCreator, type ForYouSuggestedFollow, type ForYouContextHint, type CryptoGuideStatus, type CreatorPublicProfile, type SubscriptionPlan, type TokenPackage } from "@/lib/api";
 import { useTier } from "@/hooks/useTier";
 import { useI18n } from "@/lib/i18n";
 import { connectSocket } from "@/lib/socket";
@@ -738,6 +738,10 @@ function SidebarDmChat({ userId, myDbId, onBack }: SidebarDmChatProps) {
 export function Layout() {
   const { isAuthenticated, isAdmin, isSuperGod, isSuperGodEligible, user, isLoading, logout, refreshUser } = useAuth();
   const [godToggling, setGodToggling] = useState(false);
+  const [usernamePickerInput, setUsernamePickerInput] = useState('');
+  const [usernamePickerError, setUsernamePickerError] = useState<string | null>(null);
+  const [usernamePickerSaving, setUsernamePickerSaving] = useState(false);
+
   const handleToggleGod = useCallback(async () => {
     if (godToggling) return;
     setGodToggling(true);
@@ -750,6 +754,27 @@ export function Layout() {
       setGodToggling(false);
     }
   }, [godToggling, isSuperGod, refreshUser]);
+
+  const handleSetUsername = useCallback(async () => {
+    const val = usernamePickerInput.trim();
+    if (!val || !/^[a-zA-Z0-9_]{3,30}$/.test(val)) {
+      setUsernamePickerError('3–30 characters: letters, numbers, and underscores only.');
+      return;
+    }
+    setUsernamePickerSaving(true);
+    setUsernamePickerError(null);
+    try {
+      await updateProfile({ username: val });
+      await refreshUser();
+    } catch (err: any) {
+      setUsernamePickerError(
+        err?.status === 409 || String(err?.message || '').toLowerCase().includes('taken')
+          ? 'That username is already taken. Try another one.'
+          : 'Something went wrong. Please try again.'
+      );
+      setUsernamePickerSaving(false);
+    }
+  }, [usernamePickerInput, refreshUser]);
   const { tier, isPrime, isMember } = useTier();
   const { isTelegram } = useTelegram();
   useViewportHeight();
@@ -793,6 +818,10 @@ export function Layout() {
   const [showAgeGate, setShowAgeGate] = useState(() => {
     try { return !sessionStorage.getItem("pnptv:age_confirmed"); } catch { return false; }
   });
+
+  // Username picker — Telegram users without a @username get a TG_<id> placeholder.
+  // Force them to set a real handle before accessing the app.
+  const needsUsername = isAuthenticated && !isLoading && typeof user?.username === 'string' && user.username.startsWith('TG_');
 
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth < 1024);
@@ -1141,6 +1170,40 @@ export function Layout() {
 
   return (
     <div className="app-shell bg-pnp-background">
+      {/* ── Username picker — blocking modal for TG_ placeholder accounts ───── */}
+      {needsUsername && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="w-full max-w-sm bg-pnp-surface border border-pnp-border rounded-2xl p-6 flex flex-col gap-4">
+            <div>
+              <h2 className="text-xl font-bold text-pnp-textPrimary">Choose your username</h2>
+              <p className="text-sm text-pnp-textSecondary mt-1">Pick a unique handle for your PNPtv! profile. You can change it later from settings.</p>
+            </div>
+            <input
+              type="text"
+              value={usernamePickerInput}
+              onChange={e => { setUsernamePickerInput(e.target.value); setUsernamePickerError(null); }}
+              onKeyDown={e => { if (e.key === 'Enter' && !usernamePickerSaving) handleSetUsername(); }}
+              placeholder="e.g. PADUDE69"
+              className="w-full px-4 py-3 rounded-xl bg-pnp-background border border-pnp-border text-pnp-textPrimary placeholder:text-pnp-textSecondary focus:outline-none focus:border-[#D4007A] transition-colors"
+              maxLength={30}
+              autoFocus
+              autoCapitalize="characters"
+              autoCorrect="off"
+              spellCheck={false}
+            />
+            {usernamePickerError && (
+              <p className="text-sm text-red-400 -mt-2">{usernamePickerError}</p>
+            )}
+            <button
+              onClick={handleSetUsername}
+              disabled={usernamePickerSaving || !usernamePickerInput.trim()}
+              className="w-full py-3 rounded-xl bg-[#D4007A] text-white font-semibold text-sm disabled:opacity-40 transition-opacity"
+            >
+              {usernamePickerSaving ? 'Saving…' : 'Set username'}
+            </button>
+          </div>
+        </div>
+      )}
       {/* ── Desktop sidebar ─────────────────────────────────────────────────── */}
       <aside className="hidden lg:fixed lg:inset-y-0 lg:left-0 lg:flex lg:w-72 lg:flex-col border-r border-pnp-border glass-nav">
         {/* Sidebar header */}

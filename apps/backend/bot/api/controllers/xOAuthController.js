@@ -201,8 +201,15 @@ const handleCallback = async (req, res) => {
       if (!tokenRes) throw lastTokenError || new Error('X OAuth token exchange failed');
 
       const accessToken = tokenRes.data.access_token;
+      const grantedScopes = tokenRes.data.scope || null;
+      logger.info('X webapp token exchange succeeded', {
+        tokenType: tokenRes.data.token_type,
+        grantedScopes,
+        hasRefreshToken: !!tokenRes.data.refresh_token,
+        expiresIn: tokenRes.data.expires_in,
+      });
 
-      // Fetch X profile — try v2 API, then v1.1 fallback
+      // Fetch X profile via v2 API (requires app to be in an X Developer Project)
       let xData = null;
       try {
         const profileRes = await axios.get('https://api.twitter.com/2/users/me', {
@@ -218,28 +225,14 @@ const handleCallback = async (req, res) => {
           });
           xData = profileRes2.data?.data;
         } catch (err2) {
-          logger.warn('X webapp v2 profile fetch failed, trying v1.1 fallback', {
+          // Log full response bodies so we can diagnose the 403 cause
+          logger.error('X webapp v2 profile fetch failed on both hosts', {
             status1: err1.response?.status,
+            body1: err1.response?.data,
             status2: err2.response?.status,
+            body2: err2.response?.data,
+            grantedScopes,
           });
-        }
-      }
-
-      // Fallback: v1.1 verify_credentials (works without project enrollment)
-      if (!xData) {
-        try {
-          const v1Res = await axios.get('https://api.twitter.com/1.1/account/verify_credentials.json', {
-            headers: { Authorization: `Bearer ${accessToken}` },
-          });
-          const v1Data = v1Res.data;
-          xData = {
-            id: String(v1Data.id_str || v1Data.id),
-            username: v1Data.screen_name,
-            name: v1Data.name,
-          };
-          logger.info('X webapp profile resolved via v1.1 verify_credentials', { username: xData.username });
-        } catch (v1Err) {
-          logger.error('X webapp v1.1 profile fallback also failed:', { status: v1Err.response?.status, data: v1Err.response?.data });
         }
       }
 

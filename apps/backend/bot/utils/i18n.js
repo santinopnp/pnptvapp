@@ -6,6 +6,8 @@ class I18n {
     this.translations = {};
     this.defaultLanguage = 'en';
     this.loadTranslations();
+    // Bind so destructured `const { t } = i18n` works without losing `this`
+    this.t = this.t.bind(this);
   }
 
   /**

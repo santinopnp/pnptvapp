@@ -502,11 +502,13 @@ export function LandingPage() {
     };
   }, [activeSheet]);
 
-  // Detect post-login redirects that should offer a passkey. Fires for:
-  //   - magic-link verify (?magic_verified=1)
-  //   - X OAuth login (?post_login=x)  — but only when no email step is pending,
-  //     otherwise the passkey prompt runs after the email is saved.
-  // Browser supports WebAuthn → show prompt; otherwise proceed to the app.
+  // Detect post-login redirects. Fires for:
+  //   - magic-link verify (?magic_verified=1) — redirects immediately, no passkey prompt.
+  //     The prompt was rendered below the fold inside the landing page marketing content,
+  //     making users think nothing happened after clicking the email link.
+  //   - X OAuth login (?post_login=x)  — only when no email step is pending;
+  //     shows the passkey prompt (user is already looking at /login from the OAuth flow).
+  // Browser supports WebAuthn → show prompt (X only); otherwise proceed to the app.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const fromMagic = params.get("magic_verified") === "1";
@@ -519,6 +521,13 @@ export function LandingPage() {
 
     const returnTo = params.get("returnTo");
     pendingRedirectRef.current = sanitizeReturnTo(returnTo) ?? "/";
+
+    // Magic link: go straight to the app — passkey prompt is below the fold here
+    // and users mistake the marketing page for "nothing happened".
+    if (fromMagic) {
+      window.location.href = pendingRedirectRef.current;
+      return;
+    }
 
     if (typeof window === "undefined" || !window.PublicKeyCredential) {
       window.location.href = pendingRedirectRef.current;

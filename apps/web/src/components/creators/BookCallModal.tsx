@@ -412,6 +412,13 @@ export function BookCallModal({
     return () => { cancelled = true; };
   }, [step, creator.id, duration]);
 
+  // Auto-select first slot when user has a credit so the "Book with credit" button is immediately enabled
+  useEffect(() => {
+    if (!existingCredit) return;
+    if (selectedSlot !== null) return;
+    if (slots.length > 0) setSelectedSlot(slots[0]);
+  }, [existingCredit, slots]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleSeeMore = () => {
     const newOffset = slotsOffset + 5;
     setSlotsOffset(newOffset);
@@ -1049,42 +1056,61 @@ export function BookCallModal({
         <p className="text-xs px-1" style={{ color: "#FF453A" }}>{creditBookingError}</p>
       )}
 
-      <button
-        type="button"
-        disabled={!selectedSlot && !isOnline}
-        onClick={handleNextFromSlot}
-        className="w-full min-h-[48px] rounded-2xl text-base font-bold text-white transition-opacity disabled:opacity-40 disabled:cursor-not-allowed active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
-        style={{ background: "linear-gradient(90deg, #D4007A, #E69138)" }}
-      >
-        {isOnline && !selectedSlot ? t.creator.callNowBtn : t.creator.nextBtn}
-      </button>
+      {existingCredit ? (
+        <>
+          {/* Primary CTA: use the paid credit */}
+          <button
+            type="button"
+            disabled={!selectedSlot || creditBookingLoading}
+            onClick={handleBookWithCredit}
+            className="w-full min-h-[48px] rounded-2xl text-base font-bold text-white transition-opacity disabled:opacity-40 disabled:cursor-not-allowed active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+            style={{ background: "linear-gradient(90deg, #D4007A, #E69138)" }}
+          >
+            {creditBookingLoading ? (
+              <Spinner size={16} />
+            ) : t.lang === "es" ? (
+              `Confirmar cita (crédito ${existingCredit.duration_minutes} min)`
+            ) : (
+              `Book with Your ${existingCredit.duration_minutes}-Min Credit`
+            )}
+          </button>
 
-      {(existingCredit || otherDurationCredit) && (
-        <button
-          type="button"
-          disabled={!selectedSlot || creditBookingLoading}
-          onClick={() => {
-            if (existingCredit) {
-              handleBookWithCredit();
-            } else if (otherDurationCredit) {
-              setDuration(otherDurationCredit.duration_minutes as 30 | 60);
-            }
-          }}
-          className="w-full text-xs px-2 py-2 rounded-lg transition-opacity disabled:opacity-40 disabled:cursor-not-allowed underline-offset-2 hover:underline"
-          style={{ background: "transparent", color: "var(--pnp-text-secondary, #8E8E93)" }}
-        >
-          {creditBookingLoading ? (
-            <Spinner size={14} />
-          ) : existingCredit ? (
-            t.lang === "es"
-              ? `O usa tu crédito guardado de ${existingCredit.duration_minutes} min`
-              : `Or use your saved ${existingCredit.duration_minutes}-min credit`
-          ) : (
-            t.lang === "es"
-              ? `O cambia a ${otherDurationCredit!.duration_minutes} min y usa tu crédito guardado`
-              : `Or switch to ${otherDurationCredit!.duration_minutes} min and use your saved credit`
+          {/* Secondary: pay for another slot instead */}
+          <button
+            type="button"
+            disabled={!selectedSlot && !isOnline}
+            onClick={handleNextFromSlot}
+            className="w-full text-xs px-2 py-2 rounded-lg transition-opacity disabled:opacity-40 disabled:cursor-not-allowed underline-offset-2 hover:underline"
+            style={{ background: "transparent", color: "var(--pnp-text-secondary, #8E8E93)" }}
+          >
+            {t.lang === "es" ? "O paga una nueva sesión" : "Or pay for a new session"}
+          </button>
+        </>
+      ) : (
+        <>
+          <button
+            type="button"
+            disabled={!selectedSlot && !isOnline}
+            onClick={handleNextFromSlot}
+            className="w-full min-h-[48px] rounded-2xl text-base font-bold text-white transition-opacity disabled:opacity-40 disabled:cursor-not-allowed active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+            style={{ background: "linear-gradient(90deg, #D4007A, #E69138)" }}
+          >
+            {isOnline && !selectedSlot ? t.creator.callNowBtn : t.creator.nextBtn}
+          </button>
+
+          {otherDurationCredit && (
+            <button
+              type="button"
+              onClick={() => setDuration(otherDurationCredit.duration_minutes as 30 | 60)}
+              className="w-full text-xs px-2 py-2 rounded-lg transition-opacity underline-offset-2 hover:underline"
+              style={{ background: "transparent", color: "var(--pnp-text-secondary, #8E8E93)" }}
+            >
+              {t.lang === "es"
+                ? `O cambia a ${otherDurationCredit.duration_minutes} min y usa tu crédito guardado`
+                : `Or switch to ${otherDurationCredit.duration_minutes} min and use your saved credit`}
+            </button>
           )}
-        </button>
+        </>
       )}
     </div>
   );

@@ -12907,15 +12907,14 @@ app.put('/api/wallet/preferred', walletPreferLimiter, requireSessionAuth, asyncH
     }
     normalized = asStr.toLowerCase();
 
-    // Ownership check: allow the embedded wallet fast-path (already on this row)
-    // else confirm against Privy's linked-accounts list. Fetching the Privy user
-    // adds ~200ms once per switch — acceptable for a rare action.
+    // Ownership check: fast-path for embedded wallet (already in DB row) and
+    // preferred_wallet_address. Only call Privy API for unknown external wallets.
     const { rows: ownRows } = await getPool().query(
-      `SELECT lower(wallet_address) AS wa, privy_id FROM users WHERE id = $1 LIMIT 1`,
+      `SELECT lower(wallet_address) AS wa, lower(preferred_wallet_address) AS pwa, privy_id FROM users WHERE id = $1 LIMIT 1`,
       [userId]
     );
     const own = ownRows[0] || {};
-    let owns = own.wa && own.wa === normalized;
+    let owns = (own.wa && own.wa === normalized) || (own.pwa && own.pwa === normalized);
     if (!owns && own.privy_id) {
       try {
         const { listWalletAddresses } = require('../../services/privyLinkService');
@@ -12927,10 +12926,13 @@ app.put('/api/wallet/preferred', walletPreferLimiter, requireSessionAuth, asyncH
       return res.status(403).json({ ok: false, error: 'address_not_owned' });
     }
   }
+  const { cache: prefCache } = require('../../config/redis');
   await getPool().query(
     `UPDATE users SET preferred_wallet_address = $1 WHERE id = $2`,
     [normalized, userId]
   );
+  // Bust ownership cache so new preferred address is recognized immediately.
+  await prefCache.del(`wallet:owned:${userId}`).catch(() => {});
   res.json({ ok: true, preferredWalletAddress: normalized });
 }));
 
@@ -16928,6 +16930,9 @@ app.post('/api/privy/link', requireSessionAuth, asyncHandler(async (req, res) =>
   if (!privyToken) return res.status(400).json({ error: 'privyToken required' });
   try {
     const { privyId, walletAddress } = await privyLinkService.verifyAndLink({ pnptvUserId, privyToken });
+    // Bust the ownership cache so the newly-linked wallet passes the 403 check immediately.
+    const { cache } = require('../../config/redis');
+    await cache.del(`wallet:owned:${pnptvUserId}`).catch(() => {});
     return res.json({ ok: true, privyId, walletAddress });
   } catch (err) {
     if (err.message === 'invalid_privy_token') return res.status(401).json({ error: 'invalid_privy_token' });
@@ -17335,12 +17340,19 @@ app.post('/api/wallet/gas-topup', walletSpendLimiter, requireSessionAuth, asyncH
 
   let address;
   if (linkedAddress && bodyAddress && linkedAddress !== bodyAddress) {
-    // User already linked address A but is asking us to fund address B. Refuse
-    // — this is either a client bug or an attempt to farm dust to a foreign
-    // address. Trust the linked value.
-    return res.status(400).json({ ok: false, error: 'address_mismatch', linked: linkedAddress });
+    // Addresses differ — only allowed when bodyAddress is still owned by this
+    // user (e.g. user had external wallet as wallet_address, later created an
+    // embedded Privy wallet, and the DB hasn't been updated by linkPrivyIdentity
+    // yet). _addressBelongsToUser checks preferred_wallet_address + Privy API.
+    const bodyOwned = await _addressBelongsToUser(userId, bodyAddress).catch(() => false);
+    if (!bodyOwned) {
+      return res.status(400).json({ ok: false, error: 'address_mismatch', linked: linkedAddress });
+    }
+    // bodyAddress is a different but verified wallet — fund it.
+    address = bodyAddress;
+  } else {
+    address = linkedAddress || bodyAddress || null;
   }
-  address = linkedAddress || bodyAddress || null;
   if (!address) return res.status(400).json({ ok: false, error: 'no_wallet_address' });
 
   // Opportunistic backfill: if user has no linked wallet_address in DB but sent
@@ -17353,7 +17365,16 @@ app.post('/api/wallet/gas-topup', walletSpendLimiter, requireSessionAuth, asyncH
         [bodyAddress, String(userId)]
       );
     } catch (err) {
-      // Unique index collision (some other user already claims this address) → ignore, still fund.
+      if (err.code === '23505') {
+        // Unique constraint: address already belongs to a different user — refuse to fund.
+        const { rows: claimRows } = await dbQuery(
+          `SELECT id FROM users WHERE lower(wallet_address) = $1 AND id <> $2 LIMIT 1`,
+          [bodyAddress, String(userId)]
+        );
+        if (claimRows.length > 0) {
+          return res.status(400).json({ ok: false, error: 'address_claimed_by_other_user' });
+        }
+      }
       logger.warn('[wallet/gas-topup] backfill wallet_address skipped', { userId, address: bodyAddress, err: err.message });
     }
   }
@@ -17525,20 +17546,29 @@ async function _addressBelongsToUser(userId, normalizedAddr) {
   } catch { /* redis optional */ }
   if (!addrs) {
     const { rows } = await dbQuery(
-      `SELECT lower(wallet_address) AS wa, privy_id FROM users WHERE id = $1 LIMIT 1`,
+      `SELECT lower(wallet_address) AS wa, privy_id, lower(preferred_wallet_address) AS pwa FROM users WHERE id = $1 LIMIT 1`,
       [String(userId)]
     );
     const own = rows[0] || {};
     addrs = [];
     if (own.wa) addrs.push(own.wa);
+    // preferred_wallet_address was already ownership-checked when it was written
+    // via PUT /api/wallet/preferred — include it here so balance queries for the
+    // preferred external wallet don't require a slow Privy API call.
+    if (own.pwa && !addrs.includes(own.pwa)) addrs.push(own.pwa);
+    let privyFailed = false;
     if (own.privy_id) {
       try {
         const { listWalletAddresses } = require('../../services/privyLinkService');
         const privyAddrs = await listWalletAddresses(own.privy_id);
         for (const a of privyAddrs) if (!addrs.includes(a)) addrs.push(a);
-      } catch { /* privy unreachable — fall back to just users.wallet_address */ }
+      } catch { privyFailed = true; /* privy unreachable — fall back to DB wallets only */ }
     }
-    try { await cache.set(cacheKey, JSON.stringify(addrs), 300).catch(() => {}); } catch { /* ignore */ }
+    // Only cache when we have a complete picture — skip caching if Privy was
+    // unreachable so a transient API outage doesn't lock out external wallets.
+    if (!privyFailed) {
+      try { await cache.set(cacheKey, JSON.stringify(addrs), 300).catch(() => {}); } catch { /* ignore */ }
+    }
   }
   return addrs.includes(normalizedAddr);
 }
@@ -22426,7 +22456,22 @@ app.get('/api/public/creator/:username',
        LIMIT 1`,
       [username]
     );
-    if (!creatorRows.length) return res.status(404).json({ success: false, error: 'Creator not found' });
+    if (!creatorRows.length) {
+      // Check if this was a former username — permanent redirect
+      const { rows: redirRows } = await pool.query(
+        `SELECT u.username
+           FROM profile_username_redirects r
+           JOIN users u ON u.id::text = r.user_id
+          WHERE r.old_username = lower($1)
+            AND u.creator_status = 'active'
+          LIMIT 1`,
+        [username]
+      );
+      if (redirRows.length) {
+        return res.redirect(301, `/api/public/creator/${encodeURIComponent(redirRows[0].username)}`);
+      }
+      return res.status(404).json({ success: false, error: 'Creator not found' });
+    }
 
     const creator = creatorRows[0];
     const creatorId = String(creator.id);

@@ -453,7 +453,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
           chain: BASE_CAIP2,
           asset: USDC_BASE_ADDRESS,
         },
-        fiat: { defaultAmount: grossUpForOnramp(price) },
+        fiat: { defaultAmount: grossUpForOnramp(price), source: { defaultAsset: "usd" } },
       });
       // Poll balance until USDC covers the pack (or timeout ~60s), then trigger
       // the on-chain Ru$h purchase automatically so the card user gets the
@@ -508,7 +508,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
           chain: BASE_CAIP2,
           asset: USDC_BASE_ADDRESS,
         },
-        fiat: { defaultAmount: grossUpForOnramp(usd) },
+        fiat: { defaultAmount: grossUpForOnramp(usd), source: { defaultAsset: "usd" } },
       });
       const deadline = Date.now() + 60_000;
       let bal = walletUsdc ?? 0;
