@@ -12,6 +12,7 @@ import {
 } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import { CallPackageManager } from "@/pages/creator/CallPackageManager";
+import { CreatorAvailabilitySettings } from "@/components/creators/CreatorAvailabilitySettings";
 
 // ─── Inline microtoast (avoids dependency on NotificationProvider which
 //     wraps the full app — these are ephemeral creator-local messages) ─────────
@@ -554,6 +555,12 @@ export default function CreatorAvailability() {
       <div className="p-4 lg:p-6">
         <div className="space-y-4">
           <CallPackageManager />
+
+          {/* ── Weekly Availability ── */}
+          <p className="text-[11px] font-bold uppercase tracking-widest mb-3 mt-8" style={{ color: "rgba(255,255,255,0.45)" }}>
+            Weekly Availability
+          </p>
+          <CreatorAvailabilitySettings />
 
           {/* ── Call Earnings ── */}
           <p className="text-[11px] font-bold uppercase tracking-widest mb-3 mt-8" style={{ color: "rgba(255,255,255,0.45)" }}>
