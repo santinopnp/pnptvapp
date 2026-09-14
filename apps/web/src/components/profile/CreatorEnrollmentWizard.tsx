@@ -1,7 +1,8 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useI18n } from "@/lib/i18n";
 import { submitCreatorEnrollment } from "@/lib/api";
 import { SignaturePad } from "@/components/SignaturePad";
+import { useWallets } from "@privy-io/react-auth";
 
 // ── Tier constants (shared with MonetizeContentCard) ──────────────────────────
 
@@ -64,6 +65,7 @@ async function compressImageForUpload(file: File, maxDim: number, quality: numbe
 // Display labels for NowPayments currency codes — kept in sync with the
 // <select id="pnp-creatorenrollmentwizard-1"> options in step 3 and with ADDRESS_VALIDATORS on the backend.
 const TOKEN_LABELS: Record<string, string> = {
+  privy_wallet: "My PNPtv Wallet (USDC on Base) ★ Recommended",
   btc:       "Bitcoin (BTC)",
   btcln:     "Bitcoin Lightning",
   eth:       "Ethereum (ETH)",
@@ -240,14 +242,21 @@ export default function CreatorEnrollmentWizard({
   const [privacyAccepted, setPrivacyAccepted] = useState(false);
 
   // Step 3 state (payment)
-  // paymentMethod is now the exact NowPayments currency code (matches the
-  // set the checkout uses for incoming payments) — see routes.js:11071 and
-  // apps/backend/services/nowpaymentsPayoutService.js ADDRESS_VALIDATORS.
-  // The old Dash/Meru/USDC/USDT UI groups were flattened into a single
-  // dropdown so the picker maps 1:1 to what the payout API expects.
-  const [paymentMethod, setPaymentMethod] = useState<string>("usdttrc20");
+  // Default = 'privy_wallet' (the creator's PNPtv embedded wallet, USDC on Base).
+  // Address is auto-filled from Privy on mount; creator can switch to another
+  // network/currency if they prefer a different destination.
+  const { wallets } = useWallets();
+  const embeddedWallet = wallets.find((w) => w.walletClientType === "privy") || null;
+  const [paymentMethod, setPaymentMethod] = useState<string>("privy_wallet");
   const [paymentAddress, setPaymentAddress] = useState("");
-  const [paymentNetwork, setPaymentNetwork] = useState("");
+  const [paymentNetwork, setPaymentNetwork] = useState("privy_wallet");
+
+  // Pre-fill address from Privy embedded wallet whenever it becomes available.
+  useEffect(() => {
+    if (embeddedWallet?.address && paymentMethod === "privy_wallet" && !paymentAddress) {
+      setPaymentAddress(embeddedWallet.address);
+    }
+  }, [embeddedWallet?.address]);
 
   // Step 4 state (ID + 2257 fields + signature)
   const [idFile, setIdFile] = useState<File | null>(null);
@@ -337,12 +346,14 @@ export default function CreatorEnrollmentWizard({
   // real formats. Full validation happens server-side against a per-currency
   // regex in nowpaymentsPayoutService.ADDRESS_VALIDATORS.
   const PAYMENT_MIN_LENGTH: Record<string, number> = {
+    privy_wallet: 42,
     btc: 26, btcln: 6, eth: 42, ltc: 26, xmr: 95, bch: 34,
     usdt: 42, usdttrc20: 34, usdtbsc: 42,
     usdc: 42, usdcbsc: 42, usdcsol: 32,
     dash: 34, sol: 32, doge: 34,
   };
   const paymentMinLength = PAYMENT_MIN_LENGTH[paymentMethod] ?? 26;
+  const isPrivyWallet = paymentMethod === "privy_wallet";
   const canProceedStep3 = paymentAddress.trim().length >= paymentMinLength;
   const canProceedStep4 = !!idFile && idLegalName.trim().length >= 1 && idDob.length > 0 && idType.length > 0;
   const canProceedStep5 = !!signatureData;
@@ -610,6 +621,23 @@ export default function CreatorEnrollmentWizard({
                 <p style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>{pr.minimumPayout}</p>
               </div>
 
+              {/* Privy wallet info banner — shown when default is selected */}
+              {isPrivyWallet && (
+                <div className="rounded-xl p-3 text-xs flex gap-2.5 items-start" style={{ background: "rgba(94,209,196,0.10)", border: "1px solid rgba(94,209,196,0.30)" }}>
+                  <span className="text-lg leading-none">💎</span>
+                  <div className="space-y-0.5">
+                    <p className="font-semibold text-white">
+                      {i18n.lang === 'es' ? "Tu billetera PNPtv es tu destino de cobro" : "Your PNPtv wallet is your payout destination"}
+                    </p>
+                    <p style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                      {i18n.lang === 'es'
+                        ? "Los pagos llegan en USDC en la red Base directamente a tu billetera. Puedes cambiar de red abajo si prefieres otra moneda."
+                        : "Earnings are sent in USDC on Base directly to your wallet. You can switch to a different network below if you prefer another coin."}
+                    </p>
+                  </div>
+                </div>
+              )}
+
               <div>
                 <label htmlFor="payout-token" className="text-xs font-medium block mb-1.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
                   {pr.selectPaymentMethod}
@@ -620,9 +648,13 @@ export default function CreatorEnrollmentWizard({
                   onChange={(e) => {
                     const next = e.target.value;
                     if (next === paymentMethod) return;
-                    // Wipe the address whenever the token changes — a Bitcoin
-                    // address will never validate as Ethereum, USDT-TRC, etc.
-                    setPaymentAddress("");
+                    // Switching away from privy_wallet clears the address so the
+                    // creator types their own. Switching back auto-fills again.
+                    if (next === "privy_wallet") {
+                      setPaymentAddress(embeddedWallet?.address || "");
+                    } else {
+                      setPaymentAddress("");
+                    }
                     setPaymentMethod(next);
                     setPaymentNetwork(next);
                   }}
@@ -637,6 +669,7 @@ export default function CreatorEnrollmentWizard({
                     paddingRight: "36px",
                   }}
                 >
+                  <option value="privy_wallet">My PNPtv Wallet (USDC on Base) ★</option>
                   <option value="btc">Bitcoin (BTC)</option>
                   <option value="btcln">Bitcoin Lightning</option>
                   <option value="eth">Ethereum (ETH)</option>
@@ -657,26 +690,38 @@ export default function CreatorEnrollmentWizard({
 
               <div>
                 <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-                  {pr.walletAddress}
+                  {isPrivyWallet
+                    ? (i18n.lang === 'es' ? "Dirección de tu billetera PNPtv" : "Your PNPtv wallet address")
+                    : pr.walletAddress}
                 </label>
                 <input id="pnp-creatorenrollmentwizard-2"
                   type="text"
                   value={paymentAddress}
-                  onChange={(e) => setPaymentAddress(e.target.value)}
-                  placeholder={pr.walletPlaceholder}
+                  onChange={(e) => { if (!isPrivyWallet) setPaymentAddress(e.target.value); }}
+                  readOnly={isPrivyWallet}
+                  placeholder={isPrivyWallet
+                    ? (i18n.lang === 'es' ? "Conecta tu billetera para continuar" : "Connect your wallet to continue")
+                    : pr.walletPlaceholder}
                   className="w-full rounded-lg px-3 py-2.5 text-white outline-none"
-                  style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", fontSize: "16px" }}
+                  style={{
+                    background: isPrivyWallet ? "rgba(94,209,196,0.06)" : "rgba(255,255,255,0.06)",
+                    border: isPrivyWallet ? "1px solid rgba(94,209,196,0.25)" : "1px solid rgba(255,255,255,0.1)",
+                    fontSize: "16px",
+                    opacity: isPrivyWallet && !paymentAddress ? 0.5 : 1,
+                  }}
                   autoComplete="off"
                 />
                 <div className="flex justify-between items-center mt-1.5 text-[10px]" style={{ color: canProceedStep3 ? "#5ED1C4" : "var(--pnp-text-secondary, #8E8E93)" }}>
                   <span>
                     {canProceedStep3
                       ? (i18n.lang === 'es' ? "✓ Listo para continuar" : "✓ Ready to continue")
-                      : (i18n.lang === 'es'
-                          ? `Mínimo ${paymentMinLength} caracteres`
-                          : `Minimum ${paymentMinLength} characters required`)}
+                      : isPrivyWallet
+                        ? (i18n.lang === 'es' ? "Crea o conecta tu billetera PNPtv primero" : "Create or connect your PNPtv wallet first")
+                        : (i18n.lang === 'es'
+                            ? `Mínimo ${paymentMinLength} caracteres`
+                            : `Minimum ${paymentMinLength} characters required`)}
                   </span>
-                  <span>{paymentAddress.trim().length}/{paymentMinLength}</span>
+                  {!isPrivyWallet && <span>{paymentAddress.trim().length}/{paymentMinLength}</span>}
                 </div>
               </div>
             </>

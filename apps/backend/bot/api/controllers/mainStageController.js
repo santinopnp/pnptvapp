@@ -227,7 +227,14 @@ const token = asyncHandler(async (req, res) => {
   let hasMembership = false;
   if (!adminUser) {
     try {
-      hasMembership = await EntitlementAccessService.hasEntitlement(String(userId), 'pnp-member');
+      // Check both pnp-member and prime entitlements — a PRIME purchase grants
+      // add_on_id='prime' (not 'pnp-member'), so checking only pnp-member would
+      // incorrectly treat PRIME users as newcomers and hit the 3h session cap.
+      const [hasMember, hasPrimeEnt] = await Promise.all([
+        EntitlementAccessService.hasEntitlement(String(userId), 'pnp-member'),
+        EntitlementAccessService.hasEntitlement(String(userId), 'prime'),
+      ]);
+      hasMembership = hasMember || hasPrimeEnt;
     } catch (entErr) {
       logger.error('[MainStage] token: entitlement check failed', { error: entErr.message });
       return res.status(503).json({

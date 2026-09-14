@@ -2190,11 +2190,15 @@ class CreatorService {
       throw new Error(`Monthly price must be between $${CreatorService.PRICE_MIN} and $${CreatorService.PRICE_MAX}.`);
     }
 
-    // 'dash' is the canonical crypto payout path (BTCPay Pull Payments) since
-    // the Daimo USDC retirement on 2026-04-21. usdc/usdt remain accepted for
-    // compatibility with creators enrolled pre-retirement; the monthly cron
-    // routes them to the manual review queue rather than auto-paying.
-    const validMethods = ['dash', 'meru', 'usdc', 'usdt'];
+    // All NowPayments currency codes accepted by the enrollment wizard dropdown,
+    // plus 'privy_wallet' (Privy embedded wallet / USDC on Base — the default
+    // since 2026-09-14), and 'meru' (legacy LATAM bank transfer path).
+    const validMethods = [
+      'privy_wallet',
+      'btc', 'btcln', 'eth', 'ltc', 'xmr', 'bch', 'sol', 'doge',
+      'usdttrc20', 'usdt', 'usdtbsc', 'usdc', 'usdcbsc', 'usdcsol',
+      'dash', 'meru',
+    ];
     if (!validMethods.includes(paymentMethod)) throw new Error('Invalid payment method.');
     if (!paymentAddress?.trim()) throw new Error('Payment address or Meru account ID is required.');
     if (!signatureData) throw new Error('Digital signature is required.');

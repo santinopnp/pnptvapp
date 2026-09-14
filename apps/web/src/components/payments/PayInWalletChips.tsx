@@ -1099,10 +1099,10 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
     onError: (err) => {
       // Privy fires onError for user-cancel too — filter those out so we don't
       // show a scary error when the user just closed the modal.
+      // generic_connect_wallet_error = user dismissed the modal — treat as cancel.
       const msg = typeof err === "string" ? err : String(err);
-      if (/exited|closed|cancel|reject/i.test(msg)) return;
-      const isGeneric = /generic_connect_wallet_error/i.test(msg) || !msg || msg === "undefined";
-      setConnectError(isGeneric
+      if (/exited|closed|cancel|reject|generic_connect_wallet_error/i.test(msg)) return;
+      setConnectError(!msg || msg === "undefined"
         ? "Could not connect wallet. Try refreshing the page or use the built-in wallet instead."
         : msg);
       reportWalletClientError("connectWallet", err, { source: "WalletHomeSheet" });
@@ -1362,6 +1362,10 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
   // to remove it can do so from Privy's account UI directly.
   const handleUnlinkWallet = async (addr: string, isEmbedded: boolean) => {
     if (isEmbedded) return;
+    if (wallets.length === 1) {
+      setConnectError("This is your only linked wallet. Connect another wallet first, then you can remove this one.");
+      return;
+    }
     if (!confirm("Disconnect this wallet from your PNPtv account? You can reconnect it any time.")) return;
     setError(null);
     setConnectError(null);
@@ -1392,7 +1396,7 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
       const msg = err instanceof Error ? err.message : String(err);
       // "wallet not linked" / "not found" mean Privy already forgot the wallet —
       // benign, treat as success. Anything else, surface prominently.
-      if (!/not linked|not found|already/i.test(msg)) {
+      if (!/not linked|not found|already|only one account/i.test(msg)) {
         setConnectError(`Could not disconnect: ${msg}. Your PNPtv wallet is still active — try refreshing the page.`);
         reportWalletClientError("unlinkWallet", err, { source: "WalletHomeSheet", address: addr });
       }
