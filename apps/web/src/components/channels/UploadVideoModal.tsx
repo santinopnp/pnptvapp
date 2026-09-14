@@ -2,16 +2,19 @@
  * UploadVideoModal — Studio Express (3-step Mux upload wizard)
  *
  *   Step 1 "Sube tu video"   — drag-drop + one-liner description
- *                              Upload goes direct browser→Mux (bypass VPS)
- *                              AI call fires in parallel as upload runs
+ *                              Upload goes direct browser→Mux via TUS protocol
+ *                              (50 MB chunks, 5 auto-retries, byte-level resume)
  *   Step 2 "Pulido por IA"   — review/edit title, description, tags
  *                              Thumbnail picker from Mux-generated frames
  *   Step 3 "Publicar"        — toggle feed announce → publish → done
  *
- * Resumable: upload state stored in localStorage, restored on next open.
+ * Resumable: TUS fingerprint in IndexedDB (automatic) + localStorage banner.
+ * If the same file is re-selected after a failed session, upload resumes from
+ * the exact byte offset without restarting from scratch.
  */
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { Upload, DetailedError } from "tus-js-client";
 import {
   getMuxUploadUrl,
   aiAllChannelVideo,
@@ -38,6 +41,7 @@ interface Props {
 
 const RESUME_KEY = "mux_upload_resume";
 const MAX_FILE_BYTES = 50 * 1024 * 1024 * 1024;
+const TUS_CHUNK_SIZE = 50 * 1024 * 1024; // 50 MB per chunk
 
 function fmtBytes(b: number) {
   if (b < 1024) return `${b} B`;
@@ -94,10 +98,8 @@ export default function UploadVideoModal({
   const [uploadSpeed, setUploadSpeed] = useState(0); // bytes/sec
   const [uploadEta, setUploadEta] = useState<number | null>(null); // seconds
   const [retryCount, setRetryCount] = useState(0);
-  const xhrRef = useRef<XMLHttpRequest | null>(null);
+  const tusRef = useRef<Upload | null>(null);
   const videoIdRef = useRef<number | null>(null);
-  const uploadIdRef = useRef<string>("");
-  const uploadUrlRef = useRef<string>("");
   const uploadStartRef = useRef<number>(0);
   const lastProgressRef = useRef<{ time: number; bytes: number }>({ time: 0, bytes: 0 });
 
@@ -137,11 +139,10 @@ export default function UploadVideoModal({
     getChannelTagTaxonomy(channelId).then((r) => setTaxonomy(r.tags || [])).catch(() => {});
   }, [channelId]);
 
-  // Cleanup XHR on unmount
-  useEffect(() => () => { xhrRef.current?.abort(); }, []);
+  // Abort TUS upload on unmount
+  useEffect(() => () => { tusRef.current?.abort().catch(() => {}); }, []);
 
   const validateFile = (f: File): string | null => {
-    // Some mobile browsers report empty MIME for video files; allow those through
     if (f.type && !f.type.startsWith("video/")) return "Solo se permiten archivos de video.";
     if (f.size > MAX_FILE_BYTES) return "El archivo es demasiado grande (máx 50 GB).";
     return null;
@@ -154,71 +155,92 @@ export default function UploadVideoModal({
     setFile(f);
   };
 
-  const doXhrUpload = useCallback((fileToUpload: File, uploadUrl: string, videoId: number, uploadId: string, attempt: number) => {
-    const xhr = new XMLHttpRequest();
-    xhrRef.current = xhr;
+  const fetchThumbnails = async (videoId: number) => {
+    setThumbsLoading(true);
+    try {
+      const r = await getMuxThumbnails(channelId, videoId);
+      if (r.thumbnails && r.thumbnails.length > 0) {
+        setThumbnails(r.thumbnails);
+        setSelectedThumb(r.thumbnails[0].url);
+      }
+    } catch { /* thumbnails optional */ }
+    setThumbsLoading(false);
+  };
+
+  /**
+   * TUS upload — sends file in 50 MB chunks directly to the Mux TUS endpoint.
+   * On network failure each chunk retries up to 5 times with exponential backoff.
+   * If the same file is re-uploaded with the same uploadUrl, TUS resumes from the
+   * exact byte offset stored in the IndexedDB fingerprint (no data retransferred).
+   */
+  const doTusUpload = useCallback((
+    fileToUpload: File,
+    uploadUrl: string,
+    videoId: number,
+    uploadId: string,
+  ) => {
     uploadStartRef.current = Date.now();
     lastProgressRef.current = { time: Date.now(), bytes: 0 };
 
-    xhr.upload.addEventListener("progress", (e) => {
-      if (!e.lengthComputable) return;
-      const pct = Math.round((e.loaded / e.total) * 100);
-      setUploadPct(pct);
-      setUploadedBytes(e.loaded);
+    const upload = new Upload(fileToUpload, {
+      uploadUrl,                                          // pre-created Mux TUS resource
+      chunkSize: TUS_CHUNK_SIZE,
+      retryDelays: [0, 3_000, 5_000, 10_000, 20_000],   // 5 retries per failed chunk
+      storeFingerprintForResuming: true,                  // IndexedDB for cross-session resume
+      metadata: {
+        filename: fileToUpload.name,
+        filetype: fileToUpload.type || "video/mp4",
+      },
 
-      // Speed + ETA calculation using sliding window
-      const now = Date.now();
-      const elapsed = (now - lastProgressRef.current.time) / 1000;
-      if (elapsed > 0.5) {
-        const bytesDelta = e.loaded - lastProgressRef.current.bytes;
-        const speed = bytesDelta / elapsed;
-        setUploadSpeed(speed);
-        const remaining = e.total - e.loaded;
-        setUploadEta(speed > 0 ? Math.ceil(remaining / speed) : null);
-        lastProgressRef.current = { time: now, bytes: e.loaded };
-      }
+      onProgress(bytesUploaded, bytesTotal) {
+        const pct = Math.round((bytesUploaded / bytesTotal) * 100);
+        setUploadPct(pct);
+        setUploadedBytes(bytesUploaded);
 
-      saveResume({ uploadId, videoId, channelId, fileName: fileToUpload.name, fileSize: fileToUpload.size, uploadUrl, bytesUploaded: e.loaded });
-    });
+        const now = Date.now();
+        const elapsed = (now - lastProgressRef.current.time) / 1000;
+        if (elapsed > 0.5) {
+          const speed = (bytesUploaded - lastProgressRef.current.bytes) / elapsed;
+          setUploadSpeed(Math.max(0, speed));
+          setUploadEta(speed > 0 ? Math.ceil((bytesTotal - bytesUploaded) / speed) : null);
+          lastProgressRef.current = { time: now, bytes: bytesUploaded };
+        }
 
-    xhr.addEventListener("load", () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
+        saveResume({ uploadId, videoId, channelId, fileName: fileToUpload.name, fileSize: fileToUpload.size, uploadUrl, bytesUploaded });
+      },
+
+      onSuccess() {
         clearResume();
         setUploadPct(100);
         setUploadSpeed(0);
         setUploadEta(null);
         setRetryCount(0);
         setStep("metadata");
-        setTimeout(() => fetchThumbnails(videoId), 8000);
-      } else {
-        // Non-2xx → retry up to 3 times with exponential backoff
-        if (attempt < 3) {
-          const delay = Math.pow(2, attempt) * 1500;
-          setRetryCount(attempt + 1);
-          setTimeout(() => doXhrUpload(fileToUpload, uploadUrl, videoId, uploadId, attempt + 1), delay);
-        } else {
-          setRetryCount(0);
-          setError(`Error de subida (${xhr.status}). El archivo sigue seleccionado — pulsa "Subir a Mux" para intentar de nuevo.`);
-          setStep("pick");
-        }
-      }
-    });
+        setTimeout(() => fetchThumbnails(videoId), 8_000);
+      },
 
-    xhr.addEventListener("error", () => {
-      if (attempt < 3) {
-        const delay = Math.pow(2, attempt) * 1500;
-        setRetryCount(attempt + 1);
-        setTimeout(() => doXhrUpload(fileToUpload, uploadUrl, videoId, uploadId, attempt + 1), delay);
-      } else {
+      onError(err) {
         setRetryCount(0);
-        setError("La subida falló tras 3 intentos. Revisa tu conexión — el archivo sigue seleccionado.");
+        const status = err instanceof DetailedError ? (err.originalResponse?.getStatus() ?? null) : null;
+        setError(
+          status
+            ? `La subida falló (HTTP ${status}). El archivo sigue seleccionado — intenta de nuevo.`
+            : "La subida falló tras varios intentos. Revisa tu conexión — el archivo sigue seleccionado.",
+        );
         setStep("pick");
-      }
+      },
+
+      onShouldRetry(err, attempt) {
+        const status = err instanceof DetailedError ? (err.originalResponse?.getStatus() ?? null) : null;
+        // Never retry on auth / hard client errors
+        if (status && status >= 400 && status < 500 && status !== 429) return false;
+        setRetryCount(attempt + 1);
+        return true;
+      },
     });
 
-    xhr.open("PUT", uploadUrl);
-    xhr.setRequestHeader("Content-Type", fileToUpload.type && fileToUpload.type.startsWith("video/") ? fileToUpload.type : "video/mp4");
-    xhr.send(fileToUpload);
+    tusRef.current = upload;
+    upload.start();
   }, [channelId]);
 
   const startUpload = useCallback(async (fileToUpload: File, description1Line: string) => {
@@ -230,24 +252,38 @@ export default function UploadVideoModal({
     setUploadEta(null);
     setRetryCount(0);
 
+    // If the same file was partially uploaded before, reuse the Mux URL so TUS
+    // can resume from the stored byte offset instead of starting from scratch.
+    const sameFile = resume &&
+      resume.channelId === channelId &&
+      resume.fileName === fileToUpload.name &&
+      resume.fileSize === fileToUpload.size;
+
     let videoId: number;
     let uploadUrl: string;
     let uploadId: string;
 
-    try {
-      const res = await getMuxUploadUrl(channelId);
-      videoId = res.videoId;
-      uploadUrl = res.uploadUrl;
-      uploadId = res.uploadId;
+    if (sameFile && resume) {
+      videoId = resume.videoId;
+      uploadUrl = resume.uploadUrl;
+      uploadId = resume.uploadId;
       videoIdRef.current = videoId;
-      uploadIdRef.current = uploadId;
-      uploadUrlRef.current = uploadUrl;
-      saveResume({ uploadId, videoId, channelId, fileName: fileToUpload.name, fileSize: fileToUpload.size, uploadUrl, bytesUploaded: 0 });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setError(`No se pudo iniciar la subida: ${msg}`);
-      setStep("pick");
-      return;
+      setUploadedBytes(resume.bytesUploaded);
+      setUploadPct(Math.round((resume.bytesUploaded / fileToUpload.size) * 100));
+    } else {
+      try {
+        const res = await getMuxUploadUrl(channelId);
+        videoId = res.videoId;
+        uploadUrl = res.uploadUrl;
+        uploadId = res.uploadId;
+        videoIdRef.current = videoId;
+        saveResume({ uploadId, videoId, channelId, fileName: fileToUpload.name, fileSize: fileToUpload.size, uploadUrl, bytesUploaded: 0 });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setError(`No se pudo iniciar la subida: ${msg}`);
+        setStep("pick");
+        return;
+      }
     }
 
     // Fire AI in parallel (non-blocking)
@@ -263,20 +299,8 @@ export default function UploadVideoModal({
         .finally(() => setAiLoading(false));
     }
 
-    doXhrUpload(fileToUpload, uploadUrl, videoId, uploadId, 0);
-  }, [channelId, doXhrUpload]);
-
-  const fetchThumbnails = async (videoId: number) => {
-    setThumbsLoading(true);
-    try {
-      const r = await getMuxThumbnails(channelId, videoId);
-      if (r.thumbnails && r.thumbnails.length > 0) {
-        setThumbnails(r.thumbnails);
-        setSelectedThumb(r.thumbnails[0].url);
-      }
-    } catch { /* thumbnails optional */ }
-    setThumbsLoading(false);
-  };
+    doTusUpload(fileToUpload, uploadUrl, videoId, uploadId);
+  }, [channelId, resume, doTusUpload]);
 
   const handlePublish = async () => {
     if (!videoIdRef.current) return;
@@ -284,7 +308,6 @@ export default function UploadVideoModal({
     setPublishing(true);
     setError(null);
     try {
-      // Save latest edits first
       await updateChannelVideo(channelId, videoIdRef.current, { title: title.trim(), description, tags, post_to_feed: announce });
       const res = await publishChannelVideo(channelId, videoIdRef.current);
       setStep("done");
@@ -297,7 +320,7 @@ export default function UploadVideoModal({
   };
 
   const resetAll = () => {
-    xhrRef.current?.abort();
+    tusRef.current?.abort().catch(() => {});
     setStep("pick");
     setFile(null);
     setOneLiner("");
@@ -310,7 +333,6 @@ export default function UploadVideoModal({
     setThumbnails([]);
     setSelectedThumb(null);
     videoIdRef.current = null;
-    uploadIdRef.current = "";
     clearResume();
   };
 
@@ -330,6 +352,14 @@ export default function UploadVideoModal({
     bts: { label: "CRYSTAL", color: "#A78BFA" },
   }[accessType]!;
 
+  // Detect if the currently selected file matches the stored resume
+  const isSameFileAsResume = !!(
+    resume && file &&
+    resume.channelId === channelId &&
+    resume.fileName === file.name &&
+    resume.fileSize === file.size
+  );
+
   // ── Step renders ─────────────────────────────────────────────────────────────
 
   const renderPick = () => (
@@ -342,12 +372,8 @@ export default function UploadVideoModal({
         return (
           <div className="rounded-xl px-4 py-3 space-y-2" style={{ background: "#111", border: "1px solid rgba(255,255,255,0.08)" }}>
             <div className="flex justify-between text-xs">
-              <span className="text-white/70 font-semibold">
-                Almacenamiento · Storage
-              </span>
-              <span className="text-white/80 font-mono">
-                {fmtBytes(quota.usedBytes)} / {fmtBytes(quota.capBytes)}
-              </span>
+              <span className="text-white/70 font-semibold">Almacenamiento · Storage</span>
+              <span className="text-white/80 font-mono">{fmtBytes(quota.usedBytes)} / {fmtBytes(quota.capBytes)}</span>
             </div>
             <div className="w-full rounded-full overflow-hidden" style={{ height: 6, background: "#1E1E1E" }}>
               <div style={{ width: `${pct}%`, height: "100%", background: barColor, transition: "width .3s" }} />
@@ -370,20 +396,43 @@ export default function UploadVideoModal({
       {/* Resume banner */}
       {resume && (
         <div
-          className="rounded-xl px-4 py-3 flex items-center justify-between gap-3 text-sm"
+          className="rounded-xl px-4 py-3 space-y-1.5"
           style={{ background: "rgba(212,0,122,.1)", border: "1px solid rgba(212,0,122,.35)" }}
         >
-          <div>
-            <p className="font-semibold text-white">Subida sin terminar</p>
-            <p className="text-xs text-white/60 mt-0.5">{resume.fileName} · {fmtBytes(resume.bytesUploaded)} subidos</p>
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex-1 min-w-0">
+              <p className="font-semibold text-white text-sm">Subida sin terminar</p>
+              <p className="text-xs text-white/60 mt-0.5 truncate">
+                {resume.fileName} · {fmtBytes(resume.bytesUploaded)} de {fmtBytes(resume.fileSize)}
+              </p>
+              {isSameFileAsResume ? (
+                <p className="text-xs mt-1 font-medium" style={{ color: "#34D399" }}>
+                  ✓ Mismo archivo — continuará desde donde quedó
+                </p>
+              ) : (
+                <p className="text-xs mt-1 text-white/40">
+                  Selecciona el mismo archivo para retomar automáticamente
+                </p>
+              )}
+            </div>
+            <button
+              className="text-xs font-bold px-3 py-1.5 rounded-lg flex-none"
+              style={{ background: "rgba(255,255,255,0.08)", color: "#A1A1A3", border: "1px solid rgba(255,255,255,0.12)" }}
+              onClick={() => { clearResume(); setResume(null); }}
+            >
+              Limpiar
+            </button>
           </div>
-          <button
-            className="text-xs font-bold px-3 py-1.5 rounded-lg"
-            style={{ background: "#D4007A", color: "#fff" }}
-            onClick={() => { clearResume(); setResume(null); }}
-          >
-            Limpiar
-          </button>
+          {/* Mini progress bar */}
+          <div className="w-full rounded-full overflow-hidden" style={{ height: 3, background: "rgba(255,255,255,0.08)" }}>
+            <div
+              style={{
+                width: `${Math.round((resume.bytesUploaded / resume.fileSize) * 100)}%`,
+                height: "100%",
+                background: "#D4007A",
+              }}
+            />
+          </div>
         </div>
       )}
 
@@ -428,7 +477,7 @@ export default function UploadVideoModal({
         />
       </div>
 
-      {/* One-liner — REQUIRED so the AI has something to work with */}
+      {/* One-liner */}
       {file && (
         <div>
           <label className="block text-xs font-semibold text-white/60 mb-1.5">
@@ -465,10 +514,14 @@ export default function UploadVideoModal({
         className="w-full py-3.5 rounded-xl text-sm font-bold transition-opacity disabled:opacity-30"
         style={{ background: "linear-gradient(90deg,#D4007A,#7B61FF)", color: "#fff" }}
       >
-        {overQuota ? "Sin espacio · No storage" : "Subir a Mux →"}
+        {overQuota
+          ? "Sin espacio · No storage"
+          : isSameFileAsResume
+          ? "Retomar subida →"
+          : "Subir a Mux →"}
       </button>
       <p className="text-center text-xs text-white/30">
-        Tu video va directo a Mux — sin pasar por nuestros servidores
+        Sube directo a Mux en chunks de 50 MB — reanudable si se corta
       </p>
     </div>
   );
@@ -505,7 +558,7 @@ export default function UploadVideoModal({
         <div className="flex justify-between text-xs text-white/50 mb-1.5">
           <span>
             {retryCount > 0
-              ? `Reintentando… (${retryCount}/3)`
+              ? `Reintentando chunk… (${retryCount}/5)`
               : "Subiendo a Mux…"}
           </span>
           <span style={{ color: retryCount > 0 ? "#FFB454" : undefined }}>{uploadPct}%</span>
@@ -528,6 +581,9 @@ export default function UploadVideoModal({
             {uploadEta !== null && uploadSpeed > 0 && ` · ${fmtEta(uploadEta)}`}
           </span>
         </div>
+        <p className="text-[10px] text-white/25 mt-1">
+          Chunks de 50 MB · se reanuda automáticamente si se corta
+        </p>
       </div>
 
       {aiLoading && (
@@ -538,7 +594,7 @@ export default function UploadVideoModal({
       )}
 
       <button
-        onClick={() => { xhrRef.current?.abort(); clearResume(); setRetryCount(0); setStep("pick"); }}
+        onClick={() => { tusRef.current?.abort().catch(() => {}); clearResume(); setRetryCount(0); setStep("pick"); }}
         className="text-xs text-white/30 underline decoration-dotted hover:text-white/60"
       >
         Cancelar subida
