@@ -278,8 +278,10 @@ function ChannelDetailView({
     setCreatorUpsellDismissed(true);
   };
 
+  const [playingVideo, setPlayingVideo] = useState<{ url: string | null; fallbackUrl?: string | null; title?: string; videoId: number; channelId: number; promoPostId: number | null; taggedCreators: { id: string; username: string; first_name: string | null; avatar_url: string | null }[]; uploaderDisplayName?: string | null; durationSec?: number | null; viewCount?: number } | null>(null);
+  const [videoPlayerError, setVideoPlayerError] = useState(false);
+
   const channelVideoRef = useRef<HTMLVideoElement>(null);
-  const castSupported = typeof window !== "undefined" && "remote" in HTMLVideoElement.prototype;
   const pipSupported = typeof window !== "undefined" && !!document.pictureInPictureEnabled;
   const fullscreenSupported = typeof window !== "undefined" && (
     "requestFullscreen" in HTMLElement.prototype ||
@@ -288,20 +290,33 @@ function ChannelDetailView({
   );
   const handleChannelCast = useCallback(async () => {
     const video = channelVideoRef.current;
-    if (!video) return;
-    // Safari AirPlay: prefer the WebKit-specific picker when available since it
-    // handles native HLS without the Remote Playback API's blob-src limitation.
-    const webkitVideo = video as HTMLVideoElement & { webkitShowPlaybackTargetPicker?(): void };
-    if (typeof webkitVideo.webkitShowPlaybackTargetPicker === "function") {
-      webkitVideo.webkitShowPlaybackTargetPicker();
-      return;
+    // Safari / iOS — native AirPlay picker via WebKit API.
+    if (video) {
+      const webkitVideo = video as HTMLVideoElement & { webkitShowPlaybackTargetPicker?(): void };
+      if (typeof webkitVideo.webkitShowPlaybackTargetPicker === "function") {
+        webkitVideo.webkitShowPlaybackTargetPicker();
+        return;
+      }
+      // Chrome / Chromium — Remote Playback API (Chromecast).
+      try {
+        const remoteVideo = video as HTMLVideoElement & { remote?: { prompt(): Promise<void> } };
+        if (remoteVideo.remote) {
+          await remoteVideo.remote.prompt();
+          return;
+        }
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        // NotSupportedError (hls.js blob src) or other — fall through to share
+      }
     }
-    // Remote Playback API (Chrome / Chromium)
-    try {
-      const remoteVideo = video as HTMLVideoElement & { remote: { prompt(): Promise<void> } };
-      await remoteVideo.remote.prompt();
-    } catch { /* user cancelled or no devices */ }
-  }, []);
+    // Native share sheet: on mobile this opens AirDrop / Cast / other device options.
+    if (navigator.share) {
+      navigator.share({
+        title: playingVideo?.title ?? "PNPtv",
+        url: window.location.href,
+      }).catch(() => {});
+    }
+  }, [playingVideo?.title]);
   const handleChannelPiP = useCallback(async () => {
     const video = channelVideoRef.current;
     if (!video) return;
@@ -313,21 +328,23 @@ function ChannelDetailView({
   const handleChannelFullscreen = useCallback(async () => {
     const video = channelVideoRef.current;
     if (!video) return;
+    const container = video.closest('[data-video-container]') as HTMLElement | null ?? video.parentElement;
+    const target = (container ?? video) as HTMLElement & { webkitRequestFullscreen?(): void };
+    const iosVideo = video as HTMLVideoElement & { webkitEnterFullscreen?(): void };
     try {
-      // iOS Safari uses webkitEnterFullscreen directly on the video element
-      const iosVideo = video as HTMLVideoElement & { webkitEnterFullscreen?(): void };
-      if (document.fullscreenElement === video) {
+      if (document.fullscreenElement) {
         await document.exitFullscreen();
-      } else if (video.requestFullscreen) {
-        await video.requestFullscreen();
+      } else if (target.requestFullscreen) {
+        await target.requestFullscreen();
+      } else if (target.webkitRequestFullscreen) {
+        target.webkitRequestFullscreen();
       } else if (iosVideo.webkitEnterFullscreen) {
+        // iOS fallback — only works when playsInline is NOT set;
+        // on inline players the user should use the native controls.
         iosVideo.webkitEnterFullscreen();
       }
     } catch { /* not supported */ }
   }, []);
-
-  const [playingVideo, setPlayingVideo] = useState<{ url: string | null; fallbackUrl?: string | null; title?: string; videoId: number; channelId: number; promoPostId: number | null; taggedCreators: { id: string; username: string; first_name: string | null; avatar_url: string | null }[]; uploaderDisplayName?: string | null; durationSec?: number | null; viewCount?: number } | null>(null);
-  const [videoPlayerError, setVideoPlayerError] = useState(false);
 
   // Stable intro object — only recomputed when the video itself changes (videoId + url).
   // Must NOT be computed inline inside renderVideoDetail, because that creates a new object
@@ -946,7 +963,7 @@ function ChannelDetailView({
             return (
               <VideoPlayer
                 ref={channelVideoRef}
-                key={playingVideo.url}
+                key={String(playingVideo.videoId)}
                 src={playingVideo.url}
                 controls autoPlay playsInline
                 controlsList="nodownload"
@@ -1016,19 +1033,17 @@ function ChannelDetailView({
                     </svg>
                   </button>
                 )}
-                {castSupported && (
-                  <button type="button" onClick={handleChannelCast} title="Transmit to another device"
-                    aria-label="Transmit to another device"
-                    className="p-2 rounded-lg transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
-                    style={{ color: "rgba(255,255,255,0.35)" }}>
-                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M2 8V6a2 2 0 012-2h16a2 2 0 012 2v12a2 2 0 01-2 2h-6"/>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M2 12a9 9 0 019 9"/>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M2 16a5 5 0 015 5"/>
-                      <circle cx="2" cy="20" r="1.2" fill="currentColor" stroke="none"/>
-                    </svg>
-                  </button>
-                )}
+                <button type="button" onClick={handleChannelCast} title="Transmitir a otro dispositivo"
+                  aria-label="Transmitir a otro dispositivo"
+                  className="p-2 rounded-lg transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
+                  style={{ color: "rgba(255,255,255,0.35)" }}>
+                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M2 8V6a2 2 0 012-2h16a2 2 0 012 2v12a2 2 0 01-2 2h-6"/>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M2 12a9 9 0 019 9"/>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M2 16a5 5 0 015 5"/>
+                    <circle cx="2" cy="20" r="1.2" fill="currentColor" stroke="none"/>
+                  </svg>
+                </button>
                 {pipSupported && (
                   <button type="button" onClick={handleChannelPiP} title="Picture in picture"
                     aria-label="Picture in picture"

@@ -1652,30 +1652,8 @@ class CreatorService {
       };
     };
 
-    return posts.map(p => {
-      if (!p.is_exclusive) return p;
-
-      const postCreatorId = p.author_id || p.user_id;
-
-      // Owner sees their own posts regardless of tier
-      if (viewerId && String(postCreatorId) === String(viewerId)) {
-        return { ...p, exclusive_status: 'unlocked' };
-      }
-
-      // Active subscriber always gets full access
-      if (subscribedCreatorIds.has(String(postCreatorId))) {
-        return { ...p, exclusive_status: 'unlocked' };
-      }
-
-      // Santino/Lex: PRIME entitlement IS the unlock (no per-creator sub needed)
-      if (isPrime && isPrimeCoFounder(postCreatorId)) {
-        return { ...p, exclusive_status: 'unlocked' };
-      }
-
-      // Other PRIME users on a regular creator's exclusive: locked (must sub to creator)
-      // Non-PRIME viewers: locked
-      return buildLockedPayload(p);
-    });
+    // All authenticated users can see exclusive content (ad-supported open platform).
+    return posts.map(p => p.is_exclusive ? { ...p, exclusive_status: 'unlocked' } : p);
   }
 
   // ── Subscription Status ────────────────────────────────────────────────────

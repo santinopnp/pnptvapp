@@ -735,24 +735,8 @@ const freeViewerToken = asyncHandler(async (req, res) => {
     });
   }
 
-  // ── Path 2: scheduled gate window ───────────────────────────────────────
-  const gateState = await mainStageGateService.getState();
-  if (!gateState.enabled || !gateState.isOpen) {
-    return res.status(403).json({
-      success: false,
-      code: 'MAIN_STAGE_GATED',
-      error: gateState.enabled ? 'Main Stage is closed right now.' : 'Free-tier access is disabled.',
-      gateState: {
-        enabled: gateState.enabled,
-        isOpen: gateState.isOpen,
-        nextOpenAt: gateState.nextOpenAt,
-        currentCloseAt: gateState.currentCloseAt,
-        windows: gateState.windows,
-      },
-    });
-  }
-
-  const ttlSeconds = await mainStageGateService.freeViewerTokenTtlSec();
+  // ── Path 2: always open — gate windows removed, free users can watch anytime ──
+  const ttlSeconds = 3 * 60 * 60; // 3h token for free viewers
   const viewerId   = `free_${crypto.randomBytes(6).toString('hex')}`;
   const lkToken    = await livekitService.generateToken(
     ROOM_NAME,

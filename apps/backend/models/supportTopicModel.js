@@ -94,16 +94,23 @@ class SupportTopicModel {
    * @returns {Promise<Object>} Created topic data
    */
   static async create({ userId, threadId, threadName }) {
-    const query = `
-      INSERT INTO support_topics (user_id, thread_id, thread_name, message_count)
-      VALUES ($1, $2, $3, 1)
-      RETURNING *
-    `;
-
     try {
-      const result = await getPool().query(query, [userId, threadId, threadName]);
-      logger.info('Support topic created', { userId, threadId, threadName });
-      return result.rows[0];
+      const result = await getPool().query(`
+        INSERT INTO support_topics (user_id, thread_id, thread_name, message_count)
+        VALUES ($1, $2, $3, 1)
+        ON CONFLICT (user_id) DO NOTHING
+        RETURNING *
+      `, [userId, threadId, threadName]);
+
+      if (result.rows[0]) {
+        logger.info('Support topic created', { userId, threadId, threadName });
+        return result.rows[0];
+      }
+
+      // Conflict: another concurrent request already inserted — return existing row
+      const existing = await getPool().query('SELECT * FROM support_topics WHERE user_id = $1', [userId]);
+      logger.info('Support topic already exists, returning existing', { userId });
+      return existing.rows[0];
     } catch (error) {
       logger.error('Error creating support topic:', error);
       throw error;

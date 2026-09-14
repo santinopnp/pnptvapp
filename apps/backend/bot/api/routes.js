@@ -23110,8 +23110,7 @@ const mainStageStateLimiter = rateLimit({
 });
 app.get('/api/main-stage/state', mainStageStateLimiter, mainStageController.getState);
 
-// Viewer token — signed-in Basic/PRIME/admin only. IP-rate-limited (5/min) to prevent
-// identity flood + entitlement gate so free tier can't watch Main Stage for free.
+// Viewer token — any signed-in user (free tier included). IP-rate-limited (5/min).
 const mainStageViewerTokenLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 5,
@@ -23125,7 +23124,6 @@ app.get(
   '/api/main-stage/viewer-token',
   mainStageViewerTokenLimiter,
   requireSessionAuth,
-  requireMemberTier,
   mainStageController.viewerToken,
 );
 

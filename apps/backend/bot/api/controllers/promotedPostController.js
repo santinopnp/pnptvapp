@@ -42,7 +42,7 @@ async function syncPromotedPosts() {
         limit: 100,
       },
       headers: { Authorization: `Bearer ${DIRECTUS_TOKEN}` },
-      timeout: 10000,
+      timeout: 30000,
     });
 
     const items = res.data?.data || [];

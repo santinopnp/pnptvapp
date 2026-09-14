@@ -134,7 +134,6 @@ const getFeed = async (req, res) => {
     const isAdmin = user.role === 'admin' || user.role === 'superadmin' || EntitlementAccessService.isSuperGod(user.id);
     const viewerTier = await validateTierFresh(user.id, user.tier || 'free');
     if (viewerTier !== (user.tier || 'free').toLowerCase()) req.session.user.tier = viewerTier;
-    const isFreeUser = !isAdmin && viewerTier === 'free';
     // Fetch the viewer's blocked list from DB to exclude their posts (C-08)
     const blockedRes = await dbQuery('SELECT blocked FROM users WHERE id = $1', [user.id]);
     const blockedIds = (blockedRes.rows[0]?.blocked || []).map(Number);
@@ -143,13 +142,12 @@ const getFeed = async (req, res) => {
     const result = await SocialPostService.getFeedFiltered({
       userId: user.id,
       filter,
-      cursor: isFreeUser ? undefined : req.query.cursor,
-      limit: isFreeUser ? FREE_FEED_LIMIT : req.query.limit,
+      cursor: req.query.cursor,
+      limit: req.query.limit,
       viewerTier, isAdmin, blockedIds,
       viewerGeoTags: req.viewerGeoTags || [],
     });
-    if (isFreeUser) result.nextCursor = null;
-    return res.json({ success: true, freeUserLimited: isFreeUser, filter, ...result });
+    return res.json({ success: true, freeUserLimited: false, filter, ...result });
   } catch (err) {
     logger.error('getFeed error', err);
     return res.status(500).json({ error: 'Failed to load feed' });
@@ -2139,7 +2137,9 @@ const getPost = async (req, res) => {
     if (viewerId && viewerTier !== (req.session?.user?.tier || 'free').toLowerCase()) {
       req.session.user.tier = viewerTier;
     }
-    const viewerHasAccess = viewerIsAdmin || isAuthor || viewerTier === 'prime';
+    // All authenticated users can see exclusive posts (ad-supported open platform).
+    // Unauthenticated viewers are still locked — they must sign up first.
+    const viewerHasAccess = viewerIsAdmin || isAuthor || viewerId !== null;
     let contentLocked = isExclusivePost && !viewerHasAccess;
     // Track why we locked so the frontend can show the right upsell.
     // 'not_prime' → viewer isn't PRIME; 'not_subscribed' → viewer is PRIME but lacks the per-creator subscription.

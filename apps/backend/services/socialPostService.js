@@ -752,87 +752,9 @@ class SocialPostService {
    * @param {string}  viewerTier  - Viewer's subscription tier string
    * @param {boolean} isAdmin     - When true, bypass all tier blurring (H-08 fix)
    */
-  static _applyContentTierBlur(posts, viewerTier, isAdmin = false) {
-    // Admins can see all content regardless of tier (H-08: tier string never equals 'admin')
-    if (isAdmin) {
-      return posts.map(post => ({ ...post, content_locked: false }));
-    }
-
-    const normalizedViewer = (viewerTier || 'free').toLowerCase();
-    // Determine which content tiers the viewer can see in full
-    const allowedTiers = new Set(['free']);
-    if (normalizedViewer === 'member') {
-      allowedTiers.add('member');
-    } else if (normalizedViewer === 'prime') {
-      allowedTiers.add('member');
-      allowedTiers.add('prime');
-      allowedTiers.add('PRIME');
-    }
-
-    return posts.map(post => {
-      // filterFeedExclusivePosts runs first for exclusive posts and either
-      // unlocks or produces an enriched paywall payload (preview_gif_url,
-      // plan_slug, unlock_target, creator_channel_url). Do NOT reprocess those
-      // rows or we wipe the fields the paywall UI depends on.
-      if (post.exclusive_status === 'locked' || post.exclusive_status === 'unlocked') {
-        return post;
-      }
-      const postTier = (post.content_tier || 'free').toLowerCase();
-      const isAllowed = allowedTiers.has(post.content_tier) || allowedTiers.has(postTier);
-      if (isAllowed) {
-        // channel_promo hype posts are content_tier='free' by design (teaser is
-        // public), but metadata.video_url / metadata.video_directus_id point at
-        // the raw CDN asset for the gated video. Redact those fields when the
-        // viewer isn't entitled — otherwise a determined user can inspect the
-        // DOM and open the URL directly, bypassing the UI gate.
-        const meta = typeof post.metadata === 'string'
-          ? (() => { try { return JSON.parse(post.metadata); } catch { return null; } })()
-          : post.metadata;
-        if (meta && meta.kind === 'channel_promo') {
-          const accessType = (meta.access_type || 'free').toLowerCase();
-          let redact = false;
-          if (accessType === 'prime' && normalizedViewer !== 'prime') redact = true;
-          // sub/paid: we don't resolve per-channel entitlement here (would need
-          // an async DB round-trip per post). Redact by default — entitled
-          // viewers still play the video from the channel page itself.
-          if (accessType === 'subscription' || accessType === 'paid') redact = true;
-          if (redact) {
-            const safeMeta = { ...meta, video_url: '', video_directus_id: '' };
-            return {
-              ...post,
-              content_locked: false,
-              metadata: safeMeta,
-            };
-          }
-        }
-        return { ...post, content_locked: false };
-      }
-      // Blur: keep metadata, null out content and media, set content_locked flag
-      return {
-        id: post.id,
-        author_id: post.author_id,
-        author_username: post.author_username,
-        author_first_name: post.author_first_name,
-        author_photo: post.author_photo,
-        created_at: post.created_at,
-        likes_count: post.likes_count,
-        reposts_count: post.reposts_count,
-        replies_count: post.replies_count,
-        content_tier: post.content_tier,
-        reply_to_id: post.reply_to_id,
-        repost_of_id: post.repost_of_id,
-        is_wof: post.is_wof,
-        liked_by_me: post.liked_by_me,
-        is_exclusive: post.is_exclusive,
-        blurred: true,
-        content_locked: true,
-        content: null,
-        media_url: null,
-        media_type: null,
-        media_urls: null,
-        video_thumbnail_url: null,
-      };
-    });
+  static _applyContentTierBlur(posts) {
+    // All content is open — ad-supported platform. No tier blur.
+    return posts.map(post => ({ ...post, content_locked: false }));
   }
 
   /**
@@ -1027,21 +949,6 @@ class SocialPostService {
        LEFT JOIN users ru ON rp.user_id = ru.id
        WHERE sp.is_deleted = false
          AND sp.reply_to_id IS NULL
-         AND sp.is_exclusive = false
-         -- Defensive: home dashboard preview is unauthenticated and applies
-         -- no per-viewer tier blur, so we hard-filter any post whose
-         -- content_tier is gated. is_exclusive should already cover this on
-         -- properly-authored posts, but a missing/forgotten is_exclusive flag
-         -- on a PRIME-tier post would otherwise leak unblurred to free
-         -- viewers. See 2026-05-01 backfill.
-         AND COALESCE(sp.content_tier, 'free') = 'free'
-         -- Same reasoning for paywalled channels: unauthenticated preview
-         -- cannot resolve entitlements, so drop any post that belongs to a
-         -- prime/paid/subscription channel.
-         AND (
-           sp.channel_id IS NULL
-           OR sp.channel_id IN (SELECT id FROM creator_channels WHERE access_type IS NULL OR access_type = 'free')
-         )
        ORDER BY sp.id DESC
        LIMIT $1`,
       [lim]
@@ -1558,18 +1465,15 @@ class SocialPostService {
   // post row for fast read-time boost application; the true source of truth
   // is `SELECT SUM(weight) FROM post_hypes WHERE post_id=$1 AND expires_at>NOW()`.
   static async toggleHype(postId, userId) {
-    // Reject hyping deleted posts, exclusive posts (paywall bypass surface),
-    // or posts whose author has disabled sharing.
+    // Reject hyping deleted posts or posts whose author has disabled sharing.
+    // Exclusive/prime content can be hyped — hype promotes a reference, it doesn't
+    // expose the gated content itself (access control on playback is unchanged).
     const { rows: chk } = await query(
-      `SELECT user_id, is_deleted, is_exclusive, is_shareable, COALESCE(content_tier,'free') AS content_tier
-         FROM social_posts WHERE id=$1`,
+      `SELECT user_id, is_deleted, is_shareable FROM social_posts WHERE id=$1`,
       [postId]
     );
     if (!chk[0] || chk[0].is_deleted) {
       const err = new Error('Post not found'); err.code = 'POST_NOT_FOUND'; err.status = 404; throw err;
-    }
-    if (chk[0].is_exclusive || String(chk[0].content_tier).toLowerCase() === 'prime') {
-      const err = new Error('Cannot hype exclusive content'); err.code = 'EXCLUSIVE'; err.status = 403; throw err;
     }
     if (chk[0].is_shareable === false) {
       const err = new Error('Author disabled hype for this post'); err.code = 'NOT_SHAREABLE'; err.status = 403; throw err;
