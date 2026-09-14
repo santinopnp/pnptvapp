@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useI18n } from "@/lib/i18n";
 import { submitCreatorEnrollment } from "@/lib/api";
 import { SignaturePad } from "@/components/SignaturePad";
-import { useWallets } from "@privy-io/react-auth";
+import { useWallets, useCreateWallet } from "@privy-io/react-auth";
 
 // ── Tier constants (shared with MonetizeContentCard) ──────────────────────────
 
@@ -246,10 +246,12 @@ export default function CreatorEnrollmentWizard({
   // Address is auto-filled from Privy on mount; creator can switch to another
   // network/currency if they prefer a different destination.
   const { wallets } = useWallets();
+  const { createWallet } = useCreateWallet();
   const embeddedWallet = wallets.find((w) => w.walletClientType === "privy") || null;
   const [paymentMethod, setPaymentMethod] = useState<string>("privy_wallet");
   const [paymentAddress, setPaymentAddress] = useState("");
   const [paymentNetwork, setPaymentNetwork] = useState("privy_wallet");
+  const [creatingWallet, setCreatingWallet] = useState(false);
 
   // Pre-fill address from Privy embedded wallet whenever it becomes available.
   useEffect(() => {
@@ -257,6 +259,15 @@ export default function CreatorEnrollmentWizard({
       setPaymentAddress(embeddedWallet.address);
     }
   }, [embeddedWallet?.address]);
+
+  const handleCreateWallet = async () => {
+    setCreatingWallet(true);
+    try {
+      const created = await createWallet();
+      if (created?.address) setPaymentAddress(created.address);
+    } catch { /* user cancelled or already has wallet */ }
+    finally { setCreatingWallet(false); }
+  };
 
   // Step 4 state (ID + 2257 fields + signature)
   const [idFile, setIdFile] = useState<File | null>(null);
@@ -716,13 +727,28 @@ export default function CreatorEnrollmentWizard({
                     {canProceedStep3
                       ? (i18n.lang === 'es' ? "✓ Listo para continuar" : "✓ Ready to continue")
                       : isPrivyWallet
-                        ? (i18n.lang === 'es' ? "Crea o conecta tu billetera PNPtv primero" : "Create or connect your PNPtv wallet first")
+                        ? (i18n.lang === 'es' ? "Crea tu billetera PNPtv para continuar" : "Create your PNPtv wallet to continue")
                         : (i18n.lang === 'es'
                             ? `Mínimo ${paymentMinLength} caracteres`
                             : `Minimum ${paymentMinLength} characters required`)}
                   </span>
                   {!isPrivyWallet && <span>{paymentAddress.trim().length}/{paymentMinLength}</span>}
                 </div>
+
+                {/* Create wallet CTA — shown when privy_wallet is selected but no embedded wallet exists yet */}
+                {isPrivyWallet && !embeddedWallet && (
+                  <button
+                    type="button"
+                    onClick={handleCreateWallet}
+                    disabled={creatingWallet}
+                    className="w-full mt-2 rounded-xl py-3 text-sm font-semibold text-black transition-opacity"
+                    style={{ background: "linear-gradient(135deg, #5ED1C4, #00D4E8)", opacity: creatingWallet ? 0.6 : 1 }}
+                  >
+                    {creatingWallet
+                      ? (i18n.lang === 'es' ? "Creando billetera…" : "Creating wallet…")
+                      : (i18n.lang === 'es' ? "💎 Crear mi billetera PNPtv" : "💎 Create my PNPtv wallet")}
+                  </button>
+                )}
               </div>
             </>
           )}
