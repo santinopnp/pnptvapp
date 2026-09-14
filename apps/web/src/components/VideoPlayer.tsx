@@ -102,24 +102,29 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
     const [videoDims, setVideoDims] = useState<{ w: number; h: number } | null>(null);
     const [playbackError, setPlaybackError] = useState<string | null>(null);
 
-    // Lock orientation to landscape on fullscreen, unlock on exit
+    const [orientationLocked, setOrientationLocked] = useState(false);
+    const orientationSupported = typeof window !== "undefined" &&
+      typeof (screen.orientation as ScreenOrientation & { lock?(o: string): Promise<void> }).lock === "function";
+
+    const handleOrientationToggle = useCallback(async () => {
+      const api = screen.orientation as ScreenOrientation & { lock?(o: string): Promise<void> };
+      if (orientationLocked) {
+        try { api.unlock(); } catch { /* not supported */ }
+        setOrientationLocked(false);
+      } else {
+        try {
+          await api.lock?.("landscape");
+          setOrientationLocked(true);
+        } catch { /* denied or not supported */ }
+      }
+    }, [orientationLocked]);
+
+    // Unlock orientation when component unmounts
     useEffect(() => {
-      const onFsChange = () => {
-        const fsEl = document.fullscreenElement ?? (document as Document & { webkitFullscreenElement?: Element }).webkitFullscreenElement;
-        if (fsEl && containerRef.current && (fsEl === containerRef.current || containerRef.current.contains(fsEl))) {
-          (screen.orientation as ScreenOrientation & { lock?(o: string): Promise<void> })
-            .lock?.("landscape")
-            .catch(() => {});
-        } else {
-          try { screen.orientation.unlock(); } catch { /* not supported */ }
-        }
-      };
-      document.addEventListener("fullscreenchange", onFsChange);
-      document.addEventListener("webkitfullscreenchange", onFsChange);
       return () => {
-        document.removeEventListener("fullscreenchange", onFsChange);
-        document.removeEventListener("webkitfullscreenchange", onFsChange);
-        try { screen.orientation.unlock(); } catch { /* not supported */ }
+        try {
+          (screen.orientation as ScreenOrientation & { lock?(o: string): Promise<void> }).unlock?.();
+        } catch { /* not supported */ }
       };
     }, []);
 
@@ -496,8 +501,27 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
         {/* Cast / PiP controls — top-right, only when video is active.
             Suppressed via hideOverlayControls when the parent renders them
             outside the video element (avoids iOS native-controls z-conflict). */}
-        {!hideOverlayControls && showOverlayControls && (castSupported || pipSupported) && (
+        {!hideOverlayControls && showOverlayControls && (castSupported || pipSupported || orientationSupported) && (
           <div className="absolute top-2 right-2 z-[15] flex items-center gap-1">
+            {orientationSupported && (
+              <button
+                type="button"
+                onClick={handleOrientationToggle}
+                title={orientationLocked ? "Unlock rotation" : "Lock landscape"}
+                aria-label={orientationLocked ? "Unlock rotation" : "Lock landscape"}
+                className={`w-8 h-8 flex items-center justify-center rounded-full transition-colors ${orientationLocked ? "text-white bg-white/20" : "text-white/70 hover:text-white"}`}
+                style={{ background: orientationLocked ? "rgba(255,255,255,0.18)" : "rgba(0,0,0,0.52)", backdropFilter: "blur(6px)" }}
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                  {/* Phone frame */}
+                  <rect x="7" y="2" width="10" height="16" rx="2" />
+                  {/* Rotation arrow around phone */}
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 12a8 8 0 0 0 13.66 5.66" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M20 12a8 8 0 0 0-13.66-5.66" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M20 8v4h-4" />
+                </svg>
+              </button>
+            )}
             {castSupported && (
               <button
                 type="button"
