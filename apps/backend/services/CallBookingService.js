@@ -275,8 +275,8 @@ class CallBookingService {
       const bookingResult = await client.query(
         `SELECT b.*,
                 p.user_id AS creator_user_id,
-                u_member.display_name  AS member_display_name,
-                u_creator.display_name AS creator_display_name,
+                TRIM(u_member.first_name  || ' ' || COALESCE(u_member.last_name,  '')) AS member_display_name,
+                TRIM(u_creator.first_name || ' ' || COALESCE(u_creator.last_name, '')) AS creator_display_name,
                 u_member.username      AS member_username,
                 u_creator.username     AS creator_username
          FROM bookings b
