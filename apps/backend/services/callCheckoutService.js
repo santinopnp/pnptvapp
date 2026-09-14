@@ -223,6 +223,7 @@ async function onCallPaymentSuccess(paymentId) {
   // transaction so there is no SELECT-then-INSERT race window.
   const pool = getPool();
   const client = await pool.connect();
+  let resultBookingId = null; // hoisted so we can return it after finally
   try {
     await client.query('BEGIN');
 
@@ -356,6 +357,7 @@ async function onCallPaymentSuccess(paymentId) {
     });
 
     await client.query('COMMIT');
+    resultBookingId = confirmedBookingId;
 
     logger.info('[callCheckoutService] call credits granted after payment', {
       paymentId,
@@ -606,6 +608,7 @@ async function onCallPaymentSuccess(paymentId) {
   } finally {
     client.release();
   }
+  return { bookingId: resultBookingId };
 }
 
 // ---------------------------------------------------------------------------

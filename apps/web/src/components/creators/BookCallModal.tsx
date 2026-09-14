@@ -229,6 +229,11 @@ export function BookCallModal({
   const firstFocusRef = useRef<HTMLButtonElement>(null);
   const checkoutInFlight = useRef(false);
   const modalRef = useRef<HTMLDivElement>(null);
+  // Prevents the reset effect from re-firing while the modal is open.
+  // Both Profile and CreatorProfilePage pass inline object literals for `creator`,
+  // so every parent re-render creates a new reference and would reset the step
+  // mid-flow without this guard.
+  const openInitializedRef = useRef(false);
 
   // ── Derived ─────────────────────────────────────────────────────────────────
 
@@ -254,7 +259,15 @@ export function BookCallModal({
 
   // ── Reset on open / cleanup on close ────────────────────────────────────────
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      openInitializedRef.current = false;
+      return;
+    }
+    // Only initialize once per open session. Without this guard, every parent
+    // re-render that passes a new inline `creator` object would reset the step
+    // back to SELECT_SLOT mid-flow (the "loop" bug).
+    if (openInitializedRef.current) return;
+    openInitializedRef.current = true;
 
     const initStep: Step = !initialCreator.id
       ? "SELECT_MODEL"
@@ -559,6 +572,7 @@ export function BookCallModal({
         }
         if (tokenRes.newBalance !== undefined) setTokenBalance(tokenRes.newBalance);
         if (selectedSlot?.startUtc) setConfirmedStartAt(selectedSlot.startUtc);
+        if (tokenRes.bookingId) setConfirmedBookingId(tokenRes.bookingId);
         setStep("SUCCESS");
         return;
       }
@@ -1274,8 +1288,9 @@ export function BookCallModal({
               metadata={{ source: "book_call_modal" }}
               label={t.lang === "es" ? `Pagar $${effectivePriceUsd.toFixed(2)}` : `Pay $${effectivePriceUsd.toFixed(2)}`}
               lang={t.lang as "es" | "en"}
-              onSuccess={() => {
+              onSuccess={({ bookingId }) => {
                 setConfirmedStartAt(selectedSlot?.startUtc ?? null);
+                if (bookingId) setConfirmedBookingId(bookingId);
                 setStep("SUCCESS");
               }}
             />

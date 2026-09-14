@@ -13637,14 +13637,14 @@ app.post('/api/wallet/pay-call', walletSpendLimiter, requireSessionAuth, asyncHa
   // orphan payment with no credits.
   try {
     const CallCheckoutSvc = require('../../services/callCheckoutService');
-    await CallCheckoutSvc.onCallPaymentSuccess(paymentId);
+    const callResult = await CallCheckoutSvc.onCallPaymentSuccess(paymentId);
     const { cache } = require('../../config/redis');
     await Promise.all([
       cache.del(`wallet:${memberId}`).catch(() => {}),
       cache.del(`wallet:obj:${memberId}`).catch(() => {}),
     ]);
     logger.info('[wallet/pay-call] Tokens call credits granted', { memberId, packageId: pkg.id, tokenCost, newBalance });
-    return res.json({ success: true, newBalance, packageId: pkg.id, priceUsd, paymentId });
+    return res.json({ success: true, newBalance, packageId: pkg.id, priceUsd, paymentId, bookingId: callResult?.bookingId ?? null });
   } catch (callErr) {
     let refundedBalance = null;
     try {

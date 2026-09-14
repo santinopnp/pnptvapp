@@ -1108,7 +1108,7 @@ export function payCreatorSubWithTokens(creatorId: string): Promise<{ success: b
   return request("/api/wallet/pay-creator-sub", { method: "POST", body: { creatorId } });
 }
 
-export function payCallWithTokens(packageId: number, opts?: { startTimeUtc?: string; endTimeUtc?: string; clientNotes?: string }): Promise<{ success: boolean; newBalance: number; packageId?: number; priceUsd?: number; paymentId?: string; error?: string; code?: string; required?: number; current?: number }> {
+export function payCallWithTokens(packageId: number, opts?: { startTimeUtc?: string; endTimeUtc?: string; clientNotes?: string }): Promise<{ success: boolean; newBalance: number; packageId?: number; priceUsd?: number; paymentId?: string; bookingId?: string | null; error?: string; code?: string; required?: number; current?: number }> {
   return request("/api/wallet/pay-call", { method: "POST", body: { packageId, ...opts } });
 }
 

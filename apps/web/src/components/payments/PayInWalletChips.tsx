@@ -340,7 +340,7 @@ export interface WalletPayCardProps {
   label?: string;
   /** Called after Ru$h/entitlement credit lands. Receives the response so
       caller can navigate or toast as needed. */
-  onSuccess?: (result: { intentId: number; rushCredited?: number; entitlementId?: number | null }) => void;
+  onSuccess?: (result: { intentId: number; rushCredited?: number; entitlementId?: number | null; bookingId?: string | null }) => void;
   onError?: (err: unknown) => void;
   lang?: "es" | "en";
   compact?: boolean;
@@ -582,6 +582,7 @@ export function WalletPayCard({
         intentId: intent.intentId,
         rushCredited: verified.rushCredited,
         entitlementId: verified.entitlementId,
+        bookingId: (verified as { bookingId?: string | null }).bookingId ?? null,
       });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);

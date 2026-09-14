@@ -611,7 +611,13 @@ async function verifyAndFulfillUsdc(opts) {
       entitlementId, rushCredited: fulfillment.rushCredited || 0, txHash,
     });
 
-    return { ok: true, intentId: intent.id, entitlementId, rushCredited: fulfillment.rushCredited || 0 };
+    return {
+      ok: true,
+      intentId: intent.id,
+      entitlementId,
+      rushCredited: fulfillment.rushCredited || 0,
+      bookingId: fulfillment.bookingId ?? null,
+    };
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     if (intentIdForFallback) {
