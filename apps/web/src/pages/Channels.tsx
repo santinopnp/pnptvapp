@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Helmet } from "react-helmet-async";
 import { Button } from "@pnptv/ui-kit";
@@ -281,11 +281,25 @@ function ChannelDetailView({
   const channelVideoRef = useRef<HTMLVideoElement>(null);
   const castSupported = typeof window !== "undefined" && "remote" in HTMLVideoElement.prototype;
   const pipSupported = typeof window !== "undefined" && !!document.pictureInPictureEnabled;
+  const fullscreenSupported = typeof window !== "undefined" && (
+    "requestFullscreen" in HTMLElement.prototype ||
+    "webkitRequestFullscreen" in HTMLElement.prototype ||
+    "webkitEnterFullscreen" in HTMLVideoElement.prototype
+  );
   const handleChannelCast = useCallback(async () => {
     const video = channelVideoRef.current;
     if (!video) return;
+    // Safari AirPlay: prefer the WebKit-specific picker when available since it
+    // handles native HLS without the Remote Playback API's blob-src limitation.
+    const webkitVideo = video as HTMLVideoElement & { webkitShowPlaybackTargetPicker?(): void };
+    if (typeof webkitVideo.webkitShowPlaybackTargetPicker === "function") {
+      webkitVideo.webkitShowPlaybackTargetPicker();
+      return;
+    }
+    // Remote Playback API (Chrome / Chromium)
     try {
-      await (video as HTMLVideoElement & { remote: { prompt(): Promise<void> } }).remote.prompt();
+      const remoteVideo = video as HTMLVideoElement & { remote: { prompt(): Promise<void> } };
+      await remoteVideo.remote.prompt();
     } catch { /* user cancelled or no devices */ }
   }, []);
   const handleChannelPiP = useCallback(async () => {
@@ -296,9 +310,40 @@ function ChannelDetailView({
       else await video.requestPictureInPicture();
     } catch { /* not supported */ }
   }, []);
+  const handleChannelFullscreen = useCallback(async () => {
+    const video = channelVideoRef.current;
+    if (!video) return;
+    try {
+      // iOS Safari uses webkitEnterFullscreen directly on the video element
+      const iosVideo = video as HTMLVideoElement & { webkitEnterFullscreen?(): void };
+      if (document.fullscreenElement === video) {
+        await document.exitFullscreen();
+      } else if (video.requestFullscreen) {
+        await video.requestFullscreen();
+      } else if (iosVideo.webkitEnterFullscreen) {
+        iosVideo.webkitEnterFullscreen();
+      }
+    } catch { /* not supported */ }
+  }, []);
 
   const [playingVideo, setPlayingVideo] = useState<{ url: string | null; fallbackUrl?: string | null; title?: string; videoId: number; channelId: number; promoPostId: number | null; taggedCreators: { id: string; username: string; first_name: string | null; avatar_url: string | null }[]; uploaderDisplayName?: string | null; durationSec?: number | null; viewCount?: number } | null>(null);
   const [videoPlayerError, setVideoPlayerError] = useState(false);
+
+  // Stable intro object — only recomputed when the video itself changes (videoId + url).
+  // Must NOT be computed inline inside renderVideoDetail, because that creates a new object
+  // reference on every render (e.g. when like/hype state updates), which triggers the
+  // VideoPlayer's intro useEffect and restarts the curtain mid-playback.
+  const stableIntro = useMemo(() => {
+    if (!playingVideo) return null;
+    const eligible = (playingVideo.durationSec ?? 0) >= 30;
+    if (!eligible) return null;
+    const uploader = playingVideo.uploaderDisplayName || channel?.name || channel?.creatorUsername || "Creator";
+    const featNames = (playingVideo.taggedCreators || []).map((t) => t.first_name || t.username).filter(Boolean);
+    const performers = featNames.length > 0 ? `${uploader} feat. ${featNames.join(" y ")}` : uploader;
+    const eyebrow = channelIsPrime ? "PRIME" : `${channel?.name} for PNPtv!`;
+    return { channel: eyebrow, title: playingVideo.title, performers };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playingVideo?.videoId, playingVideo?.url]);
   // Set to true once the <video> metadata reveals a landscape aspect ratio.
   // Only landscape videos get the wider modal + taller player (semi-fullscreen);
   // portrait/square videos stay in the compact 2xl modal so they don't stretch.
@@ -898,12 +943,6 @@ function ChannelDetailView({
               <p className="text-xs text-white/40">Video unavailable</p>
             </div>
           ) : (() => {
-            const uploader = playingVideo.uploaderDisplayName || channel.creatorName || channel.creatorUsername || "Creator";
-            const featNames = (playingVideo.taggedCreators || []).map(t => t.first_name || t.username).filter(Boolean);
-            const performers = featNames.length > 0 ? `${uploader} feat. ${featNames.join(" y ")}` : uploader;
-            const eligible = (playingVideo.durationSec ?? 0) >= 30;
-            const eyebrow = channelIsPrime ? "PRIME" : `${channel.name} for PNPtv!`;
-            const intro = eligible ? { channel: eyebrow, title: playingVideo.title, performers } : null;
             return (
               <VideoPlayer
                 ref={channelVideoRef}
@@ -914,7 +953,7 @@ function ChannelDetailView({
                 creatorDisclaimer
                 hideOverlayControls
                 viewCount={playingVideo.viewCount}
-                intro={intro}
+                intro={stableIntro}
                 onContextMenu={(e) => e.preventDefault()}
                 onError={() => {
                   const fb = playingVideo.fallbackUrl;
@@ -967,9 +1006,19 @@ function ChannelDetailView({
               <div className="flex items-center gap-0.5 flex-shrink-0">
                 {/* Cast / PiP — in the action bar (not overlaid on the video) so iOS
                     native controls can't intercept the tap. Ref reaches the <video>. */}
+                {fullscreenSupported && (
+                  <button type="button" onClick={handleChannelFullscreen} title="Fullscreen"
+                    aria-label="Fullscreen"
+                    className="p-2 rounded-lg transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
+                    style={{ color: "rgba(255,255,255,0.35)" }}>
+                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0-4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/>
+                    </svg>
+                  </button>
+                )}
                 {castSupported && (
-                  <button type="button" onClick={handleChannelCast} title="Cast to TV"
-                    aria-label="Cast to TV"
+                  <button type="button" onClick={handleChannelCast} title="Transmit to another device"
+                    aria-label="Transmit to another device"
                     className="p-2 rounded-lg transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
                     style={{ color: "rgba(255,255,255,0.35)" }}>
                     <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
@@ -1365,10 +1414,27 @@ function ChannelDetailView({
             <span className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 rounded-full text-[9px] font-semibold text-white pointer-events-none" style={{ background: "rgba(220,38,38,0.9)" }}>Unavailable</span>
           )}
         </div>
-        <div className="px-2.5 py-2">
+        <div className="px-2.5 py-2 space-y-1">
           <p className="text-xs font-medium text-pnp-textPrimary line-clamp-2 leading-snug">{v.title || "Untitled"}</p>
-          {v.view_count > 0 && (
-            <p className="text-[10px] text-pnp-textSecondary mt-0.5">{formatViewCount(v.view_count)} views</p>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {showUploaderChip && (
+              <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full text-pnp-textSecondary" style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }}>
+                {v.uploader_display_name || `@${v.uploader_username}`}
+              </span>
+            )}
+            {v.view_count > 0 && (
+              <span className="text-[10px] text-pnp-textSecondary">{formatViewCount(v.view_count)} views</span>
+            )}
+          </div>
+          {visibleTags.length > 0 && (
+            <div className="flex items-center gap-1 flex-wrap">
+              {visibleTags.map((tag) => (
+                <span key={tag} className="text-[9px] px-1.5 py-0.5 rounded-full" style={{ background: "rgba(212,0,122,0.12)", color: "#D4007A", border: "1px solid rgba(212,0,122,0.2)" }}>#{tag}</span>
+              ))}
+              {overflowTagCount > 0 && (
+                <span className="text-[9px] text-pnp-textSecondary">+{overflowTagCount}</span>
+              )}
+            </div>
           )}
         </div>
       </div>
@@ -1865,7 +1931,7 @@ function ChannelDetailView({
       ) : (
         <>
         {videos.length > 0 && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5">
             {videos.map((v) => renderVideoCard(v))}
           </div>
         )}
