@@ -125,8 +125,7 @@ async function resolveCreatorChannel(userId, isExclusive) {
 
 // ── Feed ──────────────────────────────────────────────────────────────────────
 
-const FREE_FEED_LIMIT = 5;
-const FREE_PROFILE_LIMIT = 3;
+const FREE_FEED_LIMIT = 5; // kept for reference, no longer enforced
 
 const getFeed = async (req, res) => {
   const user = authGuard(req, res); if (!user) return;
@@ -1800,9 +1799,9 @@ const getPublicProfile = async (req, res) => {
 
     // Profile browsing is open to all authenticated users (no tier restriction).
 
-    const isFreeViewer = !isAdmin && viewerTier === 'free';
-    const cursor = isFreeViewer ? undefined : req.query.cursor;
-    const limit  = isFreeViewer ? FREE_PROFILE_LIMIT : req.query.limit;
+    const isFreeViewer = false; // all authenticated users get full profile access
+    const cursor = req.query.cursor;
+    const limit  = req.query.limit;
 
     // ── Redis response cache (90 s, tier-aware) ──────────────────────────────
     // Key encodes: canonical userId + viewer tier + pagination cursor.
