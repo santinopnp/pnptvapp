@@ -1168,6 +1168,26 @@ export function Layout() {
     }
   }
 
+  // Age verification + terms acceptance — global hard gate.
+  // Any authenticated user who hasn't completed both is sent to /onboarding,
+  // which owns the verification UI. Exempt: onboarding itself, legal pages,
+  // self-care, and active guest sessions (guests accepted on the invite form).
+  if (isAuthenticated && user && (!user.ageVerified || !user.termsAccepted)) {
+    const CONSENT_EXEMPT = [
+      "/onboarding",
+      "/terms",
+      "/privacy",
+      "/community-guidelines",
+      "/crypto-guide",
+      "/self-care",
+      "/login",
+      "/blocked-jurisdiction",
+    ];
+    if (!CONSENT_EXEMPT.some((p) => location.pathname.startsWith(p)) && !mainStageGuestLatchRef.current) {
+      return <Navigate to="/onboarding" replace />;
+    }
+  }
+
   return (
     <div className="app-shell bg-pnp-background">
       {/* ── Username picker — blocking modal for TG_ placeholder accounts ───── */}

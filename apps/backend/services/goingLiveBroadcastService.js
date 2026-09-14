@@ -352,7 +352,7 @@ async function notifyMainStage(creatorId, creatorName, channelRef) {
  * @param {string} creatorName
  * @param {string} channelRef
  */
-async function sendPushNotifications(followers, creatorName, channelRef) {
+async function sendPushNotifications(followers, creatorName, channelRef, creatorPhotoUrl) {
   let PushNotificationService;
   try {
     PushNotificationService = require('./pushNotificationService');
@@ -371,9 +371,10 @@ async function sendPushNotifications(followers, creatorName, channelRef) {
   const sent = await PushNotificationService.sendToUsers(followerIds, {
     title: `${creatorName} is live!`,
     body:  'Watch now before the room fills up.',
-    url:   watchUrl,
+    url:   watchPath,
     tag:   `going-live-${channelRef}`,
-  }).catch(() => 0);
+    image: creatorPhotoUrl || undefined,
+  }, { notifType: 'going_live' }).catch(() => 0);
   return sent;
 }
 
@@ -396,10 +397,17 @@ async function broadcastGoingLive(bot, creatorId, channelRef, opts = {}, streamI
       return { dispatched: 0, skippedDedup: true };
     }
 
-    const [creatorName, dmFollowers, pushFollowers] = await Promise.all([
+    const [creatorName, dmFollowers, pushFollowers, creatorPhotoUrl] = await Promise.all([
       resolveCreatorName(creatorId),
       loadFollowers(creatorId),
       loadPushFollowers(creatorId),
+      query(
+        `SELECT COALESCE(p.photo_url, u.photo_file_id) AS photo_url
+           FROM users u
+           LEFT JOIN performers p ON p.user_id::text = u.id::text AND p.status = 'active'
+          WHERE u.id::text = $1 LIMIT 1`,
+        [String(creatorId)]
+      ).then(r => r.rows[0]?.photo_url || null).catch(() => null),
     ]);
 
     const customMessage = opts?.message || null;
@@ -456,7 +464,7 @@ async function broadcastGoingLive(bot, creatorId, channelRef, opts = {}, streamI
     // 5. Web-push to opted-in followers (deep link → /live/{channelRef})
     const [dmSent, pushSent] = await Promise.all([
       bot ? sendTelegramDMs(bot, dmFollowers, creatorName, channelRef, customMessage) : Promise.resolve(0),
-      sendPushNotifications(pushFollowers, creatorName, channelRef),
+      sendPushNotifications(pushFollowers, creatorName, channelRef, creatorPhotoUrl),
     ]);
 
     logger.info('goingLiveBroadcast: fan-out complete', {

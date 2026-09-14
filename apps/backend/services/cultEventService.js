@@ -1,5 +1,6 @@
 const CultEventModel = require('../models/cultEventModel');
 const UserModel = require('../models/userModel');
+const PushNotificationService = require('./pushNotificationService');
 const logger = require('../utils/logger');
 
 const EVENT_TYPES = {
@@ -59,25 +60,40 @@ class CultEventService {
   static async sendReminder(bot, registration, reminderLabel) {
     try {
       const user = await UserModel.getById(registration.user_id);
-      const lang = user?.language || 'en';
+      const lang = user?.language || ‘en’;
       const eventDate = new Date(registration.event_at);
       const formattedDate = formatDate(eventDate, lang);
-      const time = `${eventDate.getUTCHours().toString().padStart(2, '0')}:00 UTC`;
+      const time = `${eventDate.getUTCHours().toString().padStart(2, ‘0’)}:00 UTC`;
 
       const eventName = {
-        [EVENT_TYPES.SANTINO]: lang === 'es' ? 'Hangout con Santino' : "Santino's Hangout",
-        [EVENT_TYPES.LEX]: lang === 'es' ? 'Hangout con Lex' : "Lex's Hangout",
-        [EVENT_TYPES.GALA]: lang === 'es' ? 'The Meth Gala' : 'The Meth Gala',
-        [EVENT_TYPES.PRIME]: lang === 'es' ? 'Activación PRIME' : 'PRIME Activation',
-      }[registration.event_type] || (lang === 'es' ? 'Evento' : 'Event');
+        [EVENT_TYPES.SANTINO]: lang === ‘es’ ? ‘Hangout con Santino’ : "Santino’s Hangout",
+        [EVENT_TYPES.LEX]: lang === ‘es’ ? ‘Hangout con Lex’ : "Lex’s Hangout",
+        [EVENT_TYPES.GALA]: lang === ‘es’ ? ‘The Meth Gala’ : ‘The Meth Gala’,
+        [EVENT_TYPES.PRIME]: lang === ‘es’ ? ‘Activación PRIME’ : ‘PRIME Activation’,
+      }[registration.event_type] || (lang === ‘es’ ? ‘Evento’ : ‘Event’);
 
-      const message = lang === 'es'
-        ? `⏰ Recordatorio ${reminderLabel}\n\n🎉 ${eventName}\n📅 ${formattedDate}\n🕗 ${time}\n\nSi ya no puedes asistir, avísanos con tiempo.`
-        : `⏰ ${reminderLabel} reminder\n\n🎉 ${eventName}\n📅 ${formattedDate}\n🕗 ${time}\n\nIf you can’t attend, please let us know.`;
+      const title = lang === ‘es’
+        ? `⏰ Recordatorio ${reminderLabel} — ${eventName}`
+        : `⏰ ${reminderLabel} reminder — ${eventName}`;
+      const body = lang === ‘es’
+        ? `📅 ${formattedDate} · 🕗 ${time}`
+        : `📅 ${formattedDate} · 🕗 ${time}`;
 
-      await bot.telegram.sendMessage(registration.user_id, message);
+      const sent = await PushNotificationService.sendToUser(registration.user_id, {
+        title,
+        body,
+        url: ‘/hangouts’,
+        tag: `cult-event-${registration.id}-${reminderLabel}`,
+      }, { notifType: ‘events’ });
+
+      logger.info(‘Cult event reminder sent via push’, {
+        userId: registration.user_id,
+        eventType: registration.event_type,
+        reminderLabel,
+        sent,
+      });
     } catch (error) {
-      logger.error('Error sending cult event reminder:', error);
+      logger.error(‘Error sending cult event reminder:’, error);
     }
   }
 

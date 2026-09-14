@@ -4,6 +4,7 @@ const { cache } = require('../../../config/redis');
 const AdminDashboardService = require('../../../services/adminDashboardService');
 const SocialPostService = require('../../../services/socialPostService');
 const { archivePromotedSourceForSocialPost } = require('../utils/promotedPostDeletion');
+const { provisionCreatorWallet } = require('../../../services/payoutSplitService');
 
 // Escape LIKE/ILIKE metacharacters so user input cannot widen search patterns
 const escapeLike = (str) => str.replace(/[%_\\]/g, '\\$&');
@@ -960,16 +961,16 @@ const sendPushNotification = async (req, res) => {
 
     // ── Push channel ──────────────────────────────────────────────────────────
     const PushNotificationService = require('../../../services/pushNotificationService');
-    const pushPayload = { title, body, url };
+    const pushPayload = { title, body, url, tag: req.body.tag || `admin-push-${Date.now()}` };
 
     let sent = 0;
     if (doPush) {
       if (targetType === 'all') {
-        sent = await PushNotificationService.sendToAll(pushPayload);
+        sent = await PushNotificationService.sendToAll(pushPayload, { notifType: 'system' });
       } else if (targetType === 'tier') {
-        sent = await PushNotificationService.sendToTier(tier, pushPayload);
+        sent = await PushNotificationService.sendToTier(tier, pushPayload, { notifType: 'system' });
       } else if (targetType === 'users') {
-        sent = await PushNotificationService.sendToUsers(userIds, pushPayload);
+        sent = await PushNotificationService.sendToUsers(userIds, pushPayload, { notifType: 'system' });
       }
     }
 
@@ -2265,6 +2266,11 @@ const activateCreator = async (req, res) => {
        WHERE id = $1
        RETURNING id, username, creator_status, creator_role, live_channel`,
       [userId]
+    );
+
+    // Ensure creator has an embedded wallet for payouts (fire-and-forget)
+    provisionCreatorWallet(userId).catch((e) =>
+      logger.warn('[adminController] wallet provision failed', { userId, error: e.message })
     );
 
     // Close any open applications in the other two tables so the admin

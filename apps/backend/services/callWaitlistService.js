@@ -153,10 +153,10 @@ async function notifyAvailable(creatorId) {
         await PushNotificationService.sendToUsers(pushTargets, {
           title: `@${username} está disponible`,
           body: 'Ya puedes reservar tu llamada.',
-          url: `https://pnptv.app/c/${username}?action=book`,
-          icon: '/icon-192.png',
+          url: `/c/${username}?action=book`,
+          icon: '/app-icon-192.png',
           tag: `waitlist-${creatorId}`,
-        });
+        }, { notifType: 'availability' });
       } catch (err) {
         logger.warn('[callWaitlist] push falló', { error: err.message });
       }

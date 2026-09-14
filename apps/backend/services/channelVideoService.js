@@ -734,8 +734,9 @@ async function broadcastNewVideo({ videoId, channelId, creatorId, title, descrip
         title: `🎬 Nuevo video: ${title}`,
         body: descSnippet || 'Ver en PNP Channels →',
         url: watchUrl,
-        icon: previewUrl || undefined,
-      });
+        tag: `channel-video-${videoId || Date.now()}`,
+        image: previewUrl || undefined,
+      }, { notifType: 'new_content' });
     }
     logger.info('broadcastNewVideo: push notifications queued', { videoId, count: pushUserIds.length });
   } catch (err) {

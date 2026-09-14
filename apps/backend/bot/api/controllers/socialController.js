@@ -2663,11 +2663,20 @@ const sharePostToHangouts = async (req, res) => {
 
   for (const groupId of normalizedIds) {
     try {
-      // Membership check
+      // Topics are child groups (have channel_id). If the user selected a topic,
+      // check membership in the topic first, then fall back to the parent group.
+      const { rows: groupMeta } = await dbQuery(
+        `SELECT channel_id FROM hangout_groups WHERE id = $1`,
+        [groupId]
+      );
+      const parentGroupId = groupMeta[0]?.channel_id ?? null;
+      const memberCheckId = parentGroupId ?? groupId;
+
+      // Membership check — use parent group ID for topics
       const { rows: memberRows } = await dbQuery(
         `SELECT is_banned, is_muted, muted_until FROM hangout_group_members
           WHERE group_id = $1 AND user_id = $2`,
-        [groupId, user.id]
+        [memberCheckId, user.id]
       );
       if (memberRows.length === 0) {
         results.push({ groupId, status: 'skipped', reason: 'not_a_member' });
@@ -2682,14 +2691,14 @@ const sharePostToHangouts = async (req, res) => {
         continue;
       }
 
-      // Read-only check (allow if user is owner/mod)
+      // Read-only check against the actual target group (allow if user is owner/mod in parent)
       const { rows: gsRows } = await dbQuery(
         `SELECT hg.is_read_only,
                 (EXISTS(SELECT 1 FROM hangout_group_members m
-                         WHERE m.group_id = hg.id AND m.user_id = $2
+                         WHERE m.group_id = $3 AND m.user_id = $2
                            AND m.role IN ('owner','mod'))) AS is_mod_or_owner
            FROM hangout_groups hg WHERE hg.id = $1`,
-        [groupId, user.id]
+        [groupId, user.id, memberCheckId]
       );
       if (gsRows[0]?.is_read_only && !gsRows[0].is_mod_or_owner) {
         results.push({ groupId, status: 'skipped', reason: 'read_only' });

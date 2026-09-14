@@ -795,11 +795,13 @@ async function setAcceptingCalls(req, res) {
         });
       }
 
-      // Clear opt-out marker
+      // Set active availability marker — same key/value/TTL as Telegram ping flow
+      // so /api/live/available scan picks them up. REGLA B bookability logic
+      // (acceptingRaw !== '0') still holds: '1' passes the check correctly.
       try {
-        await redis.del(acceptingKey);
+        await redis.set(acceptingKey, '1', 'EX', ACCEPTING_CALLS_TTL_SECONDS);
       } catch (redisErr) {
-        logger.warn('[callBookingController] setAcceptingCalls Redis DEL failed', { userId, error: redisErr.message });
+        logger.warn('[callBookingController] setAcceptingCalls Redis SET failed', { userId, error: redisErr.message });
         return res.status(503).json({ success: false, error: 'Service temporarily unavailable. Please try again.' });
       }
 
@@ -814,7 +816,7 @@ async function setAcceptingCalls(req, res) {
         logger.warn('[callBookingController] setAcceptingCalls socket emit failed (non-fatal)', { userId, error: sockErr.message });
       }
 
-      logger.info('[callBookingController] creator now accepting calls (opt-out cleared)', { userId });
+      logger.info('[callBookingController] creator now accepting calls', { userId });
       return res.json({ success: true, accepting: true });
     } else {
       // Turning off — write permanent opt-out marker
@@ -880,8 +882,10 @@ async function getAcceptingCallsStatus(req, res) {
     }
 
     const online = onlineRaw !== null && onlineRaw !== '0';
-    // REGLA B: the accepting_calls Redis key is now an OPT-OUT marker only.
-    // null / any value ≠ '0' → accepting is ON (default).  '0' → opted out.
+    // '1' = active opt-in (webapp toggle or Telegram ping, 60-min TTL).
+    // '0' = opted-out via webapp (no TTL, permanent until toggled back).
+    // null/absent = never set or expired — treat as opted-in by default so
+    //   creators who haven't explicitly touched the toggle remain bookable.
     const accepting = acceptingRaw !== '0';
 
     let isLive = false;

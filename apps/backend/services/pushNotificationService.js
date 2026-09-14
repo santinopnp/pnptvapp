@@ -60,11 +60,6 @@ class PushNotificationService {
   // ---------------------------------------------------------------------------
 
   /**
-   * Build the web-push payload object.
-   * @param {{ title: string, body: string, url?: string, icon?: string, tag?: string }} opts
-   * @returns {string} JSON string
-   */
-  /**
    * Has VAPID been configured on the web-push singleton?
    * One-off broadcast scripts that don't go through the full bot startup
    * must call initialize() themselves; without it every send returns false
@@ -86,12 +81,27 @@ class PushNotificationService {
     }
   }
 
+  /**
+   * Build the web-push payload object.
+   *
+   * Canonical payload shape all callsites must use:
+   *   title:  string  (≤50 chars)
+   *   body:   string  (≤120 chars)
+   *   url:    string  (relative path starting with /)
+   *   tag:    string  (REQUIRED — collapses duplicate notifications in browser)
+   *   icon:   string  (defaults to /app-icon-192.png)
+   *   image?: string  (optional large banner — creator avatar, live snapshot;
+   *                    supported by Chrome/Edge, ignored by Safari)
+   *
+   * @param {{ title: string, body: string, url?: string, icon?: string, image?: string, tag: string }} opts
+   * @returns {string} JSON string
+   */
   static _buildPayload({ title, body, url, icon, image, tag }) {
     const payload = {
       title: title || 'PNPtv!',
       body: body || '',
       url: url || '/',
-      icon: icon || '/icon-192.png',
+      icon: icon || '/app-icon-192.png',
       badge: '/badge-diamond.png',
     };
     // The Web Push spec's `image` field displays a large banner under the
@@ -100,6 +110,99 @@ class PushNotificationService {
     if (image) payload.image = image;
     if (tag) payload.tag = tag;
     return JSON.stringify(payload);
+  }
+
+  /**
+   * Check a single user's push opt-in status and quiet hours.
+   * Used by sendToUser where a batch query would be overkill.
+   *
+   * @param {string} userId
+   * @param {string} notifType  e.g. 'new_message', 'live_stream'
+   * @returns {Promise<boolean>} true = send, false = skip
+   */
+  static async _isUserOptedIn(userId, notifType) {
+    try {
+      const result = await query(
+        'SELECT notification_preferences FROM users WHERE id = $1',
+        [userId]
+      );
+      if (result.rows.length === 0) return false;
+
+      const prefs = result.rows[0].notification_preferences;
+      if (!prefs) return true;
+
+      if (prefs[notifType]?.push === false) return false;
+
+      if (prefs.quiet_hours?.enabled === true) {
+        const [startHour] = (prefs.quiet_hours.start || '00:00').split(':').map(Number);
+        const [endHour] = (prefs.quiet_hours.end || '00:00').split(':').map(Number);
+        const currentHour = new Date().getUTCHours();
+
+        // Handles both same-day (09–17) and midnight-wrap (22–06) windows
+        const inQuiet = startHour <= endHour
+          ? currentHour >= startHour && currentHour <= endHour
+          : currentHour >= startHour || currentHour <= endHour;
+
+        if (inQuiet) return false;
+      }
+
+      return true;
+    } catch (err) {
+      // On error, allow the send — a preference lookup failure should not
+      // silently drop legitimate notifications
+      logger.warn('[PushNotificationService] _isUserOptedIn error, defaulting to opted-in', {
+        userId,
+        notifType,
+        error: err.message,
+      });
+      return true;
+    }
+  }
+
+  /**
+   * Filter a list of user IDs down to those who have not opted out of
+   * `notifType` push notifications and are not currently in quiet hours.
+   * Single batch query — use for all multi-user send paths.
+   *
+   * @param {string[]} userIds
+   * @param {string} notifType
+   * @returns {Promise<string[]>} filtered user IDs
+   */
+  static async _filterOptedInUsers(userIds, notifType) {
+    if (!userIds.length) return [];
+    try {
+      const result = await query(
+        `SELECT id FROM users
+          WHERE id = ANY($1::text[])
+            AND (
+              notification_preferences IS NULL
+              OR notification_preferences->($2::text)->>'push' IS DISTINCT FROM 'false'
+            )
+            AND (
+              notification_preferences->'quiet_hours'->>'enabled' != 'true'
+              OR NOT (
+                CASE
+                  WHEN SPLIT_PART(notification_preferences->'quiet_hours'->>'start', ':', 1)::int
+                       <= SPLIT_PART(notification_preferences->'quiet_hours'->>'end', ':', 1)::int
+                  THEN EXTRACT(HOUR FROM NOW()) BETWEEN
+                         SPLIT_PART(notification_preferences->'quiet_hours'->>'start', ':', 1)::int
+                       AND SPLIT_PART(notification_preferences->'quiet_hours'->>'end', ':', 1)::int
+                  ELSE EXTRACT(HOUR FROM NOW()) >= SPLIT_PART(notification_preferences->'quiet_hours'->>'start', ':', 1)::int
+                    OR EXTRACT(HOUR FROM NOW()) <= SPLIT_PART(notification_preferences->'quiet_hours'->>'end', ':', 1)::int
+                END
+              )
+            )`,
+        [userIds, notifType]
+      );
+      return result.rows.map(r => r.id);
+    } catch (err) {
+      // On error allow everyone through — same rationale as _isUserOptedIn
+      logger.warn('[PushNotificationService] _filterOptedInUsers error, skipping filter', {
+        notifType,
+        error: err.message,
+      });
+      return userIds;
+    }
   }
 
   /**
@@ -182,14 +285,20 @@ class PushNotificationService {
    * Send a push notification to all subscriptions of a specific user.
    *
    * @param {string} userId
-   * @param {{ title: string, body: string, url?: string, icon?: string }} opts
+   * @param {{ title: string, body: string, url?: string, icon?: string, tag: string }} opts
+   * @param {{ notifType?: string }} [options]
    * @returns {Promise<number>} Number of successful deliveries
    */
-  static async sendToUser(userId, opts) {
+  static async sendToUser(userId, opts, options = {}) {
     if (!webpush) return 0;
     PushNotificationService._ensureInitialized();
 
     try {
+      if (options.notifType) {
+        const optedIn = await this._isUserOptedIn(userId, options.notifType);
+        if (!optedIn) return 0;
+      }
+
       const result = await query(
         'SELECT id, endpoint, auth, p256dh FROM push_subscriptions WHERE user_id = $1',
         [userId]
@@ -212,20 +321,44 @@ class PushNotificationService {
   /**
    * Send a push notification to every subscription in the database.
    *
-   * @param {{ title: string, body: string, url?: string, icon?: string }} opts
+   * @param {{ title: string, body: string, url?: string, icon?: string, tag: string }} opts
+   * @param {{ notifType?: string }} [options]
    * @returns {Promise<number>} Number of successful deliveries
    */
-  static async sendToAll(opts) {
+  static async sendToAll(opts, options = {}) {
     if (!webpush) return 0;
     PushNotificationService._ensureInitialized();
 
     try {
+      const notifType = options.notifType;
+      const prefFilter = notifType
+        ? `AND (
+              u.notification_preferences IS NULL
+              OR u.notification_preferences->${`'${notifType}'`}->>'push' IS DISTINCT FROM 'false'
+            )
+            AND (
+              u.notification_preferences->'quiet_hours'->>'enabled' != 'true'
+              OR NOT (
+                CASE
+                  WHEN (u.notification_preferences->'quiet_hours'->>'start')::int
+                       <= (u.notification_preferences->'quiet_hours'->>'end')::int
+                  THEN EXTRACT(HOUR FROM NOW()) BETWEEN
+                         (u.notification_preferences->'quiet_hours'->>'start')::int
+                       AND (u.notification_preferences->'quiet_hours'->>'end')::int
+                  ELSE EXTRACT(HOUR FROM NOW()) >= (u.notification_preferences->'quiet_hours'->>'start')::int
+                    OR EXTRACT(HOUR FROM NOW()) <= (u.notification_preferences->'quiet_hours'->>'end')::int
+                END
+              )
+            )`
+        : '';
+
       const result = await query(
         `SELECT ps.id, ps.endpoint, ps.auth, ps.p256dh
            FROM push_subscriptions ps
            JOIN users u ON u.id = ps.user_id
           WHERE u.deleted_at IS NULL
-            AND u.tier != 'banned'`
+            AND u.tier != 'banned'
+            ${prefFilter}`
       );
 
       if (result.rows.length === 0) return 0;
@@ -252,22 +385,56 @@ class PushNotificationService {
   }
 
   /**
-   * Send a push notification to all subscribers whose account tier matches.
+   * Send a push notification to all subscribers with a matching entitlement.
+   * `tier` maps to an add_on_id in user_entitlements — the authoritative access table.
    *
-   * @param {string} tier  e.g. 'prime', 'free', 'member'
-   * @param {{ title: string, body: string, url?: string, icon?: string }} opts
+   * @param {string} tier  add_on_id value, e.g. 'prime', 'member'
+   * @param {{ title: string, body: string, url?: string, icon?: string, tag: string }} opts
+   * @param {{ notifType?: string }} [options]
    * @returns {Promise<number>} Number of successful deliveries
    */
-  static async sendToTier(tier, opts) {
+  static async sendToTier(tier, opts, options = {}) {
     if (!webpush) return 0;
     PushNotificationService._ensureInitialized();
 
     try {
+      const notifType = options.notifType;
+      const prefFilter = notifType
+        ? `AND (
+              u.notification_preferences IS NULL
+              OR u.notification_preferences->${`'${notifType}'`}->>'push' IS DISTINCT FROM 'false'
+            )
+            AND (
+              u.notification_preferences->'quiet_hours'->>'enabled' != 'true'
+              OR NOT (
+                CASE
+                  WHEN (u.notification_preferences->'quiet_hours'->>'start')::int
+                       <= (u.notification_preferences->'quiet_hours'->>'end')::int
+                  THEN EXTRACT(HOUR FROM NOW()) BETWEEN
+                         (u.notification_preferences->'quiet_hours'->>'start')::int
+                       AND (u.notification_preferences->'quiet_hours'->>'end')::int
+                  ELSE EXTRACT(HOUR FROM NOW()) >= (u.notification_preferences->'quiet_hours'->>'start')::int
+                    OR EXTRACT(HOUR FROM NOW()) <= (u.notification_preferences->'quiet_hours'->>'end')::int
+                END
+              )
+            )`
+        : '';
+
+      // user_entitlements is the authoritative access table — users.tier is a
+      // display/admin field that may drift; never gate sends on it alone.
+      // Fallback to users.tier join preserved below as a comment for reference:
+      //   JOIN users u ON u.id = ps.user_id WHERE LOWER(u.tier) = LOWER($1)
       const result = await query(
         `SELECT ps.id, ps.endpoint, ps.auth, ps.p256dh
            FROM push_subscriptions ps
+           JOIN user_entitlements ue ON ue.user_id = ps.user_id
            JOIN users u ON u.id = ps.user_id
-          WHERE LOWER(u.tier) = LOWER($1)`,
+          WHERE ue.add_on_id = $1
+            AND (ue.expires_at IS NULL OR ue.expires_at > NOW())
+            AND ue.is_consumed = false
+            AND u.deleted_at IS NULL
+            AND u.tier != 'banned'
+            ${prefFilter}`,
         [tier]
       );
 
@@ -297,20 +464,27 @@ class PushNotificationService {
    * Send a push notification to a specific list of user IDs.
    *
    * @param {string[]} userIds
-   * @param {{ title: string, body: string, url?: string, icon?: string }} opts
+   * @param {{ title: string, body: string, url?: string, icon?: string, tag: string }} opts
+   * @param {{ notifType?: string }} [options]
    * @returns {Promise<number>} Number of successful deliveries
    */
-  static async sendToUsers(userIds, opts) {
+  static async sendToUsers(userIds, opts, options = {}) {
     if (!webpush || !Array.isArray(userIds) || userIds.length === 0) return 0;
     PushNotificationService._ensureInitialized();
 
     try {
+      const targetIds = options.notifType
+        ? await this._filterOptedInUsers(userIds, options.notifType)
+        : userIds;
+
+      if (targetIds.length === 0) return 0;
+
       // Use ANY($1::text[]) for safe parameterized array query
       const result = await query(
         `SELECT id, endpoint, auth, p256dh
            FROM push_subscriptions
           WHERE user_id = ANY($1::text[])`,
-        [userIds]
+        [targetIds]
       );
 
       if (result.rows.length === 0) return 0;
@@ -331,6 +505,72 @@ class PushNotificationService {
       return sent;
     } catch (error) {
       logger.error('[PushNotificationService] sendToUsers error', { error: error.message });
+      return 0;
+    }
+  }
+
+  /**
+   * Send a push notification to all active/eligible creators with push subscriptions.
+   *
+   * @param {{ title: string, body: string, url?: string, icon?: string, tag: string }} opts
+   * @param {{ notifType?: string }} [options]
+   * @returns {Promise<number>} Number of successful deliveries
+   */
+  static async sendToCreators(opts, options = {}) {
+    if (!webpush) return 0;
+    PushNotificationService._ensureInitialized();
+
+    try {
+      const notifType = options.notifType;
+      const prefFilter = notifType
+        ? `AND (
+              u.notification_preferences IS NULL
+              OR u.notification_preferences->${`'${notifType}'`}->>'push' IS DISTINCT FROM 'false'
+            )
+            AND (
+              u.notification_preferences->'quiet_hours'->>'enabled' != 'true'
+              OR NOT (
+                CASE
+                  WHEN (u.notification_preferences->'quiet_hours'->>'start')::int
+                       <= (u.notification_preferences->'quiet_hours'->>'end')::int
+                  THEN EXTRACT(HOUR FROM NOW()) BETWEEN
+                         (u.notification_preferences->'quiet_hours'->>'start')::int
+                       AND (u.notification_preferences->'quiet_hours'->>'end')::int
+                  ELSE EXTRACT(HOUR FROM NOW()) >= (u.notification_preferences->'quiet_hours'->>'start')::int
+                    OR EXTRACT(HOUR FROM NOW()) <= (u.notification_preferences->'quiet_hours'->>'end')::int
+                END
+              )
+            )`
+        : '';
+
+      const result = await query(
+        `SELECT ps.id, ps.endpoint, ps.auth, ps.p256dh
+           FROM push_subscriptions ps
+           JOIN users u ON u.id = ps.user_id
+          WHERE u.creator_status IN ('active', 'eligible')
+            AND u.deleted_at IS NULL
+            AND u.tier != 'banned'
+            ${prefFilter}`
+      );
+
+      if (result.rows.length === 0) return 0;
+
+      const payloadJson = this._buildPayload(opts);
+      let sent = 0;
+
+      const batchSize = 50;
+      for (let i = 0; i < result.rows.length; i += batchSize) {
+        const batch = result.rows.slice(i, i + batchSize);
+        const batchResults = await Promise.all(
+          batch.map(sub => this._sendToSubscription(sub, payloadJson))
+        );
+        sent += batchResults.filter(Boolean).length;
+      }
+
+      logger.info('[PushNotificationService] sendToCreators complete', { total: result.rows.length, sent });
+      return sent;
+    } catch (error) {
+      logger.error('[PushNotificationService] sendToCreators error', { error: error.message });
       return 0;
     }
   }

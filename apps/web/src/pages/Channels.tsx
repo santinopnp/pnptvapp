@@ -288,35 +288,131 @@ function ChannelDetailView({
     "webkitRequestFullscreen" in HTMLElement.prototype ||
     "webkitEnterFullscreen" in HTMLVideoElement.prototype
   );
+  const castSupported = typeof window !== "undefined" && (
+    "remote" in HTMLVideoElement.prototype ||
+    "webkitShowPlaybackTargetPicker" in HTMLVideoElement.prototype
+  );
+  const [castToast, setCastToast] = useState<string | null>(null);
+  const castToastRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showCastToast = (msg: string) => {
+    if (castToastRef.current) clearTimeout(castToastRef.current);
+    setCastToast(msg);
+    castToastRef.current = setTimeout(() => setCastToast(null), 3500);
+  };
+
   const handleChannelCast = useCallback(async () => {
     const video = channelVideoRef.current;
-    // Safari / iOS — native AirPlay picker via WebKit API.
-    if (video) {
-      const webkitVideo = video as HTMLVideoElement & { webkitShowPlaybackTargetPicker?(): void };
-      if (typeof webkitVideo.webkitShowPlaybackTargetPicker === "function") {
-        webkitVideo.webkitShowPlaybackTargetPicker();
-        return;
-      }
-      // Chrome / Chromium — Remote Playback API (Chromecast).
+    if (!video) return;
+    // Safari / iOS — native AirPlay picker.
+    const webkitVideo = video as HTMLVideoElement & { webkitShowPlaybackTargetPicker?(): void };
+    if (typeof webkitVideo.webkitShowPlaybackTargetPicker === "function") {
+      webkitVideo.webkitShowPlaybackTargetPicker();
+      return;
+    }
+    // Chrome / Chromium — Remote Playback API (Chromecast + DLNA on same network).
+    // HLS.js backs the video with a blob:/MediaSource src so video.remote.prompt()
+    // throws NotSupportedError. Use a throwaway element with the real m3u8 URL so
+    // the cast device can fetch it directly from the CDN.
+    if ("remote" in HTMLVideoElement.prototype && playingVideo?.url) {
+      const castEl = document.createElement("video");
+      castEl.src = playingVideo.url;
       try {
-        const remoteVideo = video as HTMLVideoElement & { remote?: { prompt(): Promise<void> } };
-        if (remoteVideo.remote) {
-          await remoteVideo.remote.prompt();
-          return;
-        }
+        await (castEl as HTMLVideoElement & { remote: { prompt(): Promise<void> } }).remote.prompt();
+        return;
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") return;
-        // NotSupportedError (hls.js blob src) or other — fall through to share
+        // NotAllowedError / NotSupportedError — no devices or not castable
       }
     }
-    // Native share sheet: on mobile this opens AirDrop / Cast / other device options.
-    if (navigator.share) {
-      navigator.share({
-        title: playingVideo?.title ?? "PNPtv",
-        url: window.location.href,
-      }).catch(() => {});
-    }
+    // No remote device found or source format not supported.
+    showCastToast("No se encontraron dispositivos en tu red. Asegúrate de que el dispositivo esté encendido y en la misma red Wi-Fi.");
   }, [playingVideo?.title]);
+
+  // ── CC / Subtitles ─────────────────────────────────────────────────────────
+  const [ccActive, setCcActive] = useState(false);
+  const userLang = typeof navigator !== "undefined" ? navigator.language.split("-")[0].toLowerCase() : "es";
+  const [autoSrActive, setAutoSrActive] = useState(false);
+  const [speechCaption, setSpeechCaption] = useState<string | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+
+  const stopAutoCc = useCallback(() => {
+    if (mediaRecorderRef.current) {
+      try { mediaRecorderRef.current.stop(); } catch { /* already stopped */ }
+      mediaRecorderRef.current = null;
+    }
+    setAutoSrActive(false);
+    setCcActive(false);
+    setSpeechCaption(null);
+  }, []);
+
+  const startAutoCc = useCallback(async (video: HTMLVideoElement) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const cap = (video as any).captureStream ?? (video as any).mozCaptureStream;
+    if (typeof cap !== "function") {
+      showCastToast("Auto-captions not supported in this browser. Try Chrome or Edge.");
+      return;
+    }
+    try {
+      const stream: MediaStream = cap.call(video);
+      const audioTracks = stream.getAudioTracks();
+      if (audioTracks.length === 0) {
+        showCastToast("No audio track found in this video.");
+        return;
+      }
+      const audioStream = new MediaStream(audioTracks);
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? "audio/webm;codecs=opus"
+        : MediaRecorder.isTypeSupported("audio/webm")
+        ? "audio/webm"
+        : "";
+      const rec = new MediaRecorder(audioStream, mimeType ? { mimeType } : undefined);
+
+      rec.ondataavailable = async (e) => {
+        if (!e.data || e.data.size < 2000) return; // skip silent/tiny chunks
+        const blob = new Blob([e.data], { type: mimeType || "audio/webm" });
+        const fd = new FormData();
+        fd.append("audio", blob, "chunk.webm");
+        try {
+          const res = await fetch(`/api/webapp/cc/transcribe?lang=${encodeURIComponent(userLang)}`, {
+            method: "POST",
+            credentials: "include",
+            body: fd,
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.text) setSpeechCaption(data.text);
+          }
+        } catch { /* network error — silent */ }
+      };
+
+      rec.start(5000); // fire ondataavailable every 5 s
+      mediaRecorderRef.current = rec;
+      setAutoSrActive(true);
+      setCcActive(true);
+      showCastToast("Subtítulos automáticos activados — detectando idioma…");
+    } catch {
+      showCastToast("Could not capture video audio.");
+    }
+  }, [userLang]);
+
+  const handleToggleCaptions = useCallback(() => {
+    const video = channelVideoRef.current;
+    if (!video) return;
+    const tracks = Array.from(video.textTracks);
+
+    if (tracks.length > 0) {
+      // Embedded tracks — toggle them directly
+      const nextActive = !ccActive;
+      const preferred = tracks.find(t => t.language.toLowerCase().startsWith(userLang)) ?? tracks[0];
+      for (const t of tracks) t.mode = "disabled";
+      if (nextActive) preferred.mode = "showing";
+      setCcActive(nextActive);
+      return;
+    }
+
+    if (autoSrActive) { stopAutoCc(); return; }
+    startAutoCc(video);
+  }, [ccActive, userLang, autoSrActive, stopAutoCc, startAutoCc]);
   const handleChannelPiP = useCallback(async () => {
     const video = channelVideoRef.current;
     if (!video) return;
@@ -370,6 +466,14 @@ function ChannelDetailView({
   // modal size.
   useEffect(() => {
     setVideoIsLandscape(false);
+  }, [playingVideo?.videoId]);
+  useEffect(() => {
+    if (mediaRecorderRef.current) {
+      try { mediaRecorderRef.current.stop(); } catch { /* ok */ }
+      mediaRecorderRef.current = null;
+      setAutoSrActive(false);
+      setSpeechCaption(null);
+    }
   }, [playingVideo?.videoId]);
   const [videoComments, setVideoComments] = useState<ChannelVideoComment[]>([]);
   const [commentsLoading, setCommentsLoading] = useState(false);
@@ -915,7 +1019,7 @@ function ChannelDetailView({
         </button>
 
         {/* Player */}
-        <div className="-mx-4 rounded-none overflow-hidden" style={{ background: "#0A0A14" }}>
+        <div className="-mx-4 sm:mx-0 rounded-none sm:rounded-xl overflow-hidden" style={{ background: "#0A0A14" }}>
           {!playingVideo.url ? (
             <div className="w-full flex flex-col items-center justify-center gap-3 py-10 px-6 text-center" style={{ minHeight: 200 }}>
               <div className="w-14 h-14 rounded-full flex items-center justify-center"
@@ -983,6 +1087,17 @@ function ChannelDetailView({
                 onLoadedMetadata={(e) => {
                   const vid = e.currentTarget;
                   if (vid.videoWidth && vid.videoHeight) setVideoIsLandscape(vid.videoWidth > vid.videoHeight * 1.05);
+                  // Auto-enable captions in user's language if the video has embedded tracks
+                  const tracks = Array.from(vid.textTracks);
+                  if (tracks.length > 0) {
+                    const lang = typeof navigator !== "undefined" ? navigator.language.split("-")[0].toLowerCase() : "es";
+                    const preferred = tracks.find(t => t.language.toLowerCase().startsWith(lang)) ?? tracks[0];
+                    for (const t of tracks) t.mode = "disabled";
+                    preferred.mode = "showing";
+                    setCcActive(true);
+                  } else {
+                    setCcActive(false);
+                  }
                 }}
                 className="w-full bg-black"
                 style={{ maxHeight: "60vh" }}
@@ -1015,6 +1130,22 @@ function ChannelDetailView({
           )}
         </div>
 
+        {/* Auto-caption overlay */}
+        {speechCaption && autoSrActive && (
+          <div className="mx-0 sm:mx-0 px-4 py-2 text-center"
+            style={{ background: "rgba(0,0,0,0.78)", backdropFilter: "blur(4px)" }}>
+            <p className="text-sm text-white leading-relaxed">{speechCaption}</p>
+          </div>
+        )}
+
+        {/* Shared toast for cast / CC feedback */}
+        {castToast && (
+          <div className="mx-4 mt-1 rounded-xl px-3 py-2.5 text-xs text-white/90 shadow-lg animate-fade-in"
+            style={{ background: "rgba(20,20,30,0.95)", border: "1px solid rgba(255,255,255,0.10)" }}>
+            {castToast}
+          </div>
+        )}
+
         {/* Info + actions */}
         <div className="space-y-2 pt-1">
           <div className="flex items-start gap-2 justify-between">
@@ -1033,15 +1164,31 @@ function ChannelDetailView({
                     </svg>
                   </button>
                 )}
-                <button type="button" onClick={handleChannelCast} title="Transmitir a otro dispositivo"
-                  aria-label="Transmitir a otro dispositivo"
+                {/* Cast — always visible on desktop; guides user when no device found */}
+                {castSupported && (
+                  <button type="button" onClick={handleChannelCast} title="Transmitir a otro dispositivo en tu red"
+                    aria-label="Transmitir a otro dispositivo en tu red"
+                    className="p-2 rounded-lg transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
+                    style={{ color: "rgba(255,255,255,0.35)" }}>
+                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M2 8V6a2 2 0 012-2h16a2 2 0 012 2v12a2 2 0 01-2 2h-6"/>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M2 12a9 9 0 019 9"/>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M2 16a5 5 0 015 5"/>
+                      <circle cx="2" cy="20" r="1.2" fill="currentColor" stroke="none"/>
+                    </svg>
+                  </button>
+                )}
+                {/* CC / Subtitles — always visible; activates embedded track in user's language */}
+                <button type="button" onClick={handleToggleCaptions}
+                  title={ccActive ? "Desactivar subtítulos" : "Activar subtítulos automáticos"}
+                  aria-label={ccActive ? "Desactivar subtítulos" : "Activar subtítulos automáticos"}
+                  aria-pressed={ccActive}
                   className="p-2 rounded-lg transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
-                  style={{ color: "rgba(255,255,255,0.35)" }}>
+                  style={{ color: ccActive ? "#D4007A" : "rgba(255,255,255,0.35)", background: ccActive ? "rgba(212,0,122,0.12)" : "transparent" }}>
                   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M2 8V6a2 2 0 012-2h16a2 2 0 012 2v12a2 2 0 01-2 2h-6"/>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M2 12a9 9 0 019 9"/>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M2 16a5 5 0 015 5"/>
-                    <circle cx="2" cy="20" r="1.2" fill="currentColor" stroke="none"/>
+                    <rect x="2" y="5" width="20" height="14" rx="2"/>
+                    <path strokeLinecap="round" d="M7 12h2m1 0h4m1 0h2"/>
+                    <path strokeLinecap="round" d="M7 15.5h4m1 0h4"/>
                   </svg>
                 </button>
                 {pipSupported && (
@@ -1467,9 +1614,9 @@ function ChannelDetailView({
         </button>
         <div className="w-full aspect-video rounded-xl bg-pnp-surfaceHover animate-pulse" />
         <div className="h-6 w-48 bg-pnp-surfaceHover animate-pulse rounded" />
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="aspect-square rounded-xl bg-pnp-surfaceHover animate-pulse" />
+        <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="aspect-video rounded-xl bg-pnp-surfaceHover animate-pulse" />
           ))}
         </div>
       </div>
@@ -2048,18 +2195,6 @@ function ChannelDetailView({
             ) : shareStep === "main" ? (
               <div className="p-4 space-y-2">
                 <button
-                  onClick={() => {
-                    navigator.clipboard.writeText(`https://pnptv.app/channels`).catch(() => {});
-                    setShareSuccess("Link copied!");
-                    setTimeout(closeShareSheet, 1000);
-                  }}
-                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm text-white hover:bg-white/8 transition-colors min-h-[44px]"
-                  style={{ border: "1px solid rgba(255,255,255,0.08)" }}
-                >
-                  <svg className="w-4 h-4 flex-shrink-0 text-white/60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244" /></svg>
-                  Copy link
-                </button>
-                <button
                   onClick={() => setShareStep("hangout")}
                   className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm text-white hover:bg-white/8 transition-colors min-h-[44px]"
                   style={{ border: "1px solid rgba(255,255,255,0.08)" }}
@@ -2295,13 +2430,22 @@ function MembersOnlyWall({ message }: { message: string }) {
         <h2 className="text-xl font-bold text-pnp-textPrimary mb-2">Members Only</h2>
         <p className="text-sm text-pnp-textSecondary max-w-xs">{message}</p>
       </div>
-      <button
-        onClick={() => navigate('/plans')}
-        className="px-6 py-3 rounded-xl text-sm font-bold text-white"
-        style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
-      >
-        See plans →
-      </button>
+      <div className="flex flex-col gap-2.5 w-full max-w-xs">
+        <button
+          onClick={() => navigate('/login')}
+          className="w-full px-6 py-3 rounded-xl text-sm font-bold text-white"
+          style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+        >
+          Log in →
+        </button>
+        <button
+          onClick={() => navigate('/plans')}
+          className="w-full px-6 py-3 rounded-xl text-sm font-semibold border"
+          style={{ color: "var(--pnp-text-primary)", borderColor: "rgba(255,255,255,0.15)", background: "rgba(255,255,255,0.04)" }}
+        >
+          See plans
+        </button>
+      </div>
       <button onClick={() => navigate(-1)} className="text-xs text-pnp-textSecondary hover:text-pnp-textPrimary">
         ← Go back
       </button>
@@ -2313,7 +2457,7 @@ function MembersOnlyWall({ message }: { message: string }) {
 export default function Channels() {
   const { user } = useAuth();
 
-  if (!user || user.tier === 'free') {
+  if (!user) {
     return <MembersOnlyWall message="Channels and exclusive content require a PNPtv! membership." />;
   }
 
@@ -3461,7 +3605,7 @@ function VideoChannelCard({ channel, onClick }: { channel: CreatorChannel; onCli
 export function Videorama() {
   const { user } = useAuth();
 
-  if (!user || user.tier === "free") {
+  if (!user) {
     return <MembersOnlyWall message="PNP Channels exclusive videos require a PNPtv! membership." />;
   }
 

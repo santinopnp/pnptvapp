@@ -9052,6 +9052,9 @@ export interface MainStageOnStageEntry {
   userId: string;
   username: string | null;
   isCrystal: boolean;
+  /** LiveKit participant identity — matches track.participant.identity in grids */
+  participantIdentity?: string;
+  isReplay?: boolean;
 }
 
 export interface MainStageState {

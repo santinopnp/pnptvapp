@@ -36,36 +36,18 @@ const checkNearbyAccess = async (ctx) => {
 
   const lang = getLanguage(ctx);
 
-  if (tier === 'member') {
-    if (ctx.callbackQuery) {
-      await ctx.answerCbQuery(lang === 'es' ? '👑 Solo para PRIME' : '👑 PRIME required', { show_alert: true });
-    }
-    await ctx.reply(
-      lang === 'es'
-        ? '👑 Esta función es exclusiva de PRIME.\n\nActualiza a PRIME para ver perfiles completos con fotos y distancia exacta.'
-        : '👑 This feature requires PRIME.\n\nUpgrade to PRIME for full profiles with photos & exact distance!',
-      {
-        parse_mode: 'Markdown',
-        ...Markup.inlineKeyboard([
-          [Markup.button.url('👑 Upgrade to PRIME', 'https://pnptv.app/subscribe')],
-        ]),
-      }
-    );
-    return true; // blocked
-  }
-
-  // free tier
+  // free + member: deep actions (photos/distance) require PRIME
   if (ctx.callbackQuery) {
-    await ctx.answerCbQuery(lang === 'es' ? '🔒 Solo para Miembros' : '🔒 Members only', { show_alert: true });
+    await ctx.answerCbQuery(lang === 'es' ? '👑 Solo para PRIME' : '👑 PRIME required', { show_alert: true });
   }
   await ctx.reply(
     lang === 'es'
-      ? '🔒 *Nearby* es una función exclusiva para Miembros.\n\nSuscríbete para desbloquear.'
-      : '🔒 *Nearby* is a Members-only feature.\n\nSubscribe to unlock.',
+      ? '👑 Esta función es exclusiva de PRIME.\n\nActualiza a PRIME para ver perfiles completos con fotos y distancia exacta.'
+      : '👑 This feature requires PRIME.\n\nUpgrade to PRIME for full profiles with photos & exact distance!',
     {
       parse_mode: 'Markdown',
       ...Markup.inlineKeyboard([
-        [Markup.button.url('⭐ Upgrade to Member', 'https://pnptv.app/subscribe')],
+        [Markup.button.url('👑 Upgrade to PRIME', 'https://pnptv.app/subscribe')],
       ]),
     }
   );
@@ -106,35 +88,8 @@ const showNearbyMenu = async (ctx, options = {}) => {
     const lang = getLanguage(ctx);
     const tier = await getNearbyTier(ctx);
 
-    // --- FREE tier: count only + upsell ---
-    if (tier === 'free') {
-      const userId = ctx.from?.id?.toString();
-      let count = 0;
-      try {
-        if (userId) {
-          const nearbyUsers = await UserService.getNearbyUsers(userId, 50);
-          count = nearbyUsers.length;
-        }
-      } catch (_) { /* location not set — count stays 0 */ }
-
-      const msg = lang === 'es'
-        ? `🔍 *¡${count} personas están cerca de ti ahora mismo!*\n\nActualiza a Miembro ($4.99/mes) para ver quiénes son.`
-        : `🔍 *${count} people are near you right now!*\n\nUpgrade to Member ($4.99/mo) to see who they are.`;
-
-      const keyboard = Markup.inlineKeyboard([
-        [Markup.button.url('⭐ Upgrade to Member', 'https://pnptv.app/subscribe')],
-      ]);
-
-      if (isNewMessage || !ctx.callbackQuery) {
-        await ctx.reply(msg, { parse_mode: 'Markdown', ...keyboard });
-      } else {
-        await safeEditOrReply(ctx, msg, { parse_mode: 'Markdown', ...keyboard });
-      }
-      return;
-    }
-
-    // --- MEMBER tier: name-only list + PRIME upsell ---
-    if (tier === 'member') {
+    // --- FREE + MEMBER tier: name-only list + PRIME upsell ---
+    if (tier === 'free' || tier === 'member') {
       const userId = ctx.from?.id?.toString();
       let nearbyUsers = [];
       try {

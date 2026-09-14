@@ -129,9 +129,9 @@ class CreatorAvailabilityPingScheduler {
       await PushNotificationService.sendToUser(userId, {
         title: '⏰ ¿Sigues disponible para llamadas?',
         body: 'Tu ventana está a punto de expirar. Renuévala fácilmente.',
-        url: `${appUrl}/creators/availability`,
+        url: '/creators/availability',
         tag: `avail-ping-${userId}`,
-      });
+      }, { notifType: 'availability_reminder' });
     } catch (err) {
       logger.warn('[availPingScheduler] Push notification failed', { userId, error: err.message });
     }

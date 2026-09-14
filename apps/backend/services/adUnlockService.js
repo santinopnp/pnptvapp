@@ -88,22 +88,10 @@ function isTierEligibleForAds(userTier, userRole) {
 function getTierAdLevel(userTier, userRole, userMeta) {
   if (userRole === 'admin' || userRole === 'superadmin') return 'none';
   const tier = String(userTier || '').toLowerCase();
-  if (tier === 'prime' || tier === 'banned') return 'none';
-  if (tier === 'member') return 'minimal';
+  if (tier === 'prime' || tier === 'member' || tier === 'banned') return 'none';
 
-  // Free tier — check dynamic signals
-  if (userMeta && userMeta.createdAt) {
-    const ageMs = Date.now() - new Date(userMeta.createdAt).getTime();
-    const ageDays = ageMs / (24 * 60 * 60 * 1000);
-    if (ageDays < AD_FREE_TRIAL_DAYS) return 'none';           // 3-day ad-free trial
-    if (ageDays < AD_FREE_TRIAL_DAYS + 7) return 'light';       // first week after trial
-  }
-  // Heavy signal — an established user with high engagement takes full ad load
-  if (userMeta && (userMeta.sessionsLast30d >= 15 || userMeta.exposureLast7d >= 40)) {
-    return 'full';
-  }
-  // Default free tier — light. Only becomes 'full' once they're clearly engaged.
-  return 'light';
+  // Free tier — always full ads (no trial ramp, no engagement gate)
+  return 'full';
 }
 
 function isValidSurface(surface) {

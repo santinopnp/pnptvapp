@@ -29,6 +29,7 @@ import {
   type AvailableCreator,
 } from "@/lib/api";
 import { PerformerDrawer } from "@/components/live/PerformerDrawer";
+import { BookCallModal } from "@/components/creators/BookCallModal";
 import { AppShell, RightRail, SuggestedCreatorRow, SuggestedFollowRow, useForYou } from "@/components/Layout";
 
 const ALLOWED_IMAGE_HOSTS = ["cms.pnptv.app", "app.pnptv.app", "pnptv.app"];
@@ -175,6 +176,7 @@ export default function Live() {
   // Available Now — Main Stage cammers ∪ Slack-available creators. Poll 20s.
   const [availableCreators, setAvailableCreators] = useState<AvailableCreator[]>([]);
   const [sheetCreator, setSheetCreator] = useState<AvailableCreator | null>(null);
+  const [bookModalCreator, setBookModalCreator] = useState<AvailableCreator | null>(null);
   useEffect(() => {
     let cancelled = false;
     const load = () => {
@@ -647,18 +649,14 @@ export default function Live() {
             <button
               type="button"
               onClick={() => {
-                const slug = sheetCreator.slug;
+                setBookModalCreator(sheetCreator);
                 setSheetCreator(null);
-                navigate(`/c/${slug}?action=book&duration=30`);
               }}
               className="w-full min-h-[52px] rounded-xl font-bold text-white flex items-center justify-center gap-2 transition active:scale-[0.98]"
               style={{ background: "linear-gradient(135deg,#D4007A,#E69138)" }}
             >
               <span aria-hidden="true">📞</span>
               <span>Book private call</span>
-              {sheetCreator.creatorPriceUsd != null && sheetCreator.creatorPriceUsd > 0 && (
-                <span className="text-xs font-semibold opacity-80">· ${sheetCreator.creatorPriceUsd.toFixed(0)}/mo</span>
-              )}
             </button>
 
             {sheetCreator.onStage && (
@@ -1283,6 +1281,22 @@ export default function Live() {
             setLiveEvents((prev) => prev.map((e) => e.id === updated.id ? updated : e));
             setDetailEvent(updated);
           }}
+        />
+      )}
+
+      {/* ── Book Call Modal (from Available Now action sheet) ── */}
+      {bookModalCreator && (
+        <BookCallModal
+          creator={{
+            id: bookModalCreator.userId,
+            username: bookModalCreator.username,
+            photo_url: bookModalCreator.photoUrl,
+            creator_type: "full_time",
+            creator_price_usd: bookModalCreator.creatorPriceUsd ?? 0,
+          }}
+          isOnline={true}
+          open={true}
+          onClose={() => setBookModalCreator(null)}
         />
       )}
 

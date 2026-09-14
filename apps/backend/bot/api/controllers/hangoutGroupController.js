@@ -3377,7 +3377,7 @@ async function notifyOnlineMembers(req, res) {
       body  = 'Someone just joined the Main Stage. Come watch!';
     }
 
-    const sent = await PushNotificationService.sendToUsers(onlineIds, { title, body, url: notifUrl });
+    const sent = await PushNotificationService.sendToUsers(onlineIds, { title, body, url: notifUrl, tag: `hangout-activity-${groupId}-${Date.now()}` }, { notifType: 'hangouts' });
 
     logger.info('notifyOnlineMembers', { groupId, type, online: onlineIds.length, sent });
     return res.json({ success: true, sent });
@@ -3776,7 +3776,7 @@ async function notifyCallStartedToMembers(groupId, callId, starter, starterDispl
     body: `${startedBy} started a video call — tap to join`,
     url: `/chat/${groupId}`,
     tag: `hangout-call-${callId}`,
-  });
+  }, { notifType: 'hangouts' });
 }
 
 // Helper: can this user moderate the active call in this group?

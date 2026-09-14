@@ -1087,7 +1087,7 @@ async function _fulfillCallBooking(client, { userId, entitlementSpec, provider, 
   };
   await client.query(
     `INSERT INTO payments (id, reference, user_id, plan_id, provider, amount, currency, status, metadata, created_at, updated_at)
-       VALUES ($1, $1, $2, NULL, $3, $4, 'USD', 'completed', $5::jsonb, NOW(), NOW())`,
+       VALUES ($1::uuid, $1::text, $2::text, NULL, $3, $4, 'USD', 'completed', $5::jsonb, NOW(), NOW())`,
     [paymentId, String(userId), provider, Number(amountUsd), JSON.stringify(meta)]
   );
 
@@ -1192,8 +1192,9 @@ async function _fulfillTip(client, { payerUserId, entitlementSpec, provider, int
           title: `💸 Tip received: $${amountCreator.toFixed(2)}`,
           body: message ? `"${String(message).slice(0, 80)}"` : 'From a supporter — tap to open payouts.',
           url: '/creator/payouts',
-          icon: '/Logo2-50.png',
-        }).catch(() => {});
+          icon: '/app-icon-192.png',
+          tag: `tip-${Date.now()}-${creator_id}`,
+        }, { notifType: 'tip_received' }).catch(() => {});
       } catch { /* push service optional */ }
     });
   }
@@ -1503,12 +1504,75 @@ function requireWalletForSurface(surface) {
   };
 }
 
+/**
+ * Re-fulfill a checkout_intent that is stuck in `grant_failed` status and has a
+ * `surface` field (call, rush, prime, creator_sub, etc.). Called by
+ * cryptoPaymentService.reconcileGrantFailed for surface-based intents.
+ *
+ * The payment is already confirmed on-chain; this only runs the entitlement
+ * grant logic and updates the row to `confirmed` on success.
+ *
+ * @param {object} payment  Row from checkout_intents (must include entitlement_spec, surface, amount_usd)
+ * @returns {Promise<{ok:boolean, reason?:string}>}
+ */
+async function fulfillGrantFailedSurface(payment) {
+  const pool = getPool();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Re-lock the row — only proceed if it's still grant_failed (idempotency guard).
+    const { rows: lockRows } = await client.query(
+      `SELECT id, status FROM checkout_intents WHERE id = $1 FOR UPDATE`,
+      [payment.id]
+    );
+    if (lockRows.length === 0) return { ok: false, reason: 'intent_not_found' };
+    if (lockRows[0].status !== 'grant_failed') {
+      await client.query('COMMIT');
+      // Already recovered by a concurrent run — treat as success.
+      return { ok: true, reason: 'already_recovered' };
+    }
+
+    let entitlementSpec;
+    try {
+      entitlementSpec = typeof payment.entitlement_spec === 'string'
+        ? JSON.parse(payment.entitlement_spec)
+        : (payment.entitlement_spec || {});
+    } catch { entitlementSpec = {}; }
+
+    const fulfillment = await _fulfill(client, {
+      userId: payment.user_id,
+      entitlementSpec,
+      surface: payment.surface,
+      provider: 'wallet_usdc',
+      intentId: payment.id,
+      amountUsd: Number(payment.amount_usd),
+    });
+
+    await client.query(
+      `UPDATE checkout_intents
+         SET status = 'confirmed', grant_result = $1, fulfilled_at = NOW()
+       WHERE id = $2 AND status = 'grant_failed'`,
+      [JSON.stringify(fulfillment), payment.id]
+    );
+
+    await client.query('COMMIT');
+    return { ok: true };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    return { ok: false, reason: err.message };
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   initiateRushPurchase,
   initiateUsdcPurchase,
   initiateEthPurchase,
   verifyAndFulfillUsdc,
   verifyAndFulfillEth,
+  fulfillGrantFailedSurface,
   requireWalletForSurface,
   // Constants exposed for tests / callers
   USDC_BASE_CONTRACT,

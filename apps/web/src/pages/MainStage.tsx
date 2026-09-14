@@ -11,7 +11,7 @@ import {
 import { ConnectionState, RoomEvent, Track } from "livekit-client";
 import { useMainStage, type MainStageState } from "@/hooks/useMainStage";
 import { useMainStageRoom } from "@/components/mainstage/MainStageProvider";
-import { getMainStageJoinCheck, acceptMainStageConsents, getWalletBalance, getMainStageViewerToken, getMainStageFreeViewerToken, getMainStageState, voteSkipMainStage, playNextMainStage, getHangoutGroup, getMainStagePin, type MainStageJoinCheck, type MainStagePin, type TopicLite } from "@/lib/api";
+import { getMainStageJoinCheck, acceptMainStageConsents, getWalletBalance, getMainStageViewerToken, getMainStageFreeViewerToken, getMainStageState, voteSkipMainStage, playNextMainStage, getHangoutGroup, getMainStagePin, ApiError, type MainStageJoinCheck, type MainStagePin, type TopicLite, type MainStageOnStageEntry } from "@/lib/api";
 import { getSocket } from "@/lib/socket";
 import { useAuth } from "@/hooks/useAuth";
 import { useMusicPlayer } from "@/hooks/useMusicPlayer";
@@ -352,6 +352,9 @@ interface MainStageInnerProps {
   onVoteSkip?: () => void;
   onPlayNext?: () => void;
   playNextCooldown?: number;
+  onStage?: MainStageOnStageEntry[];
+  onTipCreator?: (userId: string, username: string | null) => void;
+  onBookCreator?: (creator: { id: string; username: string; isCrystal: boolean }) => void;
 }
 
 function MainStageInner({
@@ -381,6 +384,9 @@ function MainStageInner({
   onVoteSkip,
   onPlayNext,
   playNextCooldown,
+  onStage,
+  onTipCreator,
+  onBookCreator,
 }: MainStageInnerProps) {
   const [modeTransitioning, setModeTransitioning] = useState(false);
   const prevModeRef = useRef(mode);
@@ -406,6 +412,9 @@ function MainStageInner({
             mediaPlaying={mediaPlaying}
             mediaVolume={mediaVolume}
             mediaStartedAt={mediaStartedAt}
+            onStage={onStage}
+            onTipCreator={onTipCreator}
+            onBookCreator={onBookCreator}
           />
         )}
         {mode === "spotlight" && (
@@ -413,6 +422,9 @@ function MainStageInner({
             focusIdentity={spotlightCammer}
             nextAt={spotlightNextAt}
             onTileClick={isAdmin ? onSpotlightPick : undefined}
+            onStage={onStage}
+            onTipCreator={onTipCreator}
+            onBookCreator={onBookCreator}
           />
         )}
         {mode === "grid3x3" && <EqualGrid />}
@@ -513,17 +525,12 @@ export default function MainStage() {
   // with the guest token.
   const { room, isJoined, join, cooldownSeconds, clearCooldown, sessionStartedAt, sessionLimitSeconds, canScreenShare, participantTier } = useMainStageRoom();
 
-  // Auth state — viewer mode covers unauthenticated visitors AND free-tier
-  // logged-in users (who can watch during the gate window but never publish).
+  // Auth state — viewer mode = unauthenticated only. Any logged-in user can
+  // join as a cammer; free-tier gets a newcomer token (cam only, no mic, 3h).
   const { user, isLoading: isAuthLoading } = useAuth();
-  const hasMemberAccess = !!user && (
-    user.role === "admin" || user.role === "superadmin"
-    || user.tier === "PRIME" || user.tier === "prime"
-    || user.tier === "member"
-  );
-  const canParticipate = hasMemberAccess;
+  const canParticipate = !!user;
   const isViewerMode = !isGuestMode && !isAuthLoading && !canParticipate;
-  const isFreeTierViewer = isViewerMode && !!user;
+  const isFreeTierViewer = false; // free-tier users are now cammers, not viewers
 
   // Viewer-mode state
   const [viewerLkToken, setViewerLkToken] = useState<string | null>(null);
@@ -540,10 +547,13 @@ export default function MainStage() {
   const autoConnectRef = useRef(false);
 
   // Resolve effective values: guest path overrides everything from the hook.
+  // Viewer mode uses its own LiveKitRoom and must not inherit the provider's
+  // member-join error/loading state — the provider error is for participant
+  // connections only and would incorrectly block the viewer stage.
   const state       = hookedState;
   const role        = isGuestMode ? ("guest" as const) : hookedRole;
-  const loading     = isGuestMode ? false              : hookedLoading;
-  const error       = isGuestMode ? null               : hookedError;
+  const loading     = (isGuestMode || isViewerMode) ? false : hookedLoading;
+  const error       = (isGuestMode || isViewerMode) ? null  : hookedError;
 
   const [adminOpen, setAdminOpen] = useState(false);
   const [connState, setConnState] = useState<ConnectionState>(ConnectionState.Connecting);
@@ -1054,12 +1064,22 @@ export default function MainStage() {
       }, isFreeTierViewer
         ? (3 * 60 - 15) * 60 * 1000    // 2h45m — free-tier gets 3h tokens
         : (24 * 60 - 15) * 60 * 1000); // 23h45m — paid viewer 24h tokens
-    } catch {
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        if (err.code === 'AGE_VERIFICATION_REQUIRED' || err.code === 'CONSENT_REQUIRED') {
+          navigate('/onboarding', { replace: true });
+          return;
+        }
+        if (err.code === 'SESSION_INVALIDATED' || err.status === 401) {
+          navigate('/login?from=mainstage', { replace: true });
+          return;
+        }
+      }
       setViewerError("Couldn't connect to Main Stage. Please try again.");
     } finally {
       setViewerConnecting(false);
     }
-  }, [isFreeTierViewer]);
+  }, [isFreeTierViewer, navigate]);
 
   // Auto-connect free-tier logged-in users — no gate, no popup.
   useEffect(() => {
@@ -1211,7 +1231,7 @@ export default function MainStage() {
             className="min-h-[50px] w-full rounded-2xl text-sm font-bold text-white transition-all active:scale-[0.97]"
             style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}
           >
-            Become a Member — Cam + Mic, 4h Sessions
+            Become a Member — Cam + Mic, Unlimited Access
           </button>
           <button
             type="button"
@@ -1651,7 +1671,7 @@ export default function MainStage() {
         <div className="flex items-center gap-1 sm:gap-1.5 flex-shrink-0">
           {isViewerMode && (
             <span
-              className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold"
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold"
               style={{
                 background: "rgba(212,0,122,0.12)",
                 border:     "1px solid rgba(212,0,122,0.35)",
@@ -2043,6 +2063,9 @@ export default function MainStage() {
                 onVoteSkip={handleVoteSkip}
                 onPlayNext={canPlayNext ? handlePlayNext : undefined}
                 playNextCooldown={playNextCooldown}
+                onStage={state?.spotlight?.onStage}
+                onTipCreator={(userId, username) => { setTipSelectedCreatorId(userId); setShowTipSheet(true); void username; }}
+                onBookCreator={(c) => setBookCallCreator({ id: c.id, username: c.username, photo_url: null, creator_type: "occasional", creator_price_usd: 0, crystalCreator: c.isCrystal })}
               />
             </LiveKitRoom>
           ) : isViewerMode ? (
@@ -2077,6 +2100,9 @@ export default function MainStage() {
                   spotlight={(viewerStateOverride ?? state)?.spotlight}
                   showTips={false}
                   showBottomBar={false}
+                  onStage={(viewerStateOverride ?? state)?.spotlight?.onStage}
+                  onTipCreator={(userId, username) => { setTipSelectedCreatorId(userId); setShowTipSheet(true); void username; }}
+                  onBookCreator={(c) => setBookCallCreator({ id: c.id, username: c.username, photo_url: null, creator_type: "occasional", creator_price_usd: 0, crystalCreator: c.isCrystal })}
                 />
               </LiveKitRoom>
 
@@ -2190,8 +2216,32 @@ export default function MainStage() {
                 onVoteSkip={handleVoteSkip}
                 onPlayNext={canPlayNext ? handlePlayNext : undefined}
                 playNextCooldown={playNextCooldown}
+                onStage={state?.spotlight?.onStage}
+                onTipCreator={(userId, username) => { setTipSelectedCreatorId(userId); setShowTipSheet(true); void username; }}
+                onBookCreator={(c) => setBookCallCreator({ id: c.id, username: c.username, photo_url: null, creator_type: "occasional", creator_price_usd: 0, crystalCreator: c.isCrystal })}
               />
             </LiveKitRoom>
+          )}
+
+          {/* ── Ad strip for newcomer-tier (free) participants ── */}
+          {participantTier === 'newcomer' && (
+            <div
+              className="flex-shrink-0 flex flex-col items-center gap-1 px-4 py-2"
+              style={{
+                background: "rgba(10,10,15,0.97)",
+                borderTop: "1px solid rgba(255,255,255,0.08)",
+              }}
+            >
+              <AdSlot slot="instant_message" />
+              <button
+                type="button"
+                onClick={() => navigate("/subscribe")}
+                className="text-[10px] font-medium transition-opacity hover:opacity-80"
+                style={{ color: "rgba(255,255,255,0.30)" }}
+              >
+                Go Member — remove ads + unlock mic
+              </button>
+            </div>
           )}
 
           {/* ── Chat input — mobile only, hidden on desktop ── */}
@@ -2819,7 +2869,7 @@ export default function MainStage() {
       {/* Pinned announcement — mobile overlay. Sits above the chat-overlay
           messages so late-joiners always see the latest admin update even
           when they've collapsed chat. Dismissible per-session. */}
-      {visiblePin && !isViewerMode && (
+      {visiblePin && (
         <div
           className="absolute left-3 right-3 z-40 flex items-start gap-2 px-3 py-2 rounded-xl lg:hidden"
           style={{
@@ -2848,13 +2898,15 @@ export default function MainStage() {
         </div>
       )}
 
-      {chatOverlayVisible && !isViewerMode && chatMessages.length > 0 && (
+      {chatOverlayVisible && chatMessages.length > 0 && (
         <div
           aria-live="polite"
           aria-label="Chat messages"
           className="absolute left-3 pointer-events-none z-30 flex flex-col justify-end gap-1 lg:hidden"
           style={{
-            bottom: "calc(116px + env(safe-area-inset-bottom, 0px))",
+            bottom: participantTier === 'newcomer'
+              ? "calc(190px + env(safe-area-inset-bottom, 0px))"
+              : "calc(116px + env(safe-area-inset-bottom, 0px))",
             maxWidth: "min(280px, 58vw)",
             maxHeight: "38vh",
             overflow: "hidden",

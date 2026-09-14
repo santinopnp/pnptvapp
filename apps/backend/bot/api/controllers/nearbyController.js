@@ -135,17 +135,6 @@ class NearbyController {
         });
       }
 
-      // Free tier: count-only response
-      if (effectiveTier === 'free') {
-        const countResult = await NearbyController._countNearby(userId, lat, lon, rad);
-        return res.status(200).json({
-          success: true,
-          tier: 'free',
-          count: countResult,
-          upgradeMessage: 'Upgrade to Member to see who is nearby',
-        });
-      }
-
       // Run full search
       const result = await nearbyService.searchNearby(
         userId,
@@ -155,8 +144,8 @@ class NearbyController {
         { limit: Math.min(parseInt(limit) || 50, 200) }
       );
 
-      // Member tier: strip sensitive fields (distance, photo URL, lastName)
-      if (effectiveTier === 'member') {
+      // Free + member tier: name-only list (distance, photo, lastName stripped)
+      if (effectiveTier === 'free' || effectiveTier === 'member') {
         const blurredUsers = (result.users || []).map(u => ({
           id: u.user_id,
           firstName: u.name || null,
@@ -164,7 +153,7 @@ class NearbyController {
         }));
         return res.status(200).json({
           success: true,
-          tier: 'member',
+          tier: effectiveTier,
           total: blurredUsers.length,
           radius_km: rad,
           users: blurredUsers,

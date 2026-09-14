@@ -1185,8 +1185,9 @@ async function notifyCammerJoined(identity) {
     title: `🎤 ${displayName} is on Main Stage`,
     body: 'Tap to join the stream →',
     url: '/main-stage',
-    icon: cammer.photo_url || '/Logo2-50.png',
-  });
+    tag: `mainstage-${cammer.id || idStr}`,
+    image: cammer.photo_url || cammer.avatar_url || '/app-icon-192.png',
+  }, { notifType: 'live_events' });
   logger.info('[MainStage] notifyCammerJoined delivered', {
     identity: idStr, audienceSize: userIds.length, sent,
   });

@@ -1679,6 +1679,15 @@ const limiter = rateLimit({
       // skip global bucket so an active session doesn't block a creator upload.
       // Each has its own dedicated muxUrlLimiter below.
       '/api/webapp/social/mux-upload-url',
+      // Layout polling: multiple browser tabs each poll these on independent
+      // timers (10-30s); with 3+ tabs open a single user blows past 600/15min
+      // on pure reads before any real action request goes through.
+      '/api/webapp/dm/threads',          // DM inbox — polled every 30s
+      '/api/main-stage/state',           // Main Stage state — polled every 10s
+      '/api/webapp/hangouts/groups',     // Hangouts list — polled
+      '/api/live/available',             // Available-now creators — polled every 20s
+      '/api/proxy/live/streams',         // Live stream list — polled
+      '/api/main-stage/cammers',         // Main Stage cammer list — polled
     ];
     // Skip high-frequency streaming endpoints that poll every 2-5s while a
     // user watches a live stream — otherwise watchers exhaust their 600/15min
@@ -23172,7 +23181,7 @@ app.get('/api/main-stage/cammers', mainStageStateLimiter, asyncHandler(async (re
   ).map(String);
 
   if (userIds.length === 0) {
-    await cache.set(CACHE_KEY, [], 15).catch(() => {});
+    await cache.set(CACHE_KEY, [], 5).catch(() => {});
     return res.json({ success: true, cammers: [] });
   }
 
@@ -23213,7 +23222,7 @@ app.get('/api/main-stage/cammers', mainStageStateLimiter, asyncHandler(async (re
     });
   });
 
-  await cache.set(CACHE_KEY, cammers, 15).catch(() => {});
+  await cache.set(CACHE_KEY, cammers, 5).catch(() => {});
   res.json({ success: true, cammers });
 }));
 
@@ -23242,22 +23251,39 @@ app.get('/api/live/available', mainStageStateLimiter, asyncHandler(async (req, r
     ).map(String)
   );
 
-  // Signal 2 — creators with active accepting_calls Redis key. Scan is O(N)
-  // across matching keys but the pattern is narrow enough (<500 creators typical).
-  const availIds = new Set();
+  // Signal 2 — creators with an ACTIVE accepting_calls key (value='1').
+  //   value='1' → explicit opt-in (webapp toggle or Telegram ping), TTL 60 min
+  //   value='0' → opted-out via webapp — must be EXCLUDED even though the key exists
+  //   key absent → default bookable state (not shown as "actively accepting")
+  // We also cross-check presence:online:{id} so a creator who forgot to turn off
+  // their availability but closed the browser doesn't show as online.
+  const acceptingCandidates = [];
   let cursor = '0';
   do {
     const [next, batch] = await redis.scan(cursor, 'MATCH', 'user:*:accepting_calls', 'COUNT', '200');
-    for (const key of batch || []) {
-      const id = String(key).slice('user:'.length, -':accepting_calls'.length);
-      if (id) availIds.add(id);
+    if (batch && batch.length > 0) {
+      const vals = await redis.mget(...batch);
+      for (let i = 0; i < batch.length; i++) {
+        if (vals[i] !== '1') continue; // skip opted-out ('0') and blank keys
+        const id = String(batch[i]).slice('user:'.length, -':accepting_calls'.length);
+        if (id) acceptingCandidates.push(id);
+      }
     }
     cursor = next;
   } while (cursor !== '0');
 
+  // Cross-check actual online presence — 60s heartbeat key must exist.
+  const availIds = new Set();
+  if (acceptingCandidates.length > 0) {
+    const presenceVals = await redis.mget(...acceptingCandidates.map(id => `presence:online:${id}`));
+    for (let i = 0; i < acceptingCandidates.length; i++) {
+      if (presenceVals[i]) availIds.add(acceptingCandidates[i]);
+    }
+  }
+
   const allIds = Array.from(new Set([...stageIds, ...availIds]));
   if (allIds.length === 0) {
-    await cache.set(CACHE_KEY, [], 15).catch(() => {});
+    await cache.set(CACHE_KEY, [], 10).catch(() => {});
     return res.json({ success: true, creators: [] });
   }
 
@@ -23294,7 +23320,7 @@ app.get('/api/live/available', mainStageStateLimiter, asyncHandler(async (req, r
     return (a.displayName || '').localeCompare(b.displayName || '');
   });
 
-  await cache.set(CACHE_KEY, creators, 15).catch(() => {});
+  await cache.set(CACHE_KEY, creators, 10).catch(() => {});
   res.json({ success: true, creators });
 }));
 
@@ -24209,6 +24235,55 @@ app.post('/api/webapp/creators/me/replay/bunny-finish', authenticateUser, asyncH
 }));
 
 // ── Fin subida a Bunny ───────────────────────────────────────────────────────
+
+// ── CC Auto-transcription + translation ──────────────────────────────────────
+const ccAudioUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 3 * 1024 * 1024 },
+  fileFilter: (_, file, cb) => cb(null, file.mimetype.startsWith('audio/')),
+});
+
+app.post('/api/webapp/cc/transcribe', requireSessionAuth, ccAudioUpload.single('audio'), asyncHandler(async (req, res) => {
+  const audio = req.file;
+  if (!audio) return res.status(400).json({ error: 'No audio chunk' });
+
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'Transcription not configured' });
+
+  const targetLang = String(req.query.lang || req.body?.lang || 'en').split('-')[0].toLowerCase();
+
+  const blob = new Blob([audio.buffer], { type: audio.mimetype || 'audio/webm' });
+  const fd = new FormData();
+  fd.append('file', blob, 'chunk.webm');
+  fd.append('model', 'whisper-1');
+  fd.append('response_format', 'json');
+
+  const whisperRes = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}` },
+    body: fd,
+  });
+
+  if (!whisperRes.ok) {
+    const errText = await whisperRes.text().catch(() => '');
+    logger.error('[CC] Whisper error', { status: whisperRes.status, errText });
+    return res.status(502).json({ error: 'Transcription failed' });
+  }
+
+  const data = await whisperRes.json();
+  let text = (data.text || '').trim();
+  const detectedLang = (data.language || '').toLowerCase().slice(0, 2);
+
+  if (text && detectedLang && detectedLang !== targetLang) {
+    try {
+      const { translateText } = require('../../services/grokService');
+      text = (await translateText(text, targetLang)) || text;
+    } catch { /* show original if translation fails */ }
+  }
+
+  return res.json({ text, sourceLang: detectedLang });
+}));
+// ── End CC transcription ──────────────────────────────────────────────────────
 
 // Export app WITHOUT 404/error handlers
 // These will be added in bot.js AFTER the webhook callback

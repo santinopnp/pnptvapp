@@ -413,6 +413,9 @@ export function WalletPayCard({
   const [eth, setEth] = _useState<number | null>(null);
   // Tracks whether the onramp poll has been cancelled (component unmounted).
   const pollCancelledRef = _useRef(false);
+  // Set to true after initial balance load completes so we can auto-pay once
+  // when the user arrives with enough balance already funded.
+  const autoPayFiredRef = _useRef(false);
 
   _useEffect(() => {
     // Reset cancellation flag when the wallet/auth changes so a fresh poll can run.
@@ -430,9 +433,19 @@ export function WalletPayCard({
       getWalletUsdcBalance(activeWallet.address).catch(() => null),
       getWalletEthBalance(activeWallet.address).catch(() => null),
     ]).then(([usdcR, ethR]) => {
-      setUsdc(usdcR?.hasWallet ? usdcR.usdc : null);
+      const bal = usdcR?.hasWallet ? usdcR.usdc : null;
+      setUsdc(bal);
       setEth(ethR?.hasWallet ? ethR.eth : null);
+      // One-tap auto-pay: if the wallet already has enough USDC when the
+      // component mounts (user topped up externally or is returning after a
+      // cancelled signing), fire handlePay automatically once so they don't
+      // have to find and tap the Pay button themselves.
+      if (bal != null && bal >= amountUsd && !autoPayFiredRef.current && isEmbedded) {
+        autoPayFiredRef.current = true;
+        setTimeout(() => handlePay(), 400);
+      }
     }).finally(() => setLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authenticated, activeWallet?.address]);
 
   // Not signed into Privy yet — frame as card-primary so a card-only user
@@ -586,10 +599,26 @@ export function WalletPayCard({
       });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
+      const errStatus = (err as { status?: number }).status;
+      const isInsufficientFunds = errStatus === 402 || msg === "INSUFFICIENT_FUNDS";
       const isUserCancel = /User rejected|user denied|cancel/i.test(msg);
       const isChain = /wrong network|unrecognized chain|chain mismatch|switch chain|network mismatch/i.test(msg);
+
+      if (isInsufficientFunds && isEmbedded) {
+        // Silently open the fund flow — no error banner, one seamless step.
+        setPaying(false);
+        handleFund();
+        return;
+      }
+
+      const currentUsdc = usdc ?? 0;
+      const fundsAlreadyReady = currentUsdc >= amountUsd;
       const friendly = isUserCancel
-        ? (es ? "Cancelaste la transacción." : "You cancelled the transaction.")
+        ? fundsAlreadyReady
+          ? (es
+            ? "Cancelaste la firma. Tus fondos están listos — toca Pagar para completar."
+            : "Signing cancelled. Your funds are ready — tap Pay to complete.")
+          : (es ? "Cancelaste la transacción." : "You cancelled the transaction.")
         : isChain
           ? (es ? "Cambia la red de tu billetera a Base y vuelve a intentar." : "Switch your wallet network to Base and try again.")
           : msg;

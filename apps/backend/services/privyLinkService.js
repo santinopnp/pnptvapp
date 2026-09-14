@@ -15,6 +15,7 @@
 
 const { query } = require('../config/postgres');
 const logger = require('../utils/logger');
+const { provisionCreatorWallet } = require('./payoutSplitService');
 
 let _privyClient = null;
 function getPrivyClient() {
@@ -84,6 +85,7 @@ async function verifyAndLink({ pnptvUserId, privyToken }) {
     [privyId, pnptvUserId],
   );
   if (collision.rowCount > 0) {
+    logger.warn('[privy-link] collision: privy_id already on another user', { privyId, pnptvUserId, otherUserId: collision.rows[0].id });
     const e = new Error('privy_id_already_linked');
     e.otherUserId = collision.rows[0].id;
     throw e;
@@ -99,6 +101,22 @@ async function verifyAndLink({ pnptvUserId, privyToken }) {
   );
 
   logger.info('[privy-link] linked', { pnptvUserId, privyId, walletAddress });
+
+  // If this user is an active creator without a wallet, provision one now
+  // that we have a privy_id to attach it to. Fire-and-forget.
+  if (!walletAddress) {
+    query(
+      `SELECT 1 FROM users WHERE id = $1 AND creator_status = 'active' AND wallet_address IS NULL LIMIT 1`,
+      [pnptvUserId],
+    ).then(({ rowCount }) => {
+      if (rowCount > 0) {
+        provisionCreatorWallet(pnptvUserId).catch((e) =>
+          logger.warn('[privy-link] wallet provision failed', { pnptvUserId, error: e.message })
+        );
+      }
+    }).catch(() => {});
+  }
+
   return { privyId, walletAddress };
 }
 

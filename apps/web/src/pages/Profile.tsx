@@ -77,7 +77,7 @@ import { BookCallModal } from "@/components/creators/BookCallModal";
 import CreatorSubscribeWizard from "@/components/creators/CreatorSubscribeWizard";
 import type { CreatorCardCreator } from "@/components/creators/CreatorCard";
 import { NearbyBadge, useNearbyToggle } from "@/components/NearbyBadge";
-import { getDistanceToUser, getMyCallCredits, NP_COINS_SUBSCRIBE } from "@/lib/api";
+import { getDistanceToUser, getMyCallCredits, getCreatorCallPackages, NP_COINS_SUBSCRIBE, type CallPackage } from "@/lib/api";
 import { useAcceptingCalls } from "@/hooks/useAcceptingCalls";
 
 
@@ -257,11 +257,13 @@ export default function Profile() {
 
   // Book a Call modal state
   const [showBookCall, setShowBookCall] = useState(false);
+  const [bookCallDuration, setBookCallDuration] = useState<30 | 60>(30);
+  const [callPackages, setCallPackages] = useState<CallPackage[]>([]);
   // Viewer already holds an unused/partial call credit for this creator —
   // unlocks the Schedule button even when the creator is offline.
   const [hasCreditForCreator, setHasCreditForCreator] = useState(false);
   useEffect(() => {
-    if (isOwnProfile || !targetUserId) { setHasCreditForCreator(false); return; }
+    if (isOwnProfile || !targetUserId) { setHasCreditForCreator(false); setCallPackages([]); return; }
     let cancelled = false;
     getMyCallCredits(targetUserId)
       .then((res) => {
@@ -271,6 +273,12 @@ export default function Profile() {
           return (c.status === "unused" || c.status === "partial") && remaining > 0;
         });
         setHasCreditForCreator(usable);
+      })
+      .catch(() => {});
+    getCreatorCallPackages(targetUserId)
+      .then((res) => {
+        if (cancelled || !res?.success) return;
+        setCallPackages(res.packages.filter((p) => p.is_active));
       })
       .catch(() => {});
     return () => { cancelled = true; };
@@ -1984,17 +1992,22 @@ export default function Profile() {
 
               {/* Book a Call — visible whenever the creator is accepting calls
                   OR the viewer holds an unused credit (offline schedule flow). */}
-              {isPerformer && (creatorAcceptingCalls || hasCreditForCreator) && (
-                <button
-                  onClick={() => setShowBookCall(true)}
-                  className="w-full min-h-[44px] py-2.5 rounded-[10px] text-sm font-bold flex items-center justify-center gap-2 transition-all active:scale-95"
-                  style={{ background: "rgba(212,0,122,.12)", border: "1px solid rgba(212,0,122,.5)", color: "#FF4DA6" }}
-                >
-                  <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 6.75c0 8.284 6.716 15 15 15h2.25a2.25 2.25 0 002.25-2.25v-1.372c0-.516-.351-.966-.852-1.091l-4.423-1.106c-.44-.11-.902.055-1.173.417l-.97 1.293c-.282.376-.769.542-1.21.38a12.035 12.035 0 01-7.143-7.143c-.162-.441.004-.928.38-1.21l1.293-.97c.363-.271.527-.734.417-1.173L6.963 3.102a1.125 1.125 0 00-1.091-.852H4.5A2.25 2.25 0 002.25 4.5v2.25z" />
-                  </svg>
-                  {creatorAcceptingCalls ? "Available now — Book a Call" : "Schedule a Call — use your credit"}
-                </button>
+              {isPerformer && callPackages.length > 0 && (creatorAcceptingCalls || hasCreditForCreator) && (
+                <div className="flex gap-2.5">
+                  {callPackages.map((pkg) => (
+                    <button
+                      key={pkg.id}
+                      onClick={() => { setBookCallDuration(pkg.duration_minutes as 30 | 60); setShowBookCall(true); }}
+                      className="flex-1 min-h-[44px] py-2.5 rounded-[10px] text-sm font-bold flex items-center justify-center gap-2 transition-all active:scale-95 relative"
+                      style={{ background: "rgba(212,0,122,.12)", border: "1px solid rgba(212,0,122,.5)", color: "#FF4DA6" }}
+                    >
+                      <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 6.75c0 8.284 6.716 15 15 15h2.25a2.25 2.25 0 002.25-2.25v-1.372c0-.516-.351-.966-.852-1.091l-4.423-1.106c-.44-.11-.902.055-1.173.417l-.97 1.293c-.282.376-.769.542-1.21.38a12.035 12.035 0 01-7.143-7.143c-.162-.441.004-.928.38-1.21l1.293-.97c.363-.271.527-.734.417-1.173L6.963 3.102a1.125 1.125 0 00-1.091-.852H4.5A2.25 2.25 0 002.25 4.5v2.25z" />
+                      </svg>
+                      {pkg.duration_minutes} min · ${parseFloat(pkg.price_usd).toFixed(0)}
+                    </button>
+                  ))}
+                </div>
               )}
             </>
           )}
@@ -2755,6 +2768,8 @@ export default function Profile() {
             bio: profile.bio || null,
           } as CreatorCardCreator}
           isOnline={profile.performerData?.isAvailable ?? false}
+          initialDuration={bookCallDuration}
+          skipPackageStep
           open={showBookCall}
           onClose={() => setShowBookCall(false)}
         />

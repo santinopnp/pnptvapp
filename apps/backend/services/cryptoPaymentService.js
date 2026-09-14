@@ -326,7 +326,8 @@ class CryptoPaymentService {
   static async reconcileGrantFailed() {
     const { rows } = await query(
       `SELECT id, user_id, plan_id, creator_id, scope_type, scope_id,
-              tx_hash, from_address, token, expected_amount_native
+              tx_hash, from_address, token, expected_amount_native,
+              surface, entitlement_spec, amount_usd
        FROM checkout_intents
        WHERE status = 'grant_failed'
          AND COALESCE(confirmed_at, created_at) > NOW() - INTERVAL '7 days'
@@ -340,34 +341,50 @@ class CryptoPaymentService {
     const stillFailed = [];
 
     for (const payment of rows) {
-      const metadata = {
-        provider: 'crypto_base',
-        asset: payment.token,
-        txHash: payment.tx_hash,
-        fromAddress: payment.from_address,
-        amountReceived: parseFloat(payment.expected_amount_native),
-        recovered: true,
-        ...(payment.creator_id && { creatorId: payment.creator_id }),
-        ...(payment.scope_type && { scopeType: payment.scope_type }),
-        ...(payment.scope_id && { scopeId: payment.scope_id }),
-      };
       try {
-        const grantResult = await PaymentService.grantEntitlementsForPlan(
-          payment.user_id,
-          payment.plan_id,
-          'crypto_base',
-          metadata,
-          `crypto_${payment.id}`
-        );
-        await query(
-          `UPDATE checkout_intents
-           SET status = 'confirmed', grant_result = $1
-           WHERE id = $2 AND status = 'grant_failed'`,
-          [JSON.stringify(grantResult), payment.id]
-        );
+        // Surface-based intents (call, rush, prime, creator_sub, etc.) must go through
+        // walletCheckoutService — grantEntitlementsForPlan only understands plan_add_ons
+        // and would silently return {errors:1,granted:0} for null plan_ids (production
+        // incident 2026-09-14: call bookings confirmed on-chain but credit never created).
+        if (payment.surface) {
+          const walletCheckoutService = require('./walletCheckoutService');
+          const result = await walletCheckoutService.fulfillGrantFailedSurface(payment);
+          if (!result?.ok) {
+            stillFailed.push({ id: payment.id, userId: payment.user_id, err: result?.reason || 'unknown' });
+            logger.warn('CryptoPayment: reconcile surface retry still failing', {
+              paymentId: payment.id, surface: payment.surface, userId: payment.user_id, reason: result?.reason,
+            });
+            continue;
+          }
+        } else {
+          const metadata = {
+            provider: 'crypto_base',
+            asset: payment.token,
+            txHash: payment.tx_hash,
+            fromAddress: payment.from_address,
+            amountReceived: parseFloat(payment.expected_amount_native),
+            recovered: true,
+            ...(payment.creator_id && { creatorId: payment.creator_id }),
+            ...(payment.scope_type && { scopeType: payment.scope_type }),
+            ...(payment.scope_id && { scopeId: payment.scope_id }),
+          };
+          const grantResult = await PaymentService.grantEntitlementsForPlan(
+            payment.user_id,
+            payment.plan_id,
+            'crypto_base',
+            metadata,
+            `crypto_${payment.id}`
+          );
+          await query(
+            `UPDATE checkout_intents
+             SET status = 'confirmed', grant_result = $1
+             WHERE id = $2 AND status = 'grant_failed'`,
+            [JSON.stringify(grantResult), payment.id]
+          );
+        }
         recovered++;
         logger.info('CryptoPayment: recovered grant_failed', {
-          paymentId: payment.id, userId: payment.user_id, planId: payment.plan_id,
+          paymentId: payment.id, userId: payment.user_id, planId: payment.plan_id, surface: payment.surface,
         });
       } catch (grantErr) {
         stillFailed.push({ id: payment.id, userId: payment.user_id, err: grantErr.message });

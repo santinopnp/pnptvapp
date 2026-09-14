@@ -517,7 +517,7 @@ const sendMessage = async (req, res) => {
       body: messageText.slice(0, 120),
       url: `/dm/${user.id}`,
       tag: `dm-${user.id}`,
-    }).catch(() => {});
+    }, { notifType: 'messages' }).catch(() => {});
 
     // ── Webapp → Telegram DM bridge: forward to recipient's Telegram ──
     DmService.bridgeToTelegram(user.id, message.recipient_id, hydratedMessage).catch(() => {});

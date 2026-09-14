@@ -47,6 +47,7 @@ import {
   createUserReport,
   togglePostLike,
   getMyCallCredits,
+  getCreatorCallPackages,
   uploadCoverPhoto,
   deleteCoverPhoto,
   tipTokens,
@@ -66,6 +67,7 @@ import {
   type ReportCategory,
   type ViewerCreatorSubscription,
   type MyCallCredit,
+  type CallPackage,
 } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -368,6 +370,7 @@ export default function CreatorProfilePage() {
   const [showBookCall, setShowBookCall] = useState(false);
   const [bookCallDuration, setBookCallDuration] = useState<30 | 60>(30);
   const [callCredits, setCallCredits] = useState<MyCallCredit[]>([]);
+  const [callPackages, setCallPackages] = useState<CallPackage[]>([]);
   const [menuOpen, setMenuOpen] = useState(false);
   const [showBlockConfirm, setShowBlockConfirm] = useState(false);
   const [blockLoading, setBlockLoading] = useState(false);
@@ -517,9 +520,15 @@ export default function CreatorProfilePage() {
           .finally(() => setChannelPassLoading(false))
       : Promise.resolve();
 
-    // Fire all 5 in parallel — individual .catch() handlers above prevent
+    const callPackagesPromise = isOtherUser
+      ? getCreatorCallPackages(creatorId)
+          .then((res) => { if (res.success) setCallPackages(res.packages.filter((p) => p.is_active)); })
+          .catch(() => {})
+      : Promise.resolve();
+
+    // Fire all in parallel — individual .catch() handlers above prevent
     // one failure from cancelling the others.
-    void Promise.all([postsPromise, blockedPromise, creditsPromise, walletPromise, channelPassPromise]);
+    void Promise.all([postsPromise, blockedPromise, creditsPromise, walletPromise, channelPassPromise, callPackagesPromise]);
   }, [data?.creator?.id, isAuthenticated, user?.dbId, user?.id]);
 
   const unusedCredit30 = useMemo(
@@ -2061,52 +2070,40 @@ export default function CreatorProfilePage() {
               <Diamond size={14} style={{ color: "#D4007A", flexShrink: 0 }} />
               <span>
                 You already have a paid{" "}
-                <b>{unusedCredit60 ? "60-min" : "30-min"}</b> call credit — click{" "}
-                <b>Book {unusedCredit60 ? "60" : "30"} min call</b> to schedule at no extra cost.
+                <b>{unusedCredit60 ? "60-min" : "30-min"}</b> call credit — tap the button below to schedule at no extra cost.
               </span>
             </div>
           )}
 
-          <div className="flex gap-2.5 mb-4 lg:max-w-md">
-            <button
-              onClick={() => handleBookCall(30)}
-              className="flex-1 py-2.5 rounded-xl text-sm font-semibold border transition-opacity hover:opacity-90 relative"
-              style={
-                unusedCredit30
-                  ? { borderColor: "#D4007A", color: "#fff", background: "rgba(212,0,122,0.15)" }
-                  : { borderColor: "rgba(255,255,255,0.15)", color: "#fff", background: "transparent" }
-              }
-            >
-              Book 30 min call
-              {unusedCredit30 && (
-                <span
-                  className="absolute -top-1.5 -right-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full"
-                  style={{ background: "#D4007A", color: "#fff" }}
-                >
-                  ✓ PAID
-                </span>
-              )}
-            </button>
-            <button
-              onClick={() => handleBookCall(60)}
-              className="flex-1 py-2.5 rounded-xl text-sm font-semibold border transition-opacity hover:opacity-90 relative"
-              style={
-                unusedCredit60
-                  ? { borderColor: "#D4007A", color: "#fff", background: "rgba(212,0,122,0.15)" }
-                  : { borderColor: "rgba(255,255,255,0.15)", color: "#fff", background: "transparent" }
-              }
-            >
-              Book 60 min call
-              {unusedCredit60 && (
-                <span
-                  className="absolute -top-1.5 -right-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full"
-                  style={{ background: "#D4007A", color: "#fff" }}
-                >
-                  ✓ PAID
-                </span>
-              )}
-            </button>
-          </div>
+          {callPackages.length > 0 && (
+            <div className="flex gap-2.5 mb-4 lg:max-w-md">
+              {callPackages.map((pkg) => {
+                const unusedCredit = pkg.duration_minutes === 30 ? unusedCredit30 : unusedCredit60;
+                return (
+                  <button
+                    key={pkg.id}
+                    onClick={() => handleBookCall(pkg.duration_minutes as 30 | 60)}
+                    className="flex-1 py-2.5 rounded-xl text-sm font-semibold border transition-opacity hover:opacity-90 relative"
+                    style={
+                      unusedCredit
+                        ? { borderColor: "#D4007A", color: "#fff", background: "rgba(212,0,122,0.15)" }
+                        : { borderColor: "rgba(255,255,255,0.15)", color: "#fff", background: "transparent" }
+                    }
+                  >
+                    {pkg.duration_minutes} min · ${parseFloat(pkg.price_usd).toFixed(0)}
+                    {unusedCredit && (
+                      <span
+                        className="absolute -top-1.5 -right-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+                        style={{ background: "#D4007A", color: "#fff" }}
+                      >
+                        ✓ PAID
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
 
           {/* Tip button — only for authenticated non-self viewers who are active performers */}
           {isAuthenticated && !isOwnProfile && (data?.creator?.creator_role === "live" || data?.creator?.creator_role === "both") && (

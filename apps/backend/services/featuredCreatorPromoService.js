@@ -20,6 +20,7 @@ const { getPool } = require('../config/postgres');
 const logger = require('../utils/logger');
 const { cache } = require('../config/redis');
 const XPostService = require('./xPostService');
+const PushNotificationService = require('./pushNotificationService');
 
 const PLATFORM_X_ACCOUNT_USER_ID = '8599671840'; // Santino — de facto platform account
 
@@ -46,8 +47,6 @@ async function resolveTodaysFeatured(today) {
        JOIN users u ON u.id = f.creator_id
       WHERE f.date = $1
         AND u.deleted_at IS NULL
-        AND EXISTS (SELECT 1 FROM crystal_entitlements ce
-                     WHERE ce.creator_id::text = u.id::text AND ce.is_active)
       LIMIT 1`,
     [today]
   );
@@ -315,9 +314,14 @@ async function runDailyPromo({ force = false } = {}) {
 
   const absoluteHero = absolutize(heroUrl);
 
-  const [xRes, tgRes] = await Promise.all([
+  const pushTitle = `Model of the day 💎 ${displayName}`;
+  const pushBody = copy.xText.split('\n')[1] || `Featured today on PNPtv — don't miss it.`;
+  const pushUrl = `/c/${encodeURIComponent(featured.username)}`;
+
+  const [xRes, tgRes, pushRes] = await Promise.all([
     postToPlatformX({ text: copy.xText, imageUrl: absoluteHero }),
     broadcastTelegram({ caption: copy.tgCaption, link: copy.tgLink, imageUrl: absoluteHero }),
+    PushNotificationService.sendToAll({ title: pushTitle, body: pushBody, url: pushUrl, tag: `featured-creator-${new Date().toISOString().slice(0, 10)}` }, { notifType: 'promotions' }).catch(e => ({ ok: false, error: e.message })),
   ]);
 
   const summary = {
@@ -329,6 +333,7 @@ async function runDailyPromo({ force = false } = {}) {
     heroUrl,
     x: xRes,
     telegram: tgRes,
+    push: pushRes,
   };
   logger.info('[featured-promo] daily run complete', summary);
   return summary;

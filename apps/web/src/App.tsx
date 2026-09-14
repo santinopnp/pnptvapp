@@ -380,16 +380,17 @@ function PrivyIdentitySync() {
     if (!authenticated || wallets.length === 0) return;
     const walletKey = wallets.map((w) => w.address).sort().join(",");
     const flag = `__pnptv_privy_linked:${walletKey}`;
-    let storageFailed = false;
-    try { if (sessionStorage.getItem(flag) === "1") return; } catch { storageFailed = true; }
-    if (storageFailed && linkedRef.current.has(walletKey)) return;
+    // Guard synchronously before any async work so concurrent re-renders
+    // don't all proceed past the check before the first call completes.
+    if (linkedRef.current.has(walletKey)) return;
+    linkedRef.current.add(walletKey);
+    try { if (sessionStorage.getItem(flag) === "1") return; } catch { /* ignore */ }
     let cancelled = false;
     (async () => {
       try {
         const token = await getAccessToken();
         if (!token || cancelled) return;
         await linkPrivyIdentity(token);
-        linkedRef.current.add(walletKey);
         try { sessionStorage.setItem(flag, "1"); } catch { /* ignore */ }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -571,7 +572,7 @@ export default function App() {
                       // WalletConnect never got an embedded wallet — leaving them
                       // stuck on the external wallet with no PNPtv rail to switch to.
                       // Existing wallet-only users get an embedded wallet on next login.
-                      embeddedWallets: { ethereum: { createOnLogin: "all-users" } },
+                      embeddedWallets: { ethereum: { createOnLogin: "off" } },
                       // Own WalletConnect Cloud project id — dedicated rate-limit +
                       // reliable Trust/Rainbow/etc handshake. Falls back to Privy's
                       // shared id if unset (works but with silent throttling).

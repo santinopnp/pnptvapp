@@ -10,6 +10,7 @@ import type { RemoteTrackPublication } from "livekit-client";
 import Hls from "hls.js";
 import { useI18n } from "@/lib/i18n";
 import { useMainStageRoom } from "@/components/mainstage/MainStageProvider";
+import type { MainStageOnStageEntry } from "@/lib/api";
 
 /**
  * Identity of the media-bot participant that publishes URL-backed media
@@ -29,6 +30,9 @@ interface CinemaGridProps {
   /** Karaoke mode hides the bottom cammer strip — the spotlighted cammer
    *  is rendered as a floating corner tile by the caller instead. */
   hideCammerStrip?: boolean;
+  onStage?: MainStageOnStageEntry[];
+  onTipCreator?: (userId: string, username: string | null) => void;
+  onBookCreator?: (creator: { id: string; username: string; isCrystal: boolean }) => void;
 }
 
 interface UrlMediaPlayerProps {
@@ -93,6 +97,11 @@ export function UrlMediaPlayer({ src, kind, playing, volume, startedAt }: UrlMed
   const [canPlay, setCanPlay] = useState(false);
 
   const isHls = /\.m3u8(\?|$)/i.test(src);
+
+  // Block Safari AirPlay on the video element (non-standard attribute must be set via DOM)
+  useEffect(() => {
+    if (videoRef.current) videoRef.current.setAttribute("x-webkit-airplay", "deny");
+  }, []);
 
   // Load media source
   useEffect(() => {
@@ -297,6 +306,9 @@ export function UrlMediaPlayer({ src, kind, playing, volume, startedAt }: UrlMed
         muted={muted}
         controls={false}
         loop
+        disableRemotePlayback
+        disablePictureInPicture
+        controlsList="nodownload nofullscreen noremoteplayback"
         onEnded={() => { videoRef.current?.play().catch(() => {}); }}
       />
 
@@ -380,26 +392,113 @@ export function UrlMediaPlayer({ src, kind, playing, volume, startedAt }: UrlMed
  * Strip tile for the Cinema layout cammer row.
  * Requests VideoQuality.MEDIUM to provide better visual clarity for cammers.
  * Tile height uses viewport-relative clamping for clean desktop scaling.
+ * Shows creator name + crystal badge overlay when the cammer is a known creator.
  */
-function CinemaStripTile({ trackRef }: { trackRef: TrackReferenceOrPlaceholder }) {
+function CinemaStripTile({
+  trackRef,
+  creatorEntry,
+  onTipCreator,
+  onBookCreator,
+}: {
+  trackRef: TrackReferenceOrPlaceholder;
+  creatorEntry?: MainStageOnStageEntry;
+  onTipCreator?: (userId: string, username: string | null) => void;
+  onBookCreator?: (creator: { id: string; username: string; isCrystal: boolean }) => void;
+}) {
   useEffect(() => {
     const pub = trackRef.publication as RemoteTrackPublication | undefined;
     if (!pub || !("setVideoQuality" in pub)) return;
     pub.setVideoQuality(VideoQuality.MEDIUM);
   }, [trackRef.publication]);
 
+  const displayName = creatorEntry?.username
+    ? `@${creatorEntry.username}`
+    : (trackRef.participant.name || trackRef.participant.identity);
+
   return (
     <div
-      className="flex-shrink-0 rounded-2xl overflow-hidden"
+      className="flex-shrink-0 rounded-2xl overflow-hidden relative"
       style={{
         width: "calc(16/9 * clamp(120px, 17vh, 210px))",
         height: "clamp(120px, 17vh, 210px)",
         minWidth: "calc(16/9 * 120px)",
-        border: "2px solid rgba(212,0,122,0.28)",
-        boxShadow: "0 6px 18px rgba(0,0,0,0.45), 0 0 20px rgba(212,0,122,0.15)",
+        border: creatorEntry?.isCrystal
+          ? "2px solid rgba(220,220,255,0.55)"
+          : "2px solid rgba(212,0,122,0.28)",
+        boxShadow: creatorEntry?.isCrystal
+          ? "0 6px 18px rgba(0,0,0,0.45), 0 0 20px rgba(180,170,255,0.25)"
+          : "0 6px 18px rgba(0,0,0,0.45), 0 0 20px rgba(212,0,122,0.15)",
       }}
     >
       <ParticipantTile trackRef={trackRef} style={{ width: "100%", height: "100%" }} />
+      {/* Creator name + badge scrim */}
+      <div
+        className="absolute bottom-0 left-0 right-0 px-2 pb-1.5 pt-6"
+        style={{
+          background: "linear-gradient(to top, rgba(0,0,0,0.75) 0%, transparent 100%)",
+          pointerEvents: "none",
+        }}
+      >
+        <div className="flex items-center justify-center gap-1">
+          {creatorEntry?.isCrystal && (
+            <span
+              className="text-[8px] font-bold px-1 py-0.5 rounded-full flex-shrink-0"
+              style={{
+                background: "linear-gradient(135deg,rgba(15,15,20,0.90),rgba(35,30,55,0.90))",
+                border: "1px solid rgba(220,220,255,0.55)",
+                color: "#F0EDFF",
+              }}
+            >
+              ❖
+            </span>
+          )}
+          <span
+            className="text-white text-[10px] font-semibold truncate"
+            style={{ textShadow: "0 1px 3px rgba(0,0,0,0.9)" }}
+          >
+            {displayName}
+          </span>
+        </div>
+      </div>
+      {/* Quick action row — tip/book buttons rendered OVER the tile, pointer-events ON */}
+      {creatorEntry && (onTipCreator || (onBookCreator && creatorEntry.username)) && (
+        <div
+          className="absolute top-1.5 right-1.5 flex items-center gap-1"
+          style={{ pointerEvents: "auto" }}
+        >
+          {onBookCreator && creatorEntry.username && (
+            <button
+              type="button"
+              onClick={() => onBookCreator({
+                id: creatorEntry.userId,
+                username: creatorEntry.username as string,
+                isCrystal: creatorEntry.isCrystal,
+              })}
+              className="min-h-[28px] px-2 rounded-full text-[9px] font-bold text-white transition-all active:scale-95"
+              style={{
+                background: "rgba(10,10,15,0.80)",
+                border: "1px solid rgba(255,255,255,0.25)",
+                backdropFilter: "blur(6px)",
+              }}
+            >
+              Book
+            </button>
+          )}
+          {onTipCreator && (
+            <button
+              type="button"
+              onClick={() => onTipCreator(creatorEntry.userId, creatorEntry.username)}
+              className="min-h-[28px] px-2 rounded-full text-[9px] font-bold text-white transition-all active:scale-95"
+              style={{
+                background: "linear-gradient(135deg,#D4007A,#7B61FF)",
+                boxShadow: "0 2px 8px rgba(212,0,122,0.45)",
+              }}
+            >
+              💸
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -412,6 +511,9 @@ export function CinemaGrid({
   mediaVolume = 0.8,
   mediaStartedAt = null,
   hideCammerStrip = false,
+  onStage,
+  onTipCreator,
+  onBookCreator,
 }: CinemaGridProps) {
   const { user } = useAuth();
   const t = useI18n().live;
@@ -467,7 +569,7 @@ export function CinemaGrid({
           <UrlMediaPlayer
             src={mediaSrc}
             kind={mediaKind === "music" ? "music" : "video"}
-            playing={mediaPlaying && cammerTracks.length === 0}
+            playing={mediaKind === "video" ? mediaPlaying : (mediaPlaying && cammerTracks.length === 0)}
             volume={mediaVolume}
             startedAt={mediaStartedAt}
           />
@@ -504,9 +606,20 @@ export function CinemaGrid({
             msOverflowStyle: "none",
           }}
         >
-          {cammerTracks.map((track) => (
-            <CinemaStripTile key={track.participant.identity} trackRef={track} />
-          ))}
+          {cammerTracks.map((track) => {
+            const creatorEntry = onStage?.find(
+              (e) => e.participantIdentity === track.participant.identity || e.userId === track.participant.identity
+            );
+            return (
+              <CinemaStripTile
+                key={track.participant.identity}
+                trackRef={track}
+                creatorEntry={creatorEntry}
+                onTipCreator={onTipCreator}
+                onBookCreator={onBookCreator}
+              />
+            );
+          })}
         </div>
       )}
     </div>

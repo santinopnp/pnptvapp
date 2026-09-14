@@ -12,6 +12,7 @@
 const emailService = require('./emailservice');
 const { sendNotificationViaTelegram } = require('./notificationBotDelivery');
 const { query } = require('../config/postgres');
+const { getRedis } = require('../config/redis');
 const logger = require('../utils/logger');
 const PushNotificationService = require('./pushNotificationService');
 const sendSystemDM = require('./sendSystemDM');
@@ -301,7 +302,7 @@ async function sendBookingConfirmationToMember(memberId, booking, callInfo) {
       body: `Call with ${creatorName} is booked. Tap to view details.`,
       url: callId ? `/call/${callId}` : '/my-access',
       tag: `call_confirmed_${callId || memberId}`,
-    });
+    }, { notifType: 'call_booking' });
   } catch (pushErr) {
     logger.warn('[callNotificationService] push (member confirm) failed', { error: pushErr.message });
   }
@@ -382,7 +383,7 @@ async function sendBookingConfirmationToCreator(creatorId, booking, memberInfo, 
       body: `${memberUsername} reservó una llamada contigo. Revisa los detalles.`,
       url: callId ? `/call/${callId}` : '/my-access',
       tag: `call_confirmed_creator_${callId || creatorId}`,
-    });
+    }, { notifType: 'call_booking' });
   } catch (pushErr) {
     logger.warn('[callNotificationService] push (creator confirm) failed', { error: pushErr.message });
   }
@@ -431,18 +432,35 @@ function scheduleEndOfCallWarnings({ bookingId, creatorId, memberId, endMs, crea
       // Single push at T-10m — enough to prompt them; the rest ride on DMs so we
       // don't spam the notification tray six times per call.
       if (minLeft === 10) {
-        PushNotificationService.sendToUser(memberId, {
-          title: '⏰ 10 minutes left in your call',
-          body: `Wrap up with ${creatorName} — the room closes automatically.`,
-          url: `/call/${bookingId}`,
-          tag: `call_end_10m_${bookingId}`,
-        }).catch(() => {});
-        PushNotificationService.sendToUser(creatorId, {
-          title: '⏰ 10 minutos para cerrar',
-          body: `Ve cerrando con ${memberName} — la sala se cierra sola.`,
-          url: `/call/${bookingId}`,
-          tag: `call_end_10m_creator_${bookingId}`,
-        }).catch(() => {});
+        (async () => {
+          try {
+            const redis = getRedis();
+            const remKeyMember = `call:push:reminded:${bookingId}:10m_member`;
+            const remKeyCreator = `call:push:reminded:${bookingId}:10m_creator`;
+            const [okMember, okCreator] = await Promise.all([
+              redis.set(remKeyMember, '1', 'NX', 'EX', 86400),
+              redis.set(remKeyCreator, '1', 'NX', 'EX', 86400),
+            ]);
+            if (okMember) {
+              await PushNotificationService.sendToUser(memberId, {
+                title: '⏰ 10 minutes left in your call',
+                body: `Wrap up with ${creatorName} — the room closes automatically.`,
+                url: `/call/${bookingId}`,
+                tag: `call_end_10m_${bookingId}`,
+              }, { notifType: 'call_active' });
+            }
+            if (okCreator) {
+              await PushNotificationService.sendToUser(creatorId, {
+                title: '⏰ 10 minutos para cerrar',
+                body: `Ve cerrando con ${memberName} — la sala se cierra sola.`,
+                url: `/call/${bookingId}`,
+                tag: `call_end_10m_creator_${bookingId}`,
+              }, { notifType: 'call_active' });
+            }
+          } catch (pushErr) {
+            logger.warn('[callNotificationService] push (10m warning) failed', { bookingId, error: pushErr.message });
+          }
+        })();
       }
     }, delayMs);
     if (t.unref) t.unref();
@@ -520,19 +538,36 @@ function scheduleCallReminders(bookingId, creatorId, memberId, startAt, callInfo
     const t = setTimeout(() => {
       sendReminder('Your call starts in 1 hour!', true)
         .catch((err) => logger.warn('[callNotificationService] 1h reminder failed', { bookingId, error: err.message }));
-      // Push — fire-and-forget
-      PushNotificationService.sendToUser(memberId, {
-        title: '⏰ Tu llamada empieza en 1 hora',
-        body: 'Tu sesión privada comienza pronto — prepárate!',
-        url: joinUrl ? joinUrl.replace(/^https?:\/\/[^/]+/, '') : '/my-access',
-        tag: `call_reminder_1h_${bookingId}`,
-      }).catch(() => {});
-      PushNotificationService.sendToUser(creatorId, {
-        title: '⏰ Llamada privada en 1 hora',
-        body: 'Tu próxima sesión privada empieza en 1 hora — prepara tu setup.',
-        url: joinUrl ? joinUrl.replace(/^https?:\/\/[^/]+/, '') : '/my-access',
-        tag: `call_reminder_1h_creator_${bookingId}`,
-      }).catch(() => {});
+      // Push — fire-and-forget, Redis NX dedup
+      (async () => {
+        try {
+          const redis = getRedis();
+          const remKeyMember = `call:push:reminded:${bookingId}:1h_member`;
+          const remKeyCreator = `call:push:reminded:${bookingId}:1h_creator`;
+          const [okMember, okCreator] = await Promise.all([
+            redis.set(remKeyMember, '1', 'NX', 'EX', 86400),
+            redis.set(remKeyCreator, '1', 'NX', 'EX', 86400),
+          ]);
+          if (okMember) {
+            await PushNotificationService.sendToUser(memberId, {
+              title: '⏰ Tu llamada empieza en 1 hora',
+              body: 'Tu sesión privada comienza pronto — prepárate!',
+              url: `/call/${bookingId}`,
+              tag: `call_reminder_1h_${bookingId}`,
+            }, { notifType: 'call_reminder' });
+          }
+          if (okCreator) {
+            await PushNotificationService.sendToUser(creatorId, {
+              title: '⏰ Llamada privada en 1 hora',
+              body: 'Tu próxima sesión privada empieza en 1 hora — prepara tu setup.',
+              url: `/call/${bookingId}`,
+              tag: `call_reminder_1h_creator_${bookingId}`,
+            }, { notifType: 'call_reminder' });
+          }
+        } catch (pushErr) {
+          logger.warn('[callNotificationService] push (1h reminder) failed', { bookingId, error: pushErr.message });
+        }
+      })();
     }, msUntil1h);
     if (t.unref) t.unref(); // don't hold Node process open
     logger.info('[callNotificationService] 1h reminder scheduled', { bookingId, inMs: msUntil1h });
@@ -546,19 +581,36 @@ function scheduleCallReminders(bookingId, creatorId, memberId, startAt, callInfo
     const t = setTimeout(() => {
       sendReminder('Your call starts in 15 minutes!', true)
         .catch((err) => logger.warn('[callNotificationService] 15min reminder failed', { bookingId, error: err.message }));
-      // Push — fire-and-forget
-      PushNotificationService.sendToUser(memberId, {
-        title: '🔴 Tu llamada empieza en 15 minutos',
-        body: 'Entra ahora para estar listo.',
-        url: joinUrl ? joinUrl.replace(/^https?:\/\/[^/]+/, '') : '/my-access',
-        tag: `call_reminder_15m_${bookingId}`,
-      }).catch(() => {});
-      PushNotificationService.sendToUser(creatorId, {
-        title: '🔴 Llamada en 15 minutos',
-        body: 'Tu próxima sesión privada empieza en 15 minutos — entra al cuarto.',
-        url: joinUrl ? joinUrl.replace(/^https?:\/\/[^/]+/, '') : '/my-access',
-        tag: `call_reminder_15m_creator_${bookingId}`,
-      }).catch(() => {});
+      // Push — fire-and-forget, Redis NX dedup
+      (async () => {
+        try {
+          const redis = getRedis();
+          const remKeyMember = `call:push:reminded:${bookingId}:15m_member`;
+          const remKeyCreator = `call:push:reminded:${bookingId}:15m_creator`;
+          const [okMember, okCreator] = await Promise.all([
+            redis.set(remKeyMember, '1', 'NX', 'EX', 86400),
+            redis.set(remKeyCreator, '1', 'NX', 'EX', 86400),
+          ]);
+          if (okMember) {
+            await PushNotificationService.sendToUser(memberId, {
+              title: '🔴 Tu llamada empieza en 15 minutos',
+              body: 'Entra ahora para estar listo.',
+              url: `/call/${bookingId}`,
+              tag: `call_reminder_15m_${bookingId}`,
+            }, { notifType: 'call_reminder' });
+          }
+          if (okCreator) {
+            await PushNotificationService.sendToUser(creatorId, {
+              title: '🔴 Llamada en 15 minutos',
+              body: 'Tu próxima sesión privada empieza en 15 minutos — entra al cuarto.',
+              url: `/call/${bookingId}`,
+              tag: `call_reminder_15m_creator_${bookingId}`,
+            }, { notifType: 'call_reminder' });
+          }
+        } catch (pushErr) {
+          logger.warn('[callNotificationService] push (15m reminder) failed', { bookingId, error: pushErr.message });
+        }
+      })();
     }, msUntil15m);
     if (t.unref) t.unref();
     logger.info('[callNotificationService] 15min reminder scheduled', { bookingId, inMs: msUntil15m });
@@ -686,14 +738,19 @@ async function sendPostCallSurveyPrompt(memberId, bookingId, creatorDisplayName)
       });
     }
 
-    // Push notification
+    // Push notification — Redis NX dedup
     try {
-      await PushNotificationService.sendToUser(memberId, {
-        title: '⭐ ¿Cómo fue tu llamada?',
-        body: 'Deja tu calificación — solo toma 10 segundos.',
-        url: `/booking/${encodeURIComponent(bookingId)}/confirm?survey=1`,
-        tag: `call_survey_${bookingId}`,
-      });
+      const redis = getRedis();
+      const remKey = `call:push:reminded:${bookingId}:survey_member`;
+      const ok = await redis.set(remKey, '1', 'NX', 'EX', 86400);
+      if (ok) {
+        await PushNotificationService.sendToUser(memberId, {
+          title: '⭐ ¿Cómo fue tu llamada?',
+          body: 'Deja tu calificación — solo toma 10 segundos.',
+          url: `/booking/${encodeURIComponent(bookingId)}/confirm?survey=1`,
+          tag: `call_survey_${bookingId}`,
+        }, { notifType: 'call_survey' });
+      }
     } catch (pushErr) {
       logger.warn('[callNotificationService] push (survey) failed', { error: pushErr.message });
     }
@@ -934,13 +991,13 @@ async function sendCancellationNotifications({ memberId, creatorId, creditId, bo
     body: memberSubject,
     url: '/my-access',
     tag: `call_cancelled_${creditId || bookingId}`,
-  }).catch(() => {});
+  }, { notifType: 'call_booking' }).catch(() => {});
   PushNotificationService.sendToUser(creatorId, {
     title: '📞 Llamada cancelada',
     body: creatorSubject,
     url: '/my-access',
     tag: `call_cancelled_creator_${creditId || bookingId}`,
-  }).catch(() => {});
+  }, { notifType: 'call_booking' }).catch(() => {});
 
   // --- System DM ---
   sendSystemDM(SYSTEM_DM_SENDER_ID, String(memberId), `❌ ${memberBody}`, query).catch(() => {});

@@ -951,10 +951,16 @@ export default function Nearby() {
     const last = lastFetchedRef.current;
     if (!force && last) {
       const elapsed = now - last.at;
-      const dlat = (lat - last.lat) * 111_000;
-      const dlng = (lng - last.lng) * 111_000 * Math.cos(lat * Math.PI / 180);
+      // Round to 3 decimals (~111m grid) to match backend precision and collapse
+      // GPS jitter that would otherwise bypass the movement guard every second.
+      const rLat = Math.round(lat * 1000) / 1000;
+      const rLng = Math.round(lng * 1000) / 1000;
+      const rLastLat = Math.round(last.lat * 1000) / 1000;
+      const rLastLng = Math.round(last.lng * 1000) / 1000;
+      const dlat = (rLat - rLastLat) * 111_000;
+      const dlng = (rLng - rLastLng) * 111_000 * Math.cos(lat * Math.PI / 180);
       const movedMeters = Math.sqrt(dlat * dlat + dlng * dlng);
-      if (elapsed < 10_000 && movedMeters < 50 && rad === last.rad) return;
+      if (elapsed < 10_000 && movedMeters < 150 && rad === last.rad) return;
     }
     lastFetchedRef.current = { lat, lng, rad, at: now };
     try {
@@ -965,13 +971,8 @@ export default function Nearby() {
       ]);
       if (usersData.status === "fulfilled") {
         const result = usersData.value as NearbySearchResponse & { tier?: string; count?: number };
-        if (result.tier === "free" && typeof result.count === "number") {
-          setNearbyCount(result.count);
-          setNearbyUsers([]);
-        } else {
-          setNearbyUsers(result.users || []);
-          setNearbyCount(result.users?.length ?? 0);
-        }
+        setNearbyUsers(result.users || []);
+        setNearbyCount(result.users?.length ?? 0);
       }
       if (placesData.status === "fulfilled") {
         const places = placesData.value.places || [];
@@ -1017,8 +1018,12 @@ export default function Nearby() {
     const last = lastSentRef.current;
     if (last) {
       const elapsed = now - last.at;
-      const dlat = (lat - last.lat) * 111_000;
-      const dlng = (lng - last.lng) * 111_000 * Math.cos(lat * Math.PI / 180);
+      const rLat = Math.round(lat * 1000) / 1000;
+      const rLng = Math.round(lng * 1000) / 1000;
+      const rLastLat = Math.round(last.lat * 1000) / 1000;
+      const rLastLng = Math.round(last.lng * 1000) / 1000;
+      const dlat = (rLat - rLastLat) * 111_000;
+      const dlng = (rLng - rLastLng) * 111_000 * Math.cos(lat * Math.PI / 180);
       const movedMeters = Math.sqrt(dlat * dlat + dlng * dlng);
       if (elapsed < MIN_LOCATION_SEND_MS && movedMeters < MIN_MOVEMENT_METERS) return;
     }

@@ -21,6 +21,7 @@
 
 const { query, getClient } = require('../config/postgres');
 const logger = require('../utils/logger');
+const { dispatchSplit } = require('./payoutSplitService');
 
 // ── Config ───────────────────────────────────────────────────────────────────
 
@@ -243,35 +244,44 @@ async function requestCashout({ creatorId, amountUsd, lane, destination }) {
       orderId: order.id, creatorId, amountUsd, lane, earningCount: earningIds.length,
     });
 
-    // ── Dispatch to lane (outside the transaction — provider calls must not block DB) ──
-    // All current lanes are manual-settled (operator dispatches from treasury
-    // via BTCPay / Meru UI / wallet). Lane handlers are thin wrappers that log
-    // the pending order and return ref + pending_manual=true so the order row
-    // moves to 'processing'.
+    // ── Dispatch — on-chain 70/10/20 USDC split from treasury ───────────────
     let dispatchResult;
     try {
-      dispatchResult = await dispatchManual(order, lane, destination);
+      dispatchResult = await dispatchSplit({
+        orderId: order.id,
+        creatorId,
+        amountUsd,
+        creatorAddress: destination.address,
+      });
 
-      // Update order with provider_ref and set to processing
+      // Auto-settle: split sent atomically, mark order settled immediately
+      const meta = JSON.stringify({ split: dispatchResult, lane });
       await query(
         `UPDATE fiat_cashout_orders
-            SET status = 'processing',
+            SET status = 'settled',
                 provider_ref = $2,
                 provider_meta = $3::jsonb,
                 processed_at = NOW(),
+                settled_at = NOW(),
                 updated_at = NOW()
           WHERE id = $1`,
-        [order.id, dispatchResult.ref || null, JSON.stringify(dispatchResult)]
+        [order.id, dispatchResult.txCreator, meta]
       );
-      order.status = 'processing';
-      order.provider_ref = dispatchResult.ref || null;
+      await query(
+        `UPDATE creator_earnings
+            SET status = 'paid_out', updated_at = NOW()
+          WHERE id = ANY($1::uuid[])`,
+        [earningIds]
+      );
+      order.status = 'settled';
+      order.provider_ref = dispatchResult.txCreator;
     } catch (dispatchErr) {
       // On dispatch failure, roll the order to 'failed' and restore earnings to 'available'.
       logger.error('[cashoutService] dispatch failed — rolling back order', {
         orderId: order.id, lane, error: dispatchErr.message,
       });
       await failCashoutOrder(order.id, dispatchErr.message);
-      throw err('DISPATCH_FAILED', `Payment lane dispatch failed: ${dispatchErr.message}`, 502);
+      throw err('DISPATCH_FAILED', `Payment dispatch failed: ${dispatchErr.message}`, 502);
     }
 
     return { order, dispatch: dispatchResult };

@@ -39,7 +39,8 @@ class NotificationService {
           title: 'PNPtv Admin Alert',
           body: message,
           url: '/admin',
-        }).catch((err) => logger.warn('Admin push notification failed', { error: err.message }));
+          tag: `admin-alert-${Date.now()}`,
+        }, { notifType: 'system' }).catch((err) => logger.warn('Admin push notification failed', { error: err.message }));
       }
 
       return true;
@@ -76,7 +77,8 @@ class NotificationService {
         title: 'PNPtv',
         body: message,
         url: options.url || '/',
-      }).catch((err) => logger.warn('User push notification failed', { userId, error: err.message }));
+        tag: options.tag || `notif-${Date.now()}`,
+      }, { notifType: options.notifType || 'system' }).catch((err) => logger.warn('User push notification failed', { userId, error: err.message }));
 
       return true;
     } catch (error) {

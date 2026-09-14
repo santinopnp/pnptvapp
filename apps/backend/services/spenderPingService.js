@@ -103,10 +103,10 @@ async function logPing(creatorId, viewerId) {
 
 // ─── delivery helpers ───────────────────────────────────────────────────────
 
-async function deliverPush(userId, { title, body, url, tag }) {
+async function deliverPush(userId, { title, body, url, tag }, notifType) {
   try {
     const PushSvc = require('./pushNotificationService');
-    await PushSvc.sendToUser(userId, { title, body, url, tag });
+    await PushSvc.sendToUser(userId, { title, body, url, tag }, { notifType: notifType || 'spender_activity' });
   } catch (err) {
     logger.warn('[spenderPingService] push failed', { userId, error: err.message });
   }
@@ -228,7 +228,7 @@ async function fanoutViewerOnline(viewerId) {
       await deliverPush(creator_id, {
         title, body, url,
         tag: `spender_online_${viewerId}`,
-      });
+      }, 'spender_activity');
       // type:'follow' — routes buildUrl() to /profile/{entityId}, matching
       // the push notification's deep link. 'system' would fall through to
       // the site root and break the profile CTA.
@@ -306,7 +306,7 @@ async function fanoutCreatorAvailable(creatorUserId) {
       await deliverPush(viewer_id, {
         title, body, url,
         tag: `creator_available_${creatorUserId}`,
-      });
+      }, 'spender_activity');
       // No TG DM for viewers on this path — going-live TG push already covers
       // creator activity; a second channel here would be noise for the viewer.
       await logPing(creatorUserId, viewer_id);

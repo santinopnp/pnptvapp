@@ -6,6 +6,7 @@
 const CACHE_NAME = 'pnptv-49060919';
 const APP_SHELL = [
   '/Logo2-50.png',
+  '/badge-diamond.png',
   '/logo-login.png',
   '/logo-header.png',
   '/logo-nav.png',
@@ -98,7 +99,7 @@ self.addEventListener('push', (event) => {
   const title = data.title || 'PNPtv!';
   const options = {
     body: data.body || '',
-    icon: data.icon || '/icon-192.png',
+    icon: data.icon || '/app-icon-192.png',
     badge: '/badge-diamond.png',
     tag: data.tag || undefined,
     renotify: !!data.tag,
@@ -153,5 +154,24 @@ self.addEventListener('notificationclick', (event) => {
         return clients.openWindow(navUrl);
       })
     )
+  );
+});
+
+self.addEventListener('pushsubscriptionchange', (event) => {
+  event.waitUntil(
+    self.registration.pushManager.subscribe(event.oldSubscription.options)
+      .then((newSub) => {
+        const json = newSub.toJSON();
+        return fetch('/api/webapp/push/subscribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            endpoint: newSub.endpoint,
+            keys: { auth: json.keys.auth, p256dh: json.keys.p256dh },
+          }),
+        });
+      })
+      .catch(() => {})
   );
 });

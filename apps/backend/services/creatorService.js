@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const { query } = require('../config/postgres');
 const logger = require('../utils/logger');
+const { provisionCreatorWallet } = require('./payoutSplitService');
 const NotificationEmitter = require('./notificationEmitter');
 const sendSystemDM = require('./sendSystemDM');
 const { CREATOR_REVENUE_RATE, PLATFORM_COMMISSION_RATE, EARNINGS_HOLD_HOURS } = require('../config/monetizationConfig');
@@ -221,6 +222,11 @@ class CreatorService {
              updated_at = NOW()
        WHERE id = $1 AND identity_verified = false`,
       [userId]
+    );
+
+    // Ensure creator has an embedded wallet for payouts (fire-and-forget)
+    provisionCreatorWallet(userId).catch((e) =>
+      logger.warn('[creatorService] wallet provision failed', { userId, error: e.message })
     );
 
     // Grant lifetime pnp-member so the creator immediately has full platform access
@@ -2351,6 +2357,11 @@ class CreatorService {
              updated_at = NOW()
        WHERE id = $1 AND identity_verified = false`,
       [enrollment.user_id]
+    );
+
+    // Ensure creator has an embedded wallet for payouts (fire-and-forget)
+    provisionCreatorWallet(enrollment.user_id).catch((e) =>
+      logger.warn('[creatorService] wallet provision failed on approval', { userId: enrollment.user_id, error: e.message })
     );
 
     // Close any open applications in the other two tables so the admin

@@ -2128,11 +2128,11 @@ const xLoginCallback = async (req, res) => {
     if (req.session?.user?.id) {
       const existingId = req.session.user.id;
 
-      // Clear x_id/twitter from any other user that has this X identity (prevents unique constraint violations)
+      // Clear x_id/x_user_id/twitter from any other user that has this X identity (prevents unique constraint violations)
       if (xId) {
         await query(
-          `UPDATE users SET x_id = NULL, twitter = CASE WHEN twitter = $1 THEN NULL ELSE twitter END, updated_at = NOW()
-           WHERE x_id = $2 AND id != $3`,
+          `UPDATE users SET x_id = NULL, x_user_id = NULL, twitter = CASE WHEN twitter = $1 THEN NULL ELSE twitter END, updated_at = NOW()
+           WHERE (x_id = $2 OR x_user_id = $2) AND id != $3`,
           [xHandle, xId, existingId]
         );
       }

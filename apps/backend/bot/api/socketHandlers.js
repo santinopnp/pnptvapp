@@ -809,14 +809,16 @@ function initSocketIO(io) {
                 body: 'Tap to check out and pay',
                 url: `/profile/${user.id}?action=book&open=1`,
                 tag: `performer_online_${user.id}`,
+                image: user.photo_url || user.avatar_url || undefined,
               }
             : {
                 title: `${displayName} is online`,
                 body: 'Click to visit their profile',
                 url: `/profile/${user.id}`,
                 tag: `performer_online_${user.id}`,
+                image: user.photo_url || user.avatar_url || undefined,
               };
-          await PushNotificationService.sendToUsers(followerIds, payload);
+          await PushNotificationService.sendToUsers(followerIds, payload, { notifType: 'creator_activity' });
         } catch (_) {}
       });
     }
