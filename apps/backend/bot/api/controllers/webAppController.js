@@ -551,7 +551,7 @@ const magicLinkStart = async (req, res) => {
 
     // Look up user — but do NOT reveal whether the address exists.
     const result = await query(
-      `SELECT id, first_name, language FROM users WHERE email = $1 AND is_deleted = false LIMIT 1`,
+      `SELECT id, first_name, language FROM users WHERE lower(email) = $1 AND is_deleted = false LIMIT 1`,
       [rawEmail]
     );
 
@@ -1926,6 +1926,7 @@ const xLoginStart = async (req, res) => {
       clientMode: hasWebappConfig ? 'webapp' : 'twitter',
     };
     req.session.xWebLogin = true;
+    if (req.query.settings_link === '1') req.session.xOAuthSettingsLink = true;
     await new Promise((resolve, reject) =>
       req.session.save(err => (err ? reject(err) : resolve()))
     );
@@ -2189,6 +2190,8 @@ const xLoginCallback = async (req, res) => {
       const user = updated[0];
       query(`UPDATE users SET last_login_at = NOW(), last_login_method = 'x', updated_at = NOW() WHERE id = $1`, [user.id]).catch(() => {});
       const xLinkSessionData = buildSession(user, { xHandle, last_login_method: 'x' });
+      const fromSettings = req.session.xOAuthSettingsLink === true;
+      delete req.session.xOAuthSettingsLink;
       await new Promise((resolve, reject) =>
         req.session.regenerate(err => (err ? reject(err) : resolve()))
       );
@@ -2203,7 +2206,8 @@ const xLoginCallback = async (req, res) => {
       // X sign-ins. Users who linked X to an existing session may still lack
       // an email (e.g. an incognito test session created by a prior X login).
       const linkedAddEmailFlag = user.email ? '' : '&add_email=1';
-      return res.redirect(`https://pnptv.app/login?post_login=x${linkedAddEmailFlag}&returnTo=%2Ffeed`);
+      const returnTo = fromSettings ? '%2Fsettings%2Faccount' : '%2Ffeed';
+      return res.redirect(`https://pnptv.app/login?post_login=x${linkedAddEmailFlag}&returnTo=${returnTo}`);
     }
 
     const [firstName, ...nameParts] = (xName || xHandle).split(' ');

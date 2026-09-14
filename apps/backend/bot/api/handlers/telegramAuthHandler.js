@@ -495,7 +495,7 @@ const checkAuthStatus = async (req, res) => {
     // Refresh tier, role, and subscription from DB (prevents stale session data)
     try {
       const { rows } = await query(
-        'SELECT pnptv_id, tier, role, subscription_status, photo_file_id, creator_status, creator_type, creator_role, creator_locked, age_verified, terms_accepted, date_of_birth, content_disclaimer, onboarding_complete, live_channel FROM users WHERE id = $1',
+        'SELECT pnptv_id, tier, role, subscription_status, photo_file_id, creator_status, creator_type, creator_role, creator_locked, age_verified, terms_accepted, date_of_birth, content_disclaimer, onboarding_complete, live_channel, twitter, x_username FROM users WHERE id = $1',
         [user.id]
       );
       if (rows.length > 0) {
@@ -519,6 +519,12 @@ const checkAuthStatus = async (req, res) => {
         const isValidPhoto = (p) => p && typeof p === 'string' && (p.startsWith('/') || p.startsWith('http'));
         if (isValidPhoto(fresh.photo_file_id)) {
           user.photoUrl = fresh.photo_file_id;
+        }
+        // Refresh X identity from DB so users who linked X in a prior session still see it connected
+        const freshXHandle = fresh.x_username || fresh.twitter || null;
+        if (freshXHandle) {
+          user.xHandle = freshXHandle;
+          user.auth_methods = { ...(user.auth_methods || {}), x: true };
         }
       }
     } catch (dbErr) {
@@ -579,6 +585,8 @@ const checkAuthStatus = async (req, res) => {
         date_of_birth: user.date_of_birth || null,
         // Auth methods flags (used by Profile.tsx IdentityConnections)
         auth_methods: authMethods,
+        // X identity (used by IdentityConnections)
+        xHandle: user.xHandle || null,
         // Login method tracking
         last_login_method: user.last_login_method || null,
         // Email (from OIDC or direct registration)

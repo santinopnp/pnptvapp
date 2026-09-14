@@ -278,6 +278,25 @@ function ChannelDetailView({
     setCreatorUpsellDismissed(true);
   };
 
+  const channelVideoRef = useRef<HTMLVideoElement>(null);
+  const castSupported = typeof window !== "undefined" && "remote" in HTMLVideoElement.prototype;
+  const pipSupported = typeof window !== "undefined" && !!document.pictureInPictureEnabled;
+  const handleChannelCast = useCallback(async () => {
+    const video = channelVideoRef.current;
+    if (!video) return;
+    try {
+      await (video as HTMLVideoElement & { remote: { prompt(): Promise<void> } }).remote.prompt();
+    } catch { /* user cancelled or no devices */ }
+  }, []);
+  const handleChannelPiP = useCallback(async () => {
+    const video = channelVideoRef.current;
+    if (!video) return;
+    try {
+      if (document.pictureInPictureElement === video) await document.exitPictureInPicture();
+      else await video.requestPictureInPicture();
+    } catch { /* not supported */ }
+  }, []);
+
   const [playingVideo, setPlayingVideo] = useState<{ url: string | null; fallbackUrl?: string | null; title?: string; videoId: number; channelId: number; promoPostId: number | null; taggedCreators: { id: string; username: string; first_name: string | null; avatar_url: string | null }[]; uploaderDisplayName?: string | null; durationSec?: number | null; viewCount?: number } | null>(null);
   const [videoPlayerError, setVideoPlayerError] = useState(false);
   // Set to true once the <video> metadata reveals a landscape aspect ratio.
@@ -887,11 +906,13 @@ function ChannelDetailView({
             const intro = eligible ? { channel: eyebrow, title: playingVideo.title, performers } : null;
             return (
               <VideoPlayer
+                ref={channelVideoRef}
                 key={playingVideo.url}
                 src={playingVideo.url}
                 controls autoPlay playsInline
                 controlsList="nodownload"
                 creatorDisclaimer
+                hideOverlayControls
                 viewCount={playingVideo.viewCount}
                 intro={intro}
                 onContextMenu={(e) => e.preventDefault()}
@@ -944,6 +965,32 @@ function ChannelDetailView({
             <h2 className="text-base font-semibold text-pnp-textPrimary leading-snug flex-1 min-w-0">{v.title || "Untitled"}</h2>
             {user && (
               <div className="flex items-center gap-0.5 flex-shrink-0">
+                {/* Cast / PiP — in the action bar (not overlaid on the video) so iOS
+                    native controls can't intercept the tap. Ref reaches the <video>. */}
+                {castSupported && (
+                  <button type="button" onClick={handleChannelCast} title="Cast to TV"
+                    aria-label="Cast to TV"
+                    className="p-2 rounded-lg transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
+                    style={{ color: "rgba(255,255,255,0.35)" }}>
+                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M2 8V6a2 2 0 012-2h16a2 2 0 012 2v12a2 2 0 01-2 2h-6"/>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M2 12a9 9 0 019 9"/>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M2 16a5 5 0 015 5"/>
+                      <circle cx="2" cy="20" r="1.2" fill="currentColor" stroke="none"/>
+                    </svg>
+                  </button>
+                )}
+                {pipSupported && (
+                  <button type="button" onClick={handleChannelPiP} title="Picture in picture"
+                    aria-label="Picture in picture"
+                    className="p-2 rounded-lg transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
+                    style={{ color: "rgba(255,255,255,0.35)" }}>
+                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M11 19H5a2 2 0 01-2-2V7a2 2 0 012-2h14a2 2 0 012 2v5"/>
+                      <rect x="13" y="13" width="8" height="6" rx="1"/>
+                    </svg>
+                  </button>
+                )}
                 {v.promo_post_id && (() => {
                   const likeState = videoLikes[v.id] ?? { liked: v.liked_by_me ?? false, count: v.likes_count ?? 0 };
                   return (

@@ -1057,7 +1057,13 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
       if (wallet?.address) {
         setActiveAddress(wallet.address);
         _setPreferredWallet(wallet.address);
-        getAccessToken().then((t) => { if (t) _linkPrivyIdentity(t).catch(() => {}); }).catch(() => {});
+        // After server commits preferred_wallet_address + busts ownership cache,
+        // kick a second refresh so the external wallet's balance lands even if
+        // the first pass (triggered by address change) raced the DB write.
+        getAccessToken()
+          .then((t) => { if (t) return _linkPrivyIdentity(t); })
+          .catch(() => {})
+          .finally(() => { setRefreshTick((n) => n + 1); });
       }
     },
     onError: (err) => {
@@ -1213,6 +1219,7 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
   const [sendTxHash, setSendTxHash] = _useState<string | null>(null);
   const [sendError, setSendError] = _useState<string | null>(null);
   const [sendConfirm, setSendConfirm] = _useState(false);
+  const [refreshTick, setRefreshTick] = _useState(0);
 
   const _usdcBridgeStorageKey = address ? `pnptv.usdcBridge.${address.toLowerCase()}` : null;
 
@@ -1270,7 +1277,7 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
       if (r && r.success) setRush({ regular: r.regularBalance || 0, gifted: r.giftedBalance || 0 });
     }).finally(() => setLoading(false));
   };
-  _useEffect(() => { refresh(); }, [address]);
+  _useEffect(() => { refresh(); }, [address, refreshTick]); // refreshTick forces re-check after server commits preferred wallet
   _useEffect(() => {
     if (!showBuyModal) refresh();
   }, [showBuyModal]);
@@ -1345,6 +1352,12 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
     }
     try {
       await unlinkWallet({ address: addr });
+      // Close the connector session so the wallet drops from useWallets() immediately.
+      // Without this, the WalletConnect/injected session stays alive and the chip
+      // re-appears after unlink. disconnect() is a no-op on clients that don't
+      // support programmatic disconnects (e.g. MetaMask injected), so it's safe.
+      const walletObj = wallets.find((w) => w.address === addr);
+      try { walletObj?.disconnect?.(); } catch { /* non-fatal */ }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       // "wallet not linked" / "not found" mean Privy already forgot the wallet —
@@ -1353,6 +1366,9 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
         setConnectError(`Could not disconnect: ${msg}. Your PNPtv wallet is still active — try refreshing the page.`);
         reportWalletClientError("unlinkWallet", err, { source: "WalletHomeSheet", address: addr });
       }
+      // Even on error, attempt to close the connector session
+      const walletObj = wallets.find((w) => w.address === addr);
+      try { walletObj?.disconnect?.(); } catch { /* non-fatal */ }
     } finally {
       setUnlinkingAddress(null);
     }

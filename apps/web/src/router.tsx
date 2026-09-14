@@ -364,6 +364,7 @@ const MercadoPagoPage = lazy(() =>
   import("@/pages/Lifetime100").then((m) => ({ default: m.MercadoPagoPage }))
 );
 const CryptoGuide = lazy(() => import("@/pages/CryptoGuide"));
+const ConnectWallet = lazy(() => import("@/pages/ConnectWallet"));
 const GamificationPage = lazy(() => import("@/pages/GamificationPage"));
 const ReferralCenter = lazy(() => import("@/pages/ReferralCenter"));
 const InvitePage = lazy(() => import("@/pages/InvitePage"));
@@ -1409,6 +1410,14 @@ export const router = createBrowserRouter([
     element: (
       <ModuleLoader>
         <CryptoGuide />
+      </ModuleLoader>
+    ),
+  },
+  {
+    path: "/connect-wallet",
+    element: (
+      <ModuleLoader>
+        <ConnectWallet />
       </ModuleLoader>
     ),
   },

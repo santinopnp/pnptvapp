@@ -57,6 +57,12 @@ type VideoPlayerProps = React.VideoHTMLAttributes<HTMLVideoElement> & {
   uploaderId?: string;
   /** When provided, shows a view count badge overlay in the top-left corner. */
   viewCount?: number;
+  /**
+   * When true, suppresses the cast/PiP overlay buttons. Use this when the
+   * parent renders those controls outside the video element (e.g. Channels
+   * action bar) to avoid iOS native-controls z-index conflicts.
+   */
+  hideOverlayControls?: boolean;
 };
 
 function isHlsSource(src: string | undefined | null): boolean {
@@ -82,6 +88,7 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
       videoId,
       uploaderId,
       viewCount,
+      hideOverlayControls = false,
       ...rest
     },
     ref
@@ -443,8 +450,10 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
           </div>
         )}
 
-        {/* Cast / PiP controls — top-right, only when video is active */}
-        {showOverlayControls && (castSupported || pipSupported) && (
+        {/* Cast / PiP controls — top-right, only when video is active.
+            Suppressed via hideOverlayControls when the parent renders them
+            outside the video element (avoids iOS native-controls z-conflict). */}
+        {!hideOverlayControls && showOverlayControls && (castSupported || pipSupported) && (
           <div className="absolute top-2 right-2 z-[15] flex items-center gap-1">
             {castSupported && (
               <button

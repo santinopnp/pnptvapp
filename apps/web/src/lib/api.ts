@@ -414,12 +414,14 @@ export function toggleSuperGod(enabled: boolean): Promise<{ success: boolean; en
 
 export interface AuthMethods {
   telegram: boolean;
+  x?: boolean;
 }
 
 export interface AuthStatusResponse {
   authenticated: boolean;
   user?: TelegramAuthResponse["user"] & {
     auth_methods?: AuthMethods;
+    xHandle?: string | null;
     creator_status?: string;
     creator_type?: string | null;
     creator_role?: "creator" | "performer" | "both" | null;
@@ -5745,6 +5747,14 @@ export interface CanvaExportJob {
 export function getXLoginUrl(): string {
   const base = import.meta.env.VITE_API_URL || "https://pnptv.app";
   return `${base}/api/webapp/auth/x/start?redirect=true`;
+}
+
+export function startWebappXLink(): Promise<{ success: boolean; url?: string; error?: string }> {
+  return request("/api/webapp/auth/x/start?settings_link=1");
+}
+
+export function unlinkXAccount(): Promise<{ success: boolean; message?: string; error?: string }> {
+  return request("/api/webapp/auth/x/unlink", { method: "POST" });
 }
 
 

@@ -99,11 +99,14 @@ class Plan {
       'monthly-pass-promo-15',
       'yearly50',
     ]);
+    // custom-prime-* are one-time operator-issued plans — never surface publicly
+    const isCustomPlan = (plan) => plan.id.startsWith('custom-prime-');
     const SCOPED_ADD_ONS = new Set(['channel-access', 'hangout-access', 'creator-subscription']);
     const EXCLUDED_TIERS = new Set(['creator', 'channel', 'hangout']);
     return plans.filter((plan) => {
       if (hiddenIds.has(plan.id)) return false;
       if (HIDDEN_LEGACY_IDS.has(plan.id)) return false;
+      if (isCustomPlan(plan)) return false;
       if (EXCLUDED_TIERS.has(plan.tier)) return false;
       // If the plan has add-ons and every add-on is scoped, it's a per-resource
       // purchase masquerading as a subscription plan — hide it from /subscribe.

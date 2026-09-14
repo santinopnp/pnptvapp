@@ -91,7 +91,7 @@ function BadgeIcon({ badge, size = "md" }: BadgeIconProps) {
         };
       case "colombia":
         return {
-          bg: "linear-gradient(180deg, #FCD116 0%, #FCD116 33%, #003893 33%, #003893 66%, #CE1126 66%, #CE1126 100%)",
+          bg: "linear-gradient(180deg, #FCD116 0%, #FCD116 50%, #003893 50%, #003893 75%, #CE1126 75%, #CE1126 100%)",
           border: "rgba(255,255,255,0.35)",
           color: "#ffffff",
           IconEl: null,

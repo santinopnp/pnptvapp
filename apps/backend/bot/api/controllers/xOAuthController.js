@@ -242,11 +242,12 @@ const handleCallback = async (req, res) => {
       if (!xHandle) return res.redirect(canonicalErrorUrl);
 
       const RETURN_COLS = `id, pnptv_id, first_name, last_name, username, email,
-        subscription_status, tier, terms_accepted, photo_file_id, bio, language, telegram, twitter, x_id, role`;
+        subscription_status, tier, terms_accepted, photo_file_id, bio, language, telegram, twitter, x_id,
+        x_username, role, creator_status, creator_locked, content_disclaimer, last_login_method`;
 
       let user;
 
-      // If already logged in, link X to existing user
+      // If already logged in, link X to existing user — patch session, don't overwrite it
       if (req.session?.user?.id) {
         const existingId = req.session.user.id;
         // Clear x_id/twitter from any other user that has this X identity
@@ -261,12 +262,25 @@ const handleCallback = async (req, res) => {
           await query(`UPDATE users SET twitter = NULL, updated_at = NOW() WHERE twitter = $1 AND id != $2`, [xHandle, existingId]);
         }
         await query(
-          `UPDATE users SET twitter = $1, x_id = COALESCE(x_id, $2), updated_at = NOW() WHERE id = $3`,
+          `UPDATE users SET twitter = $1, x_id = COALESCE(x_id, $2), x_username = $1,
+           last_login_method = 'x', last_login_at = NOW(), updated_at = NOW() WHERE id = $3`,
           [xHandle, xId, existingId]
         );
-        const { rows } = await query(`SELECT ${RETURN_COLS} FROM users WHERE id = $1`, [existingId]);
-        user = rows[0];
-        logger.info(`Linked X @${xHandle} to existing session user ${user.id}`);
+        // Patch only X fields into the existing session
+        req.session.user = {
+          ...req.session.user,
+          xHandle,
+          auth_methods: { ...(req.session.user.auth_methods || {}), x: true },
+        };
+        const fromSettings = req.session.xOAuthSettingsLink === true;
+        delete req.session.xOAuthSettingsLink;
+        await new Promise((resolve, reject) =>
+          req.session.save(err => (err ? reject(err) : resolve()))
+        );
+        enforceDefaultFollows(existingId).catch(() => {});
+        logger.info(`Linked X @${xHandle} to existing session user ${existingId}`);
+        const returnTo = fromSettings ? '/settings/account' : '/';
+        return res.redirect(`${canonicalAppUrl}${returnTo}`);
       } else {
         // Lookup priority: x_id → twitter handle → email (if X provides it)
         let result = xId
@@ -355,13 +369,24 @@ const handleCallback = async (req, res) => {
         logger.error('[X OAuth] Failed to save X tokens (non-fatal for login):', tokenSaveErr.message);
       }
 
-      // Build complete session matching webAppController.buildSession
+      // Update last_login fields
+      query(
+        `UPDATE users SET last_login_at = NOW(), last_login_method = 'x', updated_at = NOW() WHERE id = $1`,
+        [user.id]
+      ).catch(() => {});
+
+      // Build complete session — matches webAppController.buildSession
+      await new Promise((resolve, reject) =>
+        req.session.regenerate(err => (err ? reject(err) : resolve()))
+      );
       req.session.user = {
         id: user.id,
         pnptvId: user.pnptv_id,
         username: user.username,
+        displayName: user.first_name || user.username || 'Member',
         firstName: user.first_name,
         lastName: user.last_name,
+        email: user.email || null,
         subscriptionStatus: user.subscription_status,
         tier: user.tier || 'free',
         acceptedTerms: user.terms_accepted,
@@ -369,19 +394,24 @@ const handleCallback = async (req, res) => {
         bio: user.bio,
         language: user.language,
         role: user.role || 'user',
+        creator_status: user.creator_status || 'none',
+        creator_locked: user.creator_locked === true,
+        contentDisclaimer: user.content_disclaimer || false,
         xHandle,
         auth_methods: {
           telegram: !!(user.telegram),
           x: true,
         },
+        last_login_method: 'x',
+        sessionCreatedAt: Date.now(),
       };
-
       await new Promise((resolve, reject) =>
         req.session.save(err => (err ? reject(err) : resolve()))
       );
 
       logger.info(`Web app X login success: user ${user.id} via @${xHandle}`);
-      return res.redirect(canonicalAppUrl);
+      const addEmailFlag = user.email ? '' : '&add_email=1';
+      return res.redirect(`${canonicalAppUrl}/login?post_login=x${addEmailFlag}&returnTo=%2Ffeed`);
     } catch (err) {
       logger.error(`X webapp login callback error: ${err.message}`);
       const canonicalErr = (process.env.WEBAPP_ORIGIN || process.env.BOT_WEBHOOK_DOMAIN || 'https://pnptv.app').replace(/\/+$/, '') + '/?error=auth_failed';

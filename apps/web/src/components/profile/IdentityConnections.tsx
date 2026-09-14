@@ -2,9 +2,10 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useI18n } from "@/lib/i18n";
 import {
   checkAuthStatus,
-  recoverAccount,
   linkTelegramAccount,
   unlinkTelegramAccount,
+  startWebappXLink,
+  unlinkXAccount,
   type TelegramWidgetUser,
 } from "@/lib/api";
 
@@ -77,8 +78,6 @@ function TelegramLinkWidget({ onAuth, onLoadError }: TelegramLinkWidgetProps) {
 export default function IdentityConnections({ telegramUsername }: IdentityConnectionsProps) {
   const t = useI18n();
   const p = t.profile;
-  const [hasLegacyEmail, setHasLegacyEmail] = useState(false);
-  const [legacyEmail, setLegacyEmail] = useState<string | null>(null);
 
   // Telegram link state
   const [telegramLinked, setTelegramLinked] = useState<boolean>(!!telegramUsername);
@@ -89,20 +88,17 @@ export default function IdentityConnections({ telegramUsername }: IdentityConnec
   const [linkLoading, setLinkLoading] = useState(false);
   const [unlinkConfirm, setUnlinkConfirm] = useState(false);
 
-  // Recovery form state
-  const [showRecovery, setShowRecovery] = useState(false);
-  const [emailInput, setEmailInput] = useState("");
-  const [isRecovering, setIsRecovering] = useState(false);
-  const [recoverySent, setRecoverySent] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // X link state
+  const [xLinked, setXLinked] = useState(false);
+  const [xHandle, setXHandle] = useState<string | null>(null);
+  const [xLinkLoading, setXLinkLoading] = useState(false);
+  const [xLinkError, setXLinkError] = useState<string | null>(null);
+  const [xUnlinkConfirm, setXUnlinkConfirm] = useState(false);
 
   const refreshStatus = useCallback(() => {
     return checkAuthStatus()
       .then((status) => {
         if (status.authenticated && status.user) {
-          const placeholder = status.user.email && /@telegram\.pnptv\.app$/i.test(status.user.email);
-          setHasLegacyEmail(!!status.user.email && !placeholder);
-          setLegacyEmail(!placeholder && status.user.email ? status.user.email : null);
           const tgId = status.user.telegram_id;
           const linked = !!tgId && Number(tgId) > 0;
           setTelegramLinked(linked);
@@ -112,6 +108,9 @@ export default function IdentityConnections({ telegramUsername }: IdentityConnec
           } else if (telegramUsername) {
             setTelegramHandle(telegramUsername);
           }
+          const xConnected = !!status.user.auth_methods?.x;
+          setXLinked(xConnected);
+          setXHandle(status.user.xHandle ?? null);
         }
       })
       .catch(() => {});
@@ -121,21 +120,38 @@ export default function IdentityConnections({ telegramUsername }: IdentityConnec
     refreshStatus();
   }, [refreshStatus]);
 
-  const handleRecover = async () => {
-    if (!emailInput.trim()) return;
-    setIsRecovering(true);
-    setError(null);
+  const handleConnectX = async () => {
+    setXLinkLoading(true);
+    setXLinkError(null);
     try {
-      const res = await recoverAccount(emailInput);
-      if (res.success) {
-        setRecoverySent(true);
+      const res = await startWebappXLink();
+      if (res.success && res.url) {
+        window.location.href = res.url;
       } else {
-        setError(res.message || "Failed to initiate recovery");
+        setXLinkError(res.error || "Could not start X connection. Try again.");
+        setXLinkLoading(false);
       }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Connection error");
+      setXLinkError(err instanceof Error ? err.message : "Connection error");
+      setXLinkLoading(false);
+    }
+  };
+
+  const handleUnlinkX = async () => {
+    setXLinkLoading(true);
+    setXLinkError(null);
+    try {
+      const res = await unlinkXAccount();
+      if (res.success) {
+        setXUnlinkConfirm(false);
+        await refreshStatus();
+      } else {
+        setXLinkError(res.error || "Failed to unlink X");
+      }
+    } catch (err: unknown) {
+      setXLinkError(err instanceof Error ? err.message : "Failed to unlink X");
     } finally {
-      setIsRecovering(false);
+      setXLinkLoading(false);
     }
   };
 
@@ -181,13 +197,13 @@ export default function IdentityConnections({ telegramUsername }: IdentityConnec
         {p.identityConnections}
       </h2>
 
-      {/* Data sovereignty notice */}
+      {/* Notice */}
       <div className="flex items-start gap-2 mb-4 pl-3 border-l-2 border-pink-500/30">
         <svg className="w-3.5 h-3.5 text-white/40 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
         </svg>
         <p className="text-xs text-white/50 leading-relaxed">
-          Your PNPtv! identity is consolidated. We've moved away from external platforms like X to a secure, private SSO system powered by Authentik.
+          Your PNPtv! identity is secured by our own SSO system. Connect Telegram or X to enable additional sign-in options and cross-posting.
         </p>
       </div>
 
@@ -280,61 +296,67 @@ export default function IdentityConnections({ telegramUsername }: IdentityConnec
           )}
         </div>
 
-        {/* Legacy / Email section */}
-        <div className="py-2 border-t border-white/5">
-          {!showRecovery ? (
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: "rgba(255, 255, 255, 0.1)" }}>
-                  <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-white">Legacy Account</p>
-                  {hasLegacyEmail ? (
-                    <p className="text-xs truncate" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>{legacyEmail}</p>
-                  ) : (
-                    <p className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Link your old X or Email account</p>
-                  )}
-                </div>
+        {/* X (Twitter) section */}
+        <div className="py-3 border-t border-white/5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 bg-black">
+                <svg className="w-4 h-4 text-white" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.746l7.73-8.835L1.254 2.25H8.08l4.253 5.622 5.912-5.622Zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+                </svg>
               </div>
-              {!hasLegacyEmail && (
-                <button onClick={() => setShowRecovery(true)} className="text-xs font-semibold px-3 py-1.5 rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors">
-                  Recover
-                </button>
-              )}
-              {hasLegacyEmail && (
-                <span className="text-xs font-semibold px-2.5 py-1 rounded-full" style={{ background: "rgba(52, 199, 89, 0.15)", color: "#34C759" }}>Linked</span>
-              )}
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-white">X</p>
+                {xLinked ? (
+                  <p className="text-xs truncate" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                    {xHandle ? `@${xHandle}` : "Connected"}
+                  </p>
+                ) : (
+                  <p className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Connect your X account</p>
+                )}
+              </div>
             </div>
-          ) : (
-            <div className="bg-white/5 rounded-xl p-4 animate-fade-in-up">
-              <h3 className="text-xs font-bold text-white mb-2">Recover Old Account</h3>
-              {recoverySent ? (
-                <p className="text-[10px] text-green-400">Recovery link sent! Check your email to set a password, then you can link it here.</p>
-              ) : (
-                <>
-                  <p className="text-[10px] text-white/50 mb-3">Enter the email from your old account to trigger a password reset.</p>
-                  <div className="flex gap-2">
-                    <input id="pnp-identityconnections-1"
-                      type="email"
-                      value={emailInput}
-                      onChange={(e) => setEmailInput(e.target.value)}
-                      placeholder="email@example.com"
-                      style={{ fontSize: "16px" }}
-                      className="flex-1 min-w-0 bg-black/40 border border-white/10 rounded-lg px-2 py-1.5 text-white outline-none focus:border-pink-500"
-                    />
-                    <button
-                      onClick={handleRecover}
-                      disabled={isRecovering || !emailInput.includes("@")}
-                      className="bg-pink-600 hover:bg-pink-500 disabled:opacity-50 text-white text-xs px-3 py-1.5 rounded-lg font-bold transition-colors"
-                    >
-                      {isRecovering ? "..." : "Send"}
-                    </button>
-                  </div>
-                  {error && <p className="text-[10px] text-red-400 mt-2">{error}</p>}
-                  <button onClick={() => setShowRecovery(false)} className="text-[10px] text-white/30 mt-3 hover:text-white/60">Cancel</button>
-                </>
-              )}
+            {xLinked ? (
+              <button
+                onClick={() => { setXUnlinkConfirm(true); setXLinkError(null); }}
+                disabled={xLinkLoading}
+                className="text-xs font-semibold px-3 py-1.5 rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors disabled:opacity-50"
+              >
+                Unlink
+              </button>
+            ) : (
+              <button
+                onClick={handleConnectX}
+                disabled={xLinkLoading}
+                className="text-xs font-semibold px-3 py-1.5 rounded-full text-white hover:opacity-90 transition-opacity disabled:opacity-50 bg-black border border-white/20"
+              >
+                {xLinkLoading ? "…" : "Connect"}
+              </button>
+            )}
+          </div>
+
+          {xLinkError && <p className="text-[10px] text-red-400 mt-2">{xLinkError}</p>}
+
+          {xUnlinkConfirm && xLinked && (
+            <div className="bg-white/5 rounded-xl p-4 mt-3 animate-fade-in-up">
+              <p className="text-[11px] text-white/80 mb-3 leading-relaxed">
+                Unlink X from this account? You will no longer be able to log in with X or cross-post from PNPtv.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleUnlinkX}
+                  disabled={xLinkLoading}
+                  className="bg-red-500/20 text-red-300 hover:bg-red-500/30 text-xs px-3 py-1.5 rounded-lg font-bold transition-colors disabled:opacity-50"
+                >
+                  {xLinkLoading ? "…" : "Unlink"}
+                </button>
+                <button
+                  onClick={() => { setXUnlinkConfirm(false); setXLinkError(null); }}
+                  className="text-xs text-white/50 hover:text-white/80 px-2"
+                >
+                  Cancel
+                </button>
+              </div>
             </div>
           )}
         </div>

@@ -459,8 +459,8 @@ async function redeemLink(code, userId, { ip = null } = {}) {
       }
     }
 
-    // Set colombia_badge (platform-wide links only)
-    if (!resourceType) {
+    // Set colombia_badge only for Colombia-specific links
+    if (!resourceType && link.co_only) {
       await client.query(`UPDATE users SET colombia_badge = true WHERE id = $1`, [uid]);
     }
 

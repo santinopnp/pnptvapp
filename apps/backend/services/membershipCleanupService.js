@@ -166,12 +166,12 @@ class MembershipCleanupService {
     try {
       const { rows } = await query(`
         SELECT
-          COUNT(*)::int FILTER (WHERE tier IN ('PRIME','member')) AS active_prime,
-          COUNT(*)::int FILTER (WHERE subscription_status = 'churned') AS churned_total,
-          COUNT(*)::int FILTER (
+          COUNT(*) FILTER (WHERE tier IN ('PRIME','member'))::int AS active_prime,
+          COUNT(*) FILTER (WHERE subscription_status = 'churned')::int AS churned_total,
+          COUNT(*) FILTER (
             WHERE is_consumed = false AND is_lifetime = false
               AND expires_at IS NOT NULL AND expires_at > NOW()
-          ) AS active_entitlements
+          )::int AS active_entitlements
         FROM users u
         LEFT JOIN user_entitlements ue ON ue.user_id = u.id::text
           AND ue.add_on_id IN ('prime','pnp-member')
