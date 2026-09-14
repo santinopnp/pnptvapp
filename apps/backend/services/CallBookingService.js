@@ -189,12 +189,13 @@ class CallBookingService {
       // Credit is consumed (quantity_used++) only when call completes
       await callPackageService.reserveCredit(creditId, client);
 
-      // 6. Create the booking record
+      // 6. Create the booking record — price_cents = 0 because the call was
+      // already paid for when the credit was purchased.
       const bookingResult = await client.query(
         `INSERT INTO bookings (
-          id, user_id, performer_id, start_time_utc, end_time_utc,
+          id, user_id, performer_id, price_cents, start_time_utc, end_time_utc,
           duration_minutes, credit_id, status, call_type
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'confirmed', 'video')
+        ) VALUES ($1, $2, $3, 0, $4, $5, $6, $7, 'confirmed', 'video')
         RETURNING *`,
         [uuidv4(), memberId, performerId, startAt, endTime, durationMinutes, creditId]
       );
