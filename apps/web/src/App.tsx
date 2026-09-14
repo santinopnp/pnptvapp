@@ -320,7 +320,7 @@ function PrivyReadinessBreadcrumb() {
 // wallet shard on the new device as soon as they authenticate.
 function PrivyAutoLogin() {
   const { ready, authenticated, login } = usePrivy();
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user } = useAuth();
   useEffect(() => {
     if (!isAuthenticated) return;   // PNPtv not logged in yet
     if (!ready) return;             // Privy SDK still initializing
@@ -330,14 +330,23 @@ function PrivyAutoLogin() {
     // PNPtv account), don't auto-trigger Privy login — user would just loop back
     // to the same 409. They can still open the wallet sheet manually.
     const staleFlag = "__pnptv_privy_stale_409";
+    // Use localStorage (not sessionStorage) so the flag survives OIDC/OAuth
+    // redirects that clear sessionStorage — prevents the popup-then-logout loop
+    // where clearing sessionStorage during redirect resets the flag and fires again.
     try { if (sessionStorage.getItem(staleFlag) === "1") return; } catch { /* ignore */ }
-    try { if (sessionStorage.getItem(flag) === "1") return; } catch { /* ignore */ }
-    try { sessionStorage.setItem(flag, "1"); } catch { /* ignore */ }
-    // Small delay: let any in-flight Privy session restore finish before
-    // showing the modal, avoiding a flash on fast connections.
-    const t = setTimeout(() => login(), 1800);
+    try { if (localStorage.getItem(flag) === "1") return; } catch { /* ignore */ }
+    try { localStorage.setItem(flag, "1"); } catch { /* ignore */ }
+    // Guide Privy to present only the same login method the user chose for PNPtv,
+    // so the accounts are guaranteed to match (same email / same Telegram / same X).
+    const method = user?.lastLoginMethod;
+    const t = setTimeout(() => {
+      if (method === "telegram" || method === "mini_app") login({ loginMethods: ["telegram"] });
+      else if (method === "x") login({ loginMethods: ["twitter"] });
+      else if (method === "oidc") login({ loginMethods: ["email", "google"] });
+      else login();
+    }, 1800);
     return () => clearTimeout(t);
-  }, [isAuthenticated, ready, authenticated, login]);
+  }, [isAuthenticated, ready, authenticated, login, user?.lastLoginMethod]);
   return null;
 }
 
@@ -362,7 +371,7 @@ function PrivyIdentitySync() {
     if (!isPnptvAuthenticated && authenticated) {
       // Also clear the stale-409 flag so the next user gets a fresh auto-login.
       try { sessionStorage.removeItem("__pnptv_privy_stale_409"); } catch { /* ignore */ }
-      try { sessionStorage.removeItem("__pnptv_privy_autologin"); } catch { /* ignore */ }
+      try { localStorage.removeItem("__pnptv_privy_autologin"); } catch { /* ignore */ }
       privyLogout().catch(() => {});
     }
   }, [isPnptvAuthenticated, isPnptvLoading, authenticated, privyLogout]);

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import { usePrivy, useWallets, useConnectWallet } from "@privy-io/react-auth";
 import { useI18n } from "@/lib/i18n";
 import {
   checkAuthStatus,
@@ -6,8 +7,10 @@ import {
   unlinkTelegramAccount,
   startWebappXLink,
   unlinkXAccount,
+  setPreferredWalletServer,
   type TelegramWidgetUser,
 } from "@/lib/api";
+import { PREFERRED_WALLET_KEY } from "@/components/payments/PayInWalletChips";
 
 export interface IdentityConnectionsProps {
   telegramUsername?: string;
@@ -94,6 +97,40 @@ export default function IdentityConnections({ telegramUsername }: IdentityConnec
   const [xLinkLoading, setXLinkLoading] = useState(false);
   const [xLinkError, setXLinkError] = useState<string | null>(null);
   const [xUnlinkConfirm, setXUnlinkConfirm] = useState(false);
+
+  // Wallet state
+  const { ready: privyReady, authenticated: privyAuth, login: privyLogin } = usePrivy();
+  const { wallets } = useWallets();
+  const [preferredAddress, setPreferredAddress] = useState<string | null>(() => {
+    try { return localStorage.getItem(PREFERRED_WALLET_KEY); } catch { return null; }
+  });
+  const [walletLoading, setWalletLoading] = useState(false);
+  const [walletError, setWalletError] = useState<string | null>(null);
+  const { connectWallet } = useConnectWallet({
+    onSuccess: () => setWalletError(null),
+    onError: (err) => setWalletError(err instanceof Error ? err.message : "Failed to connect wallet"),
+  });
+
+  const handleSetPreferred = async (address: string) => {
+    setWalletLoading(true);
+    setWalletError(null);
+    try {
+      try { localStorage.setItem(PREFERRED_WALLET_KEY, address); } catch { /* ignore */ }
+      setPreferredAddress(address);
+      await setPreferredWalletServer(address);
+    } catch {
+      setWalletError("Failed to save preference");
+    } finally {
+      setWalletLoading(false);
+    }
+  };
+
+  const handleConnectWallet = () => {
+    setWalletError(null);
+    if (!privyReady) return;
+    if (!privyAuth) { privyLogin(); return; }
+    try { connectWallet(); } catch { /* onError handles UI */ }
+  };
 
   const refreshStatus = useCallback(() => {
     return checkAuthStatus()
@@ -359,6 +396,68 @@ export default function IdentityConnections({ telegramUsername }: IdentityConnec
               </div>
             </div>
           )}
+        </div>
+
+        {/* Wallets section */}
+        <div className="py-3 border-t border-white/5">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: "linear-gradient(135deg, #7C3AED33, #2563EB33)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                <svg className="w-4.5 h-4.5 text-purple-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a2.25 2.25 0 0 0-2.25-2.25H15a3 3 0 1 1-6 0H5.25A2.25 2.25 0 0 0 3 12m18 0v6a2.25 2.25 0 0 1-2.25 2.25H5.25A2.25 2.25 0 0 1 3 18v-6m18 0V9M3 12V9m18-3a2.25 2.25 0 0 0-2.25-2.25H5.25A2.25 2.25 0 0 0 3 6v3m18 0V6" />
+                </svg>
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-white">Wallets</p>
+                <p className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                  {wallets.length > 0 ? `${wallets.length} connected` : privyAuth ? "No wallet connected" : "Not connected"}
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={handleConnectWallet}
+              disabled={!privyReady || walletLoading}
+              className="text-xs font-semibold px-3 py-1.5 rounded-full text-white hover:opacity-90 transition-opacity disabled:opacity-40"
+              style={{ background: "linear-gradient(135deg, #7C3AED, #2563EB)" }}
+            >
+              {wallets.length > 0 ? "+ Add" : "Connect"}
+            </button>
+          </div>
+
+          {wallets.length > 0 && (
+            <div className="space-y-1.5 mt-2">
+              {wallets.map((wallet) => {
+                const isPreferred = preferredAddress === wallet.address;
+                const label = wallet.walletClientType === "privy"
+                  ? "PNPtv Wallet"
+                  : wallet.walletClientType.charAt(0).toUpperCase() + wallet.walletClientType.slice(1);
+                const short = `${wallet.address.slice(0, 6)}…${wallet.address.slice(-4)}`;
+                return (
+                  <div key={wallet.address} className="flex items-center justify-between px-3 py-2 rounded-xl bg-white/5">
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium text-white">{label}</p>
+                      <p className="text-[10px] font-mono" style={{ color: "#8E8E93" }}>{short}</p>
+                    </div>
+                    {isPreferred ? (
+                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full" style={{ background: "rgba(124,58,237,0.15)", color: "#A78BFA" }}>
+                        Preferred
+                      </span>
+                    ) : (
+                      <button
+                        onClick={() => handleSetPreferred(wallet.address)}
+                        disabled={walletLoading}
+                        className="text-[10px] text-white/40 hover:text-white/70 transition-colors disabled:opacity-50"
+                      >
+                        Set preferred
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {walletError && <p className="text-[10px] text-red-400 mt-2">{walletError}</p>}
         </div>
       </div>
     </div>
