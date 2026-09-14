@@ -175,12 +175,15 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
     // (or the user hits Skip). Once dismissed, the intro never re-shows for
     // this mount — replays go straight to video.
     const [introDone, setIntroDone] = useState<boolean>(intro == null);
-    // Reset gate when src changes (e.g. re-open a different video in the same
-    // player mount) — otherwise the intro from the previous video would be
-    // considered already dismissed for the new one.
+    // Reset gate only when `intro` itself changes (i.e. a genuinely different
+    // video is loaded). Removing `src` from deps is intentional: when the same
+    // video switches to a fallback URL the intro must NOT replay — the user
+    // already watched/skipped it. Using `src` as a dep also caused the intro to
+    // restart after iOS fullscreen exit if the stream emitted an error event
+    // that triggered the fallback-URL path.
     useEffect(() => {
       setIntroDone(intro == null);
-    }, [src, intro]);
+    }, [intro]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const setRefs = (el: HTMLVideoElement | null) => {
       localRef.current = el;
@@ -297,16 +300,38 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
       onPlay?.(e);
     };
 
-    const castSupported = typeof window !== "undefined" && "remote" in HTMLVideoElement.prototype;
+    const castSupported = typeof window !== "undefined" && (
+      "remote" in HTMLVideoElement.prototype ||
+      "webkitShowPlaybackTargetPicker" in HTMLVideoElement.prototype ||
+      typeof navigator.share === "function"
+    );
     const pipSupported = typeof window !== "undefined" && !!document.pictureInPictureEnabled;
     const showOverlayControls = !showPaywall && !accessLoading && introDone && !playbackError;
 
     const handleCast = useCallback(async () => {
       const video = localRef.current;
       if (!video) return;
+      // Safari / iOS — AirPlay picker
+      const webkitVideo = video as HTMLVideoElement & { webkitShowPlaybackTargetPicker?(): void };
+      if (typeof webkitVideo.webkitShowPlaybackTargetPicker === "function") {
+        webkitVideo.webkitShowPlaybackTargetPicker();
+        return;
+      }
+      // Chrome / Chromium — Remote Playback API
       try {
-        await (video as HTMLVideoElement & { remote: { prompt(): Promise<void> } }).remote.prompt();
-      } catch { /* user cancelled */ }
+        const remoteVideo = video as HTMLVideoElement & { remote?: { prompt(): Promise<void> } };
+        if (remoteVideo.remote) {
+          await remoteVideo.remote.prompt();
+          return;
+        }
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        // NotSupportedError (hls.js blob src) or other — fall through to share
+      }
+      // Fallback — native share sheet (opens AirDrop / Cast on mobile)
+      if (navigator.share) {
+        navigator.share({ title: "PNPtv", url: window.location.href }).catch(() => {});
+      }
     }, []);
 
     const handlePiP = useCallback(async () => {
@@ -330,7 +355,7 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
       .join(" ");
 
     return (
-      <div className={containerClasses} style={style}>
+      <div className={containerClasses} style={style} data-video-container="1">
         {/* Ambient Blur Background — eliminates harsh black bars on portrait/letterboxed videos */}
         {ambientBlur && poster && (
           <div
@@ -363,6 +388,7 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
           onPlay={handlePlay}
           onError={handleVideoError}
           autoPlay={intro || showPaywall ? false : autoPlay}
+          x-webkit-airplay="allow"
           {...rest}
         />
 
