@@ -2610,11 +2610,6 @@ const sharePostToHangouts = async (req, res) => {
   if (!post || post.is_deleted) {
     return res.status(404).json({ error: 'Post not found' });
   }
-  // Exclusive posts must not be forwardable — the recipient may not hold
-  // the entitlement, and the snapshot embeds media_url directly.
-  if (post.is_exclusive) {
-    return res.status(403).json({ error: 'Exclusive posts cannot be shared', code: 'EXCLUSIVE_NO_SHARE' });
-  }
   if (post.is_shareable === false) {
     return res.status(403).json({ error: 'This post is not shareable', code: 'NOT_SHAREABLE' });
   }
@@ -2634,6 +2629,8 @@ const sharePostToHangouts = async (req, res) => {
 
   const resolvePhoto = (p) => (p && (p.startsWith('/') || p.startsWith('http'))) ? p : null;
 
+  // Exclusive posts: share the card but strip the actual media URL so non-entitled
+  // recipients see a locked preview instead of the raw content.
   const meta = {
     postId: post.id,
     snapshot: {
@@ -2641,11 +2638,12 @@ const sharePostToHangouts = async (req, res) => {
       authorFirstName: post.author_first_name || null,
       authorPhoto: resolvePhoto(post.author_photo),
       content: preview || null,
-      mediaUrl: post.media_url || null,
+      mediaUrl: post.is_exclusive ? null : (post.media_url || null),
       mediaType: post.media_type || null,
       videoTitle: post.video_title || null,
       videoDescription: post.video_description || null,
       videoThumbnailUrl: post.video_thumbnail_url || null,
+      isExclusive: post.is_exclusive ? true : undefined,
       note: noteText || null,
     },
   };

@@ -829,17 +829,14 @@ const shareDmPost = async (req, res) => {
   );
   const post = postRows[0];
   if (!post || post.is_deleted) return res.status(404).json({ error: 'Post not found' });
-  // Exclusive posts cannot be forwarded via DM — the snapshot carries the
-  // media_url and would leak to a non-entitled recipient.
-  if (post.is_exclusive) {
-    return res.status(403).json({ error: 'Exclusive posts cannot be shared', code: 'EXCLUSIVE_NO_SHARE' });
-  }
   if (post.is_shareable === false) {
     return res.status(403).json({ error: 'This post is not shareable', code: 'NOT_SHAREABLE' });
   }
 
   try {
     const resolvePhoto = (p) => (p && (p.startsWith('/') || p.startsWith('http'))) ? p : null;
+    // Exclusive posts: strip media URL from the snapshot so non-entitled recipients
+    // see a locked preview card instead of the raw content.
     const msg = await DmService.sharePostToDm(
       user.id,
       partnerId,
@@ -849,11 +846,12 @@ const shareDmPost = async (req, res) => {
         authorFirstName: post.author_first_name || null,
         authorPhoto: resolvePhoto(post.author_photo),
         content: post.content || null,
-        mediaUrl: post.media_url || null,
+        mediaUrl: post.is_exclusive ? null : (post.media_url || null),
         mediaType: post.media_type || null,
         videoTitle: post.video_title || null,
         videoDescription: post.video_description || null,
         videoThumbnailUrl: post.video_thumbnail_url || null,
+        isExclusive: post.is_exclusive ? true : undefined,
       },
       note
     );

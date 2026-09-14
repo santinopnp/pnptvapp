@@ -1637,6 +1637,7 @@ export default function PostCard({
               <button
                 onClick={async () => {
                   if (hypeInFlight.current) return;
+                  if (hypeQuota && hypeQuota.remaining === 0) return;
                   hypeInFlight.current = true;
                   const next = !hypePosted;
                   setHypePosted(next);
@@ -1656,8 +1657,7 @@ export default function PostCard({
                       if (typeof d?.dailyLimit === 'number') {
                         setHypeQuota({ remaining: d.dailyRemaining ?? 0, limit: d.dailyLimit, resetsAt: d.resetsAt ?? null });
                       }
-                      setHypeError(err.message);
-                      setTimeout(() => setHypeError(null), 4500);
+                      // No red error text — quota indicator handles the state
                     } else {
                       const msg = err instanceof Error ? err.message : '';
                       setHypeError(msg || 'Failed');
@@ -1667,9 +1667,10 @@ export default function PostCard({
                     hypeInFlight.current = false;
                   }
                 }}
-                className="flex items-center gap-1.5 text-xs transition-all"
+                disabled={!!(hypeQuota && hypeQuota.remaining === 0)}
+                className="flex items-center gap-1.5 text-xs transition-all disabled:cursor-default disabled:opacity-40"
                 style={hypePosted ? { color: '#FF9500', filter: 'drop-shadow(0 0 5px rgba(255,149,0,0.6))' } : { color: 'var(--pnp-text-secondary, #8E8E93)' }}
-                title={hypePosted ? 'Un-hype' : 'Hype this post'}
+                title={hypeQuota?.remaining === 0 ? 'Daily hypes used — come back tomorrow' : hypePosted ? 'Un-hype' : 'Hype this post'}
                 aria-label={hypePosted ? 'Un-hype this post' : 'Hype this post'}
                 aria-pressed={hypePosted}
               >
@@ -1684,37 +1685,20 @@ export default function PostCard({
           </div>
 
           {hypeError && (
-            <p className="text-xs text-red-400 mt-1" role="alert">{hypeError}</p>
+            <p className="text-xs text-pnp-textSecondary mt-1 opacity-70" role="alert">{hypeError}</p>
           )}
 
-          {hypeQuota && !hypeError && hypeQuota.remaining < hypeQuota.limit && (() => {
-            const anyFt = ft as unknown as Record<string, (...args: unknown[]) => string>;
-            let label: string;
-            if (hypeQuota.remaining === 0) {
-              const ms = hypeQuota.resetsAt ? new Date(hypeQuota.resetsAt).getTime() - Date.now() : 0;
-              if (hypeQuota.resetsAt && ms > 0) {
-                const h = Math.floor(ms / 3600000);
-                const m = Math.floor((ms % 3600000) / 60000);
-                label = anyFt.hypeQuotaFullWithReset?.(hypeQuota.limit, h, m)
-                  ?? `Out of hypes today (${hypeQuota.limit}/day) — resets in ${h}h ${m}m`;
-              } else {
-                label = anyFt.hypeQuotaFull?.(hypeQuota.limit)
-                  ?? `Out of hypes today (${hypeQuota.limit}/day)`;
-              }
-            } else {
-              label = anyFt.hypeQuotaLeft?.(hypeQuota.remaining, hypeQuota.limit)
-                ?? `${hypeQuota.remaining}/${hypeQuota.limit} hypes left today`;
+          {hypeQuota && !hypeError && hypeQuota.remaining === 0 && (() => {
+            const ms = hypeQuota.resetsAt ? new Date(hypeQuota.resetsAt).getTime() - Date.now() : 0;
+            let resetHint = '';
+            if (hypeQuota.resetsAt && ms > 0) {
+              const h = Math.floor(ms / 3600000);
+              const m = Math.floor((ms % 3600000) / 60000);
+              resetHint = h > 0 ? ` · ${h}h ${m}m` : ` · ${m}m`;
             }
-            const tooltip = hypeQuota.resetsAt
-              ? (anyFt.hypeQuotaTooltip?.(new Date(hypeQuota.resetsAt).toLocaleString())
-                  ?? `Resets ${new Date(hypeQuota.resetsAt).toLocaleString()}`)
-              : undefined;
             return (
-              <p
-                className={`text-[10px] mt-1 ${hypeQuota.remaining === 0 ? 'text-red-400' : hypeQuota.remaining <= 1 ? 'text-orange-400' : 'text-pnp-textSecondary'}`}
-                title={tooltip}
-              >
-                🔥 {label}
+              <p className="text-[10px] mt-1 text-white/30" title={hypeQuota.resetsAt ? `Resets ${new Date(hypeQuota.resetsAt).toLocaleString()}` : undefined}>
+                🔥 Daily limit reached{resetHint}
               </p>
             );
           })()}

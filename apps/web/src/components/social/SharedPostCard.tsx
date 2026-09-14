@@ -255,7 +255,7 @@ export function SharedPostCard({ postId, snapshot, isMe = false }: Props) {
         </div>
 
         {/* ── Media ─────────────────────────────────────────────────────── */}
-        {snapshot.mediaUrl && (
+        {(snapshot.mediaUrl || isLocked) && (
           <button
             type="button"
             onClick={goToPost}
@@ -268,18 +268,28 @@ export function SharedPostCard({ postId, snapshot, isMe = false }: Props) {
                   className="absolute inset-0 flex flex-col items-center justify-center gap-1.5"
                   style={{
                     background:
-                      "linear-gradient(135deg, rgba(212,0,122,0.18), rgba(230,145,56,0.18)), rgba(0,0,0,0.5)",
+                      "linear-gradient(135deg, rgba(212,0,122,0.18), rgba(230,145,56,0.18)), rgba(0,0,0,0.75)",
                   }}
                 >
-                  <svg className="w-6 h-6 text-white/70" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8} aria-hidden>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 11v3M8 11V8a4 4 0 118 0v3M5 11h14v9H5z" />
-                  </svg>
-                  <p className="text-xs text-white/85 font-semibold">
-                    {lang === "es" ? "Contenido exclusivo" : "Exclusive content"}
-                  </p>
-                  <p className="text-[10px] text-white/60">
-                    {lang === "es" ? "Toca para suscribirte" : "Tap to subscribe"}
-                  </p>
+                  {snapshot.videoThumbnailUrl && (
+                    <img
+                      src={snapshot.videoThumbnailUrl}
+                      alt=""
+                      className="absolute inset-0 w-full h-full object-cover opacity-25"
+                      aria-hidden
+                    />
+                  )}
+                  <div className="relative flex flex-col items-center gap-1.5">
+                    <svg className="w-6 h-6 text-white/70" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8} aria-hidden>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 11v3M8 11V8a4 4 0 118 0v3M5 11h14v9H5z" />
+                    </svg>
+                    <p className="text-xs text-white/85 font-semibold">
+                      {lang === "es" ? "Contenido exclusivo" : "Exclusive content"}
+                    </p>
+                    <p className="text-[10px] text-white/60">
+                      {lang === "es" ? "Toca para ver" : "Tap to view"}
+                    </p>
+                  </div>
                 </div>
               ) : isVideo ? (
                 <>

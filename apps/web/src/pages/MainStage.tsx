@@ -11,7 +11,7 @@ import {
 import { ConnectionState, RoomEvent, Track } from "livekit-client";
 import { useMainStage, type MainStageState } from "@/hooks/useMainStage";
 import { useMainStageRoom } from "@/components/mainstage/MainStageProvider";
-import { getMainStageJoinCheck, acceptMainStageConsents, getWalletBalance, getMainStageViewerToken, getMainStageFreeViewerToken, getMainStageGateState, getMainStageState, voteSkipMainStage, playNextMainStage, getHangoutGroup, getMainStagePin, type MainStageJoinCheck, type MainStagePin, type TopicLite, type MainStageGateState } from "@/lib/api";
+import { getMainStageJoinCheck, acceptMainStageConsents, getWalletBalance, getMainStageViewerToken, getMainStageFreeViewerToken, getMainStageState, voteSkipMainStage, playNextMainStage, getHangoutGroup, getMainStagePin, type MainStageJoinCheck, type MainStagePin, type TopicLite } from "@/lib/api";
 import { getSocket } from "@/lib/socket";
 import { useAuth } from "@/hooks/useAuth";
 import { useMusicPlayer } from "@/hooks/useMusicPlayer";
@@ -33,8 +33,7 @@ import { WellnessTipsOverlay } from "@/components/mainstage/WellnessTipsOverlay"
 import { NowPlayingChip } from "@/components/mainstage/NowPlayingChip";
 import { FullscreenToggle } from "@/components/mainstage/FullscreenToggle";
 import { AdminDrawer, AdminPanelContent, type ModeId } from "@/components/mainstage/AdminDrawer";
-import { FreeTierEntryCard } from "@/components/mainstage/FreeTierEntryCard";
-import { AdUnlockButton } from "@/components/mainstage/AdUnlockButton";
+
 import { AdSlot } from "@/components/AdSlot";
 import { BuyTokensModal } from "@/components/BuyTokensModal";
 import { WalletPayCard, TIP_PRESETS_USD, TIP_PRESETS_RUSH } from "@/components/payments/PayInWalletChips";
@@ -526,10 +525,6 @@ export default function MainStage() {
   const isViewerMode = !isGuestMode && !isAuthLoading && !canParticipate;
   const isFreeTierViewer = isViewerMode && !!user;
 
-  // Gate state — free-tier viewer needs to know when the window opens/closes
-  // so the countdown UI + auto-disconnect at close both work. Null until fetched.
-  const [gateState, setGateState] = useState<MainStageGateState | null>(null);
-
   // Viewer-mode state
   const [viewerLkToken, setViewerLkToken] = useState<string | null>(null);
   const [viewerLkUrl, setViewerLkUrl] = useState<string | null>(null);
@@ -539,8 +534,10 @@ export default function MainStage() {
   const [viewerError, setViewerError] = useState<string | null>(null);
   // Viewer REST state override — unauthenticated viewers don't receive socket state updates.
   const [viewerStateOverride, setViewerStateOverride] = useState<MainStageState | null>(null);
-  // Viewer token refresh timer (2h TTL — refresh 15 min early).
+  // Viewer token refresh timer — refresh 15 min before expiry.
   const viewerRefreshRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Tracks whether the auto-connect for free-tier has already been kicked off.
+  const autoConnectRef = useRef(false);
 
   // Resolve effective values: guest path overrides everything from the hook.
   const state       = hookedState;
@@ -1038,72 +1035,38 @@ export default function MainStage() {
     setViewerConnecting(true);
     setViewerError(null);
     try {
-      // Free-tier logged-in users use the gated teaser endpoint; unauthenticated
-      // visitors fall through to the legacy viewer-token (member-only guard).
       const res = isFreeTierViewer
         ? await getMainStageFreeViewerToken()
         : await getMainStageViewerToken();
       setViewerLkToken(res.token);
       setViewerLkUrl(res.livekitUrl);
-      if ('gateState' in res && res.gateState) {
-        setGateState(res.gateState as MainStageGateState);
-      }
-      // Refresh timer: free-tier tokens expire at window close (< 1h), so
-      // don't schedule a refresh — the whole point is that access ends.
-      // Paid viewers get 24h tokens, so refresh 15 min before expiry.
       if (viewerRefreshRef.current) clearTimeout(viewerRefreshRef.current);
-      if (!isFreeTierViewer) {
-        viewerRefreshRef.current = setTimeout(async () => {
-          try {
-            const refreshed = await getMainStageViewerToken();
-            setViewerLkToken(refreshed.token);
-            setViewerLkUrl(refreshed.livekitUrl);
-          } catch {
-            // On failure, let the connection expire naturally.
-          }
-        }, (24 * 60 - 15) * 60 * 1000);
-      }
-    } catch (err: unknown) {
-      // Free-tier gate closed → surface gate info so the UI renders the
-      // countdown instead of a generic error toast.
-      const errObj = err as { status?: number; code?: string; data?: { gateState?: MainStageGateState } };
-      if (isFreeTierViewer && errObj?.status === 403 && errObj?.code === 'MAIN_STAGE_GATED') {
-        if (errObj.data?.gateState) setGateState(errObj.data.gateState);
-        setViewerError(null); // gated view is its own render branch, not an error
-      } else {
-        setViewerError("Couldn't connect to Main Stage. Please try again.");
-      }
+      viewerRefreshRef.current = setTimeout(async () => {
+        try {
+          const refreshed = isFreeTierViewer
+            ? await getMainStageFreeViewerToken()
+            : await getMainStageViewerToken();
+          setViewerLkToken(refreshed.token);
+          setViewerLkUrl(refreshed.livekitUrl);
+        } catch {
+          // On failure, let the connection expire naturally.
+        }
+      }, isFreeTierViewer
+        ? (3 * 60 - 15) * 60 * 1000    // 2h45m — free-tier gets 3h tokens
+        : (24 * 60 - 15) * 60 * 1000); // 23h45m — paid viewer 24h tokens
+    } catch {
+      setViewerError("Couldn't connect to Main Stage. Please try again.");
     } finally {
       setViewerConnecting(false);
     }
   }, [isFreeTierViewer]);
 
-  // Fetch gate state on mount for free-tier viewers so we can render the
-  // countdown even before they click "Watch" (or if the gate is currently
-  // closed, we show it immediately instead of after a failed watch attempt).
+  // Auto-connect free-tier logged-in users — no gate, no popup.
   useEffect(() => {
-    if (!isFreeTierViewer) return;
-    getMainStageGateState()
-      .then((r) => setGateState(r.gateState))
-      .catch(() => { /* silent — countdown UI shows "loading" state */ });
-    const id = setInterval(() => {
-      getMainStageGateState().then(r => setGateState(r.gateState)).catch(() => {});
-    }, 30_000);
-    return () => clearInterval(id);
-  }, [isFreeTierViewer]);
-
-  // Auto-disconnect at window close for free-tier viewers so an expired
-  // LiveKit connection doesn't sit there showing a frozen frame.
-  useEffect(() => {
-    if (!isFreeTierViewer || !viewerLkToken || !gateState?.currentCloseAt) return;
-    const msUntilClose = gateState.currentCloseAt - Date.now();
-    if (msUntilClose <= 0) {
-      setViewerLkToken(null);
-      return;
-    }
-    const t = setTimeout(() => setViewerLkToken(null), msUntilClose);
-    return () => clearTimeout(t);
-  }, [isFreeTierViewer, viewerLkToken, gateState?.currentCloseAt]);
+    if (!isFreeTierViewer || viewerLkToken || viewerConnecting || autoConnectRef.current) return;
+    autoConnectRef.current = true;
+    void handleViewerWatch();
+  }, [isFreeTierViewer, viewerLkToken, viewerConnecting, handleViewerWatch]);
 
   // Cleanup viewer refresh timer on unmount.
   useEffect(() => {
@@ -1298,38 +1261,29 @@ export default function MainStage() {
     );
   }
 
-  // Free-tier entry card — logged-in free-tier user with no viewer token.
-  // Covers all 3 states (window open, upcoming, gate disabled) + null gateState
-  // fallback + ad-unlock slot. Replaced the old "Main Stage is closed" screen
-  // 2026-09-05 to fix the broken UX free users hit when the gate is disabled.
+  // Free-tier viewer: auto-connecting (no gate). Show spinner while connecting;
+  // on error show a retry button rather than looping forever.
   if (isFreeTierViewer && !viewerLkToken) {
-    const uiLang: "es" | "en" = t.lang === "es" ? "es" : "en";
     return (
-      <div className="fixed inset-0 flex items-center justify-center px-4 bg-pnp-background">
-        <FreeTierEntryCard
-          gateState={gateState as unknown as {
-            enabled: boolean;
-            isOpen: boolean;
-            currentCloseAt: number | null;
-            nextOpenAt: number | null;
-            windows?: { start_utc: string; duration_min: number }[];
-          } | null}
-          onWatchLive={handleViewerWatch}
-          connecting={viewerConnecting}
-          lang={uiLang}
-          adUnlockSlot={
-            <>
-              <AdUnlockButton
-                surface="mainstage_extend"
-                lang={uiLang}
-                onGranted={() => { void handleViewerWatch(); }}
-              />
-              {/* El anuncio va aqui, en la antesala, y no sobre la emision:
-                  un banner encima del video en vivo cuesta mas de lo que da. */}
-              <div className="mt-4 flex justify-center"><AdSlot slot="instant_message" /></div>
-            </>
-          }
-        />
+      <div className="fixed inset-0 flex flex-col items-center justify-center gap-5 px-6 text-center bg-pnp-background">
+        {viewerError ? (
+          <>
+            <p className="text-white/60 text-sm">{viewerError}</p>
+            <button
+              type="button"
+              onClick={() => { autoConnectRef.current = false; void handleViewerWatch(); }}
+              className="min-h-[44px] px-6 rounded-2xl text-sm font-semibold text-white transition-all active:scale-[0.97]"
+              style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}
+            >
+              Try Again
+            </button>
+          </>
+        ) : (
+          <div
+            className="w-10 h-10 rounded-full border-2 animate-spin"
+            style={{ borderColor: "rgba(212,0,122,0.2)", borderTopColor: "#D4007A" }}
+          />
+        )}
       </div>
     );
   }
@@ -2126,40 +2080,61 @@ export default function MainStage() {
                 />
               </LiveKitRoom>
 
-              {/* Login CTA — viewers are unauthenticated, prompt them to sign in and join */}
-              <div
-                className="flex-shrink-0 flex items-center gap-3 px-4 py-3"
-                style={{
-                  background: "rgba(10,10,15,0.97)",
-                  borderTop: "1px solid rgba(255,255,255,0.08)",
-                  paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom, 0px))",
-                }}
-              >
-                <button
-                  type="button"
-                  onClick={handleLeave}
-                  aria-label={t.live.mainStageAriaLeave}
-                  className="min-h-[40px] min-w-[40px] flex-shrink-0 flex items-center justify-center rounded-full bg-pnp-error/15 border border-pnp-error/30 text-pnp-error hover:bg-white/10 active:scale-[0.96] transition-all"
+              {/* Bottom bar — ad strip for free-tier members, sign-in CTA for guests */}
+              {isFreeTierViewer ? (
+                <div
+                  className="flex-shrink-0 flex flex-col items-center gap-1 px-4 py-2"
+                  style={{
+                    background: "rgba(10,10,15,0.97)",
+                    borderTop: "1px solid rgba(255,255,255,0.08)",
+                    paddingBottom: "calc(0.5rem + env(safe-area-inset-bottom, 0px))",
+                  }}
                 >
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75" />
-                  </svg>
-                </button>
-                <div className="flex-1 min-w-0">
-                  <p className="text-white font-semibold text-sm leading-tight">
-                    {liveParticipants > 0 ? `${liveParticipants} on camera` : "Join the show"}
-                  </p>
-                  <p className="text-white/45 text-xs leading-tight mt-0.5">Create a free account to turn your camera on</p>
+                  <AdSlot slot="instant_message" />
+                  <button
+                    type="button"
+                    onClick={() => navigate("/subscribe")}
+                    className="text-[10px] font-medium transition-opacity hover:opacity-80"
+                    style={{ color: "rgba(255,255,255,0.30)" }}
+                  >
+                    Go Member — remove ads + get on cam
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => navigate("/login?return_to=/main-stage")}
-                  className="flex-shrink-0 min-h-[40px] px-4 rounded-2xl text-xs font-bold text-white transition-all active:scale-[0.97] whitespace-nowrap"
-                  style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)", boxShadow: "0 4px 16px rgba(212,0,122,0.45)" }}
+              ) : (
+                <div
+                  className="flex-shrink-0 flex items-center gap-3 px-4 py-3"
+                  style={{
+                    background: "rgba(10,10,15,0.97)",
+                    borderTop: "1px solid rgba(255,255,255,0.08)",
+                    paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom, 0px))",
+                  }}
                 >
-                  Sign in
-                </button>
-              </div>
+                  <button
+                    type="button"
+                    onClick={handleLeave}
+                    aria-label={t.live.mainStageAriaLeave}
+                    className="min-h-[40px] min-w-[40px] flex-shrink-0 flex items-center justify-center rounded-full bg-pnp-error/15 border border-pnp-error/30 text-pnp-error hover:bg-white/10 active:scale-[0.96] transition-all"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75" />
+                    </svg>
+                  </button>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-white font-semibold text-sm leading-tight">
+                      {liveParticipants > 0 ? `${liveParticipants} on camera` : "Join the show"}
+                    </p>
+                    <p className="text-white/45 text-xs leading-tight mt-0.5">Create a free account to turn your camera on</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => navigate("/login?return_to=/main-stage")}
+                    className="flex-shrink-0 min-h-[40px] px-4 rounded-2xl text-xs font-bold text-white transition-all active:scale-[0.97] whitespace-nowrap"
+                    style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)", boxShadow: "0 4px 16px rgba(212,0,122,0.45)" }}
+                  >
+                    Sign in
+                  </button>
+                </div>
+              )}
             </>
           ) : (
             <LiveKitRoom

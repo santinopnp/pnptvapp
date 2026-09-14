@@ -745,8 +745,8 @@ const freeViewerToken = asyncHandler(async (req, res) => {
     false,
     { canPublishVideo: false, canPublishAudio: false, canPublishData: false, ttlSeconds },
   );
-  logger.info('[MainStage] free-viewer token issued via gate window', {
-    ip: req.ip, userId, ttlSeconds, closeAt: gateState.currentCloseAt,
+  logger.info('[MainStage] free-viewer token issued (open access)', {
+    ip: req.ip, userId, ttlSeconds,
   });
   return res.json({
     success:     true,
@@ -755,11 +755,6 @@ const freeViewerToken = asyncHandler(async (req, res) => {
     roomName:    ROOM_NAME,
     identity:    viewerId,
     viaAdUnlock: false,
-    gateState:   {
-      isOpen:         true,
-      currentCloseAt: gateState.currentCloseAt,
-      nextOpenAt:     gateState.nextOpenAt,
-    },
   });
 });
 

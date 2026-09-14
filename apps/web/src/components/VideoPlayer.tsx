@@ -96,10 +96,32 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
     const { user } = useAuth();
     const localRef = useRef<HTMLVideoElement | null>(null);
     const hlsRef = useRef<Hls | null>(null);
+    const containerRef = useRef<HTMLDivElement | null>(null);
     const [showDisclaimer, setShowDisclaimer] = useState(false);
     const [isPortrait, setIsPortrait] = useState(false);
     const [videoDims, setVideoDims] = useState<{ w: number; h: number } | null>(null);
     const [playbackError, setPlaybackError] = useState<string | null>(null);
+
+    // Lock orientation to landscape on fullscreen, unlock on exit
+    useEffect(() => {
+      const onFsChange = () => {
+        const fsEl = document.fullscreenElement ?? (document as Document & { webkitFullscreenElement?: Element }).webkitFullscreenElement;
+        if (fsEl && containerRef.current && (fsEl === containerRef.current || containerRef.current.contains(fsEl))) {
+          (screen.orientation as ScreenOrientation & { lock?(o: string): Promise<void> })
+            .lock?.("landscape")
+            .catch(() => {});
+        } else {
+          try { screen.orientation.unlock(); } catch { /* not supported */ }
+        }
+      };
+      document.addEventListener("fullscreenchange", onFsChange);
+      document.addEventListener("webkitfullscreenchange", onFsChange);
+      return () => {
+        document.removeEventListener("fullscreenchange", onFsChange);
+        document.removeEventListener("webkitfullscreenchange", onFsChange);
+        try { screen.orientation.unlock(); } catch { /* not supported */ }
+      };
+    }, []);
 
     // ── Paywall state ──────────────────────────────────────────────────────
     const [accessLoading, setAccessLoading] = useState(false);
@@ -302,8 +324,7 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
 
     const castSupported = typeof window !== "undefined" && (
       "remote" in HTMLVideoElement.prototype ||
-      "webkitShowPlaybackTargetPicker" in HTMLVideoElement.prototype ||
-      typeof navigator.share === "function"
+      "webkitShowPlaybackTargetPicker" in HTMLVideoElement.prototype
     );
     const pipSupported = typeof window !== "undefined" && !!document.pictureInPictureEnabled;
     const showOverlayControls = !showPaywall && !accessLoading && introDone && !playbackError;
@@ -326,11 +347,7 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
         }
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") return;
-        // NotSupportedError (hls.js blob src) or other — fall through to share
-      }
-      // Fallback — native share sheet (opens AirDrop / Cast on mobile)
-      if (navigator.share) {
-        navigator.share({ title: "PNPtv", url: window.location.href }).catch(() => {});
+        // NotSupportedError (hls.js blob src) or other — nothing to do
       }
     }, []);
 
@@ -355,7 +372,7 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
       .join(" ");
 
     return (
-      <div className={containerClasses} style={style} data-video-container="1">
+      <div ref={containerRef} className={containerClasses} style={style} data-video-container="1">
         {/* Ambient Blur Background — eliminates harsh black bars on portrait/letterboxed videos */}
         {ambientBlur && poster && (
           <div
