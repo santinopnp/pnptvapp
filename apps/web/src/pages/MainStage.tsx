@@ -421,7 +421,17 @@ function MainStageInner({
           <SpotlightGrid
             focusIdentity={spotlightCammer}
             nextAt={spotlightNextAt}
-            onTileClick={isAdmin ? onSpotlightPick : undefined}
+            onTileClick={isAdmin
+              ? onSpotlightPick
+              : (onTipCreator && onStage?.length
+                  ? (identity: string) => {
+                      const entry = (onStage ?? []).find(
+                        (s) => s.participantIdentity === identity || s.userId === identity,
+                      );
+                      if (entry?.userId) onTipCreator(entry.userId, entry.username ?? null);
+                    }
+                  : undefined)
+            }
             onStage={onStage}
             onTipCreator={onTipCreator}
             onBookCreator={onBookCreator}
@@ -1145,11 +1155,15 @@ export default function MainStage() {
   // Cycle the *local* view mode — each user's personal preference. The
   // server's mode remains the default for anyone who hasn't overridden.
   const handleCycleMode = useCallback(() => {
+    // Viewers receive state via REST poll (viewerStateOverride), not the socket.
+    const serverMode = (isViewerMode && viewerStateOverride)
+      ? viewerStateOverride.mode
+      : state?.mode;
     const currentEffective: ModeId =
-      (localViewMode ?? (state?.mode as ModeId | undefined) ?? "cinema");
+      (localViewMode ?? (serverMode as ModeId | undefined) ?? "cinema");
     const next = NEXT_MODE[currentEffective] ?? "cinema";
     setLocalViewMode(next);
-  }, [localViewMode, state?.mode]);
+  }, [localViewMode, state?.mode, viewerStateOverride, isViewerMode]);
 
   const handleResetViewMode = useCallback(() => {
     setLocalViewMode(null);
@@ -1575,12 +1589,12 @@ export default function MainStage() {
     );
   }
 
-  // Effective mode: per-user local override wins over the server's
-  // shared mode. Everything downstream uses this.
-  const mode: ModeId =
-    (localViewMode ?? (state?.mode as ModeId | undefined) ?? "cinema");
   // In viewer mode, prefer the REST-polled state override (socket state not delivered to unauthed viewers).
   const effectiveState = (isViewerMode && viewerStateOverride) ? viewerStateOverride : state;
+  // Effective mode: per-user local override wins over the server's shared mode.
+  // Uses effectiveState so viewers (REST-polled) get the correct room mode, not always "cinema".
+  const mode: ModeId =
+    (localViewMode ?? (effectiveState?.mode as ModeId | undefined) ?? "cinema");
   const liveParticipants = effectiveState?.counts?.participants ?? effectiveState?.counts?.cammers ?? 0;
 
   // i18n mode label lookup — used in header and toolbar aria-labels.
@@ -2247,7 +2261,7 @@ export default function MainStage() {
           {/* ── Chat input — mobile only, hidden on desktop ── */}
           {!isViewerMode && (
             <div
-              className="flex-shrink-0 flex items-center gap-2 px-3 py-2 z-40 lg:hidden"
+              className="flex-shrink-0 flex items-center gap-2 px-3 py-2 z-[110] lg:hidden"
               style={{
                 background: "rgba(8,8,14,0.88)",
                 backdropFilter: "blur(16px)",

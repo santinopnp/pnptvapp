@@ -78,10 +78,14 @@ function SpotlightStripTile({
   trackRef,
   onTileClick,
   creatorEntry,
+  onTipCreator,
+  onBookCreator,
 }: {
   trackRef: TrackReferenceOrPlaceholder;
   onTileClick?: (identity: string) => void;
   creatorEntry?: MainStageOnStageEntry;
+  onTipCreator?: (userId: string, username: string | null) => void;
+  onBookCreator?: (creator: { id: string; username: string; isCrystal: boolean }) => void;
 }) {
   const t = useI18n().live;
 
@@ -139,6 +143,46 @@ function SpotlightStripTile({
             : (trackRef.participant.name || trackRef.participant.identity)}
         </span>
       </div>
+      {/* Quick action buttons — tip/book overlaid in top-right corner */}
+      {creatorEntry && (onTipCreator || (onBookCreator && creatorEntry.username)) && (
+        <div
+          className="absolute top-1 right-1 flex items-center gap-0.5"
+          style={{ pointerEvents: "auto" }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {onBookCreator && creatorEntry.username && (
+            <button
+              type="button"
+              onClick={() => onBookCreator({
+                id: creatorEntry.userId,
+                username: creatorEntry.username as string,
+                isCrystal: creatorEntry.isCrystal,
+              })}
+              className="min-h-[22px] px-1.5 rounded-full text-[8px] font-bold text-white transition-all active:scale-95"
+              style={{
+                background: "rgba(10,10,15,0.80)",
+                border: "1px solid rgba(255,255,255,0.25)",
+                backdropFilter: "blur(6px)",
+              }}
+            >
+              Book
+            </button>
+          )}
+          {onTipCreator && (
+            <button
+              type="button"
+              onClick={() => onTipCreator(creatorEntry.userId, creatorEntry.username)}
+              className="min-h-[22px] px-1.5 rounded-full text-[8px] font-bold text-white transition-all active:scale-95"
+              style={{
+                background: "linear-gradient(135deg,#D4007A,#7B61FF)",
+                boxShadow: "0 2px 6px rgba(212,0,122,0.45)",
+              }}
+            >
+              💸
+            </button>
+          )}
+        </div>
+      )}
     </button>
   );
 }
@@ -355,6 +399,8 @@ export function SpotlightGrid({
               trackRef={track}
               onTileClick={onTileClick}
               creatorEntry={findCreatorEntry(track.participant.identity, onStage)}
+              onTipCreator={onTipCreator}
+              onBookCreator={onBookCreator}
             />
           ))}
         </div>
