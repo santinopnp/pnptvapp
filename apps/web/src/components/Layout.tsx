@@ -2757,6 +2757,19 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
     }
   }, [location.search, location.pathname, location.hash]);
 
+  // Auto-open BuyTokensModal on ?buy_rush=1 — used by push notification CTAs.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const params = new URLSearchParams(location.search);
+    if (params.get("buy_rush") === "1") {
+      setLiveBuyOpen(true);
+      const cleaned = new URLSearchParams(location.search);
+      cleaned.delete("buy_rush");
+      const search = cleaned.toString();
+      window.history.replaceState({}, "", location.pathname + (search ? `?${search}` : "") + location.hash);
+    }
+  }, [location.search, location.pathname, location.hash, isAuthenticated]);
+
   // Poll /api/main-stage/state while on Main Stage so newly-arriving Crystal
   // Creators surface in the action stack without a page reload. Stops on
   // unmount / navigation away.

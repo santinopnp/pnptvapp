@@ -1489,11 +1489,9 @@ export default function SocialPostCard({
                 );
               })()}
 
-              {/* Promoted CTA buttons (single or dual) */}
+              {/* Promoted CTA — single "Get Access" button */}
               {post.is_promoted && post.promoted_link && (
-                <div
-                  className={`mt-3 ${post.promoted_link2 ? "flex gap-2" : ""}`}
-                >
+                <div className="mt-3">
                   <button
                     onClick={(e) => { e.stopPropagation();
                       const link = post.promoted_link!;
@@ -1505,34 +1503,14 @@ export default function SocialPostCard({
                         window.open(link, "_blank", "noopener,noreferrer");
                       }
                     }}
-                    className={`${post.promoted_link2 ? "flex-1" : "w-full"} text-sm font-semibold py-2.5 rounded-lg transition-opacity hover:opacity-90`}
+                    className="w-full text-sm font-semibold py-2.5 rounded-lg transition-opacity hover:opacity-90"
                     style={{
                       background: "linear-gradient(135deg, #D4007A, #E69138)",
                       color: "#fff",
                     }}
                   >
-                    {post.promoted_link_label || "Watch Now"}
+                    Get Access
                   </button>
-                  {post.promoted_link2 && (
-                    <button
-                      onClick={(e) => { e.stopPropagation();
-                        const link = post.promoted_link2!;
-                        if (link.startsWith("/")) {
-                          onNavigate(link);
-                        } else if (link.startsWith("https://")) {
-                          window.open(link, "_blank", "noopener,noreferrer");
-                        }
-                      }}
-                      className="flex-1 text-sm font-semibold py-2.5 rounded-lg transition-colors hover:bg-white/10"
-                      style={{
-                        background: "rgba(255,255,255,0.06)",
-                        color: "#fff",
-                        border: "1px solid rgba(255,255,255,0.15)",
-                      }}
-                    >
-                      {post.promoted_link2_label || "Open"}
-                    </button>
-                  )}
                 </div>
               )}
 
