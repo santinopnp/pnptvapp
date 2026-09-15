@@ -17777,6 +17777,168 @@ app.get('/api/wallet/cctp-attestation', walletStatusLimiter, requireSessionAuth,
   }
 }));
 
+// GET /api/wallet/bridge/stranded-usdc — check USDC balance across Ethereum
+// mainnet, Polygon, Arbitrum, and Optimism in parallel for the session user's
+// linked wallet_address. Returns only chains with usdc > 0. 30s Redis cache
+// per chain. Used by the bridge UI to surface stranded USDC for bridging to Base.
+app.get('/api/wallet/bridge/stranded-usdc', walletStatusLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
+  const userId = req.session?.user?.id;
+  const { query: dbQuery } = require('../../config/postgres');
+  const { cache } = require('../../config/redis');
+
+  const { rows } = await dbQuery(
+    `SELECT wallet_address FROM users WHERE id = $1 LIMIT 1`,
+    [String(userId)]
+  );
+  const address = rows[0]?.wallet_address;
+  if (!address) return res.json({ ok: true, hasWallet: false, chains: [] });
+
+  const apiKey = process.env.ALCHEMY_API_KEY;
+  if (!apiKey) return res.json({ ok: true, hasWallet: true, address, chains: [], reason: 'alchemy_not_configured' });
+
+  const CHAINS = [
+    { chainId: 1,     chainName: 'Ethereum', usdcContract: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', rpc: `https://eth-mainnet.g.alchemy.com/v2/${apiKey}` },
+    { chainId: 137,   chainName: 'Polygon',  usdcContract: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359', rpc: `https://polygon-mainnet.g.alchemy.com/v2/${apiKey}` },
+    { chainId: 42161, chainName: 'Arbitrum', usdcContract: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831', rpc: `https://arb-mainnet.g.alchemy.com/v2/${apiKey}` },
+    { chainId: 10,    chainName: 'Optimism', usdcContract: '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85', rpc: `https://opt-mainnet.g.alchemy.com/v2/${apiKey}` },
+  ];
+
+  const addrLower = address.toLowerCase();
+  const callData = '0x70a08231' + addrLower.replace(/^0x/, '').padStart(64, '0');
+
+  const results = await Promise.all(CHAINS.map(async (chain) => {
+    const cacheKey = `wallet:usdc-stranded:${chain.chainId}:${addrLower}`;
+    try {
+      const cached = await cache.get(cacheKey).catch(() => null);
+      if (cached != null) return { ...chain, usdc: Number(cached), cached: true };
+
+      const rpcRes = await fetch(chain.rpc, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_call',
+          params: [{ to: chain.usdcContract, data: callData }, 'latest'] }),
+      });
+      const j = await rpcRes.json();
+      const raw = BigInt(j.result || '0x0');
+      const usdc = Number(raw) / 1_000_000;
+      await cache.set(cacheKey, String(usdc), 30).catch(() => {});
+      return { ...chain, usdc };
+    } catch (err) {
+      logger.warn('[wallet/bridge/stranded-usdc] rpc failed', { chainId: chain.chainId, err: err.message });
+      return { ...chain, usdc: 0 };
+    }
+  }));
+
+  const chains = results
+    .filter((c) => c.usdc > 0)
+    .map(({ chainId, chainName, usdc, usdcContract }) => ({ chainId, chainName, usdc, usdcContract }));
+
+  return res.json({ ok: true, hasWallet: true, address, chains });
+}));
+
+// GET /api/wallet/bridge/relay-quote?originChainId=1&amount=12.34 — get a
+// Relay Protocol bridge quote from an L1/L2 chain to Base (chainId 8453). Used
+// by the bridge UI to show the user fee + time estimate before signing.
+// originChainId must be one of 1, 137, 42161, 10. amount is USD float (USDC).
+app.get('/api/wallet/bridge/relay-quote', walletStatusLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
+  const userId = req.session?.user?.id;
+  const { query: dbQuery } = require('../../config/postgres');
+
+  const SUPPORTED_CHAINS = {
+    1:     '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+    137:   '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359',
+    42161: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
+    10:    '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85',
+  };
+
+  const originChainId = parseInt(req.query.originChainId, 10);
+  if (!SUPPORTED_CHAINS[originChainId]) {
+    return res.status(400).json({ ok: false, error: 'unsupported_originChainId', supported: Object.keys(SUPPORTED_CHAINS).map(Number) });
+  }
+
+  const amountUsd = parseFloat(req.query.amount);
+  if (!isFinite(amountUsd) || amountUsd <= 0) {
+    return res.status(400).json({ ok: false, error: 'invalid_amount' });
+  }
+
+  const { rows } = await dbQuery(
+    `SELECT wallet_address FROM users WHERE id = $1 LIMIT 1`,
+    [String(userId)]
+  );
+  const address = rows[0]?.wallet_address;
+  if (!address) return res.status(400).json({ ok: false, error: 'no_wallet' });
+
+  if (!(await _addressBelongsToUser(userId, address.toLowerCase()))) {
+    return res.status(403).json({ ok: false, error: 'address_not_owned' });
+  }
+
+  const rawAmount = Math.floor(amountUsd * 1_000_000);
+  const originCurrency = SUPPORTED_CHAINS[originChainId];
+  const destinationCurrency = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+  const relayUrl = `https://api.relay.link/quote?originChainId=${originChainId}&destinationChainId=8453&originCurrency=${originCurrency}&destinationCurrency=${destinationCurrency}&amount=${rawAmount}&tradeType=EXACT_INPUT&recipient=${address}&user=${address}`;
+
+  try {
+    const relayRes = await fetch(relayUrl, {
+      headers: { 'User-Agent': 'PNPtv/1.0' },
+    });
+    if (!relayRes.ok) {
+      logger.warn('[wallet/bridge/relay-quote] relay api error', { status: relayRes.status, originChainId, amountUsd });
+      return res.status(502).json({ ok: false, error: 'relay_api_error', code: relayRes.status });
+    }
+    const relayJson = await relayRes.json();
+    const { steps, details } = relayJson;
+
+    let outputUsdc = 0;
+    let feeUsdc = 0;
+    let timeEstimate = null;
+    if (details) {
+      outputUsdc = details.currencyOut?.amountFormatted ? Number(details.currencyOut.amountFormatted) : 0;
+      timeEstimate = details.timeEstimate ?? null;
+      if (Array.isArray(details.feesOnTop) && details.feesOnTop.length > 0) {
+        feeUsdc = details.feesOnTop.reduce((sum, f) => sum + (Number(f.amount) || 0), 0) / 1_000_000;
+      } else {
+        feeUsdc = Math.max(0, amountUsd - outputUsdc);
+      }
+    }
+
+    return res.json({ ok: true, steps, details, outputUsdc, feeUsdc, timeEstimate });
+  } catch (err) {
+    logger.warn('[wallet/bridge/relay-quote] fetch failed', { err: err.message });
+    return res.status(502).json({ ok: false, error: 'relay_fetch_failed' });
+  }
+}));
+
+// POST /api/wallet/bridge/relay-execute — submit a Relay Protocol bridge step
+// execution (pass requestId + stepId + optional txHash/signature from the client
+// after the user has signed the on-chain tx). Proxies to Relay's /execute
+// endpoint and returns the result directly.
+// Body: { requestId: string, stepId: string, txHash?: string, signature?: string }
+app.post('/api/wallet/bridge/relay-execute', walletSpendLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
+  const { requestId, stepId, txHash, signature } = req.body || {};
+  if (!requestId || typeof requestId !== 'string' || requestId.trim() === '') {
+    return res.status(400).json({ ok: false, error: 'requestId required' });
+  }
+
+  const payload = { requestId, stepId, txHash, signature };
+
+  try {
+    const relayRes = await fetch('https://api.relay.link/execute', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'User-Agent': 'PNPtv/1.0' },
+      body: JSON.stringify(payload),
+    });
+    const relayJson = await relayRes.json().catch(() => ({}));
+    if (!relayRes.ok) {
+      logger.warn('[wallet/bridge/relay-execute] relay api error', { status: relayRes.status, requestId });
+      return res.status(502).json({ ok: false, error: 'relay_api_error', code: relayRes.status, details: relayJson });
+    }
+    return res.json({ ok: true, ...relayJson });
+  } catch (err) {
+    logger.warn('[wallet/bridge/relay-execute] fetch failed', { err: err.message, requestId });
+    return res.status(502).json({ ok: false, error: 'relay_fetch_failed' });
+  }
+}));
+
 // GET /api/wallet/balance/eth-mainnet — on-chain native ETH balance on
 // Ethereum mainnet for a given address. Used to detect stranded ETH that
 // needs bridging to Base. Optional ?address=0x… override.
@@ -17914,7 +18076,7 @@ app.post('/api/wallet/client-error', walletStatusLimiter, requireSessionAuth, as
   // "User rejected" when the user closes the modal or declines the prompt.
   // Log at info + skip persistence + skip Slack so oncall isn't paged for
   // a user changing their mind.
-  const cancelRe = /user\s*(exited|rejected|declined|denied|cancelled|canceled)|action.?(rejected|cancelled)|user\s*closed/i;
+  const cancelRe = /user\s*(exited|rejected|declined|denied|cancelled|canceled)|action.?(rejected|cancelled)|user\s*closed|generic_connect_wallet_error/i;
   const isUserCancel = cancelRe.test(safeMessage || '') || cancelRe.test(safeError || '');
 
   if (isUserCancel) {

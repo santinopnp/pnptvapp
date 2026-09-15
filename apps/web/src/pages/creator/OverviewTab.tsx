@@ -2,7 +2,8 @@ import React, { lazy, Suspense } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import type { CreatorDashboard as DashboardData } from "@/lib/api";
-import { checkoutCrystalSelf, getWalletUsdcBalance } from "@/lib/api";
+import { checkoutCrystalSelf, getWalletUsdcBalance, getStrandedUsdcBalances, getRelayBridgeQuote, executeRelayBridge, type StrandedUsdcChain } from "@/lib/api";
+import { useWallets } from "@privy-io/react-auth";
 import type { CreatorStrings } from "@/lib/i18n/creator";
 import { AppShell, RightRail, SuggestedFollowRow, ContextHintCard, useForYou } from "@/components/Layout";
 import { WalletPayCard } from "@/components/payments/PayInWalletChips";
@@ -12,62 +13,223 @@ const LazyBuyTokensModal = lazy(() =>
   import("@/components/BuyTokensModal").then((m) => ({ default: m.BuyTokensModal }))
 );
 
+type BridgePhase = "idle" | "quoting" | "confirming" | "signing" | "done" | "error";
+interface BridgeState {
+  phase: BridgePhase;
+  quote?: { outputUsdc: number; feeUsdc: number; timeEstimate: number; steps: unknown[]; details: unknown };
+  error?: string;
+}
+
 function WalletSpendBanner() {
-  const [usdc, setUsdc] = React.useState<number | null>(null);
+  const [baseUsdc, setBaseUsdc] = React.useState<number | null>(null);
+  const [strandedChains, setStrandedChains] = React.useState<StrandedUsdcChain[]>([]);
   const [dismissed, setDismissed] = React.useState(() =>
     sessionStorage.getItem("wallet-spend-banner-dismissed") === "1"
   );
   const [modalOpen, setModalOpen] = React.useState(false);
+  const [bridgeMap, setBridgeMap] = React.useState<Record<number, BridgeState>>({});
+  const { wallets } = useWallets();
 
   React.useEffect(() => {
     if (dismissed) return;
-    getWalletUsdcBalance()
-      .then((r) => { if (r.hasWallet && r.usdc >= 1) setUsdc(r.usdc); })
-      .catch(() => {});
+    Promise.all([
+      getWalletUsdcBalance().catch(() => null),
+      getStrandedUsdcBalances().catch(() => null),
+    ]).then(([baseRes, strandedRes]) => {
+      if (baseRes?.hasWallet && baseRes.usdc >= 1) setBaseUsdc(baseRes.usdc);
+      if (strandedRes?.chains?.length) setStrandedChains(strandedRes.chains);
+    });
   }, [dismissed]);
 
-  if (dismissed || usdc === null) return null;
+  const hasAnything = baseUsdc !== null || strandedChains.length > 0;
+  if (dismissed || !hasAnything) return null;
 
-  const amount = Math.floor(usdc * 100) / 100;
-  const rush = Math.round(amount * 6);
+  function dismiss() {
+    setDismissed(true);
+    sessionStorage.setItem("wallet-spend-banner-dismissed", "1");
+  }
+
+  function getBridge(chainId: number): BridgeState {
+    return bridgeMap[chainId] ?? { phase: "idle" };
+  }
+
+  function patchBridge(chainId: number, patch: Partial<BridgeState>) {
+    setBridgeMap((prev) => ({ ...prev, [chainId]: { ...(prev[chainId] ?? { phase: "idle" }), ...patch } }));
+  }
+
+  async function handleQuote(chain: StrandedUsdcChain) {
+    patchBridge(chain.chainId, { phase: "quoting", error: undefined });
+    try {
+      const q = await getRelayBridgeQuote(chain.chainId, chain.usdc);
+      patchBridge(chain.chainId, { phase: "confirming", quote: q });
+    } catch (err) {
+      patchBridge(chain.chainId, { phase: "error", error: err instanceof Error ? err.message : "Failed to get quote" });
+    }
+  }
+
+  async function handleSignAndBridge(chain: StrandedUsdcChain) {
+    const state = getBridge(chain.chainId);
+    if (!state.quote) return;
+    patchBridge(chain.chainId, { phase: "signing" });
+    try {
+      const embedded = wallets.find((w) => w.walletClientType === "privy");
+      if (!embedded) throw new Error("No embedded wallet found");
+      await embedded.switchChain(chain.chainId);
+      const provider = await embedded.getEthereumProvider();
+
+      for (const rawStep of state.quote.steps) {
+        const step = rawStep as { id: string; kind?: string; type?: string; requestId?: string; items?: unknown[] };
+        const items = (step.items ?? []) as Array<{ kind?: string; type?: string; data?: unknown }>;
+        for (const item of items) {
+          let txHash: string | undefined;
+          let signature: string | undefined;
+          const isSignature = item.kind === "signature" || item.type === "signature";
+          const isTx = item.kind === "transaction" || item.type === "transaction";
+          if (isSignature) {
+            const d = item.data as { sign?: { signData?: unknown } } | undefined;
+            const signData = d?.sign?.signData ?? item.data;
+            signature = await provider.request({
+              method: "eth_signTypedData_v4",
+              params: [embedded.address, typeof signData === "string" ? signData : JSON.stringify(signData)],
+            }) as string;
+          } else if (isTx) {
+            txHash = await provider.request({ method: "eth_sendTransaction", params: [item.data] }) as string;
+          }
+          const details = state.quote.details as { requestId?: string } | undefined;
+          const requestId = step.requestId ?? details?.requestId;
+          if (requestId) {
+            await executeRelayBridge(requestId, step.id, txHash, signature);
+          }
+        }
+      }
+
+      patchBridge(chain.chainId, { phase: "done" });
+      setStrandedChains((prev) => prev.filter((c) => c.chainId !== chain.chainId));
+    } catch (err) {
+      patchBridge(chain.chainId, { phase: "error", error: err instanceof Error ? err.message : "Bridge failed" });
+    }
+  }
+
+  const baseAmount = baseUsdc !== null ? Math.floor(baseUsdc * 100) / 100 : 0;
+  const baseRush = Math.round(baseAmount * 6);
 
   return (
     <>
-      <div
-        className="glass-card-sm p-4 mb-4 flex items-start gap-3"
-        style={{ border: "1px solid rgba(212,0,122,0.35)", background: "rgba(212,0,122,0.06)" }}
-      >
-        <span className="text-2xl flex-shrink-0 leading-none mt-0.5">💎</span>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-semibold text-white leading-snug">
-            ${amount.toFixed(2)} USDC sitting in your wallet
-          </p>
-          <p className="text-[11px] mt-0.5 leading-relaxed" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-            Convert it to {rush} Ru$h 💎 and spend it on PNPtv — tips, memberships, calls, and more.
-          </p>
-          <button
-            onClick={() => setModalOpen(true)}
-            className="mt-2.5 px-4 py-1.5 rounded-full text-xs font-bold text-white btn-gradient"
-          >
-            Buy {rush} Ru$h 💎
-          </button>
-        </div>
-        <button
-          onClick={() => { setDismissed(true); sessionStorage.setItem("wallet-spend-banner-dismissed", "1"); }}
-          className="flex-shrink-0 text-white/30 hover:text-white/60 transition-colors text-lg leading-none"
-          aria-label="Dismiss"
+      {baseUsdc !== null && (
+        <div
+          className="glass-card-sm p-4 mb-3 flex items-start gap-3"
+          style={{ border: "1px solid rgba(212,0,122,0.35)", background: "rgba(212,0,122,0.06)" }}
         >
-          ×
-        </button>
-      </div>
+          <span className="text-2xl flex-shrink-0 leading-none mt-0.5">💎</span>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-white leading-snug">
+              ${baseAmount.toFixed(2)} USDC ready on Base
+            </p>
+            <p className="text-[11px] mt-0.5 leading-relaxed" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+              Convert to {baseRush} Ru$h 💎 — tips, memberships, calls, and more.
+            </p>
+            <button
+              onClick={() => setModalOpen(true)}
+              className="mt-2.5 px-4 py-1.5 rounded-full text-xs font-bold text-white btn-gradient"
+            >
+              Buy {baseRush} Ru$h 💎
+            </button>
+          </div>
+          <button
+            onClick={dismiss}
+            className="flex-shrink-0 text-white/30 hover:text-white/60 transition-colors text-lg leading-none"
+            aria-label="Dismiss"
+          >×</button>
+        </div>
+      )}
+
+      {strandedChains.map((chain) => {
+        const s = getBridge(chain.chainId);
+        const chainAmt = Math.floor(chain.usdc * 100) / 100;
+        return (
+          <div
+            key={chain.chainId}
+            className="glass-card-sm p-4 mb-3 flex items-start gap-3"
+            style={{ border: "1px solid rgba(94,209,196,0.3)", background: "rgba(94,209,196,0.04)" }}
+          >
+            <span className="text-2xl flex-shrink-0 leading-none mt-0.5">🔗</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-white leading-snug">
+                ${chainAmt.toFixed(2)} USDC on {chain.chainName}
+              </p>
+              <p className="text-[11px] mt-0.5 leading-relaxed" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                Bridge to Base — no gas needed, ~0.3% fee.
+              </p>
+              {s.phase === "idle" && (
+                <button
+                  onClick={() => handleQuote(chain)}
+                  className="mt-2.5 px-4 py-1.5 rounded-full text-xs font-bold text-white"
+                  style={{ background: "rgba(94,209,196,0.18)", border: "1px solid rgba(94,209,196,0.4)" }}
+                >
+                  Bridge to Base
+                </button>
+              )}
+              {s.phase === "quoting" && (
+                <p className="text-[11px] mt-2 text-white/50">Getting quote…</p>
+              )}
+              {s.phase === "confirming" && s.quote && (
+                <div className="mt-2">
+                  <p className="text-[11px] text-white/70">
+                    You&apos;ll receive ≈${s.quote.outputUsdc.toFixed(2)} USDC on Base
+                    {s.quote.timeEstimate ? ` · ~${s.quote.timeEstimate}s` : ""}
+                  </p>
+                  <div className="flex gap-2 mt-2">
+                    <button
+                      onClick={() => handleSignAndBridge(chain)}
+                      className="px-4 py-1.5 rounded-full text-xs font-bold text-white"
+                      style={{ background: "rgba(94,209,196,0.18)", border: "1px solid rgba(94,209,196,0.4)" }}
+                    >
+                      Sign &amp; Bridge
+                    </button>
+                    <button
+                      onClick={() => patchBridge(chain.chainId, { phase: "idle" })}
+                      className="px-3 py-1.5 rounded-full text-xs text-white/40 hover:text-white/60"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+              {s.phase === "signing" && (
+                <p className="text-[11px] mt-2 text-white/50">Waiting for wallet signature…</p>
+              )}
+              {s.phase === "done" && (
+                <p className="text-[11px] mt-2 font-semibold" style={{ color: "#5ED1C4" }}>
+                  ✓ Bridge submitted — USDC on its way to Base.
+                </p>
+              )}
+              {s.phase === "error" && (
+                <div className="mt-2">
+                  <p className="text-[11px] text-red-400">{s.error ?? "Something went wrong"}</p>
+                  <button
+                    onClick={() => patchBridge(chain.chainId, { phase: "idle" })}
+                    className="mt-1 text-[11px] text-white/40 hover:text-white/60 underline"
+                  >
+                    Try again
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
 
       {modalOpen && (
         <Suspense fallback={null}>
           <LazyBuyTokensModal
             isOpen={modalOpen}
             onClose={() => setModalOpen(false)}
-            onSuccess={() => { setModalOpen(false); setDismissed(true); sessionStorage.setItem("wallet-spend-banner-dismissed", "1"); }}
-            initialAmountUsd={amount}
+            onSuccess={() => {
+              setModalOpen(false);
+              setDismissed(true);
+              sessionStorage.setItem("wallet-spend-banner-dismissed", "1");
+            }}
+            initialAmountUsd={baseAmount}
           />
         </Suspense>
       )}

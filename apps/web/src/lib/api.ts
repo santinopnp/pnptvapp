@@ -1884,6 +1884,56 @@ export async function getCctpAttestation(txHash: string): Promise<{
   return res.json();
 }
 
+export interface StrandedUsdcChain {
+  chainId: number;
+  chainName: string;
+  usdc: number;
+  usdcContract: string;
+}
+
+export async function getStrandedUsdcBalances(): Promise<{
+  ok: boolean;
+  hasWallet: boolean;
+  address?: string;
+  chains: StrandedUsdcChain[];
+}> {
+  const res = await fetch(`${API_BASE}/api/wallet/bridge/stranded-usdc`, { credentials: "include" });
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  return res.json();
+}
+
+export async function getRelayBridgeQuote(originChainId: number, amountUsd: number): Promise<{
+  ok: boolean;
+  steps: unknown[];
+  details: unknown;
+  outputUsdc: number;
+  feeUsdc: number;
+  timeEstimate: number;
+}> {
+  const res = await fetch(
+    `${API_BASE}/api/wallet/bridge/relay-quote?originChainId=${originChainId}&amount=${amountUsd}`,
+    { credentials: "include" }
+  );
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  return res.json();
+}
+
+export async function executeRelayBridge(
+  requestId: string,
+  stepId: string,
+  txHash?: string,
+  signature?: string
+): Promise<{ ok: boolean; [key: string]: unknown }> {
+  const res = await fetch(`${API_BASE}/api/wallet/bridge/relay-execute`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ requestId, stepId, txHash, signature }),
+  });
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  return res.json();
+}
+
 // Fire-and-forget: report a frontend wallet error (Privy login/addFunds/tx)
 // so we can see it in Slack #testing-team without waiting for the user to
 // screenshot. Never throws — swallows fetch failures to avoid infinite loops.
