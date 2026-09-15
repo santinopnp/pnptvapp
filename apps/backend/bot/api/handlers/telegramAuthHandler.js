@@ -155,18 +155,38 @@ const handleTelegramAuth = async (req, res) => {
       const localPnptvId = pnptvId || crypto.randomUUID();
       logger.info(`User ${telegramUser.id} / ${localPnptvId} not in database, creating new user record`);
 
+      // Build a non-null username: prefer Telegram @username, fall back to
+      // first_name slug, then a random PNPTV_XXXXXX handle.
+      let newUsername = telegramUser.username
+        ? telegramUser.username.toUpperCase()
+        : telegramUser.first_name
+          ? telegramUser.first_name.replace(/[^a-zA-Z0-9_]/g, '_').toUpperCase()
+          : null;
+      if (!newUsername) {
+        newUsername = `PNPTV_${crypto.randomUUID().replace(/-/g, '').substring(0, 6).toUpperCase()}`;
+      }
+      // Ensure uniqueness — append suffix until free
+      let suffix = 2;
+      let candidate = newUsername;
+      while (true) {
+        const { rows: taken } = await query('SELECT id FROM users WHERE UPPER(username) = $1 LIMIT 1', [candidate]);
+        if (taken.length === 0) { newUsername = candidate; break; }
+        candidate = `${newUsername}_${suffix++}`;
+        if (suffix > 999) { newUsername = `PNPTV_${crypto.randomUUID().replace(/-/g, '').substring(0, 6).toUpperCase()}`; break; }
+      }
+
       try {
         await query(
           `INSERT INTO users (id, telegram, pnptv_id, username, first_name, language, subscription_status, terms_accepted, age_verified, role)
            VALUES ($1, $1, $2, $3, $4, $5, 'free', false, false, 'user')
            ON CONFLICT (id) DO UPDATE SET
              pnptv_id = EXCLUDED.pnptv_id,
-             username = COALESCE(EXCLUDED.username, users.username),
+             username = COALESCE(users.username, EXCLUDED.username),
              updated_at = NOW()`,
           [
             String(telegramUser.id),
             localPnptvId,
-            telegramUser.username ? telegramUser.username.toUpperCase() : null,
+            newUsername,
             telegramUser.first_name || '',
             telegramUser.language_code || 'en'
           ]
@@ -184,11 +204,28 @@ const handleTelegramAuth = async (req, res) => {
           [String(telegramUser.id), localPnptvId]
         );
       } catch (createError) {
-        logger.error('Error creating user record:', createError);
-        return res.status(500).json({
-          error: 'User creation failed',
-          redirect: '/auth/telegram-login'
-        });
+        // Race condition: another request created this user between our SELECT and INSERT.
+        // Re-fetch and continue rather than returning a 500.
+        if (createError.code === '23505') {
+          userQuery = await query(
+            `SELECT id, pnptv_id, telegram, username, email, subscription_status, terms_accepted,
+                    first_name, language, photo_file_id,
+                    COALESCE(age_verified, false) as age_verified,
+                    COALESCE(onboarding_complete, false) as onboarding_complete,
+                    COALESCE(role, 'user') as role
+             FROM users WHERE telegram = $1::varchar LIMIT 1`,
+            [String(telegramUser.id)]
+          );
+          if (userQuery.rows.length > 0) {
+            logger.warn('telegramAuth: race on user creation resolved by re-fetch', { telegramId: telegramUser.id });
+          } else {
+            logger.error('Error creating user record:', createError);
+            return res.status(500).json({ error: 'User creation failed', redirect: '/auth/telegram-login' });
+          }
+        } else {
+          logger.error('Error creating user record:', createError);
+          return res.status(500).json({ error: 'User creation failed', redirect: '/auth/telegram-login' });
+        }
       }
       // Fire-and-forget: notify #marketing-telegram of the new signup
       try {
