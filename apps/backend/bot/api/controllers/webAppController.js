@@ -223,8 +223,26 @@ async function findOrLinkUser({ telegramId, twitterHandle, xId, email, firstName
     return { user, isNew: false };
   }
 
-  // No match — create new user
-  const newUser = await createWebUser({ telegramId, twitterHandle, xId, email, firstName, lastName, username, photoFileId });
+  // No match — create new user. Guard against the race condition where two
+  // concurrent first-logins for the same Telegram ID both pass the SELECT
+  // above and then both try to INSERT: the loser gets a 23505 unique violation.
+  // In that case, fetch the row the winner just created and return it as-is.
+  let newUser;
+  try {
+    newUser = await createWebUser({ telegramId, twitterHandle, xId, email, firstName, lastName, username, photoFileId });
+  } catch (err) {
+    if (err.code === '23505' && telegramId) {
+      const { rows: racedUser } = await query(
+        `SELECT ${RETURN_COLS} FROM users WHERE telegram = $1 AND is_deleted = false LIMIT 1`,
+        [String(telegramId)]
+      );
+      if (racedUser.length > 0) {
+        enforceDefaultFollows(racedUser[0].id).catch(() => {});
+        return { user: racedUser[0], isNew: false };
+      }
+    }
+    throw err;
+  }
   // Enforce default follows for new user (fire-and-forget)
   enforceDefaultFollows(newUser.id).catch(() => {});
   // Grant 3-day PRIME trial (fire-and-forget, never blocks login)
