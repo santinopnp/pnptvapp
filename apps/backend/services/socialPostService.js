@@ -1289,6 +1289,66 @@ class SocialPostService {
     return { posts, nextCursor };
   }
 
+  // ── Promo Video Rotation ─────────────────────────────────────────────────
+  // Posts one promo video every 2 h as Santino, rotating through 9 clips.
+  // The new post is pinned (featured); previous promo posts lose their pin
+  // but stay in the feed as regular promoted posts.
+
+  static get PROMO_VIDEOS() {
+    return [
+      { url: '/promos/promo-1.mp4', hook: "You're missing out 👀",                                     benefit: "Subscribe in seconds — tap 💎 PNPtv Wallet or pay by card. Instant access." },
+      { url: '/promos/promo-2.mp4', hook: "The hottest PNP content lives here 🔥",                     benefit: "One tap with your 💎 PNPtv Wallet or card — you're in. No forms, no friction." },
+      { url: '/promos/promo-3.mp4', hook: "This is what members see every day 💎",                     benefit: "Pay with your PNPtv Wallet or by card and unlock everything in under 30 seconds." },
+      { url: '/promos/promo-4.mp4', hook: "The full session is in here.",                              benefit: "Get instant access — 💎 PNPtv Wallet or card. Takes less than a minute." },
+      { url: '/promos/promo-5.mp4', hook: "Ready to play? 🐷",                                        benefit: "Subscribe now — pay with your 💎 wallet or card. No waiting, no redirects." },
+      { url: '/promos/promo-6.mp4', hook: "Your vibe. Your tribe. Your content.",                     benefit: "Your 💎 PNPtv Wallet or card gets you in instantly. One tap and you're live." },
+      { url: '/promos/promo-7.mp4', hook: "Your kind of content — finally, a space for us 🏳️‍🌈", benefit: "Easy checkout — 💎 PNPtv Wallet or card. Join the community in seconds." },
+      { url: '/promos/promo-8.mp4', hook: "He's waiting to meet you 👋",                              benefit: "Subscribe with your 💎 PNPtv Wallet or pay by card — instant access to private calls." },
+      { url: '/promos/promo-9.mp4', hook: "Lock in lifetime access — one payment, forever 💎",        benefit: "$100 once. Pay with 💎 PNPtv Wallet or card. Never pay again." },
+    ];
+  }
+
+  static async postPromoVideo() {
+    const { getRedis } = require('../config/redis');
+    const redis = getRedis();
+
+    // Atomic increment — 1-based, wraps over the 9 videos
+    const raw = await redis.incr('pnpapp:promo:video_index');
+    const idx = (raw - 1) % SocialPostService.PROMO_VIDEOS.length;
+    const promo = SocialPostService.PROMO_VIDEOS[idx];
+
+    // Unpin all previous promo posts (they stay as regular promoted posts)
+    await query(
+      `UPDATE social_posts SET pinned_at = NULL
+       WHERE metadata->>'kind' = 'promo_video' AND pinned_at IS NOT NULL AND is_deleted = false`
+    );
+
+    const content = `${promo.hook}\n\n${promo.benefit}`;
+    const { rows } = await query(
+      `INSERT INTO social_posts
+         (user_id, content, media_url, media_type,
+          is_promoted, promoted_link, promoted_link_label,
+          promoted_link2, promoted_link2_label,
+          content_tier, is_shareable, metadata, pinned_at, category)
+       VALUES ($1, $2, $3, 'video',
+               true, '#promo-modal', 'Get Access 💎',
+               '/subscribe', 'Pay by Card 💳',
+               'free', false,
+               $4::jsonb, NOW(), 'adult')
+       RETURNING id`,
+      [
+        '8599671840',
+        content,
+        promo.url,
+        JSON.stringify({ kind: 'promo_video', index: idx + 1 }),
+      ]
+    );
+
+    const postId = rows[0].id;
+    logger.info(`[PromoVideo] posted promo ${idx + 1}/9 → post ${postId} (pinned/featured)`);
+    return { postId, promoIndex: idx + 1 };
+  }
+
   // ── Create Post ───────────────────────────────────────────────────────────
 
   static async createPost(userId, content, mediaUrl, mediaType, replyToId, repostOfId, isWof = false, isExclusive = false, isShareable = true, videoThumbnailUrl = null, videoTitle = null, videoDescription = null, hangoutGroupId = null, sourceMessageId = null, category = null, isAiGenerated = false) {

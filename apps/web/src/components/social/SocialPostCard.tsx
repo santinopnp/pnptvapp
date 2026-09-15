@@ -18,6 +18,7 @@ import { MediaLightbox } from "@/components/hangouts/MediaLightbox";
 // NP inline checkout retired 2026-08-09; PRIME CTAs deep-link to /subscribe.
 import { CryptoOnboardingWizard } from "@/components/payments/CryptoOnboardingWizard";
 import CreatorSubscribeWizard from "@/components/creators/CreatorSubscribeWizard";
+import { WalletPayCard } from "@/components/payments/PayInWalletChips";
 import {
   getReplies,
   createReply,
@@ -405,6 +406,13 @@ export default function SocialPostCard({
   const [hypeCount, setHypeCount] = useState<number>(Math.max(0, Number(post.hype_score) || 0));
   const [hypeError, setHypeError] = useState<string | null>(null);
   const [hypeQuota, setHypeQuota] = useState<{ remaining: number; limit: number; resetsAt: string | null } | null>(null);
+  const [showPromoModal, setShowPromoModal] = useState(false);
+  const PROMO_PLANS = [
+    { id: "lifetime100", label: "Lifetime PRIME", duration: "Forever", price: 99.99, badge: "Best Deal" },
+    { id: "monthly-pass", label: "PRIME Monthly", duration: "30 days", price: 24.99, badge: null },
+    { id: "yearly50", label: "PRIME Annual", duration: "1 year", price: 50, badge: null },
+  ] as const;
+  const [selectedPromoPlan, setSelectedPromoPlan] = useState<typeof PROMO_PLANS[number]>(PROMO_PLANS[0]);
   const hypeInFlight = useRef(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -1495,7 +1503,9 @@ export default function SocialPostCard({
                   <button
                     onClick={(e) => { e.stopPropagation();
                       const link = post.promoted_link!;
-                      if (link.startsWith("/")) {
+                      if (link === "#promo-modal") {
+                        setShowPromoModal(true);
+                      } else if (link.startsWith("/")) {
                         onNavigate(link);
                       } else if (link.startsWith("https://")) {
                         window.open(link, "_blank", "noopener,noreferrer");
@@ -2444,6 +2454,80 @@ export default function SocialPostCard({
           />
         );
       })()}
+
+      {/* Promo membership modal — opened by promoted_link="#promo-modal" */}
+      {showPromoModal && (
+        <div
+          className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center"
+          onClick={() => setShowPromoModal(false)}
+        >
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+          <div
+            className="relative w-full max-w-sm mx-auto bg-[#0e0e0e] rounded-t-2xl sm:rounded-2xl p-5 pb-8 sm:pb-5 shadow-2xl border border-white/10"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setShowPromoModal(false)}
+              className="absolute top-3 right-4 text-white/50 hover:text-white text-xl leading-none"
+            >
+              ×
+            </button>
+            <p className="text-center text-xs font-semibold text-[#E69138] uppercase tracking-widest mb-1">
+              PRIME Membership
+            </p>
+            <h2 className="text-center text-white text-lg font-bold mb-4">
+              Unlock everything. Stay forever. 💎
+            </h2>
+
+            {/* Plan selector */}
+            <div className="flex flex-col gap-2 mb-4">
+              {PROMO_PLANS.map((plan) => (
+                <button
+                  key={plan.id}
+                  onClick={() => setSelectedPromoPlan(plan)}
+                  className={`flex items-center justify-between px-4 py-3 rounded-xl border transition-all ${
+                    selectedPromoPlan.id === plan.id
+                      ? "border-[#D4007A] bg-[#D4007A]/10"
+                      : "border-white/10 bg-white/5 hover:border-white/20"
+                  }`}
+                >
+                  <div className="text-left">
+                    <span className="block text-sm font-semibold text-white">{plan.label}</span>
+                    <span className="block text-xs text-white/50">{plan.duration}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {plan.badge && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#E69138] text-black">
+                        {plan.badge}
+                      </span>
+                    )}
+                    <span className="text-sm font-bold text-white">
+                      ${plan.price === 99.99 ? "100" : plan.price}
+                    </span>
+                  </div>
+                </button>
+              ))}
+            </div>
+
+            {/* 💎 Wallet pay */}
+            <WalletPayCard
+              surface="subscription"
+              amountUsd={selectedPromoPlan.price}
+              entitlementSpec={{ planId: selectedPromoPlan.id }}
+              label={`Pay $${selectedPromoPlan.price === 99.99 ? "100" : selectedPromoPlan.price} with 💎 PNPtv Wallet`}
+              onSuccess={() => setShowPromoModal(false)}
+            />
+
+            {/* Card pay fallback */}
+            <button
+              onClick={() => { setShowPromoModal(false); onNavigate("/subscribe"); }}
+              className="mt-3 w-full py-2.5 rounded-xl text-sm font-semibold text-white/70 hover:text-white border border-white/10 hover:border-white/20 transition-colors"
+            >
+              💳 Pay by Card
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
