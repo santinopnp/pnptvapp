@@ -319,7 +319,8 @@
     top: 0;
     bottom: calc(4rem + max(0.75rem, env(safe-area-inset-bottom, 0px)));
     height: auto;
-    z-index: 50;
+    /* z-110: above IslandNav (z-100) so the send button receives clicks */
+    z-index: 110;
   }
   @media (min-width: 1024px) {
     .chat-overlay-safe {

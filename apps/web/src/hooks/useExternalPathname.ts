@@ -48,5 +48,7 @@ export function isExcludedFromFloatingUI(pathname: string): boolean {
   if (exact.has(pathname)) return true;
   if (pathname.startsWith("/payment/")) return true;
   if (pathname.startsWith("/checkout/")) return true;
+  // Chat pages: floating pills (install/push) overlap the send button
+  if (pathname.startsWith("/chat/")) return true;
   return false;
 }

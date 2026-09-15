@@ -240,12 +240,35 @@ export function InstallPill() {
               <h2 id="install-sheet-title" className="text-lg font-bold text-pnp-textPrimary">
                 {isIOS ? t.notifications.installSheetIOSTitle : t.notifications.installSheetTitle}
               </h2>
-              <p className="text-sm mt-2 text-pnp-textSecondary">
-                {isIOS
-                  ? t.notifications.installSheetIOSDescription
-                  : t.notifications.installSheetDescription}
-              </p>
+              {!isIOS && (
+                <p className="text-sm mt-2 text-pnp-textSecondary">
+                  {t.notifications.installSheetDescription}
+                </p>
+              )}
             </div>
+
+            {isIOS && (
+              <ol className="space-y-3 text-sm text-pnp-textSecondary">
+                <li className="flex items-start gap-3">
+                  <span className="w-5 h-5 rounded-full bg-white/10 text-white text-[11px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5">1</span>
+                  <span>
+                    Tap the{" "}
+                    <span className="inline-flex items-center gap-1 text-white font-medium">
+                      <ShareIosIcon className="w-3.5 h-3.5 inline" /> Share
+                    </span>{" "}
+                    button at the bottom of Safari
+                  </span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <span className="w-5 h-5 rounded-full bg-white/10 text-white text-[11px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5">2</span>
+                  <span>Scroll down and tap <span className="text-white font-medium">Add to Home Screen</span></span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <span className="w-5 h-5 rounded-full bg-white/10 text-white text-[11px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5">3</span>
+                  <span>Tap <span className="text-white font-medium">Add</span> — done!</span>
+                </li>
+              </ol>
+            )}
 
             <div className="space-y-2">
               {isIOS ? (

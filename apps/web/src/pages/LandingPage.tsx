@@ -405,7 +405,7 @@ export function LandingPage() {
 
 
   const scrollToAuth = useCallback(() => {
-    authRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    authRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
 
   const scrollToCreators = useCallback(() => {
@@ -997,7 +997,7 @@ export function LandingPage() {
       <SafeSaneCommunity lang={t.lang} />
 
       {/* ── AUTH SECTION — anchor for "Join free" / "Sign in" CTAs ──────── */}
-      <div ref={authRef} id="auth">
+      <div id="auth">
         <div
           className="flex flex-col items-center px-4 py-16"
           style={{ background: "linear-gradient(180deg, #0A0A0F 0%, #0D0A14 100%)" }}
@@ -1020,7 +1020,7 @@ export function LandingPage() {
       </div>
 
       {/* ── AUTH WIDGET (existing — untouched) ──────────────────────────── */}
-      <main className="flex flex-col items-center justify-center text-center px-4 pb-16">
+      <main ref={authRef} className="flex flex-col items-center justify-center text-center px-4 pb-16">
         <div className="w-full max-w-xs flex flex-col items-center gap-4">
 
           {/* ── Post-magic-link passkey prompt ────────────────────────────────
