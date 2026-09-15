@@ -1,12 +1,79 @@
-import React from "react";
+import React, { lazy, Suspense } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import type { CreatorDashboard as DashboardData } from "@/lib/api";
-import { checkoutCrystalSelf } from "@/lib/api";
+import { checkoutCrystalSelf, getWalletUsdcBalance } from "@/lib/api";
 import type { CreatorStrings } from "@/lib/i18n/creator";
 import { AppShell, RightRail, SuggestedFollowRow, ContextHintCard, useForYou } from "@/components/Layout";
 import { WalletPayCard } from "@/components/payments/PayInWalletChips";
 import { useI18n } from "@/lib/i18n";
+
+const LazyBuyTokensModal = lazy(() =>
+  import("@/components/BuyTokensModal").then((m) => ({ default: m.BuyTokensModal }))
+);
+
+function WalletSpendBanner() {
+  const [usdc, setUsdc] = React.useState<number | null>(null);
+  const [dismissed, setDismissed] = React.useState(() =>
+    sessionStorage.getItem("wallet-spend-banner-dismissed") === "1"
+  );
+  const [modalOpen, setModalOpen] = React.useState(false);
+
+  React.useEffect(() => {
+    if (dismissed) return;
+    getWalletUsdcBalance()
+      .then((r) => { if (r.hasWallet && r.usdc >= 1) setUsdc(r.usdc); })
+      .catch(() => {});
+  }, [dismissed]);
+
+  if (dismissed || usdc === null) return null;
+
+  const amount = Math.floor(usdc * 100) / 100;
+  const rush = Math.round(amount * 6);
+
+  return (
+    <>
+      <div
+        className="glass-card-sm p-4 mb-4 flex items-start gap-3"
+        style={{ border: "1px solid rgba(212,0,122,0.35)", background: "rgba(212,0,122,0.06)" }}
+      >
+        <span className="text-2xl flex-shrink-0 leading-none mt-0.5">💎</span>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold text-white leading-snug">
+            ${amount.toFixed(2)} USDC sitting in your wallet
+          </p>
+          <p className="text-[11px] mt-0.5 leading-relaxed" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+            Convert it to {rush} Ru$h 💎 and spend it on PNPtv — tips, memberships, calls, and more.
+          </p>
+          <button
+            onClick={() => setModalOpen(true)}
+            className="mt-2.5 px-4 py-1.5 rounded-full text-xs font-bold text-white btn-gradient"
+          >
+            Buy {rush} Ru$h 💎
+          </button>
+        </div>
+        <button
+          onClick={() => { setDismissed(true); sessionStorage.setItem("wallet-spend-banner-dismissed", "1"); }}
+          className="flex-shrink-0 text-white/30 hover:text-white/60 transition-colors text-lg leading-none"
+          aria-label="Dismiss"
+        >
+          ×
+        </button>
+      </div>
+
+      {modalOpen && (
+        <Suspense fallback={null}>
+          <LazyBuyTokensModal
+            isOpen={modalOpen}
+            onClose={() => setModalOpen(false)}
+            onSuccess={() => { setModalOpen(false); setDismissed(true); sessionStorage.setItem("wallet-spend-banner-dismissed", "1"); }}
+            initialAmountUsd={amount}
+          />
+        </Suspense>
+      )}
+    </>
+  );
+}
 
 // Legacy ice/crystal/diamond TIERS array removed — Crystal Creator is now a
 // private invite-only add-on (crystal_creator_passes table), not a tier.
@@ -176,6 +243,8 @@ export function OverviewTab({ dashboard, user, withdrawable, t, onTabChange }: O
           <p className="text-xs mt-1" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>{t.statExclusivePosts}</p>
         </div>
       </div>
+
+      <WalletSpendBanner />
 
       {/* Get Monetizing — surfaces revenue tools the creator hasn't touched yet */}
       {(() => {
