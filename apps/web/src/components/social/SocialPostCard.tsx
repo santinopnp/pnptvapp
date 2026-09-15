@@ -407,12 +407,6 @@ export default function SocialPostCard({
   const [hypeError, setHypeError] = useState<string | null>(null);
   const [hypeQuota, setHypeQuota] = useState<{ remaining: number; limit: number; resetsAt: string | null } | null>(null);
   const [showPromoModal, setShowPromoModal] = useState(false);
-  const PROMO_PLANS = [
-    { id: "lifetime100", label: "Lifetime PRIME", duration: "Forever", price: 99.99, badge: "Best Deal" },
-    { id: "monthly-pass", label: "PRIME Monthly", duration: "30 days", price: 24.99, badge: null },
-    { id: "yearly50", label: "PRIME Annual", duration: "1 year", price: 50, badge: null },
-  ] as const;
-  const [selectedPromoPlan, setSelectedPromoPlan] = useState<typeof PROMO_PLANS[number]>(PROMO_PLANS[0]);
   const hypeInFlight = useRef(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -2473,58 +2467,17 @@ export default function SocialPostCard({
               ×
             </button>
             <p className="text-center text-xs font-semibold text-[#E69138] uppercase tracking-widest mb-1">
-              PRIME Membership
+              Lifetime PRIME
             </p>
             <h2 className="text-center text-white text-lg font-bold mb-4">
-              Unlock everything. Stay forever. 💎
+              One payment. Forever access. 💎
             </h2>
-
-            {/* Plan selector */}
-            <div className="flex flex-col gap-2 mb-4">
-              {PROMO_PLANS.map((plan) => (
-                <button
-                  key={plan.id}
-                  onClick={() => setSelectedPromoPlan(plan)}
-                  className={`flex items-center justify-between px-4 py-3 rounded-xl border transition-all ${
-                    selectedPromoPlan.id === plan.id
-                      ? "border-[#D4007A] bg-[#D4007A]/10"
-                      : "border-white/10 bg-white/5 hover:border-white/20"
-                  }`}
-                >
-                  <div className="text-left">
-                    <span className="block text-sm font-semibold text-white">{plan.label}</span>
-                    <span className="block text-xs text-white/50">{plan.duration}</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {plan.badge && (
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#E69138] text-black">
-                        {plan.badge}
-                      </span>
-                    )}
-                    <span className="text-sm font-bold text-white">
-                      ${plan.price === 99.99 ? "100" : plan.price}
-                    </span>
-                  </div>
-                </button>
-              ))}
-            </div>
-
-            {/* 💎 Wallet pay */}
             <WalletPayCard
               surface="subscription"
-              amountUsd={selectedPromoPlan.price}
-              entitlementSpec={{ planId: selectedPromoPlan.id }}
-              label={`Pay $${selectedPromoPlan.price === 99.99 ? "100" : selectedPromoPlan.price} with 💎 PNPtv Wallet`}
+              amountUsd={99.99}
+              entitlementSpec={{ planId: "lifetime100" }}
               onSuccess={() => setShowPromoModal(false)}
             />
-
-            {/* Card pay fallback */}
-            <button
-              onClick={() => { setShowPromoModal(false); onNavigate("/subscribe"); }}
-              className="mt-3 w-full py-2.5 rounded-xl text-sm font-semibold text-white/70 hover:text-white border border-white/10 hover:border-white/20 transition-colors"
-            >
-              💳 Pay by Card
-            </button>
           </div>
         </div>
       )}
