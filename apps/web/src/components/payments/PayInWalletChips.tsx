@@ -797,7 +797,7 @@ export function WalletPayCard({
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-bold text-pnp-textPrimary">
-            Paga con PNPtv! Wallet 💎
+            {es ? "Paga con PNPtv Wallet 💎 o tarjeta" : "Pay with PNPtv Wallet 💎 or card"}
           </p>
           <p className="text-[11px] text-pnp-textSecondary">
             {loading

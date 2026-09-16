@@ -897,7 +897,9 @@ export default function Subscribe() {
                   onClick={(e) => { e.stopPropagation(); setWalletPanelPlanId(walletPanelPlanId === plan.id ? null : plan.id); }}
                   className={`w-full py-3 rounded-lg font-bold text-sm text-white transition-all ${walletPanelPlanId === plan.id ? "bg-gradient-to-r from-emerald-400 to-emerald-500 ring-2 ring-emerald-300" : "bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500"}`}
                 >
-                  Paga con PNPtv! Wallet 💎 · ${parseFloat(String(plan.price)).toFixed(2)}
+                  {t.lang === "es"
+                    ? `💎 Wallet PNPtv o tarjeta · $${parseFloat(String(plan.price)).toFixed(2)}`
+                    : `💎 PNPtv Wallet or card · $${parseFloat(String(plan.price)).toFixed(2)}`}
                 </button>
                 <div className="flex justify-center pt-0.5">
                   <button
@@ -1080,7 +1082,9 @@ export default function Subscribe() {
                   onClick={(e) => { e.stopPropagation(); setWalletPanelPlanId(walletPanelPlanId === plan.id ? null : plan.id); }}
                   className={`w-full py-3 rounded-lg font-bold text-sm text-white transition-all ${walletPanelPlanId === plan.id ? "bg-gradient-to-r from-emerald-400 to-emerald-500 ring-2 ring-emerald-300" : "bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500"}`}
                 >
-                  Paga con PNPtv! Wallet 💎 · ${parseFloat(String(plan.price)).toFixed(2)}
+                  {t.lang === "es"
+                    ? `💎 Wallet PNPtv o tarjeta · $${parseFloat(String(plan.price)).toFixed(2)}`
+                    : `💎 PNPtv Wallet or card · $${parseFloat(String(plan.price)).toFixed(2)}`}
                 </button>
                 <div className="flex justify-center pt-0.5">
                   <button
