@@ -901,15 +901,13 @@ export default function Subscribe() {
                     ? `💎 Wallet PNPtv o tarjeta · $${parseFloat(String(plan.price)).toFixed(2)}`
                     : `💎 PNPtv Wallet or card · $${parseFloat(String(plan.price)).toFixed(2)}`}
                 </button>
-                <div className="flex justify-center pt-0.5">
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); openNpFallback(plan.id); }}
-                    className="text-[11px] text-white/40 hover:text-white/65 transition"
-                  >
-                    {t.lang === "es" ? "₿ Pagar con otra cripto →" : "₿ Pay with another crypto →"}
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); openNpFallback(plan.id); }}
+                  className="w-full py-3 rounded-lg font-bold text-sm text-white/80 border border-white/15 bg-white/5 hover:bg-white/10 hover:text-white transition-all"
+                >
+                  {t.lang === "es" ? "₿ Pagar con otra cripto" : "₿ Pay with another crypto"}
+                </button>
                 {(() => {
                   const cost = Math.round(parseFloat(String(plan.price)) * 6);
                   const isPlatform = MEMBER_PLAN_IDS.has(plan.id) || String(plan.id).startsWith("prime");
@@ -1086,15 +1084,13 @@ export default function Subscribe() {
                     ? `💎 Wallet PNPtv o tarjeta · $${parseFloat(String(plan.price)).toFixed(2)}`
                     : `💎 PNPtv Wallet or card · $${parseFloat(String(plan.price)).toFixed(2)}`}
                 </button>
-                <div className="flex justify-center pt-0.5">
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); openNpFallback(plan.id); }}
-                    className="text-[11px] text-white/40 hover:text-white/65 transition"
-                  >
-                    {t.lang === "es" ? "₿ Pagar con otra cripto →" : "₿ Pay with another crypto →"}
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); openNpFallback(plan.id); }}
+                  className="w-full py-3 rounded-lg font-bold text-sm text-white/80 border border-white/15 bg-white/5 hover:bg-white/10 hover:text-white transition-all"
+                >
+                  {t.lang === "es" ? "₿ Pagar con otra cripto" : "₿ Pay with another crypto"}
+                </button>
                 {(() => {
                   const cost = Math.round(parseFloat(String(plan.price)) * 6);
                   const isPlatform = MEMBER_PLAN_IDS.has(plan.id) || String(plan.id).startsWith("prime");
