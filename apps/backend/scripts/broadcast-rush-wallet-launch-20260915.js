@@ -42,6 +42,7 @@ const sendSystemDM                  = require(path.join(BACKEND, 'services/sendS
 const PushNotificationService       = require(path.join(BACKEND, 'services/pushNotificationService'));
 
 const DRY_RUN       = process.argv.includes('--dry-run');
+const SKIP_PUSH     = process.argv.includes('--skip-push');
 const BATCH_ID      = 'rush-wallet-launch-20260915';
 const SYSTEM_SENDER = '8552451957';
 const DM_DELAY_MS   = 40;
@@ -149,22 +150,26 @@ async function main() {
 
   await PushNotificationService.initialize();
 
-  for (const [langKey, ids] of [['en', enIds], ['es', esIds]]) {
-    if (!ids.length) continue;
-    try {
-      const n = await PushNotificationService.sendToUsers(ids, pushPayload(langKey));
-      pushSent += n;
-      console.log(`[PUSH ${langKey}] delivered ${n}/${ids.length}`);
-    } catch (err) {
-      console.error(`[PUSH ${langKey}] error: ${err.message}`);
+  if (!SKIP_PUSH) {
+    for (const [langKey, ids] of [['en', enIds], ['es', esIds]]) {
+      if (!ids.length) continue;
+      try {
+        const n = await PushNotificationService.sendToUsers(ids, pushPayload(langKey));
+        pushSent += n;
+        console.log(`[PUSH ${langKey}] delivered ${n}/${ids.length}`);
+      } catch (err) {
+        console.error(`[PUSH ${langKey}] error: ${err.message}`);
+      }
     }
+  } else {
+    console.log('[PUSH] skipped (--skip-push)');
   }
 
   // Per-user in-app DM + dedup log
   for (const user of targets) {
     try {
       const text = dmText(user.language);
-      await sendSystemDM(SYSTEM_SENDER, user.id, text);
+      await sendSystemDM(SYSTEM_SENDER, user.id, text, query);
       dmSent++;
       await query(
         'INSERT INTO broadcast_dedup (batch_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
