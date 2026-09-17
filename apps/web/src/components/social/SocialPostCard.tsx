@@ -1489,28 +1489,36 @@ export default function SocialPostCard({
                 );
               })()}
 
-              {/* Promoted CTA — single "Get Access" button */}
+              {/* Promoted CTA buttons */}
               {post.is_promoted && post.promoted_link && (
-                <div className="mt-3">
-                  <button
-                    onClick={(e) => { e.stopPropagation();
-                      const link = post.promoted_link!;
-                      if (link === "#promo-modal") {
-                        setShowPromoModal(true);
-                      } else if (link.startsWith("/")) {
-                        onNavigate(link);
-                      } else if (link.startsWith("https://")) {
-                        window.open(link, "_blank", "noopener,noreferrer");
-                      }
-                    }}
-                    className="w-full text-sm font-semibold py-2.5 rounded-lg transition-opacity hover:opacity-90"
-                    style={{
-                      background: "linear-gradient(135deg, #D4007A, #E69138)",
-                      color: "#fff",
-                    }}
-                  >
-                    Get Access
-                  </button>
+                <div className={`mt-3 ${post.promoted_link2 ? "flex gap-2" : ""}`}>
+                  {[
+                    { link: post.promoted_link, label: post.promoted_link_label || "Get Access" },
+                    ...(post.promoted_link2 ? [{ link: post.promoted_link2, label: post.promoted_link2_label || "Learn More" }] : []),
+                  ].map(({ link, label }, idx) => (
+                    <button
+                      key={idx}
+                      onClick={(e) => { e.stopPropagation();
+                        if (link === "#promo-modal") {
+                          setShowPromoModal(true);
+                        } else if (link.startsWith("/")) {
+                          onNavigate(link);
+                        } else if (link.startsWith("https://")) {
+                          window.open(link, "_blank", "noopener,noreferrer");
+                        }
+                      }}
+                      className="flex-1 text-sm font-semibold py-2.5 rounded-lg transition-opacity hover:opacity-90"
+                      style={{
+                        background: idx === 0
+                          ? "linear-gradient(135deg, #D4007A, #E69138)"
+                          : "rgba(255,255,255,0.08)",
+                        color: "#fff",
+                        border: idx === 1 ? "1px solid rgba(255,255,255,0.15)" : "none",
+                      }}
+                    >
+                      {label}
+                    </button>
+                  ))}
                 </div>
               )}
 

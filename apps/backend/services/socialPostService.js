@@ -482,8 +482,15 @@ class SocialPostService {
     }
 
     posts = await SocialPostService.hydrateTopHypers(posts);
-    const page = posts.slice(0, lim);
-    const nextCursor = posts.length > lim ? String(page[page.length - 1].id) : null;
+
+    const FREE_POST_CAP = 25;
+    const isFreeViewer = viewerTier === 'free' && !isAdmin;
+    const effectiveLim = isFreeViewer ? Math.min(lim, FREE_POST_CAP) : lim;
+
+    const page = posts.slice(0, effectiveLim);
+    const nextCursor = (!isFreeViewer && posts.length > effectiveLim)
+      ? String(page[page.length - 1].id)
+      : null;
 
     return { posts: page, nextCursor };
   }
@@ -1331,8 +1338,8 @@ class SocialPostService {
           promoted_link2, promoted_link2_label,
           content_tier, is_shareable, metadata, pinned_at, category)
        VALUES ($1, $2, $3, 'video',
-               true, '#promo-modal', 'Get Access 💎',
-               '/subscribe', 'Pay by Card 💳',
+               true, '/subscribe', 'Subscribe · $50/yr 💎',
+               '/lifetime100', 'Lifetime · $100 🖤',
                'free', false,
                $4::jsonb, NOW(), 'adult')
        RETURNING id`,
