@@ -944,6 +944,8 @@ class SocialPostService {
               sp.source_channel, sp.category, sp.is_ai_generated,
               sp.reply_to_id, sp.repost_of_id,
               sp.likes_count, sp.reposts_count, sp.replies_count, sp.is_wof, sp.created_at,
+              sp.is_promoted, sp.promoted_link, sp.promoted_link_label,
+              sp.promoted_link2, sp.promoted_link2_label,
               u.id as author_id, u.username as author_username,
               u.first_name as author_first_name, u.photo_file_id as author_photo,
               u.city as author_city, u.country as author_country,
@@ -956,7 +958,10 @@ class SocialPostService {
        LEFT JOIN users ru ON rp.user_id = ru.id
        WHERE sp.is_deleted = false
          AND sp.reply_to_id IS NULL
-       ORDER BY sp.id DESC
+       ORDER BY
+         CASE WHEN sp.pinned_at IS NOT NULL THEN 0 ELSE 1 END,
+         sp.pinned_at DESC NULLS LAST,
+         sp.id DESC
        LIMIT $1`,
       [lim]
     );
