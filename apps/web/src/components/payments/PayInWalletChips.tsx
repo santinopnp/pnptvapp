@@ -29,6 +29,15 @@ export const TrustWalletIcon = ({ size = 28 }: { size?: number }) => (
   </svg>
 );
 
+export const BlueWalletIcon = ({ size = 28 }: { size?: number }) => (
+  <svg viewBox="0 0 40 40" width={size} height={size} fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect width="40" height="40" rx="10" fill="#0070FF"/>
+    <path d="M20 8L12 14V22C12 27.523 15.477 32.184 20 34C24.523 32.184 28 27.523 28 22V14L20 8Z" fill="white" fillOpacity="0.15"/>
+    <path d="M20 8L12 14V22C12 27.523 15.477 32.184 20 34C24.523 32.184 28 27.523 28 22V14L20 8Z" stroke="white" strokeWidth="1.5" strokeLinejoin="round"/>
+    <path d="M22 17H17.5L16 21H19.5L18 26L24 19.5H20.5L22 17Z" fill="white"/>
+  </svg>
+);
+
 export const WalletConnectIcon = ({ size = 28 }: { size?: number }) => (
   <svg viewBox="0 0 40 40" width={size} height={size} fill="none" xmlns="http://www.w3.org/2000/svg">
     <rect width="40" height="40" rx="10" fill="#3B99FC"/>
@@ -72,6 +81,10 @@ export function metaMaskDeepLink(invoiceUrl: string): string {
   return `https://metamask.app.link/dapp/${targetUrl.replace(/^https?:\/\//, "")}`;
 }
 
+export function blueWalletDeepLink(invoiceUrl: string): string {
+  return `bluewallet:openurl?url=${encodeURIComponent(invoiceUrl)}`;
+}
+
 export function isMetaMaskCompatible(payCurrency?: string | null): boolean {
   if (!payCurrency) return true; // unknown → show it; user can decide
   return EVM_CURRENCIES.has(payCurrency.toLowerCase());
@@ -87,9 +100,8 @@ interface PayInWalletChipsProps {
 }
 
 /**
- * Three-icon wallet strip: MetaMask · Trust Wallet · Other (WalletConnect).
- * Renders MetaMask only for EVM chains. Trust Wallet is always shown since it
- * handles BTC / LTC / DOGE / SOL / EVM / Tron / etc. all in one app.
+ * Four-icon wallet strip: MetaMask · Trust Wallet · BlueWallet · Other (WalletConnect).
+ * Renders MetaMask only for EVM chains. Trust Wallet and BlueWallet are always shown.
  */
 export function PayInWalletChips({
   invoiceUrl,
@@ -101,9 +113,10 @@ export function PayInWalletChips({
 }: PayInWalletChipsProps) {
   const es = lang === "es";
   const showMetaMask = isMetaMaskCompatible(payCurrency);
-  const gridCols = showMetaMask ? "grid-cols-3" : "grid-cols-2";
+  const gridCols = showMetaMask ? "grid-cols-4" : "grid-cols-3";
   const tw = trustWalletDeepLink(invoiceUrl, payCurrency);
   const mm = metaMaskDeepLink(invoiceUrl);
+  const bw = blueWalletDeepLink(invoiceUrl);
 
   return (
     <div className={className}>
@@ -132,6 +145,15 @@ export function PayInWalletChips({
         >
           <TrustWalletIcon />
           <span className="text-[10px] font-bold text-blue-300">Trust Wallet</span>
+        </a>
+        <a
+          href={bw}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex flex-col items-center gap-1.5 py-3 rounded-xl border border-[#0070FF]/30 bg-[#0070FF]/8 hover:bg-[#0070FF]/15 transition-all active:scale-[0.97]"
+        >
+          <BlueWalletIcon />
+          <span className="text-[10px] font-bold text-[#4DA3FF]">BlueWallet</span>
         </a>
         <button
           type="button"
