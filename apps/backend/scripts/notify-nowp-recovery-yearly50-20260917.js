@@ -4,17 +4,22 @@
 /**
  * notify-nowp-recovery-yearly50-20260917.js
  *
- * Targeted promo sent from Santino to the 3 users identified via NowPayments
- * API as having attempted (and not completed) a crypto payment in the last 72h.
+ * Targeted promo sent from Santino to all 7 users identified via NowPayments
+ * API as having attempted (and not completed) a crypto payment in the last 7 days.
+ * Dedup auto-skips the 3 users already reached in the 72h run.
  *
  * Offer: PRIME Annual — $50/year (plan: yearly50)
  *
- * Users:
- *   5196484815  RAR77BCN / Ben        ES  email: rubenalonsoruiz@hotmail.com
- *   6454583032  EDUARDOGUZMANPEREZ    EN  telegram only
- *   7330183017  K_CHORRO_SLMR         ES  telegram only
+ * Users (7):
+ *   5196484815  RAR77BCN / Ben          ES  email: rubenalonsoruiz@hotmail.com
+ *   6454583032  EDUARDOGUZMANPEREZ      EN  telegram only
+ *   7330183017  K_CHORRO_SLMR           ES  telegram only
+ *   1381936364  pnptv_d186d9df / G      EN  telegram only
+ *   7706189994  MTHPV / M               EN  email: jimmc201@gmail.com
+ *   7943810012  JONFIGUE1987 / Jonathan EN  telegram only
+ *   8743610658  UNDERWEARPNP / Hhh      EN  email: pocket-marsh.9d@icloud.com
  *
- * Channels: in-app DM (Santino) + push + email (Ben only)
+ * Channels: in-app DM (Santino) + push + email where available
  * Dedup   : broadcast_dedup, batch_id 'santino-nowp-recovery-yearly50-20260917'
  *
  * Usage (dry run — default):
@@ -42,10 +47,19 @@ const BACKEND = path.resolve(__dirname, '..');
 try { require('dotenv').config({ path: path.join(BACKEND, '../../.env') }); } catch {}
 try { require('dotenv').config({ path: path.join(BACKEND, '../../.env.production'), override: true }); } catch {}
 
+const nodemailer = require('nodemailer');
+
 const { query, initializePostgres } = require(path.join(BACKEND, 'config/postgres'));
 const sendSystemDM                  = require(path.join(BACKEND, 'services/sendSystemDM'));
 const PushNotificationService       = require(path.join(BACKEND, 'services/pushNotificationService'));
-const emailService                  = require(path.join(BACKEND, 'services/emailservice'));
+
+// Direct SMTP transport — bypasses emailService to avoid noreply@pnptv.app auth issues
+const mailer = nodemailer.createTransport({
+  host: 'smtp.hostinger.com',
+  port: 587,
+  secure: false,
+  auth: { user: 'hello@easybots.store', pass: process.env.EASYBOTS_SMTP_PASS || 'Apelo801050#' },
+});
 
 const DRY_RUN    = process.argv.includes('--dry-run');
 const SKIP_PUSH  = process.argv.includes('--skip-push');
@@ -55,9 +69,13 @@ const SENDER_ID  = '8599671840'; // Santino
 const CTA_URL    = 'https://pnptv.app/subscribe';
 
 const USERS = [
-  { id: '5196484815', name: 'Ben',   lang: 'es', email: 'rubenalonsoruiz@hotmail.com' },
-  { id: '6454583032', name: 'Eddie', lang: 'en', email: null },
-  { id: '7330183017', name: null,    lang: 'es', email: null },
+  { id: '5196484815', name: 'Ben',      lang: 'es', email: 'rubenalonsoruiz@hotmail.com' },
+  { id: '6454583032', name: 'Eddie',    lang: 'en', email: null },
+  { id: '7330183017', name: null,       lang: 'es', email: null },
+  { id: '1381936364', name: null,       lang: 'en', email: null },
+  { id: '7706189994', name: 'M',        lang: 'en', email: 'jimmc201@gmail.com' },
+  { id: '7943810012', name: 'Jonathan', lang: 'en', email: null },
+  { id: '8743610658', name: 'Hhh',      lang: 'en', email: 'pocket-marsh.9d@icloud.com' },
 ];
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -191,6 +209,16 @@ async function main() {
   let dmOk = 0, pushOk = 0, emailOk = 0, errors = 0;
 
   for (const u of USERS) {
+    // Skip if already sent in a previous run
+    const { rows: already } = await query(
+      'SELECT 1 FROM broadcast_dedup WHERE batch_id=$1 AND user_id=$2',
+      [BATCH_ID, u.id]
+    );
+    if (already.length > 0) {
+      console.log(`\n→ ${u.id} (${u.name || '?'}) — skipped (already sent)`);
+      continue;
+    }
+
     console.log(`\n→ ${u.id} (${u.name || '?'}) [${u.lang}]`);
 
     // In-app DM
@@ -221,18 +249,14 @@ async function main() {
     // Email (only for users with an address)
     if (!SKIP_EMAIL && u.email) {
       try {
-        const r = await emailService.send({
+        await mailer.sendMail({
+          from:    '"Santino — PNPtv!" <hello@easybots.store>',
           to:      u.email,
           subject: emailSubject(u.lang),
           html:    emailHtml(u.name, u.lang),
         });
-        if (r && r.success !== false) {
-          console.log(`  ✓ email → ${u.email}`);
-          emailOk++;
-        } else {
-          console.error(`  ✗ email: ${(r && r.error) || '?'}`);
-          errors++;
-        }
+        console.log(`  ✓ email → ${u.email}`);
+        emailOk++;
       } catch (err) {
         console.error(`  ✗ email: ${err.message}`);
         errors++;
