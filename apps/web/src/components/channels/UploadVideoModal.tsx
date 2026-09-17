@@ -2,19 +2,20 @@
  * UploadVideoModal — Studio Express (3-step Mux upload wizard)
  *
  *   Step 1 "Sube tu video"   — drag-drop + one-liner description
- *                              Upload goes direct browser→Mux via TUS protocol
- *                              (50 MB chunks, 5 auto-retries, byte-level resume)
+ *                              Upload goes direct browser→Mux via chunked PUT
+ *                              (50 MB chunks, Content-Range, 5 auto-retries)
  *   Step 2 "Pulido por IA"   — review/edit title, description, tags
  *                              Thumbnail picker from Mux-generated frames
  *   Step 3 "Publicar"        — toggle feed announce → publish → done
  *
- * Resumable: TUS fingerprint in IndexedDB (automatic) + localStorage banner.
- * If the same file is re-selected after a failed session, upload resumes from
- * the exact byte offset without restarting from scratch.
+ * Resumable: offset stored in localStorage. Re-selecting the same file after a
+ * failure resumes from the last successful chunk boundary.
+ *
+ * Note: switched from tus-js-client (PATCH) to chunked PUT because Mux migrated
+ * their direct-upload infrastructure to OCI, which only supports PUT/DELETE.
  */
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Upload, DetailedError } from "tus-js-client";
 import {
   getMuxUploadUrl,
   aiAllChannelVideo,
@@ -98,7 +99,8 @@ export default function UploadVideoModal({
   const [uploadSpeed, setUploadSpeed] = useState(0); // bytes/sec
   const [uploadEta, setUploadEta] = useState<number | null>(null); // seconds
   const [retryCount, setRetryCount] = useState(0);
-  const tusRef = useRef<Upload | null>(null);
+  const xhrRef = useRef<XMLHttpRequest | null>(null);
+  const abortedRef = useRef(false);
   const videoIdRef = useRef<number | null>(null);
   const uploadStartRef = useRef<number>(0);
   const lastProgressRef = useRef<{ time: number; bytes: number }>({ time: 0, bytes: 0 });
@@ -139,8 +141,8 @@ export default function UploadVideoModal({
     getChannelTagTaxonomy(channelId).then((r) => setTaxonomy(r.tags || [])).catch(() => {});
   }, [channelId]);
 
-  // Abort TUS upload on unmount
-  useEffect(() => () => { tusRef.current?.abort().catch(() => {}); }, []);
+  // Abort upload on unmount
+  useEffect(() => () => { abortedRef.current = true; xhrRef.current?.abort(); }, []);
 
   const validateFile = (f: File): string | null => {
     if (f.type && !f.type.startsWith("video/")) return "Solo se permiten archivos de video.";
@@ -168,79 +170,162 @@ export default function UploadVideoModal({
   };
 
   /**
-   * TUS upload — sends file in 50 MB chunks directly to the Mux TUS endpoint.
-   * On network failure each chunk retries up to 5 times with exponential backoff.
-   * If the same file is re-uploaded with the same uploadUrl, TUS resumes from the
-   * exact byte offset stored in the IndexedDB fingerprint (no data retransferred).
+   * Chunked PUT upload — sends file in 50 MB chunks directly to the Mux OCI
+   * upload endpoint using Content-Range headers. Mux migrated from TUS (PATCH)
+   * to PUT-based uploads; the OCI endpoint returns 405 for HEAD and blocks PATCH
+   * via CORS, so tus-js-client cannot be used.
+   *
+   * Resume: the stored byte offset from localStorage lets us skip already-sent
+   * chunks on retry without restarting from byte 0.
    */
-  const doTusUpload = useCallback((
+  const doPutUpload = useCallback((
     fileToUpload: File,
     uploadUrl: string,
     videoId: number,
     uploadId: string,
+    startOffset = 0,
   ) => {
     uploadStartRef.current = Date.now();
-    lastProgressRef.current = { time: Date.now(), bytes: 0 };
+    lastProgressRef.current = { time: Date.now(), bytes: startOffset };
+    abortedRef.current = false;
 
-    const upload = new Upload(fileToUpload, {
-      uploadUrl,                                          // pre-created Mux TUS resource
-      chunkSize: TUS_CHUNK_SIZE,
-      retryDelays: [0, 3_000, 5_000, 10_000, 20_000],   // 5 retries per failed chunk
-      storeFingerprintForResuming: true,                  // IndexedDB for cross-session resume
-      metadata: {
-        filename: fileToUpload.name,
-        filetype: fileToUpload.type || "video/mp4",
-      },
+    const total = fileToUpload.size;
+    let offset = startOffset;
+    let chunkAttempt = 0;
+    const RETRY_DELAYS = [0, 3_000, 5_000, 10_000, 20_000];
 
-      onProgress(bytesUploaded, bytesTotal) {
-        const pct = Math.round((bytesUploaded / bytesTotal) * 100);
+    const sendChunk = () => {
+      if (abortedRef.current) return;
+
+      const chunkEnd = Math.min(offset + TUS_CHUNK_SIZE, total);
+      const chunk = fileToUpload.slice(offset, chunkEnd);
+      const isLastChunk = chunkEnd >= total;
+
+      const xhr = new XMLHttpRequest();
+      xhrRef.current = xhr;
+      xhr.open("PUT", uploadUrl);
+      xhr.setRequestHeader("Content-Type", fileToUpload.type || "application/octet-stream");
+      // Always send Content-Range so the server knows where this chunk belongs.
+      xhr.setRequestHeader("Content-Range", `bytes ${offset}-${chunkEnd - 1}/${total}`);
+
+      xhr.upload.onprogress = (e) => {
+        if (abortedRef.current) return;
+        const uploaded = offset + e.loaded;
+        const pct = Math.round((uploaded / total) * 100);
         setUploadPct(pct);
-        setUploadedBytes(bytesUploaded);
+        setUploadedBytes(uploaded);
 
         const now = Date.now();
         const elapsed = (now - lastProgressRef.current.time) / 1000;
         if (elapsed > 0.5) {
-          const speed = (bytesUploaded - lastProgressRef.current.bytes) / elapsed;
+          const speed = (uploaded - lastProgressRef.current.bytes) / elapsed;
           setUploadSpeed(Math.max(0, speed));
-          setUploadEta(speed > 0 ? Math.ceil((bytesTotal - bytesUploaded) / speed) : null);
-          lastProgressRef.current = { time: now, bytes: bytesUploaded };
+          setUploadEta(speed > 0 ? Math.ceil((total - uploaded) / speed) : null);
+          lastProgressRef.current = { time: now, bytes: uploaded };
         }
 
-        saveResume({ uploadId, videoId, channelId, fileName: fileToUpload.name, fileSize: fileToUpload.size, uploadUrl, bytesUploaded });
-      },
+        saveResume({ uploadId, videoId, channelId, fileName: fileToUpload.name, fileSize: fileToUpload.size, uploadUrl, bytesUploaded: uploaded });
+      };
 
-      onSuccess() {
-        clearResume();
-        setUploadPct(100);
-        setUploadSpeed(0);
-        setUploadEta(null);
-        setRetryCount(0);
-        setStep("metadata");
-        setTimeout(() => fetchThumbnails(videoId), 8_000);
-      },
+      xhr.onload = () => {
+        if (abortedRef.current) return;
 
-      onError(err) {
-        setRetryCount(0);
-        const status = err instanceof DetailedError ? (err.originalResponse?.getStatus() ?? null) : null;
-        setError(
-          status
-            ? `La subida falló (HTTP ${status}). El archivo sigue seleccionado — intenta de nuevo.`
-            : "La subida falló tras varios intentos. Revisa tu conexión — el archivo sigue seleccionado.",
-        );
-        setStep("pick");
-      },
+        if (xhr.status >= 200 && xhr.status < 300) {
+          // Upload complete (200/201/204)
+          clearResume();
+          setUploadPct(100);
+          setUploadSpeed(0);
+          setUploadEta(null);
+          setRetryCount(0);
+          setStep("metadata");
+          setTimeout(() => fetchThumbnails(videoId), 8_000);
+        } else if (xhr.status === 308) {
+          // GCS-style "Resume Incomplete" — advance offset from Range header
+          const rangeHeader = xhr.getResponseHeader("Range");
+          const match = rangeHeader?.match(/bytes=0-(\d+)/);
+          offset = match ? parseInt(match[1]) + 1 : chunkEnd;
+          chunkAttempt = 0;
+          sendChunk();
+        } else if (xhr.status === 429 || xhr.status >= 500) {
+          retryChunk();
+        } else {
+          setRetryCount(0);
+          setError(`La subida falló (HTTP ${xhr.status}). El archivo sigue seleccionado — intenta de nuevo.`);
+          setStep("pick");
+        }
+      };
 
-      onShouldRetry(err, attempt) {
-        const status = err instanceof DetailedError ? (err.originalResponse?.getStatus() ?? null) : null;
-        // Never retry on auth / hard client errors
-        if (status && status >= 400 && status < 500 && status !== 429) return false;
-        setRetryCount(attempt + 1);
-        return true;
-      },
-    });
+      const retryChunk = () => {
+        if (chunkAttempt < RETRY_DELAYS.length - 1) {
+          chunkAttempt++;
+          setRetryCount(chunkAttempt);
+          setTimeout(sendChunk, RETRY_DELAYS[chunkAttempt]);
+        } else {
+          setRetryCount(0);
+          setError("La subida falló tras varios intentos. Revisa tu conexión — el archivo sigue seleccionado.");
+          setStep("pick");
+        }
+      };
 
-    tusRef.current = upload;
-    upload.start();
+      xhr.onerror = () => { if (!abortedRef.current) retryChunk(); };
+      xhr.ontimeout = () => { if (!abortedRef.current) retryChunk(); };
+      xhr.timeout = 30 * 60 * 1000; // 30 min per chunk
+
+      xhr.send(chunk);
+    };
+
+    // If entire file fits in one chunk, skip Content-Range so single-PUT servers
+    // (which may not implement 308) get a plain PUT body instead.
+    if (total <= TUS_CHUNK_SIZE) {
+      const xhr = new XMLHttpRequest();
+      xhrRef.current = xhr;
+      xhr.open("PUT", uploadUrl);
+      xhr.setRequestHeader("Content-Type", fileToUpload.type || "application/octet-stream");
+
+      xhr.upload.onprogress = (e) => {
+        if (abortedRef.current) return;
+        const pct = Math.round((e.loaded / total) * 100);
+        setUploadPct(pct);
+        setUploadedBytes(e.loaded);
+
+        const now = Date.now();
+        const elapsed = (now - lastProgressRef.current.time) / 1000;
+        if (elapsed > 0.5) {
+          const speed = (e.loaded - lastProgressRef.current.bytes) / elapsed;
+          setUploadSpeed(Math.max(0, speed));
+          setUploadEta(speed > 0 ? Math.ceil((total - e.loaded) / speed) : null);
+          lastProgressRef.current = { time: now, bytes: e.loaded };
+        }
+      };
+
+      xhr.onload = () => {
+        if (abortedRef.current) return;
+        if (xhr.status >= 200 && xhr.status < 300) {
+          clearResume();
+          setUploadPct(100);
+          setUploadSpeed(0);
+          setUploadEta(null);
+          setRetryCount(0);
+          setStep("metadata");
+          setTimeout(() => fetchThumbnails(videoId), 8_000);
+        } else {
+          setRetryCount(0);
+          setError(`La subida falló (HTTP ${xhr.status}). El archivo sigue seleccionado — intenta de nuevo.`);
+          setStep("pick");
+        }
+      };
+
+      xhr.onerror = () => {
+        if (!abortedRef.current) {
+          setError("La subida falló. Revisa tu conexión — el archivo sigue seleccionado.");
+          setStep("pick");
+        }
+      };
+
+      xhr.send(fileToUpload);
+    } else {
+      sendChunk();
+    }
   }, [channelId]);
 
   const startUpload = useCallback(async (fileToUpload: File, description1Line: string) => {
@@ -263,13 +348,16 @@ export default function UploadVideoModal({
     let uploadUrl: string;
     let uploadId: string;
 
+    let resumeOffset = 0;
     if (sameFile && resume) {
       videoId = resume.videoId;
       uploadUrl = resume.uploadUrl;
       uploadId = resume.uploadId;
+      // Round down to nearest chunk boundary so we don't send a partial chunk
+      resumeOffset = Math.floor(resume.bytesUploaded / TUS_CHUNK_SIZE) * TUS_CHUNK_SIZE;
       videoIdRef.current = videoId;
-      setUploadedBytes(resume.bytesUploaded);
-      setUploadPct(Math.round((resume.bytesUploaded / fileToUpload.size) * 100));
+      setUploadedBytes(resumeOffset);
+      setUploadPct(Math.round((resumeOffset / fileToUpload.size) * 100));
     } else {
       try {
         const res = await getMuxUploadUrl(channelId);
@@ -299,8 +387,8 @@ export default function UploadVideoModal({
         .finally(() => setAiLoading(false));
     }
 
-    doTusUpload(fileToUpload, uploadUrl, videoId, uploadId);
-  }, [channelId, resume, doTusUpload]);
+    doPutUpload(fileToUpload, uploadUrl, videoId, uploadId, resumeOffset);
+  }, [channelId, resume, doPutUpload]);
 
   const handlePublish = async () => {
     if (!videoIdRef.current) return;
@@ -320,7 +408,8 @@ export default function UploadVideoModal({
   };
 
   const resetAll = () => {
-    tusRef.current?.abort().catch(() => {});
+    abortedRef.current = true;
+    xhrRef.current?.abort();
     setStep("pick");
     setFile(null);
     setOneLiner("");
@@ -594,7 +683,7 @@ export default function UploadVideoModal({
       )}
 
       <button
-        onClick={() => { tusRef.current?.abort().catch(() => {}); clearResume(); setRetryCount(0); setStep("pick"); }}
+        onClick={() => { abortedRef.current = true; xhrRef.current?.abort(); clearResume(); setRetryCount(0); setStep("pick"); }}
         className="text-xs text-white/30 underline decoration-dotted hover:text-white/60"
       >
         Cancelar subida
