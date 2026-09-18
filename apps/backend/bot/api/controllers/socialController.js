@@ -175,9 +175,15 @@ const getFeed = async (req, res) => {
     // 5-tab feed dispatcher (2026-07-23). No filter param → 'all' (legacy).
     const filter = String(req.query.filter || 'all');
 
+    // Free-tier gate: page 2+ returns nothing so the client renders the upgrade
+    // card instead of serving unlimited scrolling to unauthenticated/free users.
+    const isFreeUser = viewerTier === 'free';
+    if (isFreeUser && req.query.cursor) {
+      return res.json({ success: true, posts: [], feedLocked: true, nextCursor: null, filter });
+    }
+
     // Run feed fetch + live-card check in parallel — the card check is a cheap
     // single Redis LRANGE and must never delay the feed response.
-    const isFreeUser = viewerTier === 'free';
     const [result, liveCard] = await Promise.all([
       SocialPostService.getFeedFiltered({
         userId: user.id,

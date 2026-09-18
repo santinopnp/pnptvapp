@@ -8996,6 +8996,8 @@ export interface CreatorMediaItem {
   caption?: string | null;
   isPremium: boolean;
   canView: boolean;
+  /** True when the item is visible but blurred for free-tier viewers (album teaser gate). */
+  blurred?: boolean;
   sortOrder?: number;
   createdAt?: string;
 }

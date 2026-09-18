@@ -18,10 +18,13 @@ function sendError(res, status, message, code) {
 /**
  * GET /api/webapp/creators/:creatorId/media
  * Public — respects premium gating via canView flag.
+ * Free-tier viewers (no prime entitlement, not admin, not self) get blurred: true
+ * on all non-premium photos beyond index 0 as a teaser / upgrade nudge.
  */
 async function listMedia(req, res) {
   const { creatorId } = req.params;
-  const viewerUserId = req.session?.user?.id || null;
+  const viewerSession = req.session?.user || null;
+  const viewerUserId = viewerSession?.id || null;
   const limit = Math.min(parseInt(req.query.limit) || 50, 200);
 
   try {
@@ -45,7 +48,44 @@ async function listMedia(req, res) {
       viewerUserId: resolvedViewerUserId,
       limit,
     });
-    return res.json({ success: true, items });
+
+    // Determine whether to apply free-tier blurring on non-premium album photos.
+    // Conditions that bypass blurring:
+    //   - viewer is the creator themselves (isSelf resolved above)
+    //   - viewer has prime tier or admin role in their session
+    //   - viewer is subscribed to this specific creator (canView on premium items
+    //     is already handled by the service; for non-premium we check prime/admin)
+    const isSelf = resolvedViewerUserId === resolvedCreatorId;
+    const viewerTier = viewerSession?.tier || 'free';
+    const viewerRole = viewerSession?.role || 'user';
+    const isPrivileged = isSelf
+      || ['prime', 'admin', 'superadmin'].includes(viewerTier)
+      || ['admin', 'superadmin'].includes(viewerRole);
+
+    if (isPrivileged) {
+      return res.json({ success: true, items });
+    }
+
+    // For free-tier viewers: first non-premium photo is visible, the rest are blurred.
+    // Premium items (canView: false) already have null url/thumbUrl from the service —
+    // blurred does not apply to them (they stay behind the existing premium lock).
+    let freePhotoCount = 0;
+    const gatedItems = items.map((item) => {
+      if (item.type !== 'photo' || !item.canView) {
+        // Videos and locked-premium items: no free-tier blurring
+        return item;
+      }
+      freePhotoCount += 1;
+      if (freePhotoCount === 1) {
+        // First visible photo: always shown in full
+        return item;
+      }
+      // Subsequent non-premium photos: mark blurred but keep url/thumbUrl so
+      // the frontend can render the blurred image (CSS blur, not data suppression).
+      return { ...item, blurred: true };
+    });
+
+    return res.json({ success: true, items: gatedItems });
   } catch (err) {
     logger.error('creatorMediaController.listMedia error', { err: err.message, creatorId });
     return sendError(res, 500, 'Failed to list media', 'SERVER_ERROR');

@@ -463,6 +463,8 @@ const joinDmVideoCall = async (req, res) => {
   }
 };
 
+const DM_FREE_DAILY_LIMIT = 3;
+
 // Send a DM via REST (fallback when Socket.IO is unavailable)
 const sendMessage = async (req, res) => {
   const user = authGuard(req, res); if (!user) return;
@@ -484,6 +486,31 @@ const sendMessage = async (req, res) => {
     const senderRole = user.role || '';
     const isAdminSender = senderRole === 'admin' || senderRole === 'superadmin';
 
+    // Free-tier DM limit: 3 per day (24 h rolling window via Redis).
+    // Admins, PRIME, and members are exempt.
+    const senderTierNorm = (user.tier || 'free').toLowerCase();
+    if (!isAdminSender && !['prime', 'member'].includes(senderTierNorm)) {
+      try {
+        const redis = getRedis();
+        const limitKey = `dm:daily:${user.id}`;
+        const count = await redis.incr(limitKey);
+        if (count === 1) await redis.expire(limitKey, 86400);
+        const remaining = Math.max(0, DM_FREE_DAILY_LIMIT - count);
+        if (count > DM_FREE_DAILY_LIMIT) {
+          return res.status(429).json({
+            error: 'DM_LIMIT_REACHED',
+            remaining: 0,
+            limit: DM_FREE_DAILY_LIMIT,
+          });
+        }
+        // Attach remaining so the response can pass it back to the frontend
+        req._dmRemaining = remaining;
+      } catch (rateErr) {
+        // Non-fatal — if Redis is unavailable, allow the send and log
+        logger.warn('DM daily rate limit check failed (allowing)', { userId: user.id, error: rateErr.message });
+      }
+    }
+
     const message = await DmService.sendMessage(
       user.id,
       requestedRecipientId,
@@ -495,7 +522,7 @@ const sendMessage = async (req, res) => {
 
     // Cristina AI ticket intercept — skip socket/push, return ticket notice
     if (message._ticket) {
-      return res.json({ success: true, message, ticketNotice: message._ticketNotice, remaining: req.dmLimit?.remaining ?? null });
+      return res.json({ success: true, message, ticketNotice: message._ticketNotice, remaining: req._dmRemaining ?? null });
     }
 
     // Deliver to recipient via Socket.IO if available
@@ -522,7 +549,7 @@ const sendMessage = async (req, res) => {
     // ── Webapp → Telegram DM bridge: forward to recipient's Telegram ──
     DmService.bridgeToTelegram(user.id, message.recipient_id, hydratedMessage).catch(() => {});
 
-    return res.json({ success: true, message: hydratedMessage, remaining: message._remaining ?? null });
+    return res.json({ success: true, message: hydratedMessage, remaining: req._dmRemaining ?? null });
   } catch (err) {
     if (err.statusCode) {
       return res.status(err.statusCode).json({ error: err.message, code: err.code });

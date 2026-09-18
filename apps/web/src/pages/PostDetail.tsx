@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Helmet } from "react-helmet-async";
 import { useParams, useNavigate, Link, useSearchParams } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
+import { useTier } from "@/hooks/useTier";
 import { ApiError, getSocialPost, togglePostLike, updateProfile, type SocialPostItem } from "@/lib/api";
 import SocialPostCard from "@/components/social/SocialPostCard";
 
@@ -44,6 +45,17 @@ export default function PostDetail() {
   // generic "Post Not Found" message.
   const [locked, setLocked] = useState<{ upgradeUrl: string; reason: "prime" | "creator" | "member" | "bts"; creatorId?: string } | null>(null);
   const [contentDisclaimer, setContentDisclaimer] = useState(user?.contentDisclaimer || false);
+  useEffect(() => {
+    if (user?.contentDisclaimer === true) setContentDisclaimer(true);
+  }, [user?.contentDisclaimer]);
+
+  // ── Free-tier soft paywall ─────────────────────────────────────────────────
+  const { isFree } = useTier();
+  // Video gate: becomes true once the 15-second threshold fires for free users.
+  const [videoGateFired, setVideoGateFired] = useState(false);
+  const [videoGateDismissed, setVideoGateDismissed] = useState(false);
+  // Ref around the SocialPostCard wrapper so we can find the <video> element.
+  const cardWrapperRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!postId) {
@@ -92,6 +104,51 @@ export default function PostDetail() {
       });
     return () => { cancelled = true; };
   }, [postId]);
+
+  // Attach timeupdate listener to the first <video> inside the card wrapper
+  // whenever a video post is loaded for a free user. Fires once at 15 s.
+  useEffect(() => {
+    if (!isFree || !post || post.media_type !== "video" || videoGateDismissed) return;
+
+    const wrapper = cardWrapperRef.current;
+    if (!wrapper) return;
+
+    // The <video> element may not be in the DOM yet (deferred render inside
+    // SocialPostCard). Poll briefly then give up gracefully.
+    let attempts = 0;
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+    let videoEl: HTMLVideoElement | null = null;
+
+    const handleTimeUpdate = () => {
+      if (videoEl && videoEl.currentTime >= 15) {
+        videoEl.pause();
+        setVideoGateFired(true);
+        cleanup();
+      }
+    };
+
+    const cleanup = () => {
+      if (intervalId !== null) clearInterval(intervalId);
+      videoEl?.removeEventListener("timeupdate", handleTimeUpdate);
+    };
+
+    intervalId = setInterval(() => {
+      attempts++;
+      const found = wrapper.querySelector("video");
+      if (found) {
+        videoEl = found;
+        videoEl.addEventListener("timeupdate", handleTimeUpdate);
+        if (intervalId !== null) clearInterval(intervalId);
+        intervalId = null;
+      } else if (attempts >= 20) {
+        // Give up after ~2 seconds of polling
+        if (intervalId !== null) clearInterval(intervalId);
+        intervalId = null;
+      }
+    }, 100);
+
+    return cleanup;
+  }, [isFree, post, videoGateDismissed]);
 
   const handleLike = useCallback((id: number) => {
     togglePostLike(id)
@@ -205,21 +262,139 @@ export default function PostDetail() {
 
       {!loading && post && (
         <>
-          <SocialPostCard
-            post={post}
-            currentUserId={String(user?.dbId || "")}
-            isAdmin={isAdmin}
-            userLang={user?.language || "en"}
-            onLike={handleLike}
-            onDelete={handleDelete}
-            onNavigate={navigate}
-            contentDisclaimerAccepted={contentDisclaimer}
-            onAcceptDisclaimer={handleAcceptDisclaimer}
-            viewerCity={user?.city ?? null}
-            viewerCountry={user?.country ?? null}
-            initialShowReplies
-            highlightReplyId={highlightReplyId}
-          />
+          {/* Wrapper gives us a positioning context for the free-tier overlays */}
+          <div ref={cardWrapperRef} style={{ position: "relative" }}>
+            <SocialPostCard
+              post={post}
+              currentUserId={String(user?.dbId || "")}
+              isAdmin={isAdmin}
+              userLang={user?.language || "en"}
+              onLike={handleLike}
+              onDelete={handleDelete}
+              onNavigate={navigate}
+              contentDisclaimerAccepted={contentDisclaimer}
+              onAcceptDisclaimer={handleAcceptDisclaimer}
+              viewerCity={user?.city ?? null}
+              viewerCountry={user?.country ?? null}
+              initialShowReplies
+              highlightReplyId={highlightReplyId}
+            />
+
+            {/* ── Video gate overlay ─────────────────────────────────────────
+                Rendered when a free user reaches 15 s of a video post.
+                Sits above the entire card so the controls are covered.    */}
+            {isFree && post.media_type === "video" && videoGateFired && !videoGateDismissed && (
+              <div
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  background: "rgba(10, 10, 10, 0.88)",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "12px",
+                  borderRadius: "12px",
+                  zIndex: 40,
+                  backdropFilter: "blur(6px)",
+                }}
+              >
+                <p
+                  style={{
+                    color: "#fff",
+                    fontWeight: 700,
+                    fontSize: "1.1rem",
+                    letterSpacing: "-0.01em",
+                    textAlign: "center",
+                    margin: 0,
+                  }}
+                >
+                  Watch in full with PRIME
+                </p>
+                <button
+                  onClick={() => navigate("/subscribe?ref=post-video&plan=monthly")}
+                  style={{
+                    background: "linear-gradient(135deg, #D4007A, #E69138)",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: "12px",
+                    padding: "10px 28px",
+                    fontSize: "0.9rem",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    letterSpacing: "0.01em",
+                  }}
+                >
+                  Get PRIME
+                </button>
+                <button
+                  onClick={() => setVideoGateDismissed(true)}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "rgba(255,255,255,0.45)",
+                    fontSize: "0.78rem",
+                    cursor: "pointer",
+                    padding: "4px 8px",
+                    textDecoration: "underline",
+                  }}
+                >
+                  Continue watching (preview only)
+                </button>
+              </div>
+            )}
+
+            {/* ── Image gate overlay ─────────────────────────────────────────
+                For free users on image posts: gradient fade covers the bottom
+                55% of the card with an upgrade nudge. Does not fully block
+                the image — desire-first approach.                          */}
+            {isFree && post.media_type !== "video" && post.media_url && (
+              <div
+                style={{
+                  position: "absolute",
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  height: "55%",
+                  background: "linear-gradient(to bottom, rgba(10,10,10,0) 0%, rgba(10,10,10,0.92) 70%)",
+                  borderRadius: "0 0 12px 12px",
+                  zIndex: 30,
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "flex-end",
+                  paddingBottom: "20px",
+                  gap: "8px",
+                }}
+              >
+                <p
+                  style={{
+                    color: "rgba(255,255,255,0.85)",
+                    fontSize: "0.82rem",
+                    margin: 0,
+                    textAlign: "center",
+                  }}
+                >
+                  See everything
+                </p>
+                <button
+                  onClick={() => navigate("/subscribe?ref=post-image&plan=monthly")}
+                  style={{
+                    background: "linear-gradient(135deg, #D4007A, #E69138)",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: "10px",
+                    padding: "8px 22px",
+                    fontSize: "0.82rem",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  Get PRIME
+                </button>
+              </div>
+            )}
+          </div>
 
           {/* CTA to view full feed */}
           <div className="glass-card-sm p-5 text-center mt-4">

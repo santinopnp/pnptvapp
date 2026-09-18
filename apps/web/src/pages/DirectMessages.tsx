@@ -284,6 +284,7 @@ function DmChatView({ userId, myDbId, myUserId, isAdmin, onBack, panelMode }: { 
   const [partnerPhoto, setPartnerPhoto] = useState<string | null>(null);
   const [partnerIsCreator, setPartnerIsCreator] = useState(false);
   const [dmRestricted, setDmRestricted] = useState(false);
+  const [dmDailyRemaining, setDmDailyRemaining] = useState<number | null>(null);
   const [showPermGate, setShowPermGate] = useState(false);
   const [pendingCallRoom, setPendingCallRoom] = useState<string | null>(null);
   const [activeCall, setActiveCall] = useState<DmVideoCallSession | null>(null);
@@ -725,14 +726,21 @@ function DmChatView({ userId, myDbId, myUserId, isAdmin, onBack, panelMode }: { 
           body: JSON.stringify(body),
         });
         if (!res.ok) {
-          const err = await res.json().catch(() => ({})) as { error?: string; code?: string; message?: string };
+          const err = await res.json().catch(() => ({})) as { error?: string; code?: string; message?: string; remaining?: number; limit?: number };
           if (err.error === "CREATOR_DM_RESTRICTED" || err.code === "CREATOR_DM_RESTRICTED") {
             setDmRestricted(true);
+            return;
+          }
+          if (err.error === "DM_LIMIT_REACHED") {
+            setDmDailyRemaining(0);
             return;
           }
           throw new Error(err.message || err.error || "Failed to send");
         }
         const data = await res.json();
+        if (typeof data.remaining === "number") {
+          setDmDailyRemaining(data.remaining);
+        }
         if (data.ticketNotice) {
           // DM to Cristina AI was redirected to support ticket
           if (data.message) setMessages((prev) => [...prev, data.message, { id: Date.now(), sender_id: "8552451957", recipient_id: userId, content: data.ticketNotice, is_read: true, created_at: new Date().toISOString() } as any]);
@@ -1956,6 +1964,26 @@ function DmChatView({ userId, myDbId, myUserId, isAdmin, onBack, panelMode }: { 
         </div>
       )}
 
+      {/* Free-tier DM limit counter / CTA */}
+      {!isAdmin && (authUser?.tier || "free").toLowerCase() === "free" && dmDailyRemaining !== null && (
+        dmDailyRemaining === 0 ? (
+          <div className="px-4 py-2.5 flex-shrink-0 border-t border-pnp-border flex items-center justify-between gap-3 bg-pnp-background">
+            <span className="text-[12px] text-pnp-textSecondary">DM limit reached — <span className="text-amber-400 font-semibold">get PRIME for unlimited</span></span>
+            <a
+              href="/subscribe?ref=dm-limit&plan=monthly"
+              className="px-3 py-1 rounded-full text-[11px] font-bold text-white flex-shrink-0"
+              style={{ background: "linear-gradient(135deg,#7B61FF,#D4007A)" }}
+            >
+              Upgrade
+            </a>
+          </div>
+        ) : (
+          <div className="px-4 py-1.5 flex-shrink-0 border-t border-pnp-border bg-pnp-background">
+            <span className="text-[11px] text-pnp-textSecondary">{dmDailyRemaining} of {3} DMs left today</span>
+          </div>
+        )
+      )}
+
       {/* Recording bar — replaces input bar while recording */}
       {isRecording ? (
         <div className={`flex items-center gap-2 px-3 py-2.5 border-t border-pnp-border flex-shrink-0 bg-pnp-background${panelMode ? "" : " pb-safe"}`}>
@@ -2007,8 +2035,9 @@ function DmChatView({ userId, myDbId, myUserId, isAdmin, onBack, panelMode }: { 
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSendMessage(); } }}
           onPaste={handlePasteImage}
           onFocus={panelMode ? () => { setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 300); } : undefined}
-          placeholder="Type a message..."
-          className="flex-1 bg-white/5 text-white placeholder-pnp-textSecondary rounded-2xl px-4 py-2 resize-none outline-none focus:ring-1 focus:ring-pnp-accent/50 max-h-32 leading-6"
+          placeholder={dmDailyRemaining === 0 ? "DM limit reached — upgrade to PRIME" : "Type a message..."}
+          disabled={dmDailyRemaining === 0}
+          className="flex-1 bg-white/5 text-white placeholder-pnp-textSecondary rounded-2xl px-4 py-2 resize-none outline-none focus:ring-1 focus:ring-pnp-accent/50 max-h-32 leading-6 disabled:opacity-40 disabled:cursor-not-allowed"
           rows={1}
           style={{ fontSize: "16px" }}
         />
@@ -2030,7 +2059,7 @@ function DmChatView({ userId, myDbId, myUserId, isAdmin, onBack, panelMode }: { 
           <button
             type="button"
             onClick={handleSendMessage}
-            disabled={sendingMessage}
+            disabled={sendingMessage || dmDailyRemaining === 0}
             className="p-2.5 rounded-full text-white active:scale-90 transition-all flex-shrink-0 disabled:opacity-30"
             style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
             aria-label={editingMsg ? "Save edit" : "Send message"}

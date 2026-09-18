@@ -547,7 +547,7 @@ export default function Profile() {
     if (!profile || profile.creatorStatus !== "active") return;
     setAlbumLoaded(false);
     listCreatorMedia(profile.id || effectiveParamId!)
-      .then((res) => setAlbumItems(res.items.filter((i) => !i.isPremium || isSubscribed)))
+      .then((res) => setAlbumItems(res.items.filter((i) => i.canView || i.blurred)))
       .catch(() => setAlbumItems([]))
       .finally(() => setAlbumLoaded(true));
   }, [profile?.id, profile?.creatorStatus, isSubscribed]);
@@ -2134,34 +2134,68 @@ export default function Profile() {
         return (
           <div className="mb-4 space-y-4">
             {photos.length > 0 && (() => {
-              const viewablePhotos = photos.filter(p => p.canView && (p.url || p.thumbUrl)).map(p => (p.url || p.thumbUrl) as string);
+              const viewablePhotos = photos.filter(p => p.canView && !p.blurred && (p.url || p.thumbUrl)).map(p => (p.url || p.thumbUrl) as string);
+              // Count of blurred (free-tier gated) photos so we can show the badge on the first one
+              const blurredCount = photos.filter(p => p.blurred).length;
               return (
               <div>
                 <p className="text-[10px] font-bold mb-2 px-0.5 uppercase tracking-[.08em]" style={{ color: "#A1A1A3" }}>Fotos</p>
                 <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-1">
-                  {photos.slice(0, 10).map((item) => {
+                  {photos.slice(0, 10).map((item, photoIdx) => {
                     const openPhoto = () => {
                       const src = (item.url || item.thumbUrl) as string | undefined;
                       if (src) setAlbumLightbox({ src, type: "image", list: viewablePhotos });
                     };
+                    const isFirstBlurred = item.blurred && photoIdx === photos.findIndex(p => p.blurred);
                     return (
                     <div
                       key={item.id}
                       className="relative flex-none w-24 h-[120px] rounded-lg overflow-hidden bg-white/5"
-                      role={item.canView ? "button" : undefined}
-                      tabIndex={item.canView ? 0 : undefined}
-                      aria-label={item.canView ? (item.caption || "Open photo") : undefined}
-                      onClick={item.canView ? openPhoto : undefined}
-                      onKeyDown={item.canView ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openPhoto(); } } : undefined}
-                      style={item.canView ? { cursor: "zoom-in" } : undefined}
+                      role={item.canView && !item.blurred ? "button" : undefined}
+                      tabIndex={item.canView && !item.blurred ? 0 : undefined}
+                      aria-label={item.canView && !item.blurred ? (item.caption || "Open photo") : item.blurred ? "Unlock with PRIME" : undefined}
+                      onClick={item.canView && !item.blurred ? openPhoto : item.blurred ? () => navigate("/subscribe?ref=creator-media&plan=monthly") : undefined}
+                      onKeyDown={item.canView && !item.blurred ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openPhoto(); } } : item.blurred ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); navigate("/subscribe?ref=creator-media&plan=monthly"); } } : undefined}
+                      style={item.canView && !item.blurred ? { cursor: "zoom-in" } : item.blurred ? { cursor: "pointer" } : undefined}
                     >
                       <img
                         src={item.thumbUrl || item.url || ""}
                         alt={item.caption || ""}
-                        className={`w-full h-full object-cover ${!item.canView ? "blur-md" : ""}`}
+                        className={`w-full h-full object-cover ${(!item.canView || item.blurred) ? "blur-md" : ""}`}
                         loading="lazy"
                       />
-                      {!item.canView && (
+                      {/* Free-tier blur gate: first blurred tile shows count badge + CTA */}
+                      {item.blurred && isFirstBlurred && (
+                        <div
+                          className="absolute inset-0 flex flex-col items-center justify-center gap-1.5"
+                          style={{ background: "rgba(0,0,0,0.55)" }}
+                        >
+                          <span className="text-base leading-none">🔒</span>
+                          <span
+                            className="text-[10px] font-bold text-center leading-tight px-1"
+                            style={{ color: "#D4007A" }}
+                          >
+                            {blurredCount} more
+                          </span>
+                          <span
+                            className="text-[8px] font-semibold text-center leading-tight px-0.5"
+                            style={{ color: "rgba(255,255,255,0.75)" }}
+                          >
+                            Unlock with PRIME
+                          </span>
+                        </div>
+                      )}
+                      {/* Free-tier blur gate: subsequent blurred tiles — subtle dark overlay only */}
+                      {item.blurred && !isFirstBlurred && (
+                        <div
+                          className="absolute inset-0 flex items-center justify-center"
+                          style={{ background: "rgba(0,0,0,0.45)" }}
+                        >
+                          <span className="text-white/40 text-xs">🔒</span>
+                        </div>
+                      )}
+                      {/* Premium / subscriber-only lock (existing behaviour) */}
+                      {!item.canView && !item.blurred && (
                         <button
                           onClick={handleSubscribeCta}
                           className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-black/40"

@@ -223,8 +223,16 @@ export default function SocialFeedTabs({
         } else {
           setPosts(res.posts);
         }
-        setNextCursor(res.nextCursor);
-        if ('freeUserLimited' in res) setFreeUserLimited(!!(res as { freeUserLimited?: boolean }).freeUserLimited);
+        // feedLocked means the backend refused page 2+ for free users — treat it
+        // the same as freeUserLimited: stop pagination and show the upgrade card.
+        const locked = !!(res as { feedLocked?: boolean }).feedLocked;
+        if (locked) {
+          setFreeUserLimited(true);
+          setNextCursor(null);
+        } else {
+          setNextCursor(res.nextCursor);
+          if ('freeUserLimited' in res) setFreeUserLimited(!!(res as { freeUserLimited?: boolean }).freeUserLimited);
+        }
         if ('needsLocation' in res) setNeedsLocation(!!(res as { needsLocation?: boolean }).needsLocation);
       }
     } catch (err) {
@@ -801,7 +809,53 @@ export default function SocialFeedTabs({
         </div>
       ) : (
         <div className="space-y-3">
-          {posts.map((post) => (
+          {posts.map((post) => {
+            // Synthetic live-stage card injected by the backend for free users
+            // when Main Stage has ≥1 active participant.
+            if ((post as unknown as { type?: string }).type === "main_stage_live") {
+              const count = (post as unknown as { participantCount: number }).participantCount;
+              return (
+                <button
+                  key="main-stage-live"
+                  type="button"
+                  onClick={() => navigate("/")}
+                  className="w-full text-left rounded-2xl p-4 flex flex-col gap-2 active:scale-[0.99] transition-transform"
+                  style={{
+                    background: "linear-gradient(135deg, rgba(212,0,122,0.13), rgba(30,10,20,0.95))",
+                    border: "1.5px solid rgba(212,0,122,0.40)",
+                  }}
+                  aria-label="Join Main Stage — live now"
+                >
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="w-2.5 h-2.5 rounded-full flex-shrink-0 animate-pulse"
+                      style={{ background: "#D4007A" }}
+                      aria-hidden="true"
+                    />
+                    <span
+                      className="text-[11px] font-bold tracking-widest uppercase"
+                      style={{ color: "#D4007A" }}
+                    >
+                      Live
+                    </span>
+                  </div>
+                  <p className="text-white font-bold text-base leading-snug">
+                    Main Stage is live right now — {count} {count === 1 ? "person" : "people"} on cam
+                  </p>
+                  <p className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                    Join free for 3 hours &middot; PRIME members always in
+                  </p>
+                  <div
+                    className="mt-1 self-start px-4 py-1.5 rounded-lg text-white text-xs font-bold"
+                    style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+                    aria-hidden="true"
+                  >
+                    Join now
+                  </div>
+                </button>
+              );
+            }
+            return (
             <SocialPostCard
               key={post.id}
               post={post}
@@ -817,22 +871,23 @@ export default function SocialFeedTabs({
               viewerCountry={viewerCountry}
               distanceKm={nearbyDistances.get(String(post.author_id)) ?? null}
             />
-          ))}
+            );
+          })}
           {freeUserLimited && (
             <div
               className="rounded-2xl p-5 text-center mx-1"
-              style={{ background: "linear-gradient(135deg, rgba(212,0,122,0.12), rgba(230,145,56,0.08))", border: "1px solid rgba(212,0,122,0.25)" }}
+              style={{ background: "#1C1C1E", border: "1px solid rgba(212,0,122,0.30)" }}
             >
-              <p className="text-base font-bold text-white mb-1">You're seeing 5 of many posts</p>
+              <p className="text-base font-bold text-white mb-1">500+ posts waiting</p>
               <p className="text-xs mb-4" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-                Become a PNPtv! member to unlock the full community feed, browse all profiles, and access channels.
+                Get PRIME to unlock the full feed — exclusive content, live streams, private shows.
               </p>
               <button
-                onClick={() => onNavigate("/subscribe")}
+                onClick={() => navigate("/subscribe?ref=feed-cap&plan=monthly")}
                 className="text-sm font-semibold px-6 py-2.5 rounded-xl text-white"
                 style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
               >
-                Join the community →
+                Unlock everything
               </button>
             </div>
           )}
