@@ -437,13 +437,12 @@ export default function SocialPostCard({
   const effectiveAuthorPhoto = isOwn && user?.photoUrl ? user.photoUrl : post.author_photo;
 
   // Creator upsell CTAs on video posts (mirrors PostCard.tsx profile view).
-  // Santino's videos push Become PRIME (classic Telegram content + hangout);
-  // every other active creator pushes membership for exclusive content, channel & private hangout.
+  // $50/yr + $100 lifetime buttons appear on every post for non-PRIME viewers.
   // Use viewerTier !== "prime" (not !isPrime) so admins can see the banner and verify it works.
   const isPrimeCreator =
     ["8599671840", "8552451957"].includes(String(post.author_id)) ||
     ["santinofurioso", "pnptv"].includes(String(post.author_username || "").toLowerCase());
-  const showPrimeUpsell = isPrimeCreator && viewerTier !== "prime" && !post.is_exclusive && !isOwn;
+  const showPrimeUpsell = viewerTier !== "prime" && !post.is_exclusive && !isOwn;
   const primeUpsellKey = `pnp_prime_upsell_dismissed_${post.author_id}`;
   const [primeUpsellDismissed, setPrimeUpsellDismissed] = useState(() => {
     try { return sessionStorage.getItem(primeUpsellKey) === "1"; } catch { return false; }
