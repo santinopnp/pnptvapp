@@ -23,6 +23,8 @@ interface BottomBarProps {
   /** PRIME play-next — only shown for prime / admin */
   onPlayNext?: () => void;
   playNextCooldown?: number; // seconds remaining
+  /** Called when a newcomer (no mic) taps the mic upgrade button */
+  onUpgradeForMic?: () => void;
 }
 
 export function BottomBarInner({
@@ -39,6 +41,7 @@ export function BottomBarInner({
   onVoteSkip,
   onPlayNext,
   playNextCooldown,
+  onUpgradeForMic,
 }: BottomBarProps) {
   const { localParticipant, isMicrophoneEnabled, isCameraEnabled } = useLocalParticipant();
   const t = useI18n();
@@ -129,11 +132,14 @@ export function BottomBarInner({
   })();
 
   const handleMicToggle = useCallback(() => {
-    if (!isAdmin && !hasMic) return;
+    if (!isAdmin && !hasMic) {
+      onUpgradeForMic?.();
+      return;
+    }
     void localParticipant.setMicrophoneEnabled(!isMicrophoneEnabled).catch(() => {
       // Mic permission denied or device unavailable — silently ignore.
     });
-  }, [isAdmin, hasMic, localParticipant, isMicrophoneEnabled]);
+  }, [isAdmin, hasMic, localParticipant, isMicrophoneEnabled, onUpgradeForMic]);
 
   const handleCamToggle = useCallback(() => {
     if (!isAdmin) return;
@@ -349,18 +355,27 @@ export function BottomBarInner({
         </button>
       )}
 
-      {/* Newcomer badge — cam only, mic muted */}
+      {/* Newcomer mic upgrade button — glowing pink pulse, replaces the generic disabled state */}
       {isParticipant && !isAdmin && !hasMic && (
-        <span
-          className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-semibold text-white/70"
-          style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.10)" }}
-          title="Camera is required and your microphone is muted. Become a Member to unlock your mic."
+        <button
+          type="button"
+          onClick={() => onUpgradeForMic?.()}
+          aria-label="Activate mic — upgrade to PRIME"
+          title="PRIME unlocks your mic + keeps you on stage all night"
+          className="min-h-[40px] flex-shrink-0 flex items-center gap-1.5 px-3 rounded-full text-[10px] font-bold transition-all active:scale-[0.94] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pnp-accent focus-visible:ring-offset-2 focus-visible:ring-offset-black animate-pulse"
+          style={{
+            background: "rgba(212,0,122,0.14)",
+            border: "1px solid rgba(212,0,122,0.45)",
+            color: "#FF6BB0",
+            boxShadow: "0 0 10px rgba(212,0,122,0.30)",
+            animationDuration: "2s",
+          }}
         >
-          <svg className="w-3 h-3 text-pnp-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9A2.25 2.25 0 004.5 18.75z" />
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" />
           </svg>
-          <span>Cam on · Mic muted</span>
-        </span>
+          <span>Activate mic</span>
+        </button>
       )}
     </div>
   );

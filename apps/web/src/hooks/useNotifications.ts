@@ -192,9 +192,35 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       }
     };
 
+    const onFriendOnStage = (data: {
+      userId: string;
+      displayName: string;
+      participantCount: number;
+      photoUrl?: string | null;
+    }) => {
+      const toastId = Date.now();
+      const count = data.participantCount ?? 1;
+      setLatestToast({
+        id: toastId,
+        message: `🎥 ${data.displayName} is live on Main Stage — ${count} on cam → join them`,
+        actor: {
+          id: data.userId,
+          firstName: data.displayName,
+          photoUrl: data.photoUrl ?? undefined,
+        },
+        // type "system" with metadata.url "/" makes getNotificationDeepLink
+        // return "/" — which the Toast component's handleTap navigates to via
+        // react-router navigate(), landing the user on the Main Stage page.
+        type: "system",
+        entityType: undefined,
+        entityId: undefined,
+      });
+    };
+
     socket.on("connect", onConnect);
     socket.on("disconnect", onDisconnect);
     socket.on("notification:new", onNewNotification);
+    socket.on("friend_on_stage", onFriendOnStage);
 
     return () => {
       // Remove only the notification-specific listeners.
@@ -202,6 +228,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       socket.off("connect", onConnect);
       socket.off("disconnect", onDisconnect);
       socket.off("notification:new", onNewNotification);
+      socket.off("friend_on_stage", onFriendOnStage);
       if (pollRef.current) {
         clearInterval(pollRef.current);
         pollRef.current = null;

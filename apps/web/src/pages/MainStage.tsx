@@ -355,6 +355,7 @@ interface MainStageInnerProps {
   onStage?: MainStageOnStageEntry[];
   onTipCreator?: (userId: string, username: string | null) => void;
   onBookCreator?: (creator: { id: string; username: string; isCrystal: boolean }) => void;
+  onUpgradeForMic?: () => void;
 }
 
 function MainStageInner({
@@ -387,6 +388,7 @@ function MainStageInner({
   onStage,
   onTipCreator,
   onBookCreator,
+  onUpgradeForMic,
 }: MainStageInnerProps) {
   const [modeTransitioning, setModeTransitioning] = useState(false);
   const prevModeRef = useRef(mode);
@@ -840,12 +842,20 @@ export default function MainStage() {
   // ── Countdown timers ────────────────────────────────────────────────────────
   // For authenticated free users: remaining seconds of their 1h session.
   const [sessionSecsLeft, setSessionSecsLeft] = useState<number | null>(null);
+  const [showTenMinBanner, setShowTenMinBanner] = useState(false);
+  const tenMinWarnFiredRef = useRef(false);
   useEffect(() => {
+    tenMinWarnFiredRef.current = false;
+    setShowTenMinBanner(false);
     if (!sessionStartedAt || !sessionLimitSeconds) { setSessionSecsLeft(null); return; }
     const tick = () => {
       const elapsed = Math.floor((Date.now() - sessionStartedAt) / 1000);
       const left = Math.max(0, sessionLimitSeconds - elapsed);
       setSessionSecsLeft(left);
+      if (left <= 600 && left > 0 && !tenMinWarnFiredRef.current) {
+        tenMinWarnFiredRef.current = true;
+        setShowTenMinBanner(true);
+      }
     };
     tick();
     const id = setInterval(tick, 1000);
@@ -1209,48 +1219,52 @@ export default function MainStage() {
 
   // ── Free-user cooldown screen ────────────────────────────────────────────────
   if (!isGuestMode && cooldownSeconds !== null) {
-    const mins = cooldownLeft !== null ? Math.ceil(cooldownLeft / 60) : Math.ceil(cooldownSeconds / 60);
+    const cooldownDisplay = cooldownLeft !== null ? fmtCooldown(cooldownLeft) : `${Math.ceil((cooldownSeconds ?? 0) / 3600)}h`;
     return (
-      <div className="fixed inset-0 flex flex-col items-center justify-center gap-6 px-6 text-center bg-pnp-background">
-        <img src="/logo-login.png" alt="PNPtv!" className="h-10 w-auto object-contain brightness-110 mb-2" />
-        <div
-          className="w-20 h-20 rounded-3xl flex items-center justify-center"
-          style={{ background: "linear-gradient(135deg,rgba(212,0,122,0.18),rgba(123,97,255,0.18))", border: "1px solid rgba(212,0,122,0.3)" }}
-        >
-          <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} style={{ color: "#D4007A" }}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
+      <div className="fixed inset-0 flex flex-col items-center justify-center gap-5 px-6 text-center bg-pnp-background">
+        <img src="/logo-login.png" alt="PNPtv!" className="h-9 w-auto object-contain brightness-110" />
+
+        {/* Pulsing live indicator — stage is still going */}
+        <div className="flex items-center gap-2">
+          <span className="w-2.5 h-2.5 rounded-full animate-pulse" style={{ background: "#D4007A" }} />
+          <span className="text-[11px] font-bold tracking-widest uppercase" style={{ color: "#D4007A" }}>Live right now</span>
         </div>
+
         <div>
-          <p className="text-white font-bold text-xl mb-1">Loved having you on stage 💎</p>
-          <p className="text-white/70 text-sm max-w-xs mx-auto">
-            Come back in{" "}
-            <span className="text-pink-400 font-bold tabular-nums">
-              {cooldownLeft !== null ? fmtCooldown(cooldownLeft) : `${Math.ceil(mins/60)}h`}
-            </span>
-            , or skip the wait and become a Member — cam + mic all day.
+          <p className="text-white font-bold text-2xl mb-2">The party's still going 🔥</p>
+          <p className="text-white/70 text-sm max-w-xs mx-auto leading-relaxed">
+            You've used your 3-hour preview. The stage is still packed — get back in all night with PRIME.
           </p>
-          <p className="text-white/35 text-xs mt-1 max-w-xs mx-auto">
-            Nos encantó tenerte 💎 Vuelve en{" "}
-            <span className="tabular-nums">
-              {cooldownLeft !== null ? fmtCooldown(cooldownLeft) : `${Math.ceil(mins/60)}h`}
-            </span>
-            {" "}o únete como Miembro — cámara + mic todo el día.
+          <p className="text-white/35 text-xs mt-2 max-w-xs mx-auto">
+            Tu preview terminó. El stage sigue encendido — vuelve toda la noche con PRIME.
           </p>
         </div>
+
         <div className="flex flex-col gap-3 w-full max-w-xs">
           <button
             type="button"
-            onClick={() => navigate("/subscribe")}
-            className="min-h-[50px] w-full rounded-2xl text-sm font-bold text-white transition-all active:scale-[0.97]"
+            onClick={() => navigate("/subscribe?ref=mainstage-cooldown&plan=monthly")}
+            className="min-h-[52px] w-full rounded-2xl text-sm font-bold text-white transition-all active:scale-[0.97]"
             style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}
           >
-            Become a Member — Cam + Mic, Unlimited Access
+            Stay all night — $15/mo
           </button>
           <button
             type="button"
+            onClick={() => navigate("/subscribe?ref=mainstage-cooldown")}
+            className="min-h-[44px] w-full rounded-2xl text-sm font-semibold text-white/80 transition-all active:scale-[0.97]"
+            style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.12)" }}
+          >
+            See all plans
+          </button>
+          <p className="text-white/30 text-xs tabular-nums">
+            Free preview resets in{" "}
+            <span className="text-white/50 font-semibold">{cooldownDisplay}</span>
+          </p>
+          <button
+            type="button"
             onClick={() => { clearCooldown(); navigate(-1); }}
-            className="min-h-[40px] w-full rounded-xl text-xs font-semibold text-white/40 transition-all active:scale-[0.97]"
+            className="text-xs font-semibold text-white/25 transition-all hover:text-white/40 active:scale-[0.97]"
           >
             Leave Main Stage
           </button>
@@ -1804,6 +1818,34 @@ export default function MainStage() {
         </div>
       </header>
 
+      {/* T-10 min upgrade nudge — shown once when newcomer session hits ≤10 min */}
+      {showTenMinBanner && participantTier === 'newcomer' && (
+        <div
+          className="flex-shrink-0 flex items-center justify-between gap-2 px-4 py-2 text-xs font-semibold"
+          style={{ background: "rgba(212,0,122,0.18)", borderBottom: "1px solid rgba(212,0,122,0.35)" }}
+        >
+          <span style={{ color: "#FF6BB0" }}>10 minutes left in your preview — stay all night for $15 →</span>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <button
+              type="button"
+              onClick={() => navigate("/subscribe?ref=mainstage-timer&plan=monthly")}
+              className="px-3 py-1 rounded-full text-white font-bold text-[10px] transition-all active:scale-95"
+              style={{ background: "linear-gradient(90deg,#D4007A,#7B61FF)" }}
+            >
+              Get PRIME
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowTenMinBanner(false)}
+              aria-label="Dismiss"
+              className="text-white/40 hover:text-white/70 transition-colors"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Topic strip — always rendered (seed guarantees non-empty state).
           flex-shrink-0 + explicit min-height prevents any parent flex layout
           from collapsing it on cramped mobile viewports. */}
@@ -2080,6 +2122,7 @@ export default function MainStage() {
                 onStage={state?.spotlight?.onStage}
                 onTipCreator={(userId, username) => { setTipSelectedCreatorId(userId); setShowTipSheet(true); void username; }}
                 onBookCreator={(c) => setBookCallCreator({ id: c.id, username: c.username, photo_url: null, creator_type: "occasional", creator_price_usd: 0, crystalCreator: c.isCrystal })}
+                onUpgradeForMic={() => navigate("/subscribe?ref=mainstage-mic&plan=monthly")}
               />
             </LiveKitRoom>
           ) : isViewerMode ? (
@@ -2233,6 +2276,7 @@ export default function MainStage() {
                 onStage={state?.spotlight?.onStage}
                 onTipCreator={(userId, username) => { setTipSelectedCreatorId(userId); setShowTipSheet(true); void username; }}
                 onBookCreator={(c) => setBookCallCreator({ id: c.id, username: c.username, photo_url: null, creator_type: "occasional", creator_price_usd: 0, crystalCreator: c.isCrystal })}
+                onUpgradeForMic={() => navigate("/subscribe?ref=mainstage-mic&plan=monthly")}
               />
             </LiveKitRoom>
           )}

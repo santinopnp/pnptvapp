@@ -1120,6 +1120,12 @@ async function addCammer(identity) {
     logger.warn('[MainStage] notifyCammerJoined failed', { identity, error: err.message })
   );
 
+  // Fire-and-forget Socket.IO toast to online followers. De-duped with same
+  // 15-min window as notifyCammerJoined via a shared Redis key.
+  notifyFollowersOnStage(identity).catch((err) =>
+    logger.warn('[MainStage] notifyFollowersOnStage failed', { identity, error: err.message })
+  );
+
   // Fire mode auto-flip evaluation AFTER the cammer is in the queue + role cached.
   const creatorsAfter = await countCreatorsInQueue();
   const humansAfter = await countHumanCammers();
@@ -1190,6 +1196,94 @@ async function notifyCammerJoined(identity) {
   }, { notifType: 'live_events' });
   logger.info('[MainStage] notifyCammerJoined delivered', {
     identity: idStr, audienceSize: userIds.length, sent,
+  });
+}
+
+/**
+ * Emit a `friend_on_stage` Socket.IO event to the online followers of a cammer
+ * who just joined the Main Stage. Best-effort — swallows all failures. Shares
+ * the same 15-min Redis dedupe key as notifyCammerJoined so a single join event
+ * doesn't produce both a push notification AND a socket toast to the same user.
+ *
+ * Follower fan-out is capped at 200 rows. Only followers whose
+ * `presence:online:{id}` Redis key is set (refreshed every 60s by the
+ * heartbeat in dmService) receive the event.
+ */
+async function notifyFollowersOnStage(identity) {
+  if (!_io) return;
+  const idStr = String(identity);
+  if (idStr === MEDIA_BOT_IDENTITY) return;
+  if (idStr.startsWith('guest_') || idStr.startsWith('viewer_')) return;
+
+  const redis = getRedis();
+  // Independent dedupe key — does not share with notifyCammerJoined's push key
+  // so both push (pnp-member only) and socket toast (all followers) can fire.
+  const socketDedupeKey = `mainstage:socket:sent:${idStr}`;
+  const acquired = await redis.set(socketDedupeKey, '1', 'EX', 15 * 60, 'NX').catch(() => null);
+  if (!acquired) {
+    logger.debug('[MainStage] notifyFollowersOnStage skipped — deduped', { identity: idStr });
+    return;
+  }
+
+  const pool = getPool();
+
+  // Resolve cammer display name and current cammer count in parallel.
+  const [userRes, stateSnap] = await Promise.all([
+    pool.query(
+      `SELECT u.id, u.username, u.first_name,
+              COALESCE(p.photo_url, u.photo_file_id) AS photo_url
+         FROM users u
+         LEFT JOIN performers p ON p.user_id::text = u.id::text AND p.status = 'active'
+        WHERE u.id::text = $1
+        LIMIT 1`,
+      [idStr]
+    ),
+    getState().catch(() => null),
+  ]);
+
+  if (userRes.rows.length === 0) return;
+  const cammer = userRes.rows[0];
+  const displayName = cammer.first_name || cammer.username || 'Someone';
+  const participantCount = stateSnap?.counts?.participants ?? 1;
+
+  // Fetch up to 200 followers of this user — no tier filter; free users included.
+  const { rows: followerRows } = await pool.query(
+    `SELECT uf.follower_id::text AS follower_id
+       FROM user_follows uf
+       JOIN users u ON u.id = uf.follower_id
+      WHERE uf.following_id::text = $1
+        AND u.deleted_at IS NULL
+        AND COALESCE(u.tier, 'free') != 'banned'
+      LIMIT 200`,
+    [idStr]
+  );
+
+  if (followerRows.length === 0) return;
+
+  // Batch-check online presence in Redis using a pipeline to avoid N+1 RTTs.
+  const pipeline = redis.pipeline();
+  for (const row of followerRows) {
+    pipeline.exists(`presence:online:${row.follower_id}`);
+  }
+  const presenceResults = await pipeline.exec().catch(() => null);
+  if (!presenceResults) return;
+
+  let emitCount = 0;
+  for (let i = 0; i < followerRows.length; i++) {
+    const isOnline = presenceResults[i]?.[1] === 1;
+    if (!isOnline) continue;
+    const followerId = followerRows[i].follower_id;
+    _io.to(`user:${followerId}`).emit('friend_on_stage', {
+      userId: cammer.id,
+      displayName,
+      participantCount,
+      photoUrl: cammer.photo_url || null,
+    });
+    emitCount++;
+  }
+
+  logger.info('[MainStage] notifyFollowersOnStage delivered', {
+    identity: idStr, followerCount: followerRows.length, emitCount,
   });
 }
 
@@ -1297,6 +1391,9 @@ async function addCammerForce(identity) {
   upsertCammerStats(identity).catch(() => {});
   notifyCammerJoined(identity).catch((err) =>
     logger.warn('[MainStage] notifyCammerJoined failed (force path)', { identity, error: err.message })
+  );
+  notifyFollowersOnStage(identity).catch((err) =>
+    logger.warn('[MainStage] notifyFollowersOnStage failed (force path)', { identity, error: err.message })
   );
 
   const creatorsAfter = await countCreatorsInQueue();

@@ -127,6 +127,42 @@ async function resolveCreatorChannel(userId, isExclusive) {
 
 const FREE_FEED_LIMIT = 5; // kept for reference, no longer enforced
 
+// ── Main Stage live card injection ────────────────────────────────────────────
+// Returns a synthetic feed item if the Main Stage has ≥1 human cammer on,
+// or null when the stage is empty / Redis is unavailable.
+// Reads mainstage:spotlight:queue (Redis list) directly — no service import
+// needed, keeping the hot path cheap (one LRANGE call, cached externally by
+// the rotation tick).
+const MAINSTAGE_QUEUE_KEY = 'mainstage:spotlight:queue';
+const MAINSTAGE_MEDIA_BOT = 'mainstage-media';
+
+function _isHumanCammer(id) {
+  const s = String(id || '');
+  if (!s) return false;
+  if (s === MAINSTAGE_MEDIA_BOT) return false;
+  if (s.startsWith('guest_') || s.startsWith('viewer_') || s.startsWith('replay-')) return false;
+  return true;
+}
+
+async function _getMainStageLiveCard() {
+  try {
+    const { getRedis } = require('../../../config/redis');
+    const redis = getRedis();
+    // Fetch up to 20 entries — we only need count + first few names.
+    const queue = await redis.lrange(MAINSTAGE_QUEUE_KEY, 0, 19);
+    const humanQueue = queue.filter(_isHumanCammer);
+    if (humanQueue.length === 0) return null;
+    return {
+      id: 'main-stage-live',
+      type: 'main_stage_live',
+      participantCount: humanQueue.length,
+    };
+  } catch {
+    // Redis unavailable or key missing — degrade gracefully, never block the feed.
+    return null;
+  }
+}
+
 const getFeed = async (req, res) => {
   const user = authGuard(req, res); if (!user) return;
   try {
@@ -138,14 +174,29 @@ const getFeed = async (req, res) => {
     const blockedIds = (blockedRes.rows[0]?.blocked || []).map(Number);
     // 5-tab feed dispatcher (2026-07-23). No filter param → 'all' (legacy).
     const filter = String(req.query.filter || 'all');
-    const result = await SocialPostService.getFeedFiltered({
-      userId: user.id,
-      filter,
-      cursor: req.query.cursor,
-      limit: req.query.limit,
-      viewerTier, isAdmin, blockedIds,
-      viewerGeoTags: req.viewerGeoTags || [],
-    });
+
+    // Run feed fetch + live-card check in parallel — the card check is a cheap
+    // single Redis LRANGE and must never delay the feed response.
+    const isFreeUser = viewerTier === 'free';
+    const [result, liveCard] = await Promise.all([
+      SocialPostService.getFeedFiltered({
+        userId: user.id,
+        filter,
+        cursor: req.query.cursor,
+        limit: req.query.limit,
+        viewerTier, isAdmin, blockedIds,
+        viewerGeoTags: req.viewerGeoTags || [],
+      }),
+      // Only inject for free-tier users; skip entirely on paginated requests
+      // (cursor present) so the card doesn't re-appear on page 2+.
+      (isFreeUser && !req.query.cursor) ? _getMainStageLiveCard() : Promise.resolve(null),
+    ]);
+
+    // Inject the live card at position 1 (after the first post, if any).
+    if (liveCard && Array.isArray(result.posts) && result.posts.length > 0) {
+      result.posts.splice(1, 0, liveCard);
+    }
+
     return res.json({ success: true, freeUserLimited: false, filter, ...result });
   } catch (err) {
     logger.error('getFeed error', err);
@@ -2595,12 +2646,25 @@ const sharePostToHangouts = async (req, res) => {
     return res.status(400).json({ error: 'No valid groupIds' });
   }
 
-  // Fetch source post
+  // Auto-join main hangout before membership check (idempotent via ON CONFLICT DO NOTHING)
+  await dbQuery(
+    `INSERT INTO hangout_group_members (group_id, user_id, role)
+     SELECT id, $1, 'member' FROM hangout_groups WHERE is_main = true
+     ON CONFLICT DO NOTHING`,
+    [user.id]
+  );
+
+  // Fetch source post with all fields needed for a rich card snapshot
   const { rows: postRows } = await dbQuery(
-    `SELECT sp.id, sp.user_id, sp.content, sp.media_url, sp.media_type, sp.is_deleted, sp.is_shareable,
-            sp.is_exclusive, sp.video_title, sp.video_description, sp.video_thumbnail_url,
+    `SELECT sp.id, sp.user_id, sp.content, sp.media_url, sp.media_type, sp.media_thumb_url,
+            sp.is_deleted, sp.is_shareable, sp.is_exclusive,
+            sp.video_title, sp.video_description, sp.video_thumbnail_url,
+            sp.created_at AS post_created_at,
             u.username AS author_username, u.first_name AS author_first_name,
-            u.photo_file_id AS author_photo
+            u.photo_file_id AS author_photo, u.creator_status AS author_creator_status,
+            u.tier AS author_tier,
+            (SELECT COUNT(*)::int FROM social_post_likes l WHERE l.post_id = sp.id) AS likes_count,
+            (SELECT COUNT(*)::int FROM social_posts r WHERE r.parent_id = sp.id AND r.is_deleted = false) AS replies_count
        FROM social_posts sp
        JOIN users u ON u.id = sp.user_id
       WHERE sp.id = $1`,
@@ -2637,13 +2701,19 @@ const sharePostToHangouts = async (req, res) => {
       authorUsername: post.author_username || null,
       authorFirstName: post.author_first_name || null,
       authorPhoto: resolvePhoto(post.author_photo),
+      authorCreatorStatus: post.author_creator_status || null,
+      authorTier: post.author_tier || null,
       content: preview || null,
       mediaUrl: post.is_exclusive ? null : (post.media_url || null),
       mediaType: post.media_type || null,
+      mediaThumbUrl: post.is_exclusive ? null : (post.media_thumb_url || null),
       videoTitle: post.video_title || null,
       videoDescription: post.video_description || null,
       videoThumbnailUrl: post.video_thumbnail_url || null,
       isExclusive: post.is_exclusive ? true : undefined,
+      likesCount: post.likes_count || 0,
+      repliesCount: post.replies_count || 0,
+      postCreatedAt: post.post_created_at || null,
       note: noteText || null,
     },
   };
@@ -2672,21 +2742,23 @@ const sharePostToHangouts = async (req, res) => {
       const parentGroupId = groupMeta[0]?.channel_id ?? null;
       const memberCheckId = parentGroupId ?? groupId;
 
-      // Membership check — use parent group ID for topics
+      const isSuperAdmin = user.role === 'admin' || user.role === 'superadmin';
+
+      // Membership check — use parent group ID for topics; admins bypass
       const { rows: memberRows } = await dbQuery(
         `SELECT is_banned, is_muted, muted_until FROM hangout_group_members
           WHERE group_id = $1 AND user_id = $2`,
         [memberCheckId, user.id]
       );
-      if (memberRows.length === 0) {
+      if (memberRows.length === 0 && !isSuperAdmin) {
         results.push({ groupId, status: 'skipped', reason: 'not_a_member' });
         continue;
       }
-      if (memberRows[0].is_banned) {
+      if (memberRows[0]?.is_banned) {
         results.push({ groupId, status: 'skipped', reason: 'banned' });
         continue;
       }
-      if (memberRows[0].is_muted && (!memberRows[0].muted_until || new Date(memberRows[0].muted_until) > new Date())) {
+      if (memberRows[0]?.is_muted && (!memberRows[0].muted_until || new Date(memberRows[0].muted_until) > new Date())) {
         results.push({ groupId, status: 'skipped', reason: 'muted' });
         continue;
       }
