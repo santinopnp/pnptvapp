@@ -1872,6 +1872,9 @@ export function Layout() {
           per UTC day. Skips checkout/onboarding/login/main-stage routes. */}
       <FeaturedModelInterstitial />
 
+      {/* Wallet login tip — one-time popup explaining how to access PNP Wallet */}
+      <WalletLoginTip />
+
       {/* Global announcement strip — only after verification */}
       {isAuthenticated && user?.ageVerified && user?.termsAccepted && (
         <div className={`fixed left-0 right-0 z-40 pointer-events-none lg:bottom-0 lg:left-72 ${
@@ -3709,6 +3712,127 @@ export function CryptoGuideCallout({
         </button>
       )}
     </div>
+  );
+}
+
+// ── WalletLoginTip ────────────────────────────────────────────────────────────
+// One-time popup explaining how to log in to PNP Wallet (same methods as PNPtv).
+// Shown on next app open; dismissed forever once user taps "Got it" or "Open Wallet".
+const WALLET_TIP_KEY = "pnptv:wallet-login-tip:v1";
+
+function WalletLoginTip() {
+  const [visible, setVisible] = useState(false);
+  const { isAuthenticated, isLoading } = useAuth();
+  const navigate = useNavigate();
+  const { isTelegram: isTg } = useTelegram();
+
+  useEffect(() => {
+    if (isLoading) return;
+    try {
+      if (!localStorage.getItem(WALLET_TIP_KEY)) setVisible(true);
+    } catch {}
+  }, [isLoading]);
+
+  const dismiss = () => {
+    try { localStorage.setItem(WALLET_TIP_KEY, "1"); } catch {}
+    setVisible(false);
+  };
+
+  const openWallet = () => {
+    dismiss();
+    window.dispatchEvent(new CustomEvent(OPEN_WALLET_EVENT));
+  };
+
+  if (!visible || isLoading) return null;
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[110] flex items-end sm:items-center justify-center p-4 pb-6"
+      style={{ background: "rgba(0,0,0,0.72)" }}
+      onClick={dismiss}
+    >
+      <div
+        className="w-full max-w-sm rounded-2xl p-6"
+        style={{
+          background: "linear-gradient(160deg, #18181f 0%, #0d0d12 100%)",
+          border: "1px solid rgba(212,0,122,0.35)",
+          boxShadow: "0 24px 64px rgba(0,0,0,0.7)",
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-start justify-between mb-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-widest mb-1" style={{ color: "#D4007A" }}>PNP Wallet</p>
+            <h2 className="text-lg font-bold text-white leading-tight">Your wallet is ready</h2>
+          </div>
+          <button type="button" onClick={dismiss} className="text-white/40 hover:text-white/70 ml-2 mt-0.5">
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <p className="text-sm mb-5 leading-relaxed" style={{ color: "rgba(255,255,255,0.7)" }}>
+          Log in to PNP Wallet the same way you log in to PNPtv — no new account needed:
+        </p>
+
+        {/* Login method rows */}
+        <div className="space-y-2.5 mb-6">
+          {/* X / Twitter */}
+          <div className="flex items-center gap-3 rounded-xl px-4 py-3" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" }}>
+            <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: "rgba(0,0,0,0.6)", border: "1px solid rgba(255,255,255,0.12)" }}>
+              <svg className="w-4 h-4 text-white" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.73-8.835L1.254 2.25H8.08l4.253 5.622zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+              </svg>
+            </div>
+            <span className="text-sm font-medium text-white">Continue with X</span>
+          </div>
+
+          {/* Email */}
+          <div className="flex items-center gap-3 rounded-xl px-4 py-3" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" }}>
+            <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: "rgba(212,0,122,0.15)", border: "1px solid rgba(212,0,122,0.25)" }}>
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="#D4007A" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                <rect x="2" y="4" width="20" height="16" rx="2" />
+                <path d="m2 7 10 7 10-7" />
+              </svg>
+            </div>
+            <span className="text-sm font-medium text-white">Continue with Email</span>
+          </div>
+
+          {/* Telegram */}
+          <div className="flex items-center gap-3 rounded-xl px-4 py-3" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" }}>
+            <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: "rgba(39,161,242,0.15)", border: "1px solid rgba(39,161,242,0.25)" }}>
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="#27A1F2">
+                <path d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2zm4.93 6.832-1.678 7.91c-.124.555-.453.693-.918.432l-2.54-1.873-1.226 1.18c-.135.135-.25.25-.513.25l.183-2.6 4.726-4.268c.206-.183-.044-.285-.319-.102L7.95 14.94l-2.496-.779c-.543-.17-.554-.543.113-.803l9.724-3.748c.452-.165.848.11.64.222z" />
+              </svg>
+            </div>
+            <span className="text-sm font-medium text-white">Continue with Telegram</span>
+          </div>
+        </div>
+
+        {/* CTAs */}
+        {isAuthenticated && (
+          <button
+            type="button"
+            onClick={openWallet}
+            className="w-full py-3 rounded-xl font-bold text-sm text-white mb-2"
+            style={{ background: "linear-gradient(135deg, #D4007A, #9b59b6)" }}
+          >
+            Open my wallet
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={dismiss}
+          className="w-full py-2.5 rounded-xl text-xs font-semibold"
+          style={{ color: "rgba(255,255,255,0.45)", background: "transparent" }}
+        >
+          Got it
+        </button>
+      </div>
+    </div>,
+    document.body
   );
 }
 
