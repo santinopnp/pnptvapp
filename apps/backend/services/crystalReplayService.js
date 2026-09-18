@@ -209,12 +209,20 @@ async function _createLiveKitIngressForReplay(creatorUserId, show, displayName) 
       // Delete stale ingresses before creating so there's no overlap.
       await _deleteExistingReplayIngress(creatorUserId);
 
+      // Route through our internal proxy (adds Referer: https://pnptv.app/).
+      // Use the 360p sub-playlist directly instead of the master playlist to avoid
+      // GStreamer's adaptive bitrate switching logic which triggers a go-glib crash.
+      const APP_ORIGIN = process.env.WEBAPP_URL || 'https://pnptv.app';
+      const ingressUrl = show.source_url
+        .replace(/^https?:\/\//, `${APP_ORIGIN}/api/internal/bunny-hls/`)
+        .replace(/\/playlist\.m3u8$/, '/360p/video.m3u8');
+
       const ingress = await client.createIngress(IngressInput.URL_INPUT, {
         name,
         roomName:            ROOM_NAME,
         participantIdentity: identity,
         participantName:     displayName || 'Encore Show',
-        url:                 show.source_url,
+        url:                 ingressUrl,
         participantMetadata: JSON.stringify({
           replay:          true,
           hide_badge:      !!show.hide_badge,

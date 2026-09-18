@@ -257,7 +257,7 @@ async function processHangoutMedia(file, hangoutId, userId) {
   const detected = await FileType.fromBuffer(file.buffer);
   const MAGIC_ALLOWED = new Set([
     'image/jpeg', 'image/png', 'image/webp', 'image/gif',
-    'video/mp4', 'video/webm',
+    'video/mp4', 'video/webm', 'video/quicktime', 'video/x-m4v',
     'audio/webm', 'audio/ogg', 'audio/mp4', 'audio/mpeg',
   ]);
   if (!detected || !MAGIC_ALLOWED.has(detected.mime)) {

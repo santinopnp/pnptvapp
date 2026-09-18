@@ -43,6 +43,9 @@ export default function Social() {
   const [contentDisclaimer, setContentDisclaimer] = useState(
     user?.contentDisclaimer || false
   );
+  useEffect(() => {
+    if (user?.contentDisclaimer === true) setContentDisclaimer(true);
+  }, [user?.contentDisclaimer]);
   const handleAcceptDisclaimer = useCallback(async () => {
     await updateProfile({ contentDisclaimer: true });
     setContentDisclaimer(true);

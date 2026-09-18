@@ -1855,7 +1855,7 @@ function HangoutChatPanel({
             </div>
           )}
 
-          <div className="flex items-end gap-1.5 px-2 py-1.5 border-t border-pnp-border flex-shrink-0 bg-pnp-background" style={{ paddingBottom: "max(0.375rem, env(safe-area-inset-bottom))" }}>
+          <div className="relative z-30 flex items-end gap-1.5 px-2 py-1.5 border-t border-pnp-border flex-shrink-0 bg-pnp-background" style={{ paddingBottom: "max(0.375rem, env(safe-area-inset-bottom))" }}>
           {!editingMsg && (
             <div className="flex items-end gap-1 mb-0.5">
               <MediaUploadButton

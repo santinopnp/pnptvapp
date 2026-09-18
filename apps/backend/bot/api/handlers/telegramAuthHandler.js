@@ -131,7 +131,8 @@ const handleTelegramAuth = async (req, res) => {
               first_name, language, photo_file_id, live_channel,
               COALESCE(age_verified, false) as age_verified,
               COALESCE(onboarding_complete, false) as onboarding_complete,
-              COALESCE(role, 'user') as role
+              COALESCE(role, 'user') as role,
+              COALESCE(content_disclaimer, false) as content_disclaimer
        FROM users
        WHERE telegram = $1::varchar OR ($2::varchar IS NOT NULL AND pnptv_id = $2::varchar)`,
       [String(telegramUser.id), pnptvId]
@@ -356,6 +357,7 @@ const handleTelegramAuth = async (req, res) => {
       acceptedTerms: user.terms_accepted,
       ageVerified: user.age_verified,
       onboardingComplete: user.onboarding_complete,
+      contentDisclaimer: user.content_disclaimer || false,
       role,
       last_login_method: 'mini_app',
       liveChannel: user.live_channel || null,
@@ -455,6 +457,7 @@ const handleTelegramAuth = async (req, res) => {
         role,
         photo_url: photoUrl,
         live_channel: user.live_channel || null,
+        contentDisclaimer: Boolean(user.content_disclaimer),
       },
       termsAccepted: user.terms_accepted
     });

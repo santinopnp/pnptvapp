@@ -439,11 +439,11 @@ export default function SocialPostCard({
   // Creator upsell CTAs on video posts (mirrors PostCard.tsx profile view).
   // Use viewerTier !== "prime" (not !isPrime) so admins can see the banner and verify it works.
   const isPrimeCreator =
-    ["8599671840", "8552451957"].includes(String(post.author_id)) ||
-    ["santinofurioso", "pnptv"].includes(String(post.author_username || "").toLowerCase());
+    ["8599671840", "8552451957", "8f5f4dd1-7bdb-4571-b026-e09d91113c91"].includes(String(post.author_id)) ||
+    ["santinofurioso", "pnptv", "pnplatinoboy"].includes(String(post.author_username || "").toLowerCase());
   const showPrimeUpsell = isPrimeCreator && viewerTier !== "prime" && !post.is_exclusive && !isOwn;
   // Two-pill upgrade strip — shown on every post for non-PRIME viewers, always visible.
-  const showUpgradePills = viewerTier !== "prime" && !isOwn && !post.is_exclusive;
+  const showUpgradePills = isPrimeCreator && viewerTier !== "prime" && !isOwn && !post.is_exclusive;
   const primeUpsellKey = `pnp_prime_upsell_dismissed_${post.author_id}`;
   const [primeUpsellDismissed, setPrimeUpsellDismissed] = useState(() => {
     try { return sessionStorage.getItem(primeUpsellKey) === "1"; } catch { return false; }
@@ -1696,124 +1696,26 @@ export default function SocialPostCard({
                   into a compact plan grid; each plan fires its own NP popup. */}
               {showPrimeUpsell && !primeUpsellDismissed && (
                 <div className="mt-2" onClick={(e) => e.stopPropagation()}>
-                  {!showPrimePlanPicker ? (
-                    /* Step 0 — Collapsed pill */
-                    <div
-                      className="cursor-pointer flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg text-[11px] font-medium border border-pink-500/30 hover:border-pink-500/60 transition-all"
-                      style={{ background: "rgba(212, 0, 122, 0.12)", backdropFilter: "blur(4px)" }}
-                      onClick={() => setShowPrimePlanPicker(true)}
-                    >
-                      <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                        <span className="text-xs">🔥</span>
-                        <span className="text-pink-200 truncate">
-                          {lang === "es"
-                            ? "Hazte PRIME — Contenido exclusivo + Hangouts"
-                            : "Become PRIME — Exclusive content + Hangouts"}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-1.5 flex-shrink-0">
-                        <span className="px-2.5 py-0.5 rounded text-[10px] font-bold text-white shadow-sm" style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}>
-                          {lang === "es" ? "Ver planes →" : "See plans →"}
-                        </span>
-                        <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); dismissPrimeUpsell(); }} aria-label="Dismiss" className="text-white/50 hover:text-white text-xs px-1">×</button>
-                      </div>
+                  <div
+                    className="cursor-pointer flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg text-[11px] font-medium border border-pink-500/30 hover:border-pink-500/60 transition-all"
+                    style={{ background: "rgba(212, 0, 122, 0.12)", backdropFilter: "blur(4px)" }}
+                    onClick={() => navigate("/subscribe")}
+                  >
+                    <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                      <span className="text-xs">🔥</span>
+                      <span className="text-pink-200 truncate">
+                        {lang === "es"
+                          ? "Hazte PRIME — Contenido exclusivo + Hangouts"
+                          : "Become PRIME — Exclusive content + Hangouts"}
+                      </span>
                     </div>
-                  ) : selectedPrimePlan ? (
-                    /* Step 2 — Coin picker for the selected plan */
-                    <div className="rounded-xl overflow-hidden border-2 border-pink-500/40" style={{ background: "rgba(212,0,122,0.08)" }}>
-                      <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
-                        <button
-                          type="button"
-                          onClick={() => setSelectedPrimePlan(null)}
-                          className="flex items-center gap-1.5 text-white/60 hover:text-white transition-colors text-xs font-medium"
-                        >
-                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
-                          </svg>
-                          <span className="text-pink-300 font-semibold">{selectedPrimePlan.label}</span>
-                          <span className="text-white/40">·</span>
-                          <span className="text-white font-bold">${selectedPrimePlan.price}</span>
-                        </button>
-                        <button type="button" onClick={() => { setShowPrimePlanPicker(false); setSelectedPrimePlan(null); dismissPrimeUpsell(); }} aria-label="Close" className="text-white/40 hover:text-white transition-colors text-base leading-none px-1">×</button>
-                      </div>
-                      <div className="p-2.5">
-                        <p className="text-[10px] text-white/50 mb-2 text-center">
-                          {lang === "es" ? "Elige cómo pagar" : "Choose how to pay"}
-                        </p>
-                        <div className="grid grid-cols-2 gap-1.5">
-                          {NP_COINS_SUBSCRIBE.map((coin) => (
-                            <button
-                              key={coin.code}
-                              type="button"
-                              disabled={inlineCheckout.launching}
-                              onClick={() => inlineCheckout.start({ planId: selectedPrimePlan.id, isSubscription: selectedPrimePlan.isRecurring, payCurrency: coin.code, storageKey: "pnp_pending_prime_banner" })}
-                              className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-white/10 bg-white/[0.04] hover:bg-white/[0.08] disabled:opacity-50 transition-colors text-left"
-                            >
-                              <span className="text-base font-bold leading-none flex-shrink-0" style={{ color: coin.color }}>{coin.icon}</span>
-                              <div className="min-w-0">
-                                <div className="flex items-center gap-1">
-                                  <span className="text-xs font-bold text-white">{coin.label}</span>
-                                  {"recommended" in coin && coin.recommended && (
-                                    <span className="text-[7px] font-bold px-1 py-px rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 leading-none">★</span>
-                                  )}
-                                </div>
-                                <span className="text-[9px] leading-none text-white/40">{coin.network}</span>
-                              </div>
-                            </button>
-                          ))}
-                        </div>
-                        {inlineCheckout.error && (
-                          <p className="mt-2 text-[10px] text-red-400 text-center">{inlineCheckout.error}</p>
-                        )}
-                        <div className="mt-2 text-center">
-                          <a href="/crypto-guide" target="_blank" rel="noopener noreferrer" className="text-[10px] text-amber-400 hover:text-amber-300 underline decoration-dotted">
-                            {lang === "es" ? "¿Qué red usar? →" : "Which network? →"}
-                          </a>
-                        </div>
-                      </div>
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      <span className="px-2.5 py-0.5 rounded text-[10px] font-bold text-white shadow-sm" style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}>
+                        {lang === "es" ? "Ver →" : "See →"}
+                      </span>
+                      <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); dismissPrimeUpsell(); }} aria-label="Dismiss" className="text-white/50 hover:text-white text-xs px-1">×</button>
                     </div>
-                  ) : (
-                    /* Step 1 — Plan grid */
-                    <div className="rounded-xl overflow-hidden border-2 border-pink-500/40" style={{ background: "rgba(212,0,122,0.08)" }}>
-                      <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-sm">🔥</span>
-                          <span className="text-xs font-bold text-pink-200">{lang === "es" ? "Elige tu plan PRIME" : "Choose your PRIME plan"}</span>
-                        </div>
-                        <button type="button" onClick={() => { setShowPrimePlanPicker(false); dismissPrimeUpsell(); }} aria-label="Close" className="text-white/40 hover:text-white transition-colors text-base leading-none px-1">×</button>
-                      </div>
-                      <div className="p-2.5 space-y-2">
-                        {PRIME_PLANS.map((plan) => (
-                          <div key={plan.id} className={`flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-all ${plan.recommended ? "border-pink-500/50 bg-pink-500/10" : "border-white/10 bg-white/[0.04] hover:bg-white/[0.07]"}`}>
-                            <div className="min-w-0 flex-1">
-                              {plan.recommended && <div className="text-[10px] font-bold text-pink-400 uppercase tracking-wider mb-0.5">★ {lang === "es" ? "Mejor valor" : "Best value"}</div>}
-                              <div className="text-[12px] font-semibold text-white leading-tight">{plan.label}</div>
-                              <div className="flex items-center gap-1.5 mt-0.5">
-                                <span className="text-[10px] text-white/50">{plan.duration}</span>
-                                {plan.isRecurring && <span className="text-[10px] font-semibold px-1.5 py-px rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">{lang === "es" ? "Recurrente" : "Recurring"}</span>}
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2 flex-shrink-0">
-                              <span className="text-sm font-black text-white">${plan.price}</span>
-                              <button
-                                type="button"
-                                onClick={() => setSelectedPrimePlan(plan)}
-                                className="px-3 py-1.5 rounded-lg text-[11px] font-bold text-white transition-all active:scale-95 whitespace-nowrap"
-                                style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
-                              >
-                                {lang === "es" ? "Elegir →" : "Select →"}
-                              </button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="px-3 pb-2.5 text-center">
-                        <a href="/subscribe" className="text-[10px] text-white/40 hover:text-white/70 transition-colors underline decoration-dotted" onClick={(e) => e.stopPropagation()}>
-                          {lang === "es" ? "Ver todos los detalles en /subscribe" : "Full details at /subscribe"}
-                        </a>
-                      </div>
-                    </div>
-                  )}
+                  </div>
                 </div>
               )}
 

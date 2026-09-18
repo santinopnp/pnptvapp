@@ -82,27 +82,92 @@ async function createVideo(title) {
 }
 
 /**
- * Firma para que el navegador suba directo por TUS.
- * Bunny espera: sha256(libraryId + apiKey + expirationTime + videoId).
- * La API key se usa solo aquí, en el servidor; al cliente va la firma.
+ * Crea la sesión TUS en Bunny (POST al endpoint) y devuelve la URL de subida.
+ * Se llama desde el servidor para que el cliente nunca toque TUS directamente.
  */
-function createTusUpload(videoGuid) {
+async function initTusUpload(videoGuid, fileSize) {
   _assertConfigured();
   const expiration = Math.floor(Date.now() / 1000) + TUS_EXPIRY_SECONDS;
   const signature = crypto
     .createHash('sha256')
     .update(`${LIBRARY_ID}${API_KEY}${expiration}${videoGuid}`)
     .digest('hex');
-  return {
-    endpoint: TUS_ENDPOINT,
+  const res = await fetch(TUS_ENDPOINT, {
+    method: 'POST',
     headers: {
-      AuthorizationSignature: signature,
-      AuthorizationExpire: String(expiration),
       VideoId: videoGuid,
       LibraryId: String(LIBRARY_ID),
+      AuthorizationSignature: signature,
+      AuthorizationExpire: String(expiration),
+      'Tus-Resumable': '1.0.0',
+      'Upload-Length': String(fileSize),
+      'Content-Length': '0',
     },
-    expiresAt: expiration * 1000,
-  };
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    const err = new Error(`TUS init failed: ${res.status} — ${body.slice(0, 200)}`);
+    err.status = 502;
+    err.code = 'BUNNY_TUS_INIT_FAILED';
+    throw err;
+  }
+  const rawLocation = res.headers.get('Location');
+  if (!rawLocation) {
+    const err = new Error('TUS init: Bunny did not return a Location header');
+    err.status = 502;
+    err.code = 'BUNNY_TUS_NO_LOCATION';
+    throw err;
+  }
+  // Bunny returns a relative path (/tusupload/...). Node.js fetch requires absolute URLs.
+  const location = rawLocation.startsWith('http') ? rawLocation : `https://video.bunnycdn.com${rawLocation}`;
+  logger.info('[bunny] TUS upload iniciado', { guid: videoGuid, fileSize, location });
+  return location;
+}
+
+/**
+ * Envía un chunk al endpoint TUS de Bunny.
+ * @param {string} tusUrl    URL de subida devuelta por initTusUpload.
+ * @param {Buffer} buffer    Bytes del chunk.
+ * @param {number} offset    Offset en bytes donde empieza este chunk.
+ * @param {string} videoGuid GUID del vídeo — Bunny exige auth en cada PATCH.
+ * @returns {number}         Nuevo offset confirmado por Bunny.
+ */
+async function patchTusChunk(tusUrl, buffer, offset, videoGuid) {
+  _assertConfigured();
+  const expiration = Math.floor(Date.now() / 1000) + TUS_EXPIRY_SECONDS;
+  const signature = crypto
+    .createHash('sha256')
+    .update(`${LIBRARY_ID}${API_KEY}${expiration}${videoGuid}`)
+    .digest('hex');
+  const res = await fetch(tusUrl, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/offset+octet-stream',
+      'Upload-Offset': String(offset),
+      'Tus-Resumable': '1.0.0',
+      'Content-Length': String(buffer.length),
+      VideoId: videoGuid,
+      LibraryId: String(LIBRARY_ID),
+      AuthorizationSignature: signature,
+      AuthorizationExpire: String(expiration),
+    },
+    body: buffer,
+  });
+  if (res.status !== 204 && !res.ok) {
+    const body = await res.text().catch(() => '');
+    logger.error('[bunny] TUS PATCH failed', {
+      guid: videoGuid, offset, chunkSize: buffer.length,
+      bunnyStatus: res.status, bunnyBody: body.slice(0, 300),
+      tusUrl,
+    });
+    const err = new Error(`TUS patch failed at offset ${offset}: ${res.status} — ${body.slice(0, 200)}`);
+    err.status = 502;
+    err.code = 'BUNNY_TUS_PATCH_FAILED';
+    throw err;
+  }
+  logger.info('[bunny] TUS chunk OK', { guid: videoGuid, offset, chunkSize: buffer.length, newUploadOffset: res.headers.get('Upload-Offset') });
+  const newOffset = parseInt(res.headers.get('Upload-Offset') || String(offset + buffer.length), 10);
+  return newOffset;
 }
 
 async function getVideo(guid) {
@@ -156,7 +221,8 @@ function getThumbnailUrl(guid) {
 module.exports = {
   isConfigured,
   createVideo,
-  createTusUpload,
+  initTusUpload,
+  patchTusChunk,
   getVideo,
   deleteVideo,
   isReady,

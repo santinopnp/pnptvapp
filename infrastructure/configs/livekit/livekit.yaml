@@ -7,10 +7,13 @@ rtc:
   tcp_port: 7881
   use_external_ip: true
 # Placeholders are substituted at container start by the entrypoint
-# in docker-compose.yml (livekit service) using env vars LIVEKIT_API_KEY
-# and LIVEKIT_API_SECRET from .env. Do NOT commit plaintext keys here.
+# in docker-compose.yml (livekit service) using env vars LIVEKIT_API_KEY,
+# LIVEKIT_API_SECRET, and REDIS_PNPTV_PASSWORD from .env.
 keys:
   __LIVEKIT_API_KEY__: __LIVEKIT_API_SECRET__
+redis:
+  address: redis-pnptv:6379
+  password: __REDIS_PNPTV_PASSWORD__
 logging:
   level: info
 turn:

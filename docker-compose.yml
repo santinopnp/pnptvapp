@@ -686,6 +686,11 @@ services:
         rtmp_port: 1936
         whip_port: 8090
         http_relay_port: 9090
+        cpu_cost:
+          rtmp_cpu_cost: 2
+          whip_cpu_cost: 2
+          whip_bypass_transcoding_cpu_cost: 0.1
+          url_cpu_cost: 1
     networks:
       - pnptvapp_net
     depends_on:

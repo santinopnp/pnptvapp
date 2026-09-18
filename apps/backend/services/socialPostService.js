@@ -490,20 +490,21 @@ class SocialPostService {
 
     let page = posts.slice(0, effectiveLim);
 
-    // Force any admin-pinned post to absolute position 0 on the first page.
-    // Done after all transforms so nothing can displace it.
+    // Always show the latest post from Santino or Lex at position 0 on the first page.
     if (!cursorId) {
-      const { rows: pinRows } = await query(
+      const FEATURED_USER_IDS = ['8599671840', '8f5f4dd1-7bdb-4571-b026-e09d91113c91'];
+      const { rows: featuredRows } = await query(
         `SELECT sp.*, u.username AS author_username, u.first_name AS author_first_name,
                 u.photo_file_id AS author_photo
            FROM social_posts sp
            JOIN users u ON u.id = sp.user_id
-          WHERE sp.pinned_at IS NOT NULL AND sp.is_deleted = false
-          ORDER BY sp.pinned_at DESC LIMIT 1`
+          WHERE sp.user_id = ANY($1::text[]) AND sp.is_deleted = false
+          ORDER BY sp.created_at DESC LIMIT 1`,
+        [FEATURED_USER_IDS]
       );
-      if (pinRows.length > 0) {
-        const [pinPost] = await sanitizePostRows(pinRows, { hideDeletedHypeOriginals: false });
-        page = [pinPost, ...page.filter(p => p.id !== pinPost.id)];
+      if (featuredRows.length > 0) {
+        const [featuredPost] = await sanitizePostRows(featuredRows, { hideDeletedHypeOriginals: false });
+        page = [featuredPost, ...page.filter(p => p.id !== featuredPost.id)];
       }
     }
 

@@ -463,8 +463,6 @@ const joinDmVideoCall = async (req, res) => {
   }
 };
 
-const DM_FREE_DAILY_LIMIT = 3;
-
 // Send a DM via REST (fallback when Socket.IO is unavailable)
 const sendMessage = async (req, res) => {
   const user = authGuard(req, res); if (!user) return;
@@ -486,30 +484,6 @@ const sendMessage = async (req, res) => {
     const senderRole = user.role || '';
     const isAdminSender = senderRole === 'admin' || senderRole === 'superadmin';
 
-    // Free-tier DM limit: 3 per day (24 h rolling window via Redis).
-    // Admins, PRIME, and members are exempt.
-    const senderTierNorm = (user.tier || 'free').toLowerCase();
-    if (!isAdminSender && !['prime', 'member'].includes(senderTierNorm)) {
-      try {
-        const redis = getRedis();
-        const limitKey = `dm:daily:${user.id}`;
-        const count = await redis.incr(limitKey);
-        if (count === 1) await redis.expire(limitKey, 86400);
-        const remaining = Math.max(0, DM_FREE_DAILY_LIMIT - count);
-        if (count > DM_FREE_DAILY_LIMIT) {
-          return res.status(429).json({
-            error: 'DM_LIMIT_REACHED',
-            remaining: 0,
-            limit: DM_FREE_DAILY_LIMIT,
-          });
-        }
-        // Attach remaining so the response can pass it back to the frontend
-        req._dmRemaining = remaining;
-      } catch (rateErr) {
-        // Non-fatal — if Redis is unavailable, allow the send and log
-        logger.warn('DM daily rate limit check failed (allowing)', { userId: user.id, error: rateErr.message });
-      }
-    }
 
     const message = await DmService.sendMessage(
       user.id,

@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useI18n } from "@/lib/i18n";
-import * as tus from "tus-js-client";
 import { WalletPayCard } from "@/components/payments/PayInWalletChips";
 import { useCreatorData } from "@/hooks/useCreatorData";
 import {
@@ -59,58 +58,74 @@ function UploadModal({ onClose, onCreated }: UploadModalProps) {
     if (!file || !title.trim()) return;
     setError(null);
     setBusy(true);
+    const CHUNK_SIZE = 10 * 1024 * 1024; // 10 MB per chunk — fits in bot memory, never touches disk
     try {
-      // 1. Crear el video en Bunny y obtener la firma de subida. La API key no
-      //    sale del servidor: aqui solo llega una firma con caducidad.
+      // 1. Crear objeto de video en Bunny y sesión TUS en el servidor.
       const initRes = await fetch("/api/webapp/creators/me/replay/bunny-upload", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: title.trim() }),
+        body: JSON.stringify({ title: title.trim(), fileSize: file.size }),
       });
       const init = await initRes.json();
       if (!initRes.ok || !init.success) throw new Error(init.error || "No se pudo iniciar la subida");
+      const videoId: string = init.videoId;
 
-      // 2. Subir los bytes directos a Bunny. TUS es reanudable, que a 2 GB desde
-      //    una conexion domestica no es opcional.
-      await new Promise<void>((resolve, reject) => {
-        const upload = new tus.Upload(file, {
-          endpoint: init.upload.endpoint,
-          headers: init.upload.headers,
-          chunkSize: 25 * 1024 * 1024,
-          retryDelays: [0, 3000, 10000, 30000, 60000],
-          metadata: { filetype: file.type, title: title.trim() },
-          // La barra espera ChunkUploadProgress; TUS no tiene trozos, asi que se
-          // reporta uno solo y el porcentaje real.
-          onProgress: (sent, total) => setProgress({
-            pct: Math.round((sent / total) * 100),
-            doneChunks: sent >= total ? 1 : 0,
-            totalChunks: 1,
-            uploadId: init.videoId,
-          }),
-          onError: reject,
-          onSuccess: () => resolve(),
+      // 2. Subir en trozos via backend (el servidor hace PATCH a Bunny — nunca toca disco).
+      const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+      let offset = 0;
+      // Show the bar immediately so the user sees progress from chunk 1.
+      setProgress({ pct: 0, doneChunks: 0, totalChunks, uploadId: videoId });
+      for (let i = 0; i < totalChunks; i++) {
+        const blob = file.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+        let success = false;
+        let lastErr = "";
+        for (let attempt = 0; attempt < 4; attempt++) {
+          if (attempt > 0) await new Promise((r) => setTimeout(r, 2000 * attempt));
+          const fd = new FormData();
+          fd.append("videoId", videoId);
+          fd.append("offset", String(offset));
+          fd.append("chunk", blob, `chunk-${i}`);
+          const r = await fetch("/api/webapp/creators/me/replay/upload-chunk", {
+            method: "POST",
+            credentials: "include",
+            body: fd,
+          });
+          const body = await r.json().catch(() => ({ success: false, error: `HTTP ${r.status}` }));
+          if (r.ok && body.success) {
+            offset = body.uploadedOffset;
+            success = true;
+            break;
+          }
+          lastErr = body.error || `HTTP ${r.status}`;
+          if (r.status === 404) throw new Error("Sesión de subida expirada. Por favor recarga e intenta de nuevo.");
+        }
+        if (!success) throw new Error(`Error subiendo fragmento ${i + 1}/${totalChunks}: ${lastErr}`);
+        setProgress({
+          pct: Math.round(((i + 1) / totalChunks) * 100),
+          doneChunks: i + 1,
+          totalChunks,
+          uploadId: videoId,
         });
-        upload.start();
-      });
+      }
 
-      // 3. Esperar al transcodificado. Registrar la URL antes de que este lista
-      //    daria un ingest fallido al emitir.
+      // 3. Esperar transcodificación (Bunny procesa en segundo plano, puede tardar varios minutos).
+      setProgress({ pct: 100, doneChunks: totalChunks, totalChunks, uploadId: videoId });
       let playbackUrl = "";
-      for (let i = 0; i < 120; i++) {
+      for (let i = 0; i < 180; i++) {
         const st = await fetch("/api/webapp/creators/me/replay/bunny-finish", {
           method: "POST",
           credentials: "include",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ videoId: init.videoId }),
+          body: JSON.stringify({ videoId }),
         }).then((r) => r.json());
         if (st.status === "ready" && st.playbackUrl) { playbackUrl = st.playbackUrl; break; }
-        if (st.status === "failed") throw new Error("Bunny no pudo procesar el video");
+        if (st.status === "failed") throw new Error("Bunny no pudo procesar el video. Intenta con otro archivo.");
         await new Promise((r) => setTimeout(r, 5000));
       }
-      if (!playbackUrl) throw new Error("El video sigue procesandose. Vuelve en unos minutos.");
+      if (!playbackUrl) throw new Error("El video sigue procesándose. Vuelve en unos minutos e intenta de nuevo.");
 
-      // 4. Registrar el show con la URL de Bunny.
+      // 4. Registrar el show con la URL de reproducción.
       const { show } = await createReplayShow({
         videoUrl: playbackUrl,
         title: title.trim(),
@@ -226,7 +241,11 @@ function UploadModal({ onClose, onCreated }: UploadModalProps) {
           {isUploading && progress && (
             <div className="space-y-1.5">
               <div className="flex justify-between text-xs text-pnp-textSecondary">
-                <span>{t.replayShowsUploadSaving}</span>
+                <span>
+                  {progress.pct < 100
+                    ? `${t.replayShowsUploadSaving} (${progress.doneChunks}/${progress.totalChunks})`
+                    : "Processing…"}
+                </span>
                 <span className="tabular-nums font-semibold text-white">{progress.pct}%</span>
               </div>
               <div className="h-1.5 rounded-full overflow-hidden bg-white/10">
@@ -238,9 +257,6 @@ function UploadModal({ onClose, onCreated }: UploadModalProps) {
                   }}
                 />
               </div>
-              <p className="text-[10px] text-pnp-textSecondary tabular-nums">
-                {progress.doneChunks}/{progress.totalChunks} chunks
-              </p>
             </div>
           )}
 

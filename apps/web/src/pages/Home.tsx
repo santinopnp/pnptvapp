@@ -42,6 +42,9 @@ export default function Home() {
   }, []);
 
   const [contentDisclaimer, setContentDisclaimer] = useState(user?.contentDisclaimer || false);
+  useEffect(() => {
+    if (user?.contentDisclaimer === true) setContentDisclaimer(true);
+  }, [user?.contentDisclaimer]);
   const [myHangouts, setMyHangouts] = useState<HangoutGroup[]>([]);
   const [previewPosts, setPreviewPosts] = useState<SocialPostItem[]>([]);
   const [previewLoading, setPreviewLoading] = useState(false);
