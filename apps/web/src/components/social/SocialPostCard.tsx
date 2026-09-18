@@ -437,12 +437,13 @@ export default function SocialPostCard({
   const effectiveAuthorPhoto = isOwn && user?.photoUrl ? user.photoUrl : post.author_photo;
 
   // Creator upsell CTAs on video posts (mirrors PostCard.tsx profile view).
-  // $50/yr + $100 lifetime buttons appear on every post for non-PRIME viewers.
   // Use viewerTier !== "prime" (not !isPrime) so admins can see the banner and verify it works.
   const isPrimeCreator =
     ["8599671840", "8552451957"].includes(String(post.author_id)) ||
     ["santinofurioso", "pnptv"].includes(String(post.author_username || "").toLowerCase());
-  const showPrimeUpsell = viewerTier !== "prime" && !post.is_exclusive && !isOwn;
+  const showPrimeUpsell = isPrimeCreator && viewerTier !== "prime" && !post.is_exclusive && !isOwn;
+  // Two-pill upgrade strip — shown on every post for non-PRIME viewers, always visible.
+  const showUpgradePills = viewerTier !== "prime" && !isOwn && !post.is_exclusive;
   const primeUpsellKey = `pnp_prime_upsell_dismissed_${post.author_id}`;
   const [primeUpsellDismissed, setPrimeUpsellDismissed] = useState(() => {
     try { return sessionStorage.getItem(primeUpsellKey) === "1"; } catch { return false; }
@@ -1864,6 +1865,30 @@ export default function SocialPostCard({
                       </div>
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* $50/yr + $100 lifetime pills — every post, every viewer who isn't PRIME */}
+              {showUpgradePills && (
+                <div className="mt-2.5 flex gap-2" onClick={(e) => e.stopPropagation()}>
+                  <button
+                    type="button"
+                    onClick={() => { setPromoModalPlanId("yearly50"); setShowPromoModal(true); }}
+                    className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-bold transition-all active:scale-95"
+                    style={{ background: "rgba(212,0,122,0.13)", border: "1px solid rgba(212,0,122,0.4)", color: "#FF6BB0" }}
+                  >
+                    <span>💎</span>
+                    <span>{lang === "es" ? "1 Año — $50" : "1 Year — $50"}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setPromoModalPlanId("lifetime100"); setShowPromoModal(true); }}
+                    className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-bold transition-all active:scale-95"
+                    style={{ background: "rgba(230,145,56,0.1)", border: "1px solid rgba(230,145,56,0.35)", color: "#E69138" }}
+                  >
+                    <span>🖤</span>
+                    <span>{lang === "es" ? "De por vida — $100" : "Lifetime — $100"}</span>
+                  </button>
                 </div>
               )}
 
