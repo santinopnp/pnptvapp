@@ -9,9 +9,8 @@ const PRIME_PLANS = [
 ] as const;
 
 const CHECKOUT_MODAL_PLANS = [
-  { id: "monthly-pass",            label: "PRIME Monthly",  tag: "30 days",  price: 24.99 },
-  { id: "prime-diamond-pass-365d", label: "PRIME Diamond",  tag: "1 year",   price: 99.99 },
-  { id: "lifetime100",             label: "Lifetime PRIME", tag: "Forever",  price: 99.99 },
+  { id: "yearly50",   label: "PRIME Annual",   tag: "1 year",  price: 50.00, weekend: true  },
+  { id: "lifetime100", label: "Lifetime PRIME", tag: "Forever", price: 99.99, weekend: false },
 ] as const;
 import { MentionText } from "@/components/MentionText";
 import { MentionInput } from "@/components/MentionInput";
@@ -2558,9 +2557,11 @@ export default function SocialPostCard({
                   </>
                 ) : (
                   <>
-                    <p className="text-xs text-white/50 text-center">
-                      {es ? "Acceso completo · Sin restricciones" : "Full access · No restrictions"}
-                    </p>
+                    <div className="text-center mb-1">
+                      <span className="inline-block text-[10px] font-bold px-2 py-1 rounded-full bg-[#E69138]/20 text-[#E69138] border border-[#E69138]/30">
+                        {es ? "🔥 Oferta de fin de semana" : "🔥 Weekend deal"}
+                      </span>
+                    </div>
                     <div className="space-y-2">
                       {CHECKOUT_MODAL_PLANS.map((plan) => (
                         <button
@@ -2568,14 +2569,14 @@ export default function SocialPostCard({
                           onClick={() => setPromoModalPlanId(plan.id)}
                           className="w-full flex items-center justify-between px-4 py-3.5 rounded-xl border transition-all text-left"
                           style={{
-                            borderColor: plan.id === "monthly-pass" ? "rgba(212,0,122,0.5)" : "rgba(255,255,255,0.1)",
-                            background: plan.id === "monthly-pass" ? "rgba(212,0,122,0.08)" : "rgba(255,255,255,0.04)",
+                            borderColor: plan.weekend ? "rgba(212,0,122,0.5)" : "rgba(255,255,255,0.1)",
+                            background: plan.weekend ? "rgba(212,0,122,0.08)" : "rgba(255,255,255,0.04)",
                           }}
                         >
                           <div>
-                            {plan.id === "monthly-pass" && (
+                            {plan.weekend && (
                               <span className="inline-block text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-pink-500/20 text-pink-300 border border-pink-500/30 mb-1 leading-none">
-                                {es ? "★ MÁS POPULAR" : "★ MOST POPULAR"}
+                                {es ? "🔥 EXCLUSIVO FIN DE SEMANA" : "🔥 WEEKEND EXCLUSIVE"}
                               </span>
                             )}
                             {plan.id === "lifetime100" && (
@@ -2587,13 +2588,11 @@ export default function SocialPostCard({
                             <p className="text-xs text-white/50">{plan.tag}</p>
                           </div>
                           <div className="text-right flex-shrink-0 ml-3">
-                            <p className="text-lg font-black text-white">${plan.price}</p>
+                            <p className="text-xl font-black text-white">${plan.price}</p>
                             <p className="text-[10px] text-white/40">
-                              {plan.id === "monthly-pass"
-                                ? (es ? "/mes" : "/mo")
-                                : plan.id === "lifetime100"
-                                  ? (es ? "única vez" : "one-time")
-                                  : (es ? "/año" : "/yr")}
+                              {plan.id === "yearly50"
+                                ? (es ? "/año" : "/yr")
+                                : (es ? "única vez" : "one-time")}
                             </p>
                           </div>
                         </button>
