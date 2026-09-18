@@ -7,6 +7,12 @@ const PRIME_PLANS = [
   { id: "prime-diamond-pass-365d", label: "PRIME Diamond",     duration: "1 year",   price: "99.99", isRecurring: false, recommended: false },
   { id: "lifetime80",              label: "Lifetime PRIME",    duration: "Forever",  price: "100",   isRecurring: false, recommended: false },
 ] as const;
+
+const CHECKOUT_MODAL_PLANS = [
+  { id: "monthly-pass",            label: "PRIME Monthly",  tag: "30 days",  price: 24.99 },
+  { id: "prime-diamond-pass-365d", label: "PRIME Diamond",  tag: "1 year",   price: 99.99 },
+  { id: "lifetime100",             label: "Lifetime PRIME", tag: "Forever",  price: 99.99 },
+] as const;
 import { MentionText } from "@/components/MentionText";
 import { MentionInput } from "@/components/MentionInput";
 import { SharePostModal } from "@/components/SharePostModal";
@@ -30,6 +36,8 @@ import {
   getOwnChannels,
   assignPostToChannel,
   NP_COINS_SUBSCRIBE,
+  prepareUsdcSubscription,
+  assertPaymentUrl,
   ApiError,
   type SocialPostItem,
   type MentionUser,
@@ -407,8 +415,12 @@ export default function SocialPostCard({
   const [hypeError, setHypeError] = useState<string | null>(null);
   const [hypeQuota, setHypeQuota] = useState<{ remaining: number; limit: number; resetsAt: string | null } | null>(null);
   const [showPromoModal, setShowPromoModal] = useState(false);
+  const [promoModalPlanId, setPromoModalPlanId] = useState<string | null>(null);
+  const [npLaunching, setNpLaunching] = useState(false);
+  const [npError, setNpError] = useState<string | null>(null);
   const hypeInFlight = useRef(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const npPopupRef = useRef<Window | null>(null);
 
   const isOwn = String(post.author_id) === currentUserId;
   const hasRealPostId = Number(post.id) > 0;
@@ -472,6 +484,22 @@ export default function SocialPostCard({
     confirmGuideAndStart: () => {},
     skipGuideAndStart: () => {},
   };
+
+  const launchNpCheckout = useCallback(async (planId: string) => {
+    setNpLaunching(true);
+    setNpError(null);
+    try {
+      const res = await prepareUsdcSubscription(planId, undefined, undefined, "usdcbase");
+      if (!res.success || !res.nowpaymentsInvoiceId) throw new Error(res.error || "Could not create invoice.");
+      assertPaymentUrl(res.invoiceUrl);
+      const src = `https://nowpayments.io/embeds/payment-widget?iid=${encodeURIComponent(String(res.nowpaymentsInvoiceId))}`;
+      npPopupRef.current = window.open(src, "pnp_np_wallet", "width=540,height=700,left=200,top=100");
+    } catch (e) {
+      setNpError(e instanceof Error ? e.message : "Could not open checkout.");
+    } finally {
+      setNpLaunching(false);
+    }
+  }, []);
 
   // Creator-subscription CTAs reveal the canonical CreatorSubscribeWizard
   // inline — same widget the creator-profile "Subscribe" button opens. This
@@ -1499,7 +1527,9 @@ export default function SocialPostCard({
                     <button
                       key={idx}
                       onClick={(e) => { e.stopPropagation();
-                        if (link === "#promo-modal") {
+                        if (link === "#promo-modal" || link === "/subscribe" || link === "/lifetime100") {
+                          setPromoModalPlanId(link === "/lifetime100" ? "lifetime100" : null);
+                          setNpError(null);
                           setShowPromoModal(true);
                         } else if (link.startsWith("/")) {
                           onNavigate(link);
@@ -2435,38 +2465,150 @@ export default function SocialPostCard({
         );
       })()}
 
-      {/* Promo membership modal — opened by promoted_link="#promo-modal" */}
-      {showPromoModal && (
-        <div
-          className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center"
-          onClick={() => setShowPromoModal(false)}
-        >
-          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+      {/* Promo membership modal — opened by promoted post CTAs */}
+      {showPromoModal && (() => {
+        const selectedPlan = promoModalPlanId
+          ? CHECKOUT_MODAL_PLANS.find(p => p.id === promoModalPlanId) ?? null
+          : null;
+        const es = lang === "es";
+        return (
           <div
-            className="relative w-full max-w-sm mx-auto bg-[#0e0e0e] rounded-t-2xl sm:rounded-2xl p-5 pb-8 sm:pb-5 shadow-2xl border border-white/10"
-            onClick={(e) => e.stopPropagation()}
+            className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center"
+            onClick={() => { setShowPromoModal(false); setNpError(null); }}
           >
-            <button
-              onClick={() => setShowPromoModal(false)}
-              className="absolute top-3 right-4 text-white/50 hover:text-white text-xl leading-none"
+            <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+            <div
+              className="relative w-full max-w-md mx-auto bg-[#0e0e0e] rounded-t-2xl sm:rounded-2xl shadow-2xl border border-white/10 overflow-y-auto"
+              style={{ maxHeight: "92dvh" }}
+              onClick={(e) => e.stopPropagation()}
             >
-              ×
-            </button>
-            <p className="text-center text-xs font-semibold text-[#E69138] uppercase tracking-widest mb-1">
-              Lifetime PRIME
-            </p>
-            <h2 className="text-center text-white text-lg font-bold mb-4">
-              One payment. Forever access. 💎
-            </h2>
-            <WalletPayCard
-              surface="subscription"
-              amountUsd={99.99}
-              entitlementSpec={{ planId: "lifetime100" }}
-              onSuccess={() => setShowPromoModal(false)}
-            />
+              {/* Header */}
+              <div className="flex items-center justify-between px-5 pt-5 pb-3 border-b border-white/10">
+                <div className="flex items-center gap-2">
+                  {selectedPlan && (
+                    <button
+                      onClick={() => { setPromoModalPlanId(null); setNpError(null); }}
+                      className="text-white/50 hover:text-white transition-colors mr-1 text-base"
+                      aria-label="Back"
+                    >
+                      ←
+                    </button>
+                  )}
+                  <div>
+                    <p className="text-[10px] font-bold text-[#E69138] uppercase tracking-widest leading-none mb-0.5">
+                      {es ? "Membresía" : "Membership"}
+                    </p>
+                    <h2 className="text-white text-base font-bold leading-none">
+                      {selectedPlan
+                        ? selectedPlan.label
+                        : (es ? "Elige tu plan PRIME" : "Choose your PRIME plan")}
+                    </h2>
+                  </div>
+                </div>
+                <button
+                  onClick={() => { setShowPromoModal(false); setNpError(null); }}
+                  className="text-white/40 hover:text-white text-xl leading-none px-1"
+                  aria-label="Close"
+                >
+                  ×
+                </button>
+              </div>
+
+              <div className="px-5 py-4 space-y-3">
+                {selectedPlan ? (
+                  <>
+                    {/* Plan summary badge */}
+                    <div className="flex items-center justify-between bg-white/5 border border-white/10 rounded-xl px-4 py-3">
+                      <div>
+                        <p className="text-xs text-white/50">{selectedPlan.tag}</p>
+                        <p className="text-sm font-bold text-white">{selectedPlan.label}</p>
+                      </div>
+                      <p className="text-lg font-black text-[#5ED1C4]">${selectedPlan.price}</p>
+                    </div>
+
+                    {/* Privy / USDC checkout (primary) */}
+                    <WalletPayCard
+                      surface="prime"
+                      amountUsd={selectedPlan.price}
+                      entitlementSpec={{ planId: selectedPlan.id }}
+                      lang={lang === "es" ? "es" : "en"}
+                      onSuccess={() => { setShowPromoModal(false); setNpError(null); }}
+                    />
+
+                    {/* NowPayments fallback */}
+                    <div className="relative flex items-center gap-2 py-1">
+                      <div className="flex-1 h-px bg-white/10" />
+                      <span className="text-[10px] text-white/40 flex-shrink-0">
+                        {es ? "o paga con cualquier cripto" : "or pay with any crypto"}
+                      </span>
+                      <div className="flex-1 h-px bg-white/10" />
+                    </div>
+                    <button
+                      onClick={() => launchNpCheckout(selectedPlan.id)}
+                      disabled={npLaunching}
+                      className="w-full py-3 rounded-xl border border-white/15 bg-white/[0.04] hover:bg-white/[0.08] disabled:opacity-50 text-sm font-semibold text-white/80 transition-colors"
+                    >
+                      {npLaunching
+                        ? (es ? "Abriendo…" : "Opening…")
+                        : (es ? "💸 Pagar con cualquier cripto →" : "💸 Pay with any crypto →")}
+                    </button>
+                    {npError && (
+                      <p className="text-[11px] text-red-400 text-center">{npError}</p>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <p className="text-xs text-white/50 text-center">
+                      {es ? "Acceso completo · Sin restricciones" : "Full access · No restrictions"}
+                    </p>
+                    <div className="space-y-2">
+                      {CHECKOUT_MODAL_PLANS.map((plan) => (
+                        <button
+                          key={plan.id}
+                          onClick={() => setPromoModalPlanId(plan.id)}
+                          className="w-full flex items-center justify-between px-4 py-3.5 rounded-xl border transition-all text-left"
+                          style={{
+                            borderColor: plan.id === "monthly-pass" ? "rgba(212,0,122,0.5)" : "rgba(255,255,255,0.1)",
+                            background: plan.id === "monthly-pass" ? "rgba(212,0,122,0.08)" : "rgba(255,255,255,0.04)",
+                          }}
+                        >
+                          <div>
+                            {plan.id === "monthly-pass" && (
+                              <span className="inline-block text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-pink-500/20 text-pink-300 border border-pink-500/30 mb-1 leading-none">
+                                {es ? "★ MÁS POPULAR" : "★ MOST POPULAR"}
+                              </span>
+                            )}
+                            {plan.id === "lifetime100" && (
+                              <span className="inline-block text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 mb-1 leading-none">
+                                {es ? "🖤 DE POR VIDA" : "🖤 FOREVER"}
+                              </span>
+                            )}
+                            <p className="text-sm font-bold text-white">{plan.label}</p>
+                            <p className="text-xs text-white/50">{plan.tag}</p>
+                          </div>
+                          <div className="text-right flex-shrink-0 ml-3">
+                            <p className="text-lg font-black text-white">${plan.price}</p>
+                            <p className="text-[10px] text-white/40">
+                              {plan.id === "monthly-pass"
+                                ? (es ? "/mes" : "/mo")
+                                : plan.id === "lifetime100"
+                                  ? (es ? "única vez" : "one-time")
+                                  : (es ? "/año" : "/yr")}
+                            </p>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-[10px] text-white/30 text-center pb-1">
+                      🔒 {es ? "Encriptado · Facturación discreta" : "Encrypted · Discreet billing"}
+                    </p>
+                  </>
+                )}
+              </div>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
