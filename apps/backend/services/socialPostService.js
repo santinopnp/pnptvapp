@@ -482,23 +482,33 @@ class SocialPostService {
       posts = [...pins, ...posts.filter(p => !pinnedIds.has(p.id))];
     }
 
-    // Re-hoist any admin-pinned post (pinned_at set) to absolute position 0 —
-    // live/online pins must not displace an explicitly pinned post.
-    const adminPinnedIdx = posts.findIndex(p => p.pinned_at);
-    if (adminPinnedIdx > 0) {
-      const [adminPinned] = posts.splice(adminPinnedIdx, 1);
-      posts.unshift(adminPinned);
-    }
-
     posts = await SocialPostService.hydrateTopHypers(posts);
 
     const FREE_POST_CAP = 25;
     const isFreeViewer = viewerTier === 'free' && !isAdmin;
     const effectiveLim = isFreeViewer ? Math.min(lim, FREE_POST_CAP) : lim;
 
-    const page = posts.slice(0, effectiveLim);
+    let page = posts.slice(0, effectiveLim);
+
+    // Force any admin-pinned post to absolute position 0 on the first page.
+    // Done after all transforms so nothing can displace it.
+    if (!cursorId) {
+      const { rows: pinRows } = await query(
+        `SELECT sp.*, u.username AS author_username, u.first_name AS author_first_name,
+                u.photo_file_id AS author_photo
+           FROM social_posts sp
+           JOIN users u ON u.id = sp.user_id
+          WHERE sp.pinned_at IS NOT NULL AND sp.is_deleted = false
+          ORDER BY sp.pinned_at DESC LIMIT 1`
+      );
+      if (pinRows.length > 0) {
+        const [pinPost] = await sanitizePostRows(pinRows, { hideDeletedHypeOriginals: false });
+        page = [pinPost, ...page.filter(p => p.id !== pinPost.id)];
+      }
+    }
+
     const nextCursor = (!isFreeViewer && posts.length > effectiveLim)
-      ? String(page[page.length - 1].id)
+      ? String(posts[effectiveLim - 1]?.id ?? page[page.length - 1]?.id)
       : null;
 
     return { posts: page, nextCursor };
