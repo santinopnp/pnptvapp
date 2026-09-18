@@ -6347,10 +6347,13 @@ app.post('/api/public/nequinegocios/register', nequiRegisterLimiter, asyncHandle
   } else {
     userId = crypto.randomUUID();
     const firstName = email.split('@')[0].slice(0, 80) || 'Founder';
+    const rawUname1 = (email.split('@')[0] || '').toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 30) || `user_${crypto.randomBytes(4).toString('hex')}`;
+    const { rows: urows1 } = await dbQuery('SELECT 1 FROM users WHERE LOWER(username)=LOWER($1) LIMIT 1', [rawUname1]);
+    const username = urows1.length > 0 ? `${rawUname1.slice(0, 24)}_${crypto.randomBytes(3).toString('hex')}` : rawUname1;
     await dbQuery(
-      `INSERT INTO users (id, email, first_name, tier, role, subscription_status, created_at, updated_at)
-       VALUES ($1, $2, $3, 'free', 'user', 'free', NOW(), NOW())`,
-      [userId, email, firstName]
+      `INSERT INTO users (id, email, username, first_name, tier, role, subscription_status, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, 'free', 'user', 'free', NOW(), NOW())`,
+      [userId, email, username, firstName]
     );
   }
 
@@ -6603,10 +6606,13 @@ async function _mpFindOrCreateUser(email) {
   } else {
     userId = crypto.randomUUID();
     const firstName = email.split('@')[0].slice(0, 80) || 'Founder';
+    const rawUname2 = (email.split('@')[0] || '').toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 30) || `user_${crypto.randomBytes(4).toString('hex')}`;
+    const { rows: urows2 } = await dbQuery('SELECT 1 FROM users WHERE LOWER(username)=LOWER($1) LIMIT 1', [rawUname2]);
+    const username = urows2.length > 0 ? `${rawUname2.slice(0, 24)}_${crypto.randomBytes(3).toString('hex')}` : rawUname2;
     await dbQuery(
-      `INSERT INTO users (id, email, first_name, tier, role, subscription_status, created_at, updated_at)
-       VALUES ($1, $2, $3, 'free', 'user', 'free', NOW(), NOW())`,
-      [userId, email, firstName]
+      `INSERT INTO users (id, email, username, first_name, tier, role, subscription_status, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, 'free', 'user', 'free', NOW(), NOW())`,
+      [userId, email, username, firstName]
     );
   }
 
@@ -14137,10 +14143,13 @@ app.post('/api/public/lifetime100/np-invoice', lifetime100NpInvoiceLimiter, asyn
   } else {
     userId = crypto.randomUUID();
     const firstName = email.split('@')[0].slice(0, 80) || 'Founder';
+    const rawUname3 = (email.split('@')[0] || '').toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 30) || `user_${crypto.randomBytes(4).toString('hex')}`;
+    const { rows: urows3 } = await dbQuery('SELECT 1 FROM users WHERE LOWER(username)=LOWER($1) LIMIT 1', [rawUname3]);
+    const username = urows3.length > 0 ? `${rawUname3.slice(0, 24)}_${crypto.randomBytes(3).toString('hex')}` : rawUname3;
     await dbQuery(
-      `INSERT INTO users (id, email, first_name, tier, role, subscription_status, language, created_at, updated_at)
-       VALUES ($1, $2, $3, 'free', 'user', 'free', $4, NOW(), NOW())`,
-      [userId, email, firstName, language]
+      `INSERT INTO users (id, email, username, first_name, tier, role, subscription_status, language, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, 'free', 'user', 'free', $5, NOW(), NOW())`,
+      [userId, email, username, firstName, language]
     );
     // Best-effort Authentik provision so a magic-link login works post-payment.
     try { await ensureEmailCredentials(userId, email, language, { skipEmail: true }); } catch (_) {}
@@ -23716,13 +23725,42 @@ const crystalReplayLimiter = rateLimit({
   message: 'Too many Crystal Replay requests — please slow down.',
 });
 
+// Internal HLS proxy — adds Referer: https://pnptv.app/ so LiveKit ingress (GStreamer
+// souphttpsrc) can fetch Bunny CDN streams that have allowed-referrers restrictions.
+// Only proxies to the configured BUNNY_STREAM_CDN_HOSTNAME; all URLs are relative in
+// Bunny playlists so GStreamer automatically routes subsequent requests through here.
+const _BUNNY_CDN_HOST = process.env.BUNNY_STREAM_CDN_HOSTNAME || '';
+app.get('/api/internal/bunny-hls/*', (req, res) => {
+  const rawPath = req.params[0] || '';
+  const slash = rawPath.indexOf('/');
+  const host = slash === -1 ? rawPath : rawPath.slice(0, slash);
+  if (!_BUNNY_CDN_HOST || host !== _BUNNY_CDN_HOST) return res.status(403).end();
+  const targetUrl = `https://${rawPath}`;
+  require('https').get(targetUrl, { headers: { Referer: 'https://pnptv.app/', 'User-Agent': 'PNPtv-Replay-Proxy/1.0' } }, (upstream) => {
+    res.status(upstream.statusCode || 200);
+    for (const h of ['content-type', 'content-length', 'accept-ranges', 'cache-control', 'last-modified', 'etag']) {
+      if (upstream.headers[h]) res.set(h, upstream.headers[h]);
+    }
+    upstream.pipe(res);
+  }).on('error', () => res.status(502).end());
+});
+
 // GET /api/webapp/creator/replay-shows — list my shows
 app.get(
   '/api/webapp/creator/replay-shows',
   requireSessionAuth,
   requireCrystalCreator,
   asyncHandler(async (req, res) => {
-    const shows = await crystalReplayService.listMyShows(req.session.user.id);
+    const rows = await crystalReplayService.listMyShows(req.session.user.id);
+    const shows = rows.map(r => ({
+      id: r.id,
+      title: r.title,
+      videoUrl: r.source_url,
+      thumbnailUrl: r.thumbnail_url || null,
+      durationSeconds: r.duration_seconds != null ? Number(r.duration_seconds) : null,
+      hideBadge: !!r.hide_badge,
+      createdAt: r.created_at,
+    }));
     return res.json({ success: true, shows });
   })
 );
@@ -23734,12 +23772,12 @@ app.post(
   requireCrystalCreator,
   crystalReplayLimiter,
   asyncHandler(async (req, res) => {
-    const { title, sourceUrl, r2Key, thumbnailUrl, durationSeconds, hideBadge } = req.body || {};
+    const { title, sourceUrl, videoUrl, r2Key, thumbnailUrl, durationSeconds, hideBadge } = req.body || {};
     try {
       const show = await crystalReplayService.createShow({
         creatorUserId:   req.session.user.id,
         title,
-        sourceUrl,
+        sourceUrl: sourceUrl || videoUrl,
         r2Key:           r2Key || null,
         thumbnailUrl:    thumbnailUrl || null,
         durationSeconds: durationSeconds || null,
@@ -23779,8 +23817,18 @@ app.get(
   requireSessionAuth,
   requireCrystalCreator,
   asyncHandler(async (req, res) => {
-    const session = await crystalReplayService.getActiveSession(req.session.user.id);
-    return res.json({ success: true, session: session || null });
+    const row = await crystalReplayService.getActiveSession(req.session.user.id);
+    if (!row) return res.json({ success: true, session: null });
+    return res.json({
+      success: true,
+      session: {
+        sessionId:    row.id,
+        showId:       row.show_id,
+        showTitle:    row.show_title,
+        startedAt:    row.started_at,
+        tipTotalRush: row.tip_total_cents ? Math.round(row.tip_total_cents * 6 / 100) : 0,
+      },
+    });
   })
 );
 
@@ -24349,8 +24397,10 @@ app.post('/api/webapp/admin/partner-groups/:id/backfill-badge', requireSessionAu
 // ── End PNP Partners Network ──────────────────────────────────────────────────
 
 // ── Subida de shows de replay a Bunny ────────────────────────────────────────
-// El creador sube directo a Bunny por TUS; el servidor solo crea el objeto y
-// firma. Asi 2 GB de video no atraviesan el disco de la maquina.
+// Chunked proxy: el cliente manda trozos al backend, el backend hace PATCH a
+// Bunny por TUS desde el servidor. Los bytes pasan por memoria (nunca por disco).
+const replayChunkUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+
 app.post('/api/webapp/creators/me/replay/bunny-upload', authenticateUser, asyncHandler(async (req, res) => {
   const creatorId = getActorId(req);
   if (!creatorId) return res.status(401).json({ success: false, error: 'No autenticado' });
@@ -24364,12 +24414,39 @@ app.post('/api/webapp/creators/me/replay/bunny-upload', authenticateUser, asyncH
       return res.status(403).json({ success: false, error: 'Requiere Crystal Creator Pass activo', code: 'CRYSTAL_ONLY' });
     }
     const title = String(req.body?.title || 'Replay show').slice(0, 200);
+    const fileSize = parseInt(req.body?.fileSize || '0', 10);
+    if (!fileSize || fileSize < 1) return res.status(400).json({ success: false, error: 'fileSize requerido' });
     const video = await bunny.createVideo(`${creatorId} — ${title}`);
-    res.json({ success: true, videoId: video.guid, upload: bunny.createTusUpload(video.guid) });
+    const tusUrl = await bunny.initTusUpload(video.guid, fileSize);
+    // Guardar la URL TUS en Redis para los PATCH posteriores (TTL = 7 h)
+    await getRedis().set(`pnpapp:replay:tus:${video.guid}`, tusUrl, 'EX', 25200);
+    res.json({ success: true, videoId: video.guid });
   } catch (e) {
     res.status(e.status || 500).json({ success: false, error: e.message, code: e.code });
   }
 }));
+
+app.post('/api/webapp/creators/me/replay/upload-chunk',
+  authenticateUser,
+  replayChunkUpload.single('chunk'),
+  asyncHandler(async (req, res) => {
+    const creatorId = getActorId(req);
+    if (!creatorId) return res.status(401).json({ success: false, error: 'No autenticado' });
+    if (!req.file) return res.status(400).json({ success: false, error: 'chunk requerido' });
+    const videoId = String(req.body?.videoId || '');
+    const offset  = parseInt(req.body?.offset || '0', 10);
+    if (!videoId) return res.status(400).json({ success: false, error: 'videoId requerido' });
+    try {
+      const tusUrl = await getRedis().get(`pnpapp:replay:tus:${videoId}`);
+      if (!tusUrl) return res.status(404).json({ success: false, error: 'Sesión de subida no encontrada. Inicia de nuevo.', code: 'TUS_SESSION_EXPIRED' });
+      const bunny = require('../../services/bunnyStreamService');
+      const newOffset = await bunny.patchTusChunk(tusUrl, req.file.buffer, offset, videoId);
+      res.json({ success: true, uploadedOffset: newOffset });
+    } catch (e) {
+      res.status(e.status || 500).json({ success: false, error: e.message, code: e.code });
+    }
+  })
+);
 
 // Se llama al terminar de subir. Bunny transcodifica en segundo plano, asi que
 // el cliente sondea esto hasta que status sea 'ready'.
