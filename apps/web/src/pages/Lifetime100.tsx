@@ -1349,6 +1349,22 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
           )}
 
         </div>
+
+        {/* Secondary option — $50/yr for users not ready for lifetime */}
+        <div style={{ textAlign: "center", padding: "6px 20px 2px" }}>
+          <a
+            href="/subscribe?plan=yearly50"
+            style={{
+              fontSize: 12,
+              color: "rgba(207,207,212,0.5)",
+              textDecoration: "none",
+              borderBottom: "1px solid rgba(207,207,212,0.2)",
+              paddingBottom: 1,
+            }}
+          >
+            Not ready? 1 Year of PRIME for $50 →
+          </a>
+        </div>
       </div>
 
       {/* Crypto payment modal — USDC / USDT / ETH / BTC via NowPayments */}

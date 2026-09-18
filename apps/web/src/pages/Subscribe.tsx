@@ -35,8 +35,8 @@ import { connectSocket } from "@/lib/socket";
 const MEMBER_PLAN_IDS = new Set(["member_monthly"]);
 // lifetime100          = /lifetime100 fundraiser (dedicated landing, not for /subscribe).
 // lifetime80           = legacy plan; superseded by `lifetime-pass` ($249.99).
-// monthly-pass-promo-15 + yearly50 = promo/discount SKUs granted out-of-band; never on /subscribe.
-const HIDDEN_PLAN_IDS = new Set(["prime-trial-3d", "lifetime100", "lifetime80", "monthly-pass-promo-15", "yearly50"]);
+// monthly-pass-promo-15 = promo/discount SKU granted out-of-band; never on /subscribe.
+const HIDDEN_PLAN_IDS = new Set(["prime-trial-3d", "lifetime100", "lifetime80", "monthly-pass-promo-15"]);
 
 const RECURRING_PLANS = new Set(["prime-week-pass-7d", "monthly-pass", "prime-diamond-pass-365d"]);
 

@@ -401,6 +401,7 @@ class SocialPostService {
               sp.source_channel, sp.hangout_group_id, sp.category, sp.is_ai_generated,
               sp.reply_to_id, sp.repost_of_id,
               sp.likes_count, sp.reposts_count, sp.replies_count, sp.is_exclusive, sp.is_shareable, sp.is_wof, sp.created_at,
+              sp.pinned_at,
               sp.is_promoted, sp.promoted_link, sp.promoted_link_label, sp.promoted_thumbnail,
               sp.promoted_link2, sp.promoted_link2_label,
               COALESCE(sp.content_tier, 'free') as content_tier,
@@ -481,6 +482,14 @@ class SocialPostService {
       posts = [...pins, ...posts.filter(p => !pinnedIds.has(p.id))];
     }
 
+    // Re-hoist any admin-pinned post (pinned_at set) to absolute position 0 —
+    // live/online pins must not displace an explicitly pinned post.
+    const adminPinnedIdx = posts.findIndex(p => p.pinned_at);
+    if (adminPinnedIdx > 0) {
+      const [adminPinned] = posts.splice(adminPinnedIdx, 1);
+      posts.unshift(adminPinned);
+    }
+
     posts = await SocialPostService.hydrateTopHypers(posts);
 
     const FREE_POST_CAP = 25;
@@ -509,9 +518,14 @@ class SocialPostService {
   static async _applyDiscoveryBoost(posts) {
     if (!Array.isArray(posts) || posts.length <= 1) return posts;
     try {
+      // Pinned posts are immune to score-based reordering
+      const pinned = posts.filter(p => p.pinned_at);
+      const unpinned = posts.filter(p => !p.pinned_at);
+      if (unpinned.length === 0) return posts;
+
       const { getRedis } = require('../config/redis');
       const redis = getRedis();
-      const distinctIds = [...new Set(posts.map(p => p.author_id).filter(Boolean).map(String))];
+      const distinctIds = [...new Set(unpinned.map(p => p.author_id).filter(Boolean).map(String))];
       if (distinctIds.length === 0) return posts;
       const pipeline = redis.pipeline();
       for (const id of distinctIds) pipeline.get(`presence:online:${id}`);
@@ -521,7 +535,7 @@ class SocialPostService {
         if (!err && val) onlineIds.add(distinctIds[idx]);
       });
       const now = Date.now();
-      const decorated = posts.map((p, idx) => {
+      const decorated = unpinned.map((p, idx) => {
         const isOnline = p.author_id && onlineIds.has(String(p.author_id));
         const isPrime = String(p.author_tier || '').toUpperCase() === 'PRIME';
         const isCreator = p.author_creator_status === 'active';
@@ -547,7 +561,7 @@ class SocialPostService {
         return { p, idx, score };
       });
       decorated.sort((a, b) => (b.score - a.score) || (a.idx - b.idx));
-      return decorated.map(d => d.p);
+      return [...pinned, ...decorated.map(d => d.p)];
     } catch (err) {
       logger.warn('_applyDiscoveryBoost failed (non-fatal)', { error: err.message });
       return posts;
@@ -899,9 +913,14 @@ class SocialPostService {
   static _diversifyFeed(posts) {
     if (posts.length <= 4) return posts;
 
+    // Pinned posts stay at the very top — exclude from round-robin
+    const pinned = posts.filter(p => p.pinned_at);
+    const unpinned = posts.filter(p => !p.pinned_at);
+    if (unpinned.length <= 4) return [...pinned, ...unpinned];
+
     // Group by author — posts already arrive newest-first from the DB query
     const byAuthor = new Map();
-    for (const p of posts) {
+    for (const p of unpinned) {
       const key = p.author_id;
       if (!byAuthor.has(key)) byAuthor.set(key, []);
       byAuthor.get(key).push(p);
@@ -916,7 +935,7 @@ class SocialPostService {
     const indices = {};
     authorKeys.forEach(k => { indices[k] = 0; });
     const result = [];
-    while (result.length < posts.length) {
+    while (result.length < unpinned.length) {
       let added = false;
       for (const key of authorKeys) {
         const arr = byAuthor.get(key);
@@ -927,7 +946,7 @@ class SocialPostService {
       }
       if (!added) break;
     }
-    return result;
+    return [...pinned, ...result];
   }
 
   /**
