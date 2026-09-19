@@ -565,7 +565,10 @@ export default function App() {
                       // out of Ethereum → Base without needing to export the key
                       // or install MetaMask. The wallet UI still defaults to Base.
                       supportedChains: [base, mainnet],
-                      loginMethods: ["email", "google", "telegram", "twitter", "wallet"],
+                      loginMethodsAndOrder: {
+                        primary: ["email", "google", "telegram", "twitter"],
+                        overflow: ["wallet"],
+                      },
                       // "all-users" ensures every user gets a PNPtv embedded wallet
                       // regardless of login method. Previously "users-without-wallets"
                       // meant a user who signed up by connecting Trust/MetaMask via
