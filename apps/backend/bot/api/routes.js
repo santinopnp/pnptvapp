@@ -13329,7 +13329,7 @@ app.post('/api/wallet/link', walletBuyLimiter, requireSessionAuth, asyncHandler(
     }
   }
 
-  const userId = String(user.telegram_id || user.id);
+  const userId = req.session?.user?.id;
   await query(
     `UPDATE users SET wallet_address = $1, wallet_linked_at = NOW() WHERE id = $2`,
     [submitted, userId]
