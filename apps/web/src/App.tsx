@@ -412,7 +412,7 @@ function PrivyIdentitySync() {
       }
     })();
     return () => { cancelled = true; };
-  }, [authenticated, wallets.map((w) => w.address).join(","), getAccessToken, privyLogout]);
+  }, [authenticated, wallets.map((w) => w.address).sort().join(","), getAccessToken, privyLogout]);
 
   // Cross-device seed for preferred wallet: if this browser has no localStorage
   // preference but the server row has one (set from another device), seed it

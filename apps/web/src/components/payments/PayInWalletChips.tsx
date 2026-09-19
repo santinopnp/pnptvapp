@@ -423,6 +423,7 @@ export function WalletPayCard({
     || null;
   const isEmbedded = activeWallet?.walletClientType === "privy";
   const [usdc, setUsdc] = _useState<number | null>(null);
+  const [balanceError, setBalanceError] = _useState(false);
   const [loading, setLoading] = _useState(false);
   const [paying, setPaying] = _useState(false);
   const [error, setError] = _useState<string | null>(null);
@@ -450,14 +451,18 @@ export function WalletPayCard({
 
   _useEffect(() => {
     if (!authenticated || !activeWallet) return;
+    let cancelled = false;
+    setBalanceError(false);
     setLoading(true);
     Promise.all([
       getWalletUsdcBalance(activeWallet.address).catch(() => null),
       getWalletEthBalance(activeWallet.address).catch(() => null),
     ]).then(([usdcR, ethR]) => {
+      if (cancelled) return;
       const bal = usdcR?.hasWallet ? usdcR.usdc : null;
       setUsdc(bal);
       setEth(ethR?.hasWallet ? ethR.eth : null);
+      setBalanceError(usdcR === null && ethR === null);
       // One-tap auto-pay: if the wallet already has enough USDC when the
       // component mounts (user topped up externally or is returning after a
       // cancelled signing), fire handlePay automatically once so they don't
@@ -466,7 +471,8 @@ export function WalletPayCard({
         autoPayFiredRef.current = true;
         setTimeout(() => handlePay(), 400);
       }
-    }).finally(() => setLoading(false));
+    }).finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authenticated, activeWallet?.address]);
 
@@ -836,6 +842,8 @@ export function WalletPayCard({
               ? (es ? "Consultando saldo…" : "Checking balance…")
               : !isEmbedded && eth === 0 && usdc != null && usdc > 0
                 ? (es ? `${usdc.toFixed(2)} USDC · Necesitas ~$0.01 ETH para gas` : `${usdc.toFixed(2)} USDC · Need ~$0.01 ETH for gas`)
+                : balanceError
+                  ? (es ? "No se pudo verificar el saldo" : "Could not check balance")
                 : usdc == null || usdc === 0
                   ? (es ? "Sin saldo USDC" : "No USDC balance")
                   : eth != null
@@ -1314,11 +1322,26 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
   const isReadOnlyView = !activeWallet && !!sessionWalletAddress;
 
   const [usdc, setUsdc] = _useState<number | null>(null);
+  const [balanceError, setBalanceError] = _useState(false);
   const [eth, setEth] = _useState<number | null>(null);
   // Ethereum mainnet balances — for the "wrong network" bridge recovery banners.
   // Separate from the Base balances shown in the main grid.
   const [ethMainnet, setEthMainnet] = _useState<number | null>(null);
   const [usdcMainnet, setUsdcMainnet] = _useState<number | null>(null);
+  const refreshCancelledRef = _useRef(false);
+  const bridgePollTimerRef = _useRef<ReturnType<typeof setTimeout> | null>(null);
+  const bridgePollCancelledRef = _useRef(false);
+  // Cancel any in-flight bridge poll when the component unmounts.
+  _useEffect(() => {
+    bridgePollCancelledRef.current = false;
+    return () => {
+      bridgePollCancelledRef.current = true;
+      if (bridgePollTimerRef.current != null) {
+        clearTimeout(bridgePollTimerRef.current);
+        bridgePollTimerRef.current = null;
+      }
+    };
+  }, []);
   const [rush, setRush] = _useState<{ regular: number; gifted: number } | null>(null);
   const [loading, setLoading] = _useState(true);
   const [copied, setCopied] = _useState(false);
@@ -1389,6 +1412,7 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
       setUsdc(null); setEth(null); setEthMainnet(null); setUsdcMainnet(null); setRush(null); setLoading(false);
       return;
     }
+    setBalanceError(false);
     setLoading(true);
     Promise.all([
       getWalletUsdcBalance(address).catch(() => null),
@@ -1397,14 +1421,20 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
       getWalletUsdcMainnetBalance(address).catch(() => null),
       _getWalletBalance().catch(() => null),
     ]).then(([u, e, em, um, r]) => {
+      if (refreshCancelledRef.current) return;
       setUsdc(u && u.hasWallet ? u.usdc : null);
       setEth(e && e.hasWallet ? e.eth : null);
       setEthMainnet(em && em.hasWallet ? em.eth : null);
       setUsdcMainnet(um && um.hasWallet ? um.usdc : null);
+      setBalanceError(u === null && e === null);
       if (r && r.success) setRush({ regular: r.regularBalance || 0, gifted: r.giftedBalance || 0 });
-    }).finally(() => setLoading(false));
+    }).finally(() => { if (!refreshCancelledRef.current) setLoading(false); });
   };
-  _useEffect(() => { refresh(); }, [address, refreshTick]); // refreshTick forces re-check after server commits preferred wallet
+  _useEffect(() => {
+    refreshCancelledRef.current = false;
+    refresh();
+    return () => { refreshCancelledRef.current = true; };
+  }, [address, refreshTick]); // refreshTick forces re-check after server commits preferred wallet
   _useEffect(() => {
     if (!showBuyModal) refresh();
   }, [showBuyModal]);
@@ -1594,21 +1624,27 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
       }
 
       setBridgeTxHash(txHash);
-      // Fire-and-forget refresh loop — poll Base balance every 30s for 20 min
-      // so the user sees the ETH land in Base without manually refreshing.
+      // Refresh loop — poll Base balance every 30s for 20 min so the user
+      // sees the ETH land in Base without manually refreshing. Cancelled if
+      // the component unmounts (bridgePollCancelledRef set by cleanup effect).
+      bridgePollCancelledRef.current = false;
       const start = Date.now();
       const poll = async () => {
+        if (bridgePollCancelledRef.current) return;
         if (Date.now() - start > 20 * 60_000) return;
         try {
           const r = await getWalletEthBalance(activeWallet.address);
+          if (bridgePollCancelledRef.current) return;
           if (r.hasWallet && r.eth > (eth || 0)) {
             refresh();
             return;
           }
         } catch { /* keep polling */ }
-        setTimeout(poll, 30_000);
+        if (!bridgePollCancelledRef.current) {
+          bridgePollTimerRef.current = setTimeout(poll, 30_000);
+        }
       };
-      setTimeout(poll, 30_000);
+      bridgePollTimerRef.current = setTimeout(poll, 30_000);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       const isCancel = /User rejected|user denied|cancel/i.test(msg);
@@ -2406,7 +2442,7 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
                     <span className="text-[10px] font-semibold uppercase tracking-wide text-white/60">USDC</span>
                   </div>
                   <p className="mt-1 text-lg font-bold text-white tabular-nums">
-                    {loading ? "…" : (usdc == null ? "0.00" : usdc.toFixed(2))}
+                    {loading ? "…" : balanceError && usdc == null ? "—" : (usdc == null ? "0.00" : usdc.toFixed(2))}
                   </p>
                   <p className="text-[10px] text-white/50 mt-0.5">on Base</p>
                 </div>
