@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { WalletPayCard } from '@/components/payments/PayInWalletChips';
+import { WalletPayCard, WalletLoginGate } from '@/components/payments/PayInWalletChips';
 import { prepareUsdcSubscription } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
 
@@ -99,6 +99,7 @@ export default function FreeTierOverlay({ label, requiredTier = 'member', childr
               <p className="text-xs text-white/50 mt-0.5">{es ? 'Elige tu plan — pago único, sin suscripción' : 'Pick a plan — one-time payment, no subscription'}</p>
             </div>
 
+            <WalletLoginGate lang={lang as 'es' | 'en'}>
             <div className="grid grid-cols-2 gap-2.5">
               {PROMO_PLANS.map(plan => {
                 const isLifetime = plan.id === 'lifetime100';
@@ -162,6 +163,7 @@ export default function FreeTierOverlay({ label, requiredTier = 'member', childr
                 );
               })}
             </div>
+            </WalletLoginGate>
 
             <button
               type="button"

@@ -27,7 +27,7 @@ import {
 } from "@/lib/api";
 import { translateText } from "@/lib/feedI18n";
 import { SharePostModal } from "@/components/SharePostModal";
-import { WalletPayCard } from "@/components/payments/PayInWalletChips";
+import { WalletPayCard, WalletLoginGate } from "@/components/payments/PayInWalletChips";
 // NP inline PRIME checkout retired 2026-08-09 — PRIME CTAs now deep-link
 // into /subscribe (which uses the wallet). Local shim below preserves the
 // JSX call sites without pulling in the NP hook.
@@ -2020,39 +2020,41 @@ export default function PostCard({
                   aria-label="Close"
                 >×</button>
               </div>
-              <div className="px-5 py-4 space-y-3">
-                <div className="flex items-center justify-between bg-white/5 border border-white/10 rounded-xl px-4 py-3">
-                  <div>
-                    <p className="text-xs text-white/50">{selectedPlan.tag}</p>
-                    <p className="text-sm font-bold text-white">{selectedPlan.label}</p>
+              <WalletLoginGate lang={es ? "es" : "en"}>
+                <div className="px-5 py-4 space-y-3">
+                  <div className="flex items-center justify-between bg-white/5 border border-white/10 rounded-xl px-4 py-3">
+                    <div>
+                      <p className="text-xs text-white/50">{selectedPlan.tag}</p>
+                      <p className="text-sm font-bold text-white">{selectedPlan.label}</p>
+                    </div>
+                    <p className="text-lg font-black text-[#5ED1C4]">${selectedPlan.price}</p>
                   </div>
-                  <p className="text-lg font-black text-[#5ED1C4]">${selectedPlan.price}</p>
+                  <WalletPayCard
+                    surface="prime"
+                    amountUsd={selectedPlan.price}
+                    entitlementSpec={{ planId: selectedPlan.id }}
+                    lang={es ? "es" : "en"}
+                    onSuccess={() => { setPromoModalPlanId(null); setNpError(null); }}
+                  />
+                  <div className="relative flex items-center gap-2 py-1">
+                    <div className="flex-1 h-px bg-white/10" />
+                    <span className="text-[10px] text-white/40 flex-shrink-0">
+                      {es ? "o paga con cualquier cripto" : "or pay with any crypto"}
+                    </span>
+                    <div className="flex-1 h-px bg-white/10" />
+                  </div>
+                  <button
+                    onClick={() => launchNpCheckout(selectedPlan.id)}
+                    disabled={npLaunching}
+                    className="w-full py-3 rounded-xl border border-white/15 bg-white/[0.04] hover:bg-white/[0.08] disabled:opacity-50 text-sm font-semibold text-white/80 transition-colors"
+                  >
+                    {npLaunching
+                      ? (es ? "Abriendo…" : "Opening…")
+                      : (es ? "💸 Pagar con cualquier cripto →" : "💸 Pay with any crypto →")}
+                  </button>
+                  {npError && <p className="text-[11px] text-red-400 text-center">{npError}</p>}
                 </div>
-                <WalletPayCard
-                  surface="prime"
-                  amountUsd={selectedPlan.price}
-                  entitlementSpec={{ planId: selectedPlan.id }}
-                  lang={es ? "es" : "en"}
-                  onSuccess={() => { setPromoModalPlanId(null); setNpError(null); }}
-                />
-                <div className="relative flex items-center gap-2 py-1">
-                  <div className="flex-1 h-px bg-white/10" />
-                  <span className="text-[10px] text-white/40 flex-shrink-0">
-                    {es ? "o paga con cualquier cripto" : "or pay with any crypto"}
-                  </span>
-                  <div className="flex-1 h-px bg-white/10" />
-                </div>
-                <button
-                  onClick={() => launchNpCheckout(selectedPlan.id)}
-                  disabled={npLaunching}
-                  className="w-full py-3 rounded-xl border border-white/15 bg-white/[0.04] hover:bg-white/[0.08] disabled:opacity-50 text-sm font-semibold text-white/80 transition-colors"
-                >
-                  {npLaunching
-                    ? (es ? "Abriendo…" : "Opening…")
-                    : (es ? "💸 Pagar con cualquier cripto →" : "💸 Pay with any crypto →")}
-                </button>
-                {npError && <p className="text-[11px] text-red-400 text-center">{npError}</p>}
-              </div>
+              </WalletLoginGate>
             </div>
           </div>
         );

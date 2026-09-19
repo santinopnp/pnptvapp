@@ -1106,6 +1106,71 @@ export function WalletTypeIcon({ clientType, size = 12 }: { clientType?: string 
 const _getPreferredWallet = getPreferredWallet;
 const _setPreferredWallet = setPreferredWallet;
 
+/**
+ * Gate that intercepts any wallet-dependent UI and shows a login step first
+ * when Privy isn't authenticated yet. Once the user logs in, the gate
+ * transparently renders its children so the checkout flow continues without
+ * any extra navigation.
+ *
+ * Use this to wrap plan-selection modals / sheets so users authenticate
+ * BEFORE they pick a plan, rather than discovering the login requirement
+ * buried inside a WalletPayCard.
+ */
+export function WalletLoginGate({ children, lang = "en" }: { children: React.ReactNode; lang?: "es" | "en" }) {
+  const { login } = usePrivy();
+  const recovery = usePrivyRecovery();
+  const { connectWallet } = useConnectWallet({ onSuccess: () => {}, onError: () => {} });
+  const es = lang === "es";
+
+  if (recovery.status === "initializing") {
+    return (
+      <div className="flex items-center justify-center gap-2 py-10">
+        <svg className="w-5 h-5 animate-spin text-emerald-300" fill="none" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" className="opacity-25" />
+          <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+        </svg>
+        <span className="text-sm text-white/70">{es ? "Cargando billetera…" : "Loading wallet…"}</span>
+      </div>
+    );
+  }
+
+  if (recovery.status === "needs_login") {
+    return (
+      <div className="py-6 px-4 space-y-3">
+        <div className="text-center space-y-1.5">
+          <div className="text-3xl">💎</div>
+          <p className="text-base font-bold text-white">
+            {es ? "Accedé a tu billetera PNPtv" : "Access your PNPtv Wallet"}
+          </p>
+          <p className="text-xs text-white/60 max-w-xs mx-auto leading-relaxed">
+            {es
+              ? "Usá el mismo login que usás en PNPtv — email, Google, Telegram o X."
+              : "Sign in with the same method you use for PNPtv — email, Google, Telegram or X."}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => { try { login(); } catch (e) { reportWalletClientError("privyLoginFromGate", e, {}); } }}
+          className="w-full py-3 rounded-xl text-sm font-bold text-white transition active:scale-[0.98]"
+          style={{ background: "linear-gradient(135deg,#D4007A,#FF6B9D)" }}
+        >
+          {es ? "Entrar con mi login de PNPtv" : "Sign in with my PNPtv login"}
+        </button>
+        <button
+          type="button"
+          onClick={() => { try { connectWallet(); } catch (e) { reportWalletClientError("connectWalletFromGate", e, {}); } }}
+          className="w-full py-2 rounded-xl text-xs font-semibold transition active:scale-[0.98]"
+          style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.55)" }}
+        >
+          {es ? "o entrá con otra wallet" : "or sign in with another wallet"}
+        </button>
+      </div>
+    );
+  }
+
+  return <>{children}</>;
+}
+
 export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
   const { authenticated, login, exportWallet, getAccessToken } = usePrivy();
   const { wallets } = useWallets();
