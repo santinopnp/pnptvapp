@@ -782,6 +782,14 @@ export function WalletPayCard({
         >
           {es ? "Entrar con mi login de PNPtv" : "Sign in with my PNPtv login"}
         </button>
+        <button
+          type="button"
+          onClick={() => { try { connectWallet(); } catch (e) { reportWalletClientError("connectWallet", e, { surface }); } }}
+          className="w-full py-2 rounded-xl text-xs font-semibold transition active:scale-[0.98]"
+          style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.55)" }}
+        >
+          {es ? "o conectá Trust / MetaMask" : "or connect Trust / MetaMask"}
+        </button>
       </div>
     );
   }
@@ -1864,6 +1872,14 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
             style={{ background: "linear-gradient(135deg,#D4007A,#FF6B9D)" }}
           >
             {_es ? "Entrar con mi login de PNPtv" : "Sign in with my PNPtv login"}
+          </button>
+          <button
+            type="button"
+            onClick={() => { try { connectWallet(); } catch (e) { reportWalletClientError("connectWallet", e, { source: "WalletHomeSheet" }); } }}
+            className="w-full py-2 rounded-xl text-xs font-semibold transition active:scale-[0.98]"
+            style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.55)" }}
+          >
+            {_es ? "o conectá Trust / MetaMask" : "or connect Trust / MetaMask"}
           </button>
         </div>
       );
