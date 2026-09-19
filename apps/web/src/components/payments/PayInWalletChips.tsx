@@ -788,7 +788,7 @@ export function WalletPayCard({
           className="w-full py-2 rounded-xl text-xs font-semibold transition active:scale-[0.98]"
           style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.55)" }}
         >
-          {es ? "o conectá Trust / MetaMask" : "or connect Trust / MetaMask"}
+          {es ? "o entrá con otra wallet" : "or sign in with another wallet"}
         </button>
       </div>
     );
@@ -1879,7 +1879,7 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
             className="w-full py-2 rounded-xl text-xs font-semibold transition active:scale-[0.98]"
             style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.55)" }}
           >
-            {_es ? "o conectá Trust / MetaMask" : "or connect Trust / MetaMask"}
+            {_es ? "o entrá con otra wallet" : "or sign in with another wallet"}
           </button>
         </div>
       );
