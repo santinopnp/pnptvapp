@@ -15,7 +15,6 @@ import {
   paySubscriptionWithTokens,
   prepareUsdcSubscription,
   getOnlineStats,
-  claimTrial,
   logSubscribeVisit,
   type SubscriptionPlan,
 } from "@/lib/api";
@@ -175,9 +174,6 @@ export default function Subscribe() {
     : null;
 
   // Free trial
-  const [trialClaiming, setTrialClaiming] = useState(false);
-  const [trialClaimed, setTrialClaimed] = useState(false);
-  const [trialAlreadyUsed, setTrialAlreadyUsed] = useState(false);
 
   // NowPayments hook retired 2026-08-09 — Wallet (USDC on Base) is the only
   // crypto path now. Any resumed NP order from sessionStorage is ignored.
@@ -826,39 +822,6 @@ export default function Subscribe() {
             })}
           </div>
 
-          {/* Free trial CTA — only for users who haven't used it */}
-          {!trialClaimed && !trialAlreadyUsed && (
-            <div className="mt-3 text-center">
-              {trialClaiming ? (
-                <span className="text-xs text-white/40">{t.lang === "es" ? "Activando prueba…" : "Activating trial…"}</span>
-              ) : (
-                <button
-                  type="button"
-                  onClick={async () => {
-                    setTrialClaiming(true);
-                    try {
-                      const res = await claimTrial();
-                      if (res.alreadyUsed) { setTrialAlreadyUsed(true); return; }
-                      setTrialClaimed(true);
-                      trackEvent("trial_claimed", { plan: "prime-trial-3d" });
-                      setTimeout(() => { window.location.href = "/"; }, 1500);
-                    } catch { setTrialClaiming(false); }
-                  }}
-                  className="text-xs font-semibold underline decoration-dotted transition-colors"
-                  style={{ color: "rgba(255,255,255,0.35)" }}
-                  onMouseEnter={e => (e.currentTarget.style.color = "rgba(255,255,255,0.65)")}
-                  onMouseLeave={e => (e.currentTarget.style.color = "rgba(255,255,255,0.35)")}
-                >
-                  {t.lang === "es" ? "¿Preferís probar 3 días gratis primero? →" : "Want to try 3 days free first? →"}
-                </button>
-              )}
-              {trialClaimed && (
-                <p className="text-xs text-emerald-400 font-semibold">
-                  ✅ {t.lang === "es" ? "¡PRIME activado por 3 días! Redirigiendo…" : "PRIME activated for 3 days! Redirecting…"}
-                </p>
-              )}
-            </div>
-          )}
         </div>
       )}
 

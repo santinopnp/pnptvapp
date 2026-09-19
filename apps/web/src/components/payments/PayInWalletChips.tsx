@@ -759,25 +759,18 @@ export function WalletPayCard({
     );
   }
   if (recovery.status === "needs_login") {
-    const isFirstTime = !recovery.serverWalletAddr;
     return (
       <div className="rounded-xl border border-amber-400/40 bg-amber-500/[0.06] p-3 space-y-2">
         <div className="flex items-center gap-2">
-          <span className="text-lg">{isFirstTime ? "💎" : "🔒"}</span>
+          <span className="text-lg">💎</span>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-bold text-white">
-              {isFirstTime
-                ? (es ? "Pagá con tu billetera" : "Pay with your wallet")
-                : (es ? "Reconectá tu billetera" : "Reconnect your wallet")}
+              {es ? "Accedé a tu billetera PNPtv" : "Access your PNPtv Wallet"}
             </p>
             <p className="text-[11px] text-white/60 leading-snug">
-              {isFirstTime
-                ? (es
-                    ? "Usá el mismo login que usás en PNPtv — te creamos una billetera gratis al instante."
-                    : "Use the same login as PNPtv — we'll create a free wallet for you instantly.")
-                : (es
-                    ? "La sesión de tu wallet expiró. Iniciá sesión de nuevo para pagar."
-                    : "Your wallet session expired. Sign back in to complete payment.")}
+              {es
+                ? "Usá el mismo login que usás en PNPtv — email, Google, Telegram o X."
+                : "Sign in with the same method you use for PNPtv — email, Google, Telegram or X."}
             </p>
           </div>
         </div>
@@ -787,9 +780,7 @@ export function WalletPayCard({
           className="w-full py-3 rounded-xl text-sm font-bold text-white transition active:scale-[0.98]"
           style={{ background: "linear-gradient(135deg,#D4007A,#FF6B9D)" }}
         >
-          {isFirstTime
-            ? (es ? "Entrar con mi login de PNPtv" : "Sign in with my PNPtv login")
-            : (es ? "Iniciar sesión" : "Sign in to wallet")}
+          {es ? "Entrar con mi login de PNPtv" : "Sign in with my PNPtv login"}
         </button>
       </div>
     );
@@ -1852,25 +1843,18 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
       );
     }
     if (recovery.status === "needs_login") {
-      const isFirstTime = !recovery.serverWalletAddr;
       const _es = typeof navigator !== "undefined" && navigator.language?.toLowerCase().startsWith("es");
       return (
         <div className="p-6 space-y-3">
           <div className="text-center space-y-1">
-            <div className="text-3xl">{isFirstTime ? "💎" : "🔒"}</div>
+            <div className="text-3xl">💎</div>
             <p className="text-base font-bold text-white">
-              {isFirstTime
-                ? (_es ? "Activá tu billetera gratis" : "Activate your free wallet")
-                : (_es ? "Reconectá tu billetera" : "Reconnect your wallet")}
+              {_es ? "Accedé a tu billetera PNPtv" : "Access your PNPtv Wallet"}
             </p>
             <p className="text-xs text-white/60 max-w-xs mx-auto leading-relaxed">
-              {isFirstTime
-                ? (_es
-                    ? "Usá el mismo método que usás para entrar a PNPtv — email, Google, Telegram o X. Te creamos una billetera gratis al instante."
-                    : "Use the same login you use for PNPtv — email, Google, Telegram or X. We'll create a free wallet for you instantly.")
-                : (_es
-                    ? "La sesión de tu wallet expiró en este dispositivo. Iniciá sesión de nuevo para ver tu saldo y pagar."
-                    : "Your wallet session expired on this device. Sign back in to see your balance and pay.")}
+              {_es
+                ? "Usá el mismo login que usás en PNPtv — email, Google, Telegram o X."
+                : "Sign in with the same method you use for PNPtv — email, Google, Telegram or X."}
             </p>
           </div>
           <button
@@ -1879,17 +1863,8 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
             className="w-full py-3 rounded-xl text-sm font-bold text-white transition active:scale-[0.98]"
             style={{ background: "linear-gradient(135deg,#D4007A,#FF6B9D)" }}
           >
-            {isFirstTime
-              ? (_es ? "Entrar con mi login de PNPtv" : "Sign in with my PNPtv login")
-              : (_es ? "Iniciar sesión" : "Sign in to wallet")}
+            {_es ? "Entrar con mi login de PNPtv" : "Sign in with my PNPtv login"}
           </button>
-          {!isFirstTime && (
-            <p className="text-[10px] text-white/40 text-center">
-              {_es
-                ? "En iPhone: si no abre nada, cerrá Safari completamente y volvé a entrar."
-                : "On iPhone: if nothing opens, close Safari fully and re-enter."}
-            </p>
-          )}
         </div>
       );
     }
