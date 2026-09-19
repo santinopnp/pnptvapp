@@ -12926,8 +12926,7 @@ app.get('/api/wallet/packages', requireSessionAuth, (req, res) => {
 // require Privy auth on the current device — this only exposes the address so
 // balances + address + Basescan link can render cross-device.
 app.get('/api/wallet/linked', requireSessionAuth, asyncHandler(async (req, res) => {
-  const user = req.session?.user;
-  const userId = String(user.telegram_id || user.id);
+  const userId = req.session?.user?.id;
   const { rows } = await getPool().query(
     `SELECT wallet_address, privy_id, wallet_linked_at, preferred_wallet_address
        FROM users WHERE id = $1 LIMIT 1`,
@@ -12966,8 +12965,7 @@ const walletPreferLimiter = rateLimit({
   legacyHeaders: false,
 });
 app.put('/api/wallet/preferred', walletPreferLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
-  const user = req.session?.user;
-  const userId = String(user.telegram_id || user.id);
+  const userId = req.session?.user?.id;
   const raw = req.body && Object.prototype.hasOwnProperty.call(req.body, 'address')
     ? req.body.address
     : undefined;
@@ -12997,8 +12995,8 @@ app.put('/api/wallet/preferred', walletPreferLimiter, requireSessionAuth, asyncH
     let owns = (own.wa && own.wa === normalized) || (own.pwa && own.pwa === normalized);
     if (!owns && own.privy_id) {
       try {
-        const { listWalletAddresses } = require('../../services/privyLinkService');
-        const addrs = await listWalletAddresses(own.privy_id);
+        const { listWalletAddressesRaw } = require('../../services/privyLinkService');
+        const addrs = await listWalletAddressesRaw(own.privy_id);
         owns = addrs.includes(normalized);
       } catch { /* fall through to reject */ }
     }
@@ -13025,8 +13023,7 @@ app.put('/api/wallet/preferred', walletPreferLimiter, requireSessionAuth, asyncH
 
 // GET /api/wallet/history — purchase history
 app.get('/api/wallet/history', requireSessionAuth, asyncHandler(async (req, res) => {
-  const user = req.session?.user;
-  const userId = String(user.telegram_id || user.id);
+  const userId = req.session?.user?.id;
   const history = await DashTokenService.getPurchaseHistory(userId, 20);
   res.json({ success: true, history });
 }));
@@ -17023,6 +17020,17 @@ app.post('/api/privy/link', requireSessionAuth, asyncHandler(async (req, res) =>
     // Bust the ownership cache so the newly-linked wallet passes the 403 check immediately.
     const { cache } = require('../../config/redis');
     await cache.del(`wallet:owned:${pnptvUserId}`).catch(() => {});
+    // Bust balance caches for the newly-linked address so fresh balances are
+    // fetched on the next request rather than serving stale zeros.
+    if (walletAddress) {
+      const addr = walletAddress.toLowerCase();
+      await Promise.all([
+        cache.del(`wallet:usdc:${addr}`).catch(() => {}),
+        cache.del(`wallet:eth:${addr}`).catch(() => {}),
+        cache.del(`wallet:usdc-mainnet:${addr}`).catch(() => {}),
+        cache.del(`wallet:eth-mainnet:${addr}`).catch(() => {}),
+      ]);
+    }
     return res.json({ ok: true, privyId, walletAddress });
   } catch (err) {
     if (err.message === 'invalid_privy_token') return res.status(401).json({ error: 'invalid_privy_token' });
@@ -17649,8 +17657,8 @@ async function _addressBelongsToUser(userId, normalizedAddr) {
     let privyFailed = false;
     if (own.privy_id) {
       try {
-        const { listWalletAddresses } = require('../../services/privyLinkService');
-        const privyAddrs = await listWalletAddresses(own.privy_id);
+        const { listWalletAddressesRaw } = require('../../services/privyLinkService');
+        const privyAddrs = await listWalletAddressesRaw(own.privy_id);
         for (const a of privyAddrs) if (!addrs.includes(a)) addrs.push(a);
       } catch { privyFailed = true; /* privy unreachable — fall back to DB wallets only */ }
     }
@@ -17685,13 +17693,13 @@ app.get('/api/wallet/balance/usdc', requireSessionAuth, asyncHandler(async (req,
     if (!(await _addressBelongsToUser(userId, normalized))) {
       return res.status(403).json({ ok: false, error: 'address_not_owned' });
     }
-    address = overrideAddr;
+    address = normalized;
   } else {
     const { rows } = await dbQuery(
       `SELECT wallet_address FROM users WHERE id = $1 LIMIT 1`,
       [String(userId)]
     );
-    address = rows[0]?.wallet_address;
+    address = rows[0]?.wallet_address?.toLowerCase() ?? null;
   }
   if (!address) return res.json({ ok: true, hasWallet: false, usdc: 0 });
 
@@ -17738,16 +17746,17 @@ app.get('/api/wallet/balance/usdc-mainnet', requireSessionAuth, asyncHandler(asy
     if (!/^0x[a-fA-F0-9]{40}$/.test(overrideAddr)) {
       return res.status(400).json({ ok: false, error: 'invalid_address' });
     }
-    if (!(await _addressBelongsToUser(userId, overrideAddr.toLowerCase()))) {
+    const normalizedOverride = overrideAddr.toLowerCase();
+    if (!(await _addressBelongsToUser(userId, normalizedOverride))) {
       return res.status(403).json({ ok: false, error: 'address_not_owned' });
     }
-    address = overrideAddr;
+    address = normalizedOverride;
   } else {
     const { rows } = await dbQuery(
       `SELECT wallet_address FROM users WHERE id = $1 LIMIT 1`,
       [String(userId)]
     );
-    address = rows[0]?.wallet_address;
+    address = rows[0]?.wallet_address?.toLowerCase() ?? null;
   }
   if (!address) return res.json({ ok: true, hasWallet: false, usdc: 0 });
 
@@ -18034,20 +18043,21 @@ app.get('/api/wallet/balance/eth-mainnet', requireSessionAuth, asyncHandler(asyn
     if (!/^0x[a-fA-F0-9]{40}$/.test(overrideAddr)) {
       return res.status(400).json({ ok: false, error: 'invalid_address' });
     }
-    if (!(await _addressBelongsToUser(userId, overrideAddr.toLowerCase()))) {
+    const normalizedOverride = overrideAddr.toLowerCase();
+    if (!(await _addressBelongsToUser(userId, normalizedOverride))) {
       return res.status(403).json({ ok: false, error: 'address_not_owned' });
     }
-    address = overrideAddr;
+    address = normalizedOverride;
   } else {
     const { rows } = await dbQuery(
       `SELECT wallet_address FROM users WHERE id = $1 LIMIT 1`,
       [String(userId)]
     );
-    address = rows[0]?.wallet_address;
+    address = rows[0]?.wallet_address?.toLowerCase() ?? null;
   }
   if (!address) return res.json({ ok: true, hasWallet: false, eth: 0 });
 
-  const cacheKey = `wallet:eth-mainnet:${address.toLowerCase()}`;
+  const cacheKey = `wallet:eth-mainnet:${address}`;
   const cached = await cache.get(cacheKey).catch(() => null);
   if (cached != null) return res.json({ ok: true, hasWallet: true, address, eth: Number(cached), cached: true });
 
@@ -18092,20 +18102,21 @@ app.get('/api/wallet/balance/eth', requireSessionAuth, asyncHandler(async (req, 
     if (!/^0x[a-fA-F0-9]{40}$/.test(overrideAddr)) {
       return res.status(400).json({ ok: false, error: 'invalid_address' });
     }
-    if (!(await _addressBelongsToUser(userId, overrideAddr.toLowerCase()))) {
+    const normalizedOverride = overrideAddr.toLowerCase();
+    if (!(await _addressBelongsToUser(userId, normalizedOverride))) {
       return res.status(403).json({ ok: false, error: 'address_not_owned' });
     }
-    address = overrideAddr;
+    address = normalizedOverride;
   } else {
     const { rows } = await dbQuery(
       `SELECT wallet_address FROM users WHERE id = $1 LIMIT 1`,
       [String(userId)]
     );
-    address = rows[0]?.wallet_address;
+    address = rows[0]?.wallet_address?.toLowerCase() ?? null;
   }
   if (!address) return res.json({ ok: true, hasWallet: false, eth: 0 });
 
-  const cacheKey = `wallet:eth:${address.toLowerCase()}`;
+  const cacheKey = `wallet:eth:${address}`;
   const cached = await cache.get(cacheKey).catch(() => null);
   if (cached != null) return res.json({ ok: true, hasWallet: true, address, eth: Number(cached), cached: true });
 

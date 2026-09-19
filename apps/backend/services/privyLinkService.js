@@ -151,8 +151,28 @@ async function listWalletAddresses(privyId) {
   }
 }
 
+/**
+ * Like listWalletAddresses but throws on error instead of swallowing it.
+ * Use this when the caller has its own try/catch and needs to distinguish
+ * between "user has no wallets" (returns []) and "Privy API failed" (throws).
+ *
+ * @param {string} privyId
+ * @returns {Promise<string[]>}
+ */
+async function listWalletAddressesRaw(privyId) {
+  if (!privyId) return [];
+  const client = getPrivyClient();
+  const privyUser = await client.getUserById(privyId);
+  if (!privyUser) return [];
+  const linked = Array.isArray(privyUser.linkedAccounts) ? privyUser.linkedAccounts : [];
+  return linked
+    .filter((a) => a?.type === 'wallet' && a.address)
+    .map((a) => String(a.address).toLowerCase());
+}
+
 module.exports = {
   verifyAndLink,
   extractWalletAddress,
   listWalletAddresses,
+  listWalletAddressesRaw,
 };
