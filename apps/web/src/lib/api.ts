@@ -10996,7 +10996,7 @@ export async function startReplayShow(id: string): Promise<{ ok: boolean; sessio
 }
 
 export async function stopReplayShow(): Promise<{ ok: boolean }> {
-  return request("/api/webapp/creator/replay-shows/session/stop", { method: "POST" });
+  return request("/api/webapp/creator/replay-shows/stop", { method: "POST" });
 }
 
 export async function getActiveReplaySession(): Promise<ActiveReplaySession | null> {

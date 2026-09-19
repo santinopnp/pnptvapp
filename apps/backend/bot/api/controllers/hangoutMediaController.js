@@ -309,10 +309,50 @@ const uploadHangoutMedia = async (req, res) => {
       }
     })();
 
-    return res.status(201).json({
-      success: true,
-      message: msg,
-    });
+    res.status(201).json({ success: true, message: msg });
+
+    // For videos: ffmpeg + ffprobe run after the response is already sent.
+    // Once done, patch the DB row and notify clients via socket so the thumbnail
+    // and duration appear without the user having waited for them.
+    if (mediaResult.backgroundTask) {
+      mediaResult.backgroundTask.then(async ({ thumbUrl, probeData }) => {
+        if (!thumbUrl && !probeData?.duration && !probeData?.width) return;
+        try {
+          await query(
+            `UPDATE chat_messages
+               SET media_thumb_url = COALESCE($1, media_thumb_url),
+                   media_width      = COALESCE($2::int, media_width),
+                   media_height     = COALESCE($3::int, media_height),
+                   media_metadata   = COALESCE(media_metadata, '{}'::jsonb) || $4::jsonb
+             WHERE id = $5`,
+            [
+              thumbUrl || null,
+              probeData.width || null,
+              probeData.height || null,
+              JSON.stringify({
+                duration: probeData.duration || null,
+                codec: probeData.codec || null,
+                fileSize: probeData.fileSize || null,
+              }),
+              msg.id,
+            ]
+          );
+          if (io) {
+            io.to(room).emit('hangout:media:ready', {
+              messageId: msg.id,
+              room,
+              media_thumb_url: thumbUrl || null,
+              media_width: probeData.width || null,
+              media_height: probeData.height || null,
+            });
+          }
+        } catch (bgErr) {
+          logger.warn('uploadHangoutMedia: background video patch failed', { error: bgErr.message, msgId: msg.id });
+        }
+      }).catch((e) => logger.warn('uploadHangoutMedia: backgroundTask rejected', { error: e.message }));
+    }
+
+    return;
   } catch (err) {
     if (err.statusCode) {
       return res.status(err.statusCode).json({ error: err.userMessage || err.message });

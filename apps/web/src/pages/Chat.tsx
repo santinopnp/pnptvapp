@@ -603,12 +603,22 @@ function HangoutChatPanel({
       setChatError(data.message || "Something went wrong");
     };
 
+    const onMediaReady = (data: { messageId: number; media_thumb_url?: string | null; media_width?: number | null; media_height?: number | null }) => {
+      setMessages((prev) => prev.map((m) => m.id === data.messageId ? {
+        ...m,
+        media_thumb_url: data.media_thumb_url ?? m.media_thumb_url,
+        media_width: data.media_width ?? m.media_width,
+        media_height: data.media_height ?? m.media_height,
+      } : m));
+    };
+
     socket.on("chat:message", onChatMessage);
     socket.on("hangout:typing", onTyping);
     socket.on("hangout:message:edited", onMessageEdited);
     socket.on("hangout:message:deleted", onMessageDeleted);
     socket.on("hangout:reaction:updated", onReactionUpdated);
     socket.on("hangout:error", onHangoutError);
+    socket.on("hangout:media:ready", onMediaReady);
     return () => {
       socket.off("chat:message", onChatMessage);
       socket.off("hangout:typing", onTyping);
@@ -616,6 +626,7 @@ function HangoutChatPanel({
       socket.off("hangout:message:deleted", onMessageDeleted);
       socket.off("hangout:reaction:updated", onReactionUpdated);
       socket.off("hangout:error", onHangoutError);
+      socket.off("hangout:media:ready", onMediaReady);
       // Clear pending typing timers + reset the list so we don't ghost across group/topic switch
       typingTimers.forEach((t) => clearTimeout(t));
       setTypingNames([]);

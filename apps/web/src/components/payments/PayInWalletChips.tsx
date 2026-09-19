@@ -571,6 +571,25 @@ export function WalletPayCard({
     if (!activeWallet) return;
     setError(null); setPaying(true);
     try {
+      // Live balance gate: re-fetch before creating the intent so we don't
+      // waste a gas topup on a user who has 0 USDC. The component-level `usdc`
+      // state can lag by up to 30s (server cache TTL). We only gate embedded
+      // wallets here — external wallets pay their own gas, so there's no
+      // treasury cost for them attempting a transfer that reverts.
+      if (isEmbedded) {
+        let liveUsdc: number | null = usdc;
+        try {
+          const fresh = await getWalletUsdcBalance(activeWallet.address);
+          liveUsdc = fresh.hasWallet ? (fresh.usdc ?? 0) : 0;
+          setUsdc(liveUsdc);
+        } catch { /* keep component-level value if fetch fails */ }
+        if (liveUsdc == null || liveUsdc < amountUsd) {
+          setPaying(false);
+          handleFund();
+          return;
+        }
+      }
+
       // For tip/donation surfaces the server reads amountUsd from
       // entitlementSpec (client-picked amount, bounded server-side). For
       // sub/membership/PRIME/rush the server resolves canonical price and
@@ -655,7 +674,9 @@ export function WalletPayCard({
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       const errStatus = (err as { status?: number }).status;
-      const isInsufficientFunds = errStatus === 402 || msg === "INSUFFICIENT_FUNDS";
+      const isInsufficientFunds = errStatus === 402
+        || msg === "INSUFFICIENT_FUNDS"
+        || /insufficient.*funds|transfer.*exceed|exceeds.*balance|execution reverted/i.test(msg);
       const isUserCancel = /User rejected|user denied|cancel/i.test(msg);
       const isChain = /wrong network|unrecognized chain|chain mismatch|switch chain|network mismatch/i.test(msg);
 

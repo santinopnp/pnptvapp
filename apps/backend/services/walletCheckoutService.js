@@ -1365,12 +1365,24 @@ function _reasonForSurface(surface) {
 
 async function _invalidateCaches(userId) {
   const uid = String(userId);
-  await Promise.all([
+  const delKeys = [
     cache.del(`wallet:${uid}`).catch(() => {}),
     cache.del(`wallet:obj:${uid}`).catch(() => {}),
     cache.del(`entitlements:${uid}`).catch(() => {}),
     cache.del(`user:tier:${uid}`).catch(() => {}),
-  ]);
+  ];
+  // Also bust the address-keyed USDC balance cache so the auto-pay trigger on
+  // the next page load doesn't read a stale post-payment balance and fire a
+  // gas topup for a wallet that's now empty.
+  try {
+    const { rows } = await query(
+      `SELECT wallet_address FROM users WHERE id = $1 LIMIT 1`,
+      [uid]
+    );
+    const addr = rows[0]?.wallet_address;
+    if (addr) delKeys.push(cache.del(`wallet:usdc:${addr.toLowerCase()}`).catch(() => {}));
+  } catch { /* non-fatal */ }
+  await Promise.all(delKeys);
 }
 
 /**

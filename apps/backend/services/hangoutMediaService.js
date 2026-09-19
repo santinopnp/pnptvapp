@@ -147,63 +147,53 @@ async function processVideo(buffer, hangoutId, userId, mimetype) {
   const videoPath = path.join(dir, videoFilename);
   const thumbPath = path.join(dir, thumbFilename);
 
+  // Write to disk first — must complete before we can return the URL
   await fs.writeFile(videoPath, buffer);
 
-  // Extract poster frame
-  let thumbUrl = null;
-  try {
-    await execFileAsync('ffmpeg', [
-      '-y',
-      '-ss', '00:00:01',
-      '-i', videoPath,
-      '-frames:v', '1',
-      '-vf', 'scale=400:-2',
-      '-q:v', '2',
-      thumbPath,
-    ], { timeout: 30000 });
-    thumbUrl = publicUrl(hangoutId, thumbFilename);
-  } catch (err) {
-    logger.warn('hangoutMediaService: ffmpeg thumbnail failed', {
-      file: videoFilename,
-      error: err.message,
-    });
-    await fs.unlink(thumbPath).catch(() => {});
-  }
+  // ffmpeg (thumbnail) + ffprobe (metadata) run in the background so the HTTP
+  // response is not held up. The controller awaits this promise after sending
+  // the 201, then patches the DB row and emits hangout:media:ready via socket.
+  const backgroundTask = (async () => {
+    let thumbUrl = null;
+    try {
+      await execFileAsync('ffmpeg', [
+        '-y', '-ss', '00:00:01', '-i', videoPath,
+        '-frames:v', '1', '-vf', 'scale=400:-2', '-q:v', '2', thumbPath,
+      ], { timeout: 30000 });
+      thumbUrl = publicUrl(hangoutId, thumbFilename);
+    } catch (err) {
+      logger.warn('hangoutMediaService: ffmpeg thumbnail failed', { file: videoFilename, error: err.message });
+      await fs.unlink(thumbPath).catch(() => {});
+    }
 
-  // Probe video dimensions/duration via ffprobe (best-effort)
-  let probeData = {};
-  try {
-    const { stdout } = await execFileAsync('ffprobe', [
-      '-v', 'quiet',
-      '-print_format', 'json',
-      '-show_streams',
-      '-show_format',
-      videoPath,
-    ], { timeout: 15000 });
-    const info = JSON.parse(stdout);
-    const videoStream = (info.streams || []).find(s => s.codec_type === 'video');
-    probeData = {
-      duration: info.format?.duration ? parseFloat(info.format.duration) : null,
-      width: videoStream?.width || null,
-      height: videoStream?.height || null,
-      codec: videoStream?.codec_name || null,
-      fileSize: info.format?.size ? parseInt(info.format.size, 10) : buffer.length,
-    };
-  } catch (probeErr) {
-    logger.warn('hangoutMediaService: ffprobe failed', { error: probeErr.message });
-    probeData = { fileSize: buffer.length };
-  }
+    let probeData = { fileSize: buffer.length };
+    try {
+      const { stdout } = await execFileAsync('ffprobe', [
+        '-v', 'quiet', '-print_format', 'json', '-show_streams', '-show_format', videoPath,
+      ], { timeout: 15000 });
+      const info = JSON.parse(stdout);
+      const videoStream = (info.streams || []).find(s => s.codec_type === 'video');
+      probeData = {
+        duration: info.format?.duration ? parseFloat(info.format.duration) : null,
+        width: videoStream?.width || null,
+        height: videoStream?.height || null,
+        codec: videoStream?.codec_name || null,
+        fileSize: info.format?.size ? parseInt(info.format.size, 10) : buffer.length,
+      };
+    } catch (probeErr) {
+      logger.warn('hangoutMediaService: ffprobe failed', { error: probeErr.message });
+    }
+
+    return { thumbUrl, probeData };
+  })();
 
   return {
     mediaUrl: publicUrl(hangoutId, videoFilename),
-    thumbUrl,
-    width: probeData.width || null,
-    height: probeData.height || null,
-    metadata: {
-      duration: probeData.duration || null,
-      codec: probeData.codec || null,
-      fileSize: probeData.fileSize || buffer.length,
-    },
+    thumbUrl: null,
+    width: null,
+    height: null,
+    metadata: { fileSize: buffer.length },
+    backgroundTask,
   };
 }
 
@@ -333,6 +323,7 @@ async function processHangoutMedia(file, hangoutId, userId) {
       width: result.width,
       height: result.height,
       metadata: result.metadata,
+      backgroundTask: result.backgroundTask,
     };
   } catch (processingErr) {
     if (processingErr.userMessage) throw processingErr;

@@ -17724,7 +17724,7 @@ app.get('/api/wallet/balance/usdc', requireSessionAuth, asyncHandler(async (req,
     const hex = j.result || '0x0';
     const raw = BigInt(hex);
     const usdc = Number(raw) / 1_000_000;
-    await cache.set(cacheKey, String(usdc), 30).catch(() => {});
+    await cache.set(cacheKey, String(usdc), 10).catch(() => {});
     return res.json({ ok: true, hasWallet: true, address, usdc });
   } catch (err) {
     logger.warn('[wallet/balance/usdc] alchemy rpc failed', { err: err.message });
@@ -23812,13 +23812,27 @@ const crystalReplayLimiter = rateLimit({
 // souphttpsrc) can fetch Bunny CDN streams that have allowed-referrers restrictions.
 // Only proxies to the configured BUNNY_STREAM_CDN_HOSTNAME; all URLs are relative in
 // Bunny playlists so GStreamer automatically routes subsequent requests through here.
+// If BUNNY_STREAM_TOKEN_KEY is set, signs every request with the Bunny token auth
+// algorithm (SHA-256 base64url of TOKEN_KEY+path+expires) so token-auth libraries work.
 const _BUNNY_CDN_HOST = process.env.BUNNY_STREAM_CDN_HOSTNAME || '';
+const _BUNNY_TOKEN_KEY = process.env.BUNNY_STREAM_TOKEN_KEY || '';
+const _BUNNY_PROXY_TTL = 4 * 3600; // 4 h — enough for a full show loop
 app.get('/api/internal/bunny-hls/*', (req, res) => {
   const rawPath = req.params[0] || '';
   const slash = rawPath.indexOf('/');
   const host = slash === -1 ? rawPath : rawPath.slice(0, slash);
   if (!_BUNNY_CDN_HOST || host !== _BUNNY_CDN_HOST) return res.status(403).end();
-  const targetUrl = `https://${rawPath}`;
+  const urlPath = slash === -1 ? '' : rawPath.slice(slash); // e.g. /guid/360p/video.m3u8
+  let targetUrl = `https://${rawPath}`;
+  if (_BUNNY_TOKEN_KEY && urlPath) {
+    const expires = Math.floor(Date.now() / 1000) + _BUNNY_PROXY_TTL;
+    const token = require('crypto')
+      .createHash('sha256')
+      .update(`${_BUNNY_TOKEN_KEY}${urlPath}${expires}`)
+      .digest('base64')
+      .replace(/\n/g, '').replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+    targetUrl = `https://${rawPath}?token=${token}&expires=${expires}`;
+  }
   require('https').get(targetUrl, { headers: { Referer: 'https://pnptv.app/', 'User-Agent': 'PNPtv-Replay-Proxy/1.0' } }, (upstream) => {
     res.status(upstream.statusCode || 200);
     for (const h of ['content-type', 'content-length', 'accept-ranges', 'cache-control', 'last-modified', 'etag']) {
