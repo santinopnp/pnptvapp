@@ -773,8 +773,8 @@ export function WalletPayCard({
             <p className="text-[11px] text-white/60 leading-snug">
               {isFirstTime
                 ? (es
-                    ? "Creamos una billetera cripto gratis para vos. Iniciá sesión para activarla y pagar."
-                    : "We'll set up a free crypto wallet for you. Sign in to activate it and pay.")
+                    ? "Usá el mismo login que usás en PNPtv — te creamos una billetera gratis al instante."
+                    : "Use the same login as PNPtv — we'll create a free wallet for you instantly.")
                 : (es
                     ? "La sesión de tu wallet expiró. Iniciá sesión de nuevo para pagar."
                     : "Your wallet session expired. Sign back in to complete payment.")}
@@ -788,7 +788,7 @@ export function WalletPayCard({
           style={{ background: "linear-gradient(135deg,#D4007A,#FF6B9D)" }}
         >
           {isFirstTime
-            ? (es ? "Activar billetera gratis" : "Activate free wallet")
+            ? (es ? "Entrar con mi login de PNPtv" : "Sign in with my PNPtv login")
             : (es ? "Iniciar sesión" : "Sign in to wallet")}
         </button>
       </div>
@@ -1853,21 +1853,22 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
     }
     if (recovery.status === "needs_login") {
       const isFirstTime = !recovery.serverWalletAddr;
+      const _es = typeof navigator !== "undefined" && navigator.language?.toLowerCase().startsWith("es");
       return (
         <div className="p-6 space-y-3">
           <div className="text-center space-y-1">
             <div className="text-3xl">{isFirstTime ? "💎" : "🔒"}</div>
             <p className="text-base font-bold text-white">
               {isFirstTime
-                ? (es ? "Activá tu billetera gratis" : "Activate your free wallet")
-                : (es ? "Reconectá tu billetera" : "Reconnect your wallet")}
+                ? (_es ? "Activá tu billetera gratis" : "Activate your free wallet")
+                : (_es ? "Reconectá tu billetera" : "Reconnect your wallet")}
             </p>
             <p className="text-xs text-white/60 max-w-xs mx-auto leading-relaxed">
               {isFirstTime
-                ? (es
-                    ? "PNPtv crea una billetera cripto segura y gratuita para vos. Iniciá sesión para activarla."
-                    : "PNPtv sets up a free secure crypto wallet for you. Sign in to activate it.")
-                : (es
+                ? (_es
+                    ? "Usá el mismo método que usás para entrar a PNPtv — email, Google, Telegram o X. Te creamos una billetera gratis al instante."
+                    : "Use the same login you use for PNPtv — email, Google, Telegram or X. We'll create a free wallet for you instantly.")
+                : (_es
                     ? "La sesión de tu wallet expiró en este dispositivo. Iniciá sesión de nuevo para ver tu saldo y pagar."
                     : "Your wallet session expired on this device. Sign back in to see your balance and pay.")}
             </p>
@@ -1879,12 +1880,12 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
             style={{ background: "linear-gradient(135deg,#D4007A,#FF6B9D)" }}
           >
             {isFirstTime
-              ? (es ? "Activar billetera gratis" : "Activate free wallet")
-              : (es ? "Iniciar sesión" : "Sign in to wallet")}
+              ? (_es ? "Entrar con mi login de PNPtv" : "Sign in with my PNPtv login")
+              : (_es ? "Iniciar sesión" : "Sign in to wallet")}
           </button>
           {!isFirstTime && (
             <p className="text-[10px] text-white/40 text-center">
-              {es
+              {_es
                 ? "En iPhone: si no abre nada, cerrá Safari completamente y volvé a entrar."
                 : "On iPhone: if nothing opens, close Safari fully and re-enter."}
             </p>
@@ -1964,32 +1965,45 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
             // embedded wallet — Privy links wallets to accounts, not browsers.
             const _isEs = typeof navigator !== "undefined" && navigator.language?.toLowerCase().startsWith("es");
             return (
-              <div className="text-center py-8 space-y-4">
-                <p className="text-4xl">👛</p>
-                <p className="text-sm font-bold text-white">
-                  {_isEs ? "Accede a tu billetera" : "Sign in to your wallet"}
-                </p>
-                <p className="text-[11px] text-white/60 leading-relaxed max-w-xs mx-auto">
-                  {_isEs
-                    ? "Usa el mismo email, Google, Telegram o X que hayas usado antes para ver tu billetera existente en este dispositivo — o crea una nueva al instante."
-                    : "Use the same email, Google, Telegram or X you've signed in with before to see your existing wallet on this device — or create a new one instantly."}
-                </p>
-                <div className="flex flex-col gap-2 max-w-xs mx-auto">
+              <div className="py-6 space-y-4">
+                <div className="text-center space-y-1">
+                  <p className="text-4xl">💎</p>
+                  <p className="text-sm font-bold text-white">
+                    {_isEs ? "Tu billetera PNPtv" : "Your PNPtv Wallet"}
+                  </p>
+                </div>
+
+                {/* "Same login as PNPtv" callout */}
+                <div
+                  className="rounded-xl px-3.5 py-3 space-y-1"
+                  style={{ background: "rgba(212,0,122,0.08)", border: "1px solid rgba(212,0,122,0.25)" }}
+                >
+                  <p className="text-[11px] font-bold text-white/90">
+                    {_isEs ? "👆 No necesitás una wallet externa" : "👆 No external wallet needed"}
+                  </p>
+                  <p className="text-[11px] text-white/60 leading-snug">
+                    {_isEs
+                      ? "Iniciá sesión con el mismo método que usás para entrar a PNPtv — email, Google, Telegram o X. Te creamos una billetera cripto gratis al instante."
+                      : "Sign in with the same method you use to log in to PNPtv — email, Google, Telegram or X. We'll create a free crypto wallet for you instantly."}
+                  </p>
+                </div>
+
+                <div className="flex flex-col gap-2 max-w-xs mx-auto w-full">
                   <button
                     type="button"
                     onClick={() => login()}
                     className="min-h-[44px] px-6 rounded-xl text-sm font-bold text-white"
                     style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}
                   >
-                    {_isEs ? "✨ Ingresar / Crear billetera" : "✨ Sign in / Create wallet"}
+                    {_isEs ? "✨ Entrar con mi login de PNPtv" : "✨ Sign in with my PNPtv login"}
                   </button>
                   <button
                     type="button"
                     onClick={handleConnectExternal}
-                    className="min-h-[44px] px-6 rounded-xl text-sm font-bold text-white border border-white/15"
-                    style={{ background: "rgba(255,255,255,0.06)" }}
+                    className="min-h-[44px] px-6 rounded-xl text-xs font-semibold text-white/60 border border-white/10"
+                    style={{ background: "rgba(255,255,255,0.04)" }}
                   >
-                    {_isEs ? "🔗 Conectar Trust / MetaMask" : "🔗 Connect Trust / MetaMask"}
+                    {_isEs ? "🔗 Ya tengo Trust / MetaMask" : "🔗 I already have Trust / MetaMask"}
                   </button>
                 </div>
                 {connectError && (
@@ -1997,10 +2011,10 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
                     {connectError}
                   </div>
                 )}
-                <p className="text-[10px] text-white/40 leading-relaxed pt-1">
+                <p className="text-[10px] text-white/35 leading-relaxed text-center">
                   {_isEs
-                    ? "Tu billetera te sigue entre dispositivos — mismo login, misma billetera."
-                    : "Your wallet follows you across devices — same login, same wallet."}
+                    ? "Mismo login en cualquier dispositivo → misma billetera."
+                    : "Same login on any device → same wallet."}
                 </p>
               </div>
             );
