@@ -13002,6 +13002,13 @@ app.put('/api/wallet/preferred', walletPreferLimiter, requireSessionAuth, asyncH
         owns = addrs.includes(normalized);
       } catch { /* fall through to reject */ }
     }
+    // First-time connection: user has no wallet on file (neither DB nor Privy)
+    // and is setting one for the first time. Trust the submitted address —
+    // same logic as the gas-topup backfill path. Privy's linkedAccounts may
+    // lag behind useWallets() immediately after connectWallet() completes.
+    if (!owns && !own.wa && !own.pwa) {
+      owns = true;
+    }
     if (!owns) {
       return res.status(403).json({ ok: false, error: 'address_not_owned' });
     }
