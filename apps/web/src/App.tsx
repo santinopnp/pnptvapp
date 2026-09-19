@@ -399,7 +399,12 @@ function PrivyIdentitySync() {
         if (msg === "privy_id_already_linked") {
           // Set a flag so PrivyAutoLogin doesn't re-trigger after the logout
           // (would create an infinite loop: same X/email → same Privy ID → 409).
-          try { sessionStorage.setItem("__pnptv_privy_stale_409", "1"); } catch { /* ignore */ }
+          // Also set a user-visible conflict flag so the needs_login panel can
+          // show an explanatory message instead of a blank login prompt.
+          try {
+            sessionStorage.setItem("__pnptv_privy_stale_409", "1");
+            sessionStorage.setItem("__pnptv_privy_conflict_msg", "1");
+          } catch { /* ignore */ }
           privyLogout().catch(() => {});
           return;
         }

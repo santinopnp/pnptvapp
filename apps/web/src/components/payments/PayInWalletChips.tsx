@@ -476,6 +476,14 @@ export function WalletPayCard({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authenticated, activeWallet?.address]);
 
+  // Auto-reload after 30s if still stuck in no_wallet state (Privy SDK
+  // sometimes needs a fresh page to hydrate the embedded wallet).
+  _useEffect(() => {
+    if (recovery.status !== "no_wallet") return;
+    const t = setTimeout(() => window.location.reload(), 30_000);
+    return () => clearTimeout(t);
+  }, [recovery.status]);
+
   // Not signed into Privy yet — frame as card-primary so a card-only user
   // doesn't bail thinking this is a new-account onboarding step. The Privy
   // flow accepts credit/debit cards via Stripe onramp (useAddFunds); the fact
@@ -590,11 +598,30 @@ export function WalletPayCard({
         // pre-existing "insufficient funds for gas" error, no regression).
         // Instrumented (2026-09-06): report topup failures so we can debug
         // silent drop-offs where a doomed tx UI opens with insufficient gas.
-        const topupResult = await requestGasTopup(activeWallet.address);
-        if (!topupResult.ok && !topupResult.skipped) {
-          reportWalletClientError("gasTopup", new Error(topupResult.reason || "topup_failed"), {
+        let topupResult: Awaited<ReturnType<typeof requestGasTopup>>;
+        try {
+          topupResult = await requestGasTopup(activeWallet.address);
+          if (!topupResult.ok && !topupResult.skipped) {
+            reportWalletClientError("gasTopup", new Error(topupResult.reason || "topup_failed"), {
+              surface, amountUsd, address: activeWallet.address, walletType: activeWallet.walletClientType,
+            });
+            const reason = topupResult.reason || "";
+            if (!/already_funded|sufficient/i.test(reason)) {
+              setError(es
+                ? "No se pudo preparar el gas. Si el pago falla, intentá de nuevo."
+                : "Gas setup failed. If payment fails, please retry.");
+            }
+          }
+        } catch (gasErr: unknown) {
+          const gasMsg = gasErr instanceof Error ? gasErr.message : String(gasErr);
+          reportWalletClientError("gasTopup", gasErr, {
             surface, amountUsd, address: activeWallet.address, walletType: activeWallet.walletClientType,
           });
+          if (!/already_funded|sufficient/i.test(gasMsg)) {
+            setError(es
+              ? "No se pudo preparar el gas. Si el pago falla, intentá de nuevo."
+              : "Gas setup failed. If payment fails, please retry.");
+          }
         }
         const res = await privySendTransaction(
           { chainId: 8453, to: _USDC_BASE as `0x${string}`, data, value: "0" },
@@ -696,11 +723,13 @@ export function WalletPayCard({
       // click carries the user through to entitlement grant.
       setFunding(true);
       const start = Date.now();
+      let consecutivePollErrors = 0;
       const poll = async (): Promise<void> => {
         if (pollCancelledRef.current) return;
         try {
           const r = await getWalletUsdcBalance(activeWallet.address);
           if (pollCancelledRef.current) return;
+          consecutivePollErrors = 0;
           const bal = r.hasWallet ? r.usdc : null;
           setUsdc(bal);
           if (bal != null && bal >= amountUsd) {
@@ -708,10 +737,22 @@ export function WalletPayCard({
             handlePay().catch(() => { /* handlePay owns its own error UI */ });
             return;
           }
-        } catch { /* keep polling on transient errors */ }
+        } catch {
+          consecutivePollErrors++;
+          if (consecutivePollErrors >= 3) {
+            setFunding(false);
+            setError(es
+              ? "Error al confirmar el pago. Reintentá."
+              : "Could not confirm payment. Please retry.");
+            return;
+          }
+        }
         if (pollCancelledRef.current) return;
         if (Date.now() - start >= 60_000) {
           setFunding(false);
+          setError(es
+            ? "El pago tardó demasiado en confirmar. Revisá tu wallet y reintentá."
+            : "Payment took too long to settle. Check your wallet and retry.");
           return;
         }
         setTimeout(poll, 3_000);
@@ -765,6 +806,9 @@ export function WalletPayCard({
     );
   }
   if (recovery.status === "needs_login") {
+    const hasConflict = (() => {
+      try { return sessionStorage.getItem("__pnptv_privy_conflict_msg") === "1"; } catch { return false; }
+    })();
     return (
       <div className="rounded-xl border border-amber-400/40 bg-amber-500/[0.06] p-3 space-y-2">
         <div className="flex items-center gap-2">
@@ -780,9 +824,19 @@ export function WalletPayCard({
             </p>
           </div>
         </div>
+        {hasConflict && (
+          <p className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-md px-2 py-1.5">
+            {es
+              ? "Tu wallet estaba vinculada a otra cuenta. Volvé a entrar para reconectar."
+              : "Your wallet was linked to another account. Sign in again to reconnect."}
+          </p>
+        )}
         <button
           type="button"
-          onClick={() => { try { login(); } catch (e) { reportWalletClientError("privyLoginFromRecovery", e, { surface }); } }}
+          onClick={() => {
+            try { sessionStorage.removeItem("__pnptv_privy_conflict_msg"); } catch { /* ignore */ }
+            try { login(); } catch (e) { reportWalletClientError("privyLoginFromRecovery", e, { surface }); }
+          }}
           className="w-full py-3 rounded-xl text-sm font-bold text-white transition active:scale-[0.98]"
           style={{ background: "linear-gradient(135deg,#D4007A,#FF6B9D)" }}
         >
@@ -808,8 +862,8 @@ export function WalletPayCard({
             <p className="text-sm font-bold text-white">{es ? "Sincronizando billetera…" : "Syncing wallet…"}</p>
             <p className="text-[11px] text-white/60 leading-snug">
               {es
-                ? `Estamos vinculando ${recovery.serverWalletAddr ? "tu wallet " + recovery.serverWalletAddr.slice(0, 6) + "…" : "tu wallet"}. Si no aparece en 30 seg, recargá la página.`
-                : `Linking ${recovery.serverWalletAddr ? "wallet " + recovery.serverWalletAddr.slice(0, 6) + "…" : "your wallet"}. If nothing appears in 30s, refresh the page.`}
+                ? `Vinculando ${recovery.serverWalletAddr ? "tu wallet " + recovery.serverWalletAddr.slice(0, 6) + "…" : "tu wallet"}. Reintentando en 30s…`
+                : `Linking ${recovery.serverWalletAddr ? "wallet " + recovery.serverWalletAddr.slice(0, 6) + "…" : "your wallet"}. Auto-retrying in 30s…`}
             </p>
           </div>
         </div>
@@ -1143,6 +1197,9 @@ export function WalletLoginGate({ children, lang = "en" }: { children: React.Rea
   }
 
   if (recovery.status === "needs_login") {
+    const hasConflict = (() => {
+      try { return sessionStorage.getItem("__pnptv_privy_conflict_msg") === "1"; } catch { return false; }
+    })();
     return (
       <div className="py-6 px-4 space-y-3">
         <div className="text-center space-y-1.5">
@@ -1156,9 +1213,19 @@ export function WalletLoginGate({ children, lang = "en" }: { children: React.Rea
               : "Sign in with the same method you use for PNPtv — email, Google, Telegram or X."}
           </p>
         </div>
+        {hasConflict && (
+          <p className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-md px-2 py-1.5">
+            {es
+              ? "Tu wallet estaba vinculada a otra cuenta. Volvé a entrar para reconectar."
+              : "Your wallet was linked to another account. Sign in again to reconnect."}
+          </p>
+        )}
         <button
           type="button"
-          onClick={() => { try { login(); } catch (e) { reportWalletClientError("privyLoginFromGate", e, {}); } }}
+          onClick={() => {
+            try { sessionStorage.removeItem("__pnptv_privy_conflict_msg"); } catch { /* ignore */ }
+            try { login(); } catch (e) { reportWalletClientError("privyLoginFromGate", e, {}); }
+          }}
           className="w-full py-3 rounded-xl text-sm font-bold text-white transition active:scale-[0.98]"
           style={{ background: "linear-gradient(135deg,#D4007A,#FF6B9D)" }}
         >
@@ -1936,6 +2003,13 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
             ? "WalletConnect"
             : activeWallet.walletClientType || "External";
 
+  // Auto-reload after 30s if still stuck in no_wallet state inside the sheet.
+  _useEffect(() => {
+    if (recovery.status !== "no_wallet") return;
+    const t = setTimeout(() => window.location.reload(), 30_000);
+    return () => clearTimeout(t);
+  }, [recovery.status]);
+
   // Recovery UI — same 3-state coverage as WalletPayCard. Presented as a
   // compact panel INSIDE the sheet (not a full-screen replacement) so users
   // still see the wallet header + close button.
@@ -1953,6 +2027,9 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
     }
     if (recovery.status === "needs_login") {
       const _es = typeof navigator !== "undefined" && navigator.language?.toLowerCase().startsWith("es");
+      const _hasConflict = (() => {
+        try { return sessionStorage.getItem("__pnptv_privy_conflict_msg") === "1"; } catch { return false; }
+      })();
       return (
         <div className="p-6 space-y-3">
           <div className="text-center space-y-1">
@@ -1966,9 +2043,19 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
                 : "Sign in with the same method you use for PNPtv — email, Google, Telegram or X."}
             </p>
           </div>
+          {_hasConflict && (
+            <p className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-md px-2 py-1.5">
+              {_es
+                ? "Tu wallet estaba vinculada a otra cuenta. Volvé a entrar para reconectar."
+                : "Your wallet was linked to another account. Sign in again to reconnect."}
+            </p>
+          )}
           <button
             type="button"
-            onClick={() => { try { login(); } catch (e) { reportWalletClientError("privyLoginFromRecovery", e, { source: "WalletHomeSheet" }); } }}
+            onClick={() => {
+              try { sessionStorage.removeItem("__pnptv_privy_conflict_msg"); } catch { /* ignore */ }
+              try { login(); } catch (e) { reportWalletClientError("privyLoginFromRecovery", e, { source: "WalletHomeSheet" }); }
+            }}
             className="w-full py-3 rounded-xl text-sm font-bold text-white transition active:scale-[0.98]"
             style={{ background: "linear-gradient(135deg,#D4007A,#FF6B9D)" }}
           >
@@ -1993,8 +2080,8 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
             <p className="text-base font-bold text-white">Sincronizando billetera…</p>
             <p className="text-xs text-white/60 max-w-xs mx-auto leading-relaxed">
               {recovery.serverWalletAddr
-                ? `Vinculando ${recovery.serverWalletAddr.slice(0, 6)}…${recovery.serverWalletAddr.slice(-4)}. Si no aparece en 30s, recargá.`
-                : "Buscando tu wallet. Si no aparece en 30s, recargá."}
+                ? `Vinculando ${recovery.serverWalletAddr.slice(0, 6)}…${recovery.serverWalletAddr.slice(-4)}. Reintentando en 30s…`
+                : "Vinculando tu wallet. Reintentando en 30s…"}
             </p>
           </div>
           <button

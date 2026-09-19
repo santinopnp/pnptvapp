@@ -30,7 +30,12 @@ export default function FreeTierOverlay({ label, requiredTier = 'member', childr
     try {
       const res = await prepareUsdcSubscription(planId, undefined, undefined, 'usdcbase');
       const src = `https://nowpayments.io/embeds/payment-widget?iid=${res.nowpaymentsInvoiceId}`;
-      npPopupRef.current = window.open(src, 'pnp_np_wallet', 'width=540,height=700,left=200,top=100');
+      const popW = Math.min(540, Math.round(window.innerWidth * 0.95));
+      const popH = Math.min(700, Math.round(window.innerHeight * 0.9));
+      const left = Math.round((window.innerWidth - popW) / 2);
+      const top = Math.round((window.innerHeight - popH) / 2);
+      const specs = `width=${popW},height=${popH},left=${left},top=${top},resizable=yes,scrollbars=yes`;
+      npPopupRef.current = window.open(src, 'pnp_np_wallet', specs);
     } catch {
       navigate('/subscribe');
     } finally {
