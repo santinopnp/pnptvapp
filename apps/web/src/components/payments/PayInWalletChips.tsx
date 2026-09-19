@@ -759,16 +759,25 @@ export function WalletPayCard({
     );
   }
   if (recovery.status === "needs_login") {
+    const isFirstTime = !recovery.serverWalletAddr;
     return (
       <div className="rounded-xl border border-amber-400/40 bg-amber-500/[0.06] p-3 space-y-2">
         <div className="flex items-center gap-2">
-          <span className="text-lg">🔒</span>
+          <span className="text-lg">{isFirstTime ? "💎" : "🔒"}</span>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-bold text-white">{es ? "Reconectá tu billetera" : "Reconnect your wallet"}</p>
+            <p className="text-sm font-bold text-white">
+              {isFirstTime
+                ? (es ? "Pagá con tu billetera" : "Pay with your wallet")
+                : (es ? "Reconectá tu billetera" : "Reconnect your wallet")}
+            </p>
             <p className="text-[11px] text-white/60 leading-snug">
-              {es
-                ? "La sesión de tu wallet expiró. Iniciá sesión de nuevo para pagar."
-                : "Your wallet session expired. Sign back in to complete payment."}
+              {isFirstTime
+                ? (es
+                    ? "Creamos una billetera cripto gratis para vos. Iniciá sesión para activarla y pagar."
+                    : "We'll set up a free crypto wallet for you. Sign in to activate it and pay.")
+                : (es
+                    ? "La sesión de tu wallet expiró. Iniciá sesión de nuevo para pagar."
+                    : "Your wallet session expired. Sign back in to complete payment.")}
             </p>
           </div>
         </div>
@@ -778,7 +787,9 @@ export function WalletPayCard({
           className="w-full py-3 rounded-xl text-sm font-bold text-white transition active:scale-[0.98]"
           style={{ background: "linear-gradient(135deg,#D4007A,#FF6B9D)" }}
         >
-          {es ? "Iniciar sesión" : "Sign in to wallet"}
+          {isFirstTime
+            ? (es ? "Activar billetera gratis" : "Activate free wallet")
+            : (es ? "Iniciar sesión" : "Sign in to wallet")}
         </button>
       </div>
     );
@@ -1841,13 +1852,24 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
       );
     }
     if (recovery.status === "needs_login") {
+      const isFirstTime = !recovery.serverWalletAddr;
       return (
         <div className="p-6 space-y-3">
           <div className="text-center space-y-1">
-            <div className="text-3xl">🔒</div>
-            <p className="text-base font-bold text-white">Reconectá tu billetera</p>
+            <div className="text-3xl">{isFirstTime ? "💎" : "🔒"}</div>
+            <p className="text-base font-bold text-white">
+              {isFirstTime
+                ? (es ? "Activá tu billetera gratis" : "Activate your free wallet")
+                : (es ? "Reconectá tu billetera" : "Reconnect your wallet")}
+            </p>
             <p className="text-xs text-white/60 max-w-xs mx-auto leading-relaxed">
-              La sesión de tu wallet expiró en este dispositivo. Iniciá sesión de nuevo para ver tu saldo y pagar.
+              {isFirstTime
+                ? (es
+                    ? "PNPtv crea una billetera cripto segura y gratuita para vos. Iniciá sesión para activarla."
+                    : "PNPtv sets up a free secure crypto wallet for you. Sign in to activate it.")
+                : (es
+                    ? "La sesión de tu wallet expiró en este dispositivo. Iniciá sesión de nuevo para ver tu saldo y pagar."
+                    : "Your wallet session expired on this device. Sign back in to see your balance and pay.")}
             </p>
           </div>
           <button
@@ -1855,10 +1877,18 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
             onClick={() => { try { login(); } catch (e) { reportWalletClientError("privyLoginFromRecovery", e, { source: "WalletHomeSheet" }); } }}
             className="w-full py-3 rounded-xl text-sm font-bold text-white transition active:scale-[0.98]"
             style={{ background: "linear-gradient(135deg,#D4007A,#FF6B9D)" }}
-          >Iniciar sesión</button>
-          <p className="text-[10px] text-white/40 text-center">
-            En iPhone: si no abre nada, cerrá Safari completamente y volvé a entrar.
-          </p>
+          >
+            {isFirstTime
+              ? (es ? "Activar billetera gratis" : "Activate free wallet")
+              : (es ? "Iniciar sesión" : "Sign in to wallet")}
+          </button>
+          {!isFirstTime && (
+            <p className="text-[10px] text-white/40 text-center">
+              {es
+                ? "En iPhone: si no abre nada, cerrá Safari completamente y volvé a entrar."
+                : "On iPhone: if nothing opens, close Safari fully and re-enter."}
+            </p>
+          )}
         </div>
       );
     }

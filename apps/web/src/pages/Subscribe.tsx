@@ -610,6 +610,8 @@ export default function Subscribe() {
 
   const memberPlans = plans.filter((p) => MEMBER_PLAN_IDS.has(p.id) && !HIDDEN_PLAN_IDS.has(p.id));
   const primePlans = plans.filter((p) => !MEMBER_PLAN_IDS.has(p.id) && !HIDDEN_PLAN_IDS.has(p.id));
+  const PROMO_IDS = ["yearly50", "lifetime100"] as const;
+  const promoPlans = plans.filter((p) => (PROMO_IDS as readonly string[]).includes(p.id));
 
   return (
     <div className="page-container py-6 px-4 max-w-2xl mx-auto">
@@ -643,6 +645,132 @@ export default function Subscribe() {
 
       {/* Current tier status banner */}
       {renderTierBanner()}
+
+      {/* ── Promo deals section — yearly50 + lifetime100 ───────────────── */}
+      {promoPlans.length > 0 && (user?.tier || "free") !== "prime" && (
+        <div className="mb-5">
+          {/* Section header */}
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-base">🔥</span>
+            <span className="text-sm font-bold text-pnp-textPrimary">
+              {t.lang === "es" ? "Promos exclusivas" : "Exclusive Deals"}
+            </span>
+            <span
+              className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full"
+              style={{ background: "rgba(212,0,122,0.18)", color: "#FF6BB0", border: "1px solid rgba(212,0,122,0.35)" }}
+            >
+              {t.lang === "es" ? "Tiempo limitado" : "Limited time"}
+            </span>
+          </div>
+
+          {/* Two-card grid */}
+          <div className="grid grid-cols-2 gap-2.5">
+            {promoPlans.map((plan) => {
+              const isLifetime = isLifetimePlan(plan);
+              const isWalletOpen = walletPanelPlanId === plan.id;
+
+              const cardStyle = isLifetime
+                ? { background: "linear-gradient(145deg,rgba(20,20,20,0.95),rgba(30,25,20,0.95))", border: "1px solid rgba(230,145,56,0.40)" }
+                : { background: "linear-gradient(145deg,rgba(212,0,122,0.14),rgba(255,107,176,0.07))", border: "1px solid rgba(212,0,122,0.40)" };
+
+              const accentColor = isLifetime ? "#E69138" : "#FF6BB0";
+              const tagBg = isLifetime ? "rgba(230,145,56,0.15)" : "rgba(212,0,122,0.18)";
+              const tagBorder = isLifetime ? "rgba(230,145,56,0.40)" : "rgba(212,0,122,0.40)";
+
+              const tagLabel = isLifetime
+                ? (t.lang === "es" ? "🖤 Siempre" : "🖤 Forever")
+                : (t.lang === "es" ? "🔥 Mejor precio" : "🔥 Best deal");
+
+              const subline = isLifetime
+                ? (t.lang === "es" ? "Un solo pago — acceso de por vida" : "One payment — lifetime access")
+                : (t.lang === "es" ? "Ahorrás vs mensual" : "Save vs monthly");
+
+              return (
+                <div key={plan.id} className="flex flex-col rounded-2xl overflow-hidden" style={cardStyle}>
+                  <div className="p-3 flex flex-col gap-1.5 flex-1">
+                    {/* Tag */}
+                    <span
+                      className="self-start text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full"
+                      style={{ background: tagBg, color: accentColor, border: `1px solid ${tagBorder}` }}
+                    >
+                      {tagLabel}
+                    </span>
+
+                    {/* Price */}
+                    <div className="flex items-baseline gap-0.5 leading-none mt-0.5">
+                      <span className="text-[11px] font-bold" style={{ color: accentColor }}>$</span>
+                      <span className="text-2xl font-black text-white">{Math.round(plan.price)}</span>
+                      {!isLifetime && (
+                        <span className="text-[10px] font-semibold text-white/50 ml-0.5">
+                          {t.lang === "es" ? "/año" : "/yr"}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Name + subline */}
+                    <p className="text-[11px] font-bold text-white leading-tight">
+                      {isLifetime
+                        ? (t.lang === "es" ? "PRIME de por vida" : "Lifetime PRIME")
+                        : (t.lang === "es" ? "PRIME anual" : "PRIME Annual")}
+                    </p>
+                    <p className="text-[10px] text-white/50 leading-snug">{subline}</p>
+                  </div>
+
+                  {/* CTA buttons */}
+                  <div className="px-3 pb-3 space-y-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setWalletPanelPlanId(isWalletOpen ? null : plan.id)}
+                      className="w-full py-2.5 rounded-xl text-[11px] font-black text-white transition-all active:scale-[0.97]"
+                      style={{
+                        background: isWalletOpen
+                          ? "linear-gradient(135deg,#34d399,#10b981)"
+                          : "linear-gradient(135deg,#10b981,#059669)",
+                        boxShadow: isWalletOpen ? "0 0 12px rgba(52,211,153,0.35)" : undefined,
+                      }}
+                    >
+                      {t.lang === "es" ? "💎 Pagar con wallet" : "💎 Pay with wallet"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openNpFallback(plan.id)}
+                      className="w-full py-2 rounded-xl text-[11px] font-semibold transition-all active:scale-[0.97]"
+                      style={{
+                        background: "rgba(255,255,255,0.05)",
+                        border: "1px solid rgba(255,255,255,0.12)",
+                        color: "rgba(255,255,255,0.70)",
+                      }}
+                    >
+                      {t.lang === "es" ? "₿ Otra cripto" : "₿ Other crypto"}
+                    </button>
+                  </div>
+
+                  {/* Inline wallet checkout panel */}
+                  {isWalletOpen && (
+                    <div className="px-3 pb-3">
+                      <WalletPayCard
+                        surface="prime"
+                        amountUsd={parseFloat(String(plan.price))}
+                        entitlementSpec={{ planId: plan.id }}
+                        metadata={{ source: "subscribe_promo", planId: plan.id }}
+                        label={t.lang === "es"
+                          ? `Pagar $${parseFloat(String(plan.price)).toFixed(0)} · ${isLifetime ? "Lifetime PRIME" : "PRIME anual"}`
+                          : `Pay $${parseFloat(String(plan.price)).toFixed(0)} · ${isLifetime ? "Lifetime PRIME" : "PRIME Annual"}`}
+                        lang={(t.lang as "es" | "en")}
+                        onSuccess={() => {
+                          setWalletPanelPlanId(null);
+                          setTimeout(() => { window.location.href = "/"; }, 1200);
+                        }}
+                        compact
+                      />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* New-to-crypto onboarding card — links to /crypto-guide */}
       <a

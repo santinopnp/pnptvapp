@@ -453,10 +453,13 @@ class SocialPostService {
        LIMIT $2`,
       params
     );
-    // Fire live/online pin fetch in parallel with post-processing (first page only)
+    // Fire live/online pin fetch and founder pin fetch in parallel (first page only)
     const pinsPromise = cursorId
       ? Promise.resolve([])
       : SocialPostService._fetchLiveOnlinePins(userId, blockedIds);
+    const founderPinsPromise = cursorId
+      ? Promise.resolve([])
+      : SocialPostService._fetchFounderPins(userId, blockedIds);
 
     let posts = await sanitizePostRows(rows, { hideDeletedHypeOriginals: true });
     if (viewerTier !== undefined) {
@@ -490,21 +493,12 @@ class SocialPostService {
 
     let page = posts.slice(0, effectiveLim);
 
-    // Always show the latest post from Santino or Lex at position 0 on the first page.
+    // Santino first, then Lex — always at positions 0 and 1 on every first page.
     if (!cursorId) {
-      const FEATURED_USER_IDS = ['8599671840', '8f5f4dd1-7bdb-4571-b026-e09d91113c91'];
-      const { rows: featuredRows } = await query(
-        `SELECT sp.*, u.username AS author_username, u.first_name AS author_first_name,
-                u.photo_file_id AS author_photo
-           FROM social_posts sp
-           JOIN users u ON u.id = sp.user_id
-          WHERE sp.user_id = ANY($1::text[]) AND sp.is_deleted = false
-          ORDER BY sp.created_at DESC LIMIT 1`,
-        [FEATURED_USER_IDS]
-      );
-      if (featuredRows.length > 0) {
-        const [featuredPost] = await sanitizePostRows(featuredRows, { hideDeletedHypeOriginals: false });
-        page = [featuredPost, ...page.filter(p => p.id !== featuredPost.id)];
+      const founderPins = await founderPinsPromise;
+      if (founderPins.length > 0) {
+        const founderIds = new Set(founderPins.map(p => p.id));
+        page = [...founderPins, ...page.filter(p => !founderIds.has(p.id))];
       }
     }
 
@@ -698,6 +692,48 @@ class SocialPostService {
       return pins;
     } catch (err) {
       logger.warn('_fetchLiveOnlinePins failed (non-fatal)', { error: err.message });
+      return [];
+    }
+  }
+
+  /**
+   * Fetch the most-recent non-reply post from each platform founder.
+   * Santino (8599671840) comes first, Lex (8f5f4dd1-...) second.
+   * Called on every feed tab's first page — never on paginated requests.
+   */
+  static async _fetchFounderPins(userId, blockedIds = []) {
+    const FOUNDER_IDS = ['8599671840', '8f5f4dd1-7bdb-4571-b026-e09d91113c91'];
+    try {
+      const blockedStr = blockedIds.map(String);
+      const { rows } = await query(
+        `SELECT DISTINCT ON (sp.user_id)
+                sp.*, u.username AS author_username, u.first_name AS author_first_name,
+                u.photo_file_id AS author_photo, u.id AS author_id,
+                u.city AS author_city, u.country AS author_country,
+                u.tier AS author_tier, u.creator_status AS author_creator_status,
+                u.creator_type AS author_creator_type,
+                u.creator_verified AS author_creator_verified,
+                u.creator_price_usd AS author_creator_price,
+                EXISTS(SELECT 1 FROM social_post_likes l WHERE l.post_id=sp.id AND l.user_id=$1) AS liked_by_me,
+                COALESCE(sp.hype_score, 0) AS hype_score,
+                EXISTS(SELECT 1 FROM post_hypes ph WHERE ph.post_id=sp.id AND ph.user_id=$1::text AND ph.expires_at > NOW()) AS hyped_by_me
+           FROM social_posts sp
+           JOIN users u ON u.id = sp.user_id
+          WHERE sp.user_id = ANY($2::text[])
+            AND sp.is_deleted = false
+            AND sp.reply_to_id IS NULL
+            AND sp.user_id != ALL($3::text[])
+          ORDER BY sp.user_id, sp.id DESC`,
+        [String(userId), FOUNDER_IDS, blockedStr.length > 0 ? blockedStr : ['']]
+      );
+      rows.sort((a, b) => {
+        const aIdx = FOUNDER_IDS.indexOf(String(a.user_id));
+        const bIdx = FOUNDER_IDS.indexOf(String(b.user_id));
+        return aIdx - bIdx;
+      });
+      return await sanitizePostRows(rows, { hideDeletedHypeOriginals: false });
+    } catch (err) {
+      logger.warn('_fetchFounderPins failed (non-fatal)', { error: err.message });
       return [];
     }
   }
@@ -2256,6 +2292,9 @@ class SocialPostService {
     const pinsPromise = skipPins
       ? Promise.resolve([])
       : SocialPostService._fetchLiveOnlinePins(userId, blockedIds);
+    const founderPinsPromise = cursorId
+      ? Promise.resolve([])
+      : SocialPostService._fetchFounderPins(userId, blockedIds);
 
     const { rows } = await query(sql, params);
     let posts = await sanitizePostRows(rows, { hideDeletedHypeOriginals: true });
@@ -2286,9 +2325,19 @@ class SocialPostService {
 
     posts = await SocialPostService.hydrateTopHypers(posts);
 
-    const page = posts.slice(0, lim);
+    let page = posts.slice(0, lim);
+
+    // Santino first, then Lex — always at positions 0 and 1 on every tab, first page only.
+    if (!cursorId) {
+      const founderPins = await founderPinsPromise;
+      if (founderPins.length > 0) {
+        const founderIds = new Set(founderPins.map(p => p.id));
+        page = [...founderPins, ...page.filter(p => !founderIds.has(p.id))];
+      }
+    }
+
     const nextCursor = f === 'hot' ? null
-      : (posts.length > lim ? String(page[page.length - 1].id) : null);
+      : (posts.length > lim ? String(posts[lim - 1].id) : null);
 
     return { posts: page, nextCursor };
   }

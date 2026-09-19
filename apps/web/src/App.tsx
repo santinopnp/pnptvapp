@@ -572,7 +572,7 @@ export default function App() {
                       // WalletConnect never got an embedded wallet — leaving them
                       // stuck on the external wallet with no PNPtv rail to switch to.
                       // Existing wallet-only users get an embedded wallet on next login.
-                      embeddedWallets: { ethereum: { createOnLogin: "off" } },
+                      embeddedWallets: { ethereum: { createOnLogin: "all-users" } },
                       // Own WalletConnect Cloud project id — dedicated rate-limit +
                       // reliable Trust/Rainbow/etc handshake. Falls back to Privy's
                       // shared id if unset (works but with silent throttling).

@@ -95,9 +95,10 @@ class Plan {
     // curl of /api/subscription/plans doesn't leak them either.
     const HIDDEN_LEGACY_IDS = new Set([
       'prime-trial-3d',
-      'lifetime100',
       'monthly-pass-promo-15',
-      'yearly50',
+      // yearly50 + lifetime100 excluded here so they reach the /subscribe
+      // promo section; HIDDEN_PLAN_IDS in Subscribe.tsx keeps them out of
+      // the main plan grid.
     ]);
     // custom-prime-* are one-time operator-issued plans — never surface publicly
     const isCustomPlan = (plan) => plan.id.startsWith('custom-prime-');

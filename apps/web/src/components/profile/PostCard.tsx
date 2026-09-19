@@ -8,11 +8,9 @@ import { useI18n } from "@/lib/i18n";
 // Add IDs here to promote additional creators.
 const PRIME_UPSELL_CREATOR_IDS = new Set(["8599671840", "8552451957", "8f5f4dd1-7bdb-4571-b026-e09d91113c91"]); // Santino (SantinoFurioso + pnptv alt) + PNPLatinoBoy (Lex)
 
-const PRIME_PLANS = [
-  { id: "prime-week-pass-7d",      label: "PRIME Week Pass",   duration: "7 days",   price: "15",    isRecurring: false, recommended: false },
-  { id: "monthly-pass",            label: "PRIME Monthly",     duration: "30 days",  price: "24.99", isRecurring: true,  recommended: true  },
-  { id: "prime-diamond-pass-365d", label: "PRIME Diamond",     duration: "1 year",   price: "99.99", isRecurring: false, recommended: false },
-  { id: "lifetime80",              label: "Lifetime PRIME",    duration: "Forever",  price: "100",   isRecurring: false, recommended: false },
+const CHECKOUT_MODAL_PLANS = [
+  { id: "yearly50",    label: "PRIME Annual",   tag: "1 year",  price: 50.00  },
+  { id: "lifetime100", label: "Lifetime PRIME", tag: "Forever", price: 100.00 },
 ] as const;
 import {
   togglePostLike,
@@ -21,6 +19,7 @@ import {
   createReply,
   editSocialPost,
   searchCreators,
+  prepareUsdcSubscription,
   NP_COINS_SUBSCRIBE,
   ApiError,
   type SocialPostItem,
@@ -28,6 +27,7 @@ import {
 } from "@/lib/api";
 import { translateText } from "@/lib/feedI18n";
 import { SharePostModal } from "@/components/SharePostModal";
+import { WalletPayCard } from "@/components/payments/PayInWalletChips";
 // NP inline PRIME checkout retired 2026-08-09 — PRIME CTAs now deep-link
 // into /subscribe (which uses the wallet). Local shim below preserves the
 // JSX call sites without pulling in the NP hook.
@@ -309,8 +309,23 @@ export default function PostCard({
     try { sessionStorage.setItem(upsellKey, "1"); } catch { /* ignore */ }
     setPrimeUpsellDismissed(true);
   };
-  const [showPrimePlanPicker, setShowPrimePlanPicker] = useState(false);
-  const [selectedPrimePlan, setSelectedPrimePlan] = useState<typeof PRIME_PLANS[number] | null>(null);
+  const [promoModalPlanId, setPromoModalPlanId] = useState<"yearly50" | "lifetime100" | null>(null);
+  const [npLaunching, setNpLaunching] = useState(false);
+  const [npError, setNpError] = useState<string | null>(null);
+  const npPopupRef = useRef<Window | null>(null);
+  const launchNpCheckout = useCallback(async (planId: string) => {
+    setNpLaunching(true);
+    setNpError(null);
+    try {
+      const res = await prepareUsdcSubscription(planId, undefined, undefined, "usdcbase");
+      const src = `https://nowpayments.io/embeds/payment-widget?iid=${res.nowpaymentsInvoiceId}`;
+      npPopupRef.current = window.open(src, "pnp_np_wallet", "width=540,height=700,left=200,top=100");
+    } catch {
+      setNpError(userLang === "es" ? "No se pudo abrir el pago. Intenta de nuevo." : "Could not open payment. Try again.");
+    } finally {
+      setNpLaunching(false);
+    }
+  }, [userLang]);
   // Creator subscribe upsell — on FREE posts of active creators.
   const showCreatorSubscribeUpsell =
     !hideCreatorCta &&
@@ -1332,109 +1347,36 @@ export default function PostCard({
                     </div>
                   )}
                   {/* PRIME plan picker — Santino & Lex posts. Pill → plan grid → coin grid. */}
-                  {showPrimeUpsell && !primeUpsellDismissed && (
-                    <div className="mt-2" onClick={(e) => e.stopPropagation()}>
-                      {!showPrimePlanPicker ? (
-                        /* Step 0 — Collapsed pill */
-                        <div
-                          className="cursor-pointer flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg text-[11px] font-medium border border-pink-500/30 hover:border-pink-500/60 transition-all"
-                          style={{ background: "rgba(212, 0, 122, 0.12)", backdropFilter: "blur(4px)" }}
-                          onClick={() => setShowPrimePlanPicker(true)}
-                        >
-                          <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                            <span className="text-xs">🔥</span>
-                            <span className="text-pink-200 truncate">
-                              {userLang === "es" ? "Hazte PRIME — Contenido exclusivo + Hangouts" : "Become PRIME — Exclusive content + Hangouts"}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-1.5 flex-shrink-0">
-                            <span className="px-2.5 py-0.5 rounded text-[10px] font-bold text-white shadow-sm" style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}>
-                              {userLang === "es" ? "Ver planes →" : "See plans →"}
-                            </span>
-                            <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); dismissPrimeUpsell(); }} aria-label="Dismiss" className="text-white/50 hover:text-white text-xs px-1">×</button>
-                          </div>
-                        </div>
-                      ) : selectedPrimePlan ? (
-                        /* Step 2 — Coin picker */
-                        <div className="rounded-xl overflow-hidden border-2 border-pink-500/40" style={{ background: "rgba(212,0,122,0.08)" }}>
-                          <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
-                            <button type="button" onClick={() => setSelectedPrimePlan(null)} className="flex items-center gap-1.5 text-white/60 hover:text-white transition-colors text-xs font-medium">
-                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" /></svg>
-                              <span className="text-pink-300 font-semibold">{selectedPrimePlan.label}</span>
-                              <span className="text-white/40">·</span>
-                              <span className="text-white font-bold">${selectedPrimePlan.price}</span>
-                            </button>
-                            <button type="button" onClick={() => { setShowPrimePlanPicker(false); setSelectedPrimePlan(null); dismissPrimeUpsell(); }} aria-label="Close" className="text-white/40 hover:text-white transition-colors text-base leading-none px-1">×</button>
-                          </div>
-                          <div className="p-2.5">
-                            <p className="text-[10px] text-white/50 mb-2 text-center">{userLang === "es" ? "Elige cómo pagar" : "Choose how to pay"}</p>
-                            <div className="grid grid-cols-2 gap-1.5">
-                              {NP_COINS_SUBSCRIBE.map((coin) => (
-                                <button
-                                  key={coin.code}
-                                  type="button"
-                                  disabled={inlineCheckout.launching}
-                                  onClick={() => inlineCheckout.start({ planId: selectedPrimePlan.id, isSubscription: selectedPrimePlan.isRecurring, payCurrency: coin.code, storageKey: "pnp_pending_prime_banner" })}
-                                  className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-white/10 bg-white/[0.04] hover:bg-white/[0.08] disabled:opacity-50 transition-colors text-left"
-                                >
-                                  <span className="text-base font-bold leading-none flex-shrink-0" style={{ color: coin.color }}>{coin.icon}</span>
-                                  <div className="min-w-0">
-                                    <div className="flex items-center gap-1">
-                                      <span className="text-xs font-bold text-white">{coin.label}</span>
-                                      {"recommended" in coin && coin.recommended && (
-                                        <span className="text-[7px] font-bold px-1 py-px rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 leading-none">★</span>
-                                      )}
-                                    </div>
-                                    <span className="text-[9px] leading-none text-white/40">{coin.network}</span>
-                                  </div>
-                                </button>
-                              ))}
-                            </div>
-                            {inlineCheckout.error && <p className="mt-2 text-[10px] text-red-400 text-center">{inlineCheckout.error}</p>}
-                            <div className="mt-2 text-center">
-                              <a href="/crypto-guide" target="_blank" rel="noopener noreferrer" className="text-[10px] text-amber-400 hover:text-amber-300 underline decoration-dotted">
-                                {userLang === "es" ? "¿Qué red usar? →" : "Which network? →"}
-                              </a>
-                            </div>
-                          </div>
-                        </div>
-                      ) : (
-                        /* Step 1 — Plan grid */
-                        <div className="rounded-xl overflow-hidden border-2 border-pink-500/40" style={{ background: "rgba(212,0,122,0.08)" }}>
-                          <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-sm">🔥</span>
-                              <span className="text-xs font-bold text-pink-200">{userLang === "es" ? "Elige tu plan PRIME" : "Choose your PRIME plan"}</span>
-                            </div>
-                            <button type="button" onClick={() => { setShowPrimePlanPicker(false); dismissPrimeUpsell(); }} aria-label="Close" className="text-white/40 hover:text-white transition-colors text-base leading-none px-1">×</button>
-                          </div>
-                          <div className="p-2.5 space-y-2">
-                            {PRIME_PLANS.map((plan) => (
-                              <div key={plan.id} className={`flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-all ${plan.recommended ? "border-pink-500/50 bg-pink-500/10" : "border-white/10 bg-white/[0.04] hover:bg-white/[0.07]"}`}>
-                                <div className="min-w-0 flex-1">
-                                  {plan.recommended && <div className="text-[10px] font-bold text-pink-400 uppercase tracking-wider mb-0.5">★ {userLang === "es" ? "Mejor valor" : "Best value"}</div>}
-                                  <div className="text-[12px] font-semibold text-white leading-tight">{plan.label}</div>
-                                  <div className="flex items-center gap-1.5 mt-0.5">
-                                    <span className="text-[10px] text-white/50">{plan.duration}</span>
-                                    {plan.isRecurring && <span className="text-[10px] font-semibold px-1.5 py-px rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">{userLang === "es" ? "Recurrente" : "Recurring"}</span>}
-                                  </div>
-                                </div>
-                                <div className="flex items-center gap-2 flex-shrink-0">
-                                  <span className="text-sm font-black text-white">${plan.price}</span>
-                                  <button type="button" onClick={() => setSelectedPrimePlan(plan)} className="px-3 py-1.5 rounded-lg text-[11px] font-bold text-white transition-all active:scale-95 whitespace-nowrap" style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}>
-                                    {userLang === "es" ? "Elegir →" : "Select →"}
-                                  </button>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                          <div className="px-3 pb-2.5 text-center">
-                            <a href="/subscribe" className="text-[10px] text-white/40 hover:text-white/70 transition-colors underline decoration-dotted" onClick={(e) => e.stopPropagation()}>
-                              {userLang === "es" ? "Ver todos los detalles en /subscribe" : "Full details at /subscribe"}
-                            </a>
-                          </div>
-                        </div>
-                      )}
+                  {/* 3-pill upgrade strip: Become PRIME + $50/yr + $100 lifetime */}
+                  {showPrimeUpsell && (
+                    <div className="mt-2.5 flex gap-1.5" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        onClick={() => navigate("/subscribe")}
+                        className="flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[10px] font-bold transition-all active:scale-95"
+                        style={{ background: "rgba(212,0,122,0.15)", border: "1px solid rgba(212,0,122,0.45)", color: "#FF6BB0" }}
+                      >
+                        <span>🔥</span>
+                        <span>{userLang === "es" ? "Hazte PRIME" : "Become PRIME"}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPromoModalPlanId("yearly50")}
+                        className="flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[10px] font-bold transition-all active:scale-95"
+                        style={{ background: "rgba(212,0,122,0.10)", border: "1px solid rgba(212,0,122,0.35)", color: "#FF6BB0" }}
+                      >
+                        <span>💎</span>
+                        <span>{userLang === "es" ? "$50/año" : "$50/yr"}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPromoModalPlanId("lifetime100")}
+                        className="flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[10px] font-bold transition-all active:scale-95"
+                        style={{ background: "rgba(230,145,56,0.10)", border: "1px solid rgba(230,145,56,0.35)", color: "#E69138" }}
+                      >
+                        <span>🖤</span>
+                        <span>{userLang === "es" ? "$100 siempre" : "$100 lifetime"}</span>
+                      </button>
                     </div>
                   )}
 
@@ -2047,6 +1989,72 @@ export default function PostCard({
             onClose={() => setLightboxSrc(null)}
             onNavigate={(url) => setLightboxSrc(url)}
           />
+        );
+      })()}
+
+      {/* Promo membership modal for $50/yr and $100 lifetime pills */}
+      {promoModalPlanId && (() => {
+        const selectedPlan = CHECKOUT_MODAL_PLANS.find(p => p.id === promoModalPlanId)!;
+        const es = userLang === "es";
+        return (
+          <div
+            className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center"
+            onClick={() => { setPromoModalPlanId(null); setNpError(null); }}
+          >
+            <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+            <div
+              className="relative w-full max-w-md mx-auto bg-[#0e0e0e] rounded-t-2xl sm:rounded-2xl shadow-2xl border border-white/10 overflow-y-auto"
+              style={{ maxHeight: "92dvh" }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between px-5 pt-5 pb-3 border-b border-white/10">
+                <div>
+                  <p className="text-[10px] font-bold text-[#E69138] uppercase tracking-widest leading-none mb-0.5">
+                    {es ? "Membresía" : "Membership"}
+                  </p>
+                  <h2 className="text-white text-base font-bold leading-none">{selectedPlan.label}</h2>
+                </div>
+                <button
+                  onClick={() => { setPromoModalPlanId(null); setNpError(null); }}
+                  className="text-white/40 hover:text-white text-xl leading-none px-1"
+                  aria-label="Close"
+                >×</button>
+              </div>
+              <div className="px-5 py-4 space-y-3">
+                <div className="flex items-center justify-between bg-white/5 border border-white/10 rounded-xl px-4 py-3">
+                  <div>
+                    <p className="text-xs text-white/50">{selectedPlan.tag}</p>
+                    <p className="text-sm font-bold text-white">{selectedPlan.label}</p>
+                  </div>
+                  <p className="text-lg font-black text-[#5ED1C4]">${selectedPlan.price}</p>
+                </div>
+                <WalletPayCard
+                  surface="prime"
+                  amountUsd={selectedPlan.price}
+                  entitlementSpec={{ planId: selectedPlan.id }}
+                  lang={es ? "es" : "en"}
+                  onSuccess={() => { setPromoModalPlanId(null); setNpError(null); }}
+                />
+                <div className="relative flex items-center gap-2 py-1">
+                  <div className="flex-1 h-px bg-white/10" />
+                  <span className="text-[10px] text-white/40 flex-shrink-0">
+                    {es ? "o paga con cualquier cripto" : "or pay with any crypto"}
+                  </span>
+                  <div className="flex-1 h-px bg-white/10" />
+                </div>
+                <button
+                  onClick={() => launchNpCheckout(selectedPlan.id)}
+                  disabled={npLaunching}
+                  className="w-full py-3 rounded-xl border border-white/15 bg-white/[0.04] hover:bg-white/[0.08] disabled:opacity-50 text-sm font-semibold text-white/80 transition-colors"
+                >
+                  {npLaunching
+                    ? (es ? "Abriendo…" : "Opening…")
+                    : (es ? "💸 Pagar con cualquier cripto →" : "💸 Pay with any crypto →")}
+                </button>
+                {npError && <p className="text-[11px] text-red-400 text-center">{npError}</p>}
+              </div>
+            </div>
+          </div>
         );
       })()}
     </div>

@@ -1694,30 +1694,6 @@ export default function SocialPostCard({
 
               {/* PRIME plan picker — Santino & Lex free posts. Collapsed pill expands
                   into a compact plan grid; each plan fires its own NP popup. */}
-              {showPrimeUpsell && !primeUpsellDismissed && (
-                <div className="mt-2" onClick={(e) => e.stopPropagation()}>
-                  <div
-                    className="cursor-pointer flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg text-[11px] font-medium border border-pink-500/30 hover:border-pink-500/60 transition-all"
-                    style={{ background: "rgba(212, 0, 122, 0.12)", backdropFilter: "blur(4px)" }}
-                    onClick={() => navigate("/subscribe")}
-                  >
-                    <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                      <span className="text-xs">🔥</span>
-                      <span className="text-pink-200 truncate">
-                        {lang === "es"
-                          ? "Hazte PRIME — Contenido exclusivo + Hangouts"
-                          : "Become PRIME — Exclusive content + Hangouts"}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1.5 flex-shrink-0">
-                      <span className="px-2.5 py-0.5 rounded text-[10px] font-bold text-white shadow-sm" style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}>
-                        {lang === "es" ? "Ver →" : "See →"}
-                      </span>
-                      <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); dismissPrimeUpsell(); }} aria-label="Dismiss" className="text-white/50 hover:text-white text-xs px-1">×</button>
-                    </div>
-                  </div>
-                </div>
-              )}
 
               {/* Creator subscribe upsell micro-banner: shown on every free post from active creators */}
               {showCreatorSubscribeUpsell && !creatorUpsellDismissed && (
@@ -1770,26 +1746,35 @@ export default function SocialPostCard({
                 </div>
               )}
 
-              {/* $50/yr + $100 lifetime pills — every post, every viewer who isn't PRIME */}
+              {/* 3-pill upgrade strip: Become PRIME + $50/yr + $100 lifetime */}
               {showUpgradePills && (
-                <div className="mt-2.5 flex gap-2" onClick={(e) => e.stopPropagation()}>
+                <div className="mt-2.5 flex gap-1.5" onClick={(e) => e.stopPropagation()}>
+                  <button
+                    type="button"
+                    onClick={() => navigate("/subscribe")}
+                    className="flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[10px] font-bold transition-all active:scale-95"
+                    style={{ background: "rgba(212,0,122,0.15)", border: "1px solid rgba(212,0,122,0.45)", color: "#FF6BB0" }}
+                  >
+                    <span>🔥</span>
+                    <span>{lang === "es" ? "Hazte PRIME" : "Become PRIME"}</span>
+                  </button>
                   <button
                     type="button"
                     onClick={() => { setPromoModalPlanId("yearly50"); setShowPromoModal(true); }}
-                    className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-bold transition-all active:scale-95"
-                    style={{ background: "rgba(212,0,122,0.13)", border: "1px solid rgba(212,0,122,0.4)", color: "#FF6BB0" }}
+                    className="flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[10px] font-bold transition-all active:scale-95"
+                    style={{ background: "rgba(212,0,122,0.10)", border: "1px solid rgba(212,0,122,0.35)", color: "#FF6BB0" }}
                   >
                     <span>💎</span>
-                    <span>{lang === "es" ? "1 Año — $50" : "1 Year — $50"}</span>
+                    <span>{lang === "es" ? "$50/año" : "$50/yr"}</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => { setPromoModalPlanId("lifetime100"); setShowPromoModal(true); }}
-                    className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-bold transition-all active:scale-95"
-                    style={{ background: "rgba(230,145,56,0.1)", border: "1px solid rgba(230,145,56,0.35)", color: "#E69138" }}
+                    className="flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[10px] font-bold transition-all active:scale-95"
+                    style={{ background: "rgba(230,145,56,0.10)", border: "1px solid rgba(230,145,56,0.35)", color: "#E69138" }}
                   >
                     <span>🖤</span>
-                    <span>{lang === "es" ? "De por vida — $100" : "Lifetime — $100"}</span>
+                    <span>{lang === "es" ? "$100 siempre" : "$100 lifetime"}</span>
                   </button>
                 </div>
               )}
