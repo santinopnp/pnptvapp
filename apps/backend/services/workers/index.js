@@ -1206,6 +1206,72 @@ function _attachDlqAlert(worker) {
   return worker;
 }
 
+// ─── subscribe-retarget processor ────────────────────────────────────────────
+async function subscribeRetargetProcessor(job) {
+  if (job.name !== 'subscribe-retarget') {
+    logger.warn(`[BullMQ] subscribeRetargetProcessor: unhandled job name "${job.name}"`);
+    return;
+  }
+
+  const { userId, visitedAt } = job.data;
+  if (!userId) return;
+
+  const { query: pgQuery } = require('../../config/postgres');
+  const { getRedis } = require('../../config/redis');
+  const axios = require('axios');
+
+  const { rows } = await pgQuery('SELECT tier, telegram FROM users WHERE id = $1', [userId]);
+  const user = rows[0];
+  if (!user) return;
+  if (user.tier === 'prime') return;
+
+  const visitKey = `pnpapp:subscribe-visit:${userId}`;
+  const stillPending = await getRedis().exists(visitKey);
+  if (!stillPending) return;
+
+  let invoiceUrl = process.env.WEBAPP_URL + '/subscribe';
+  try {
+    const npRes = await axios.post(
+      'https://api.nowpayments.io/v1/invoice',
+      {
+        price_amount: 50,
+        price_currency: 'usd',
+        pay_currency: 'usdtbsc',
+        order_id: 'retarget-' + userId + '-' + Date.now(),
+        order_description: 'PNPtv PRIME Annual — $50/yr',
+        ipn_callback_url: process.env.WEBAPP_URL + '/api/webhooks/nowpayments',
+        success_url: process.env.WEBAPP_URL + '/subscribe?nowpayments=success',
+      },
+      { headers: { 'x-api-key': process.env.NOWPAYMENTS_API_KEY } }
+    );
+    if (npRes.data?.invoice_url) invoiceUrl = npRes.data.invoice_url;
+  } catch (err) {
+    logger.warn('[BullMQ] subscribeRetargetProcessor: NowPayments invoice failed', { userId, error: err.message });
+  }
+
+  if (user.telegram) {
+    try {
+      const botModule = _safeRequire('../../bot/core/bot');
+      const bot = botModule && typeof botModule.getBotInstance === 'function' ? botModule.getBotInstance() : null;
+      if (!bot) { logger.warn('[BullMQ] subscribeRetargetProcessor: bot not available'); return; }
+      const text =
+        `🔥 <b>Hey!</b> Viste los planes PRIME en PNPtv — te dejé el link listo:\n\n` +
+        `💎 <b>$50/año</b> — acceso total, sin límites\n` +
+        `<a href="${invoiceUrl}">👉 Pagar ahora con crypto</a>\n\n` +
+        `🌐 <a href="https://pnptv.app/subscribe">Ver todas las opciones</a>`;
+      await bot.telegram.sendMessage(user.telegram, text, {
+        parse_mode: 'HTML',
+        disable_web_page_preview: false,
+      });
+    } catch (err) {
+      logger.warn('[BullMQ] subscribeRetargetProcessor: Telegram DM failed', { userId, error: err.message });
+    }
+  }
+
+  await getRedis().del(visitKey);
+  logger.info('[BullMQ] subscribeRetargetProcessor: retarget sent', { userId, visitedAt });
+}
+
 // ─── startAllWorkers ──────────────────────────────────────────────────────────
 async function startAllWorkers() {
   const BULL_PREFIX = 'pnpapp:bull';
@@ -1221,6 +1287,7 @@ async function startAllWorkers() {
       connection: makeBullConnection(), prefix: BULL_PREFIX, concurrency: 1,
       stalledInterval: 30000, maxStalledCount: 1,
     }),
+    new Worker('subscribe-retarget',  subscribeRetargetProcessor, { connection: makeBullConnection(), prefix: BULL_PREFIX, concurrency: 2 }),
   ];
 
   for (const worker of _workers) {

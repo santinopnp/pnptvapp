@@ -11326,3 +11326,14 @@ export function getAdminMonetizationSummary(hours = 24): Promise<AdminMonetizati
   return request<AdminMonetizationSummary>(`/api/admin/monetization/summary?hours=${hours}`);
 }
 
+export function getOnlineStats(): Promise<{ online: number; prime: number }> {
+  return request<{ online: number; prime: number }>("/api/webapp/stats/online");
+}
+
+export function claimTrial(): Promise<{ success: boolean; alreadyUsed?: boolean }> {
+  return request<{ success: boolean; alreadyUsed?: boolean }>("/api/webapp/claim-trial", { method: "POST" });
+}
+
+export function logSubscribeVisit(): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>("/api/webapp/subscribe-visit", { method: "POST" });
+}

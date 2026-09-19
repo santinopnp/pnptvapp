@@ -14,6 +14,9 @@ import {
   getWalletBalance,
   paySubscriptionWithTokens,
   prepareUsdcSubscription,
+  getOnlineStats,
+  claimTrial,
+  logSubscribeVisit,
   type SubscriptionPlan,
 } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
@@ -150,6 +153,32 @@ export default function Subscribe() {
   const [activationSuccess, setActivationSuccess] = useState(false);
   const [activationError, setActivationError] = useState<string | null>(null);
   const [recommendedPlanId, setRecommendedPlanId] = useState<string>(RECOMMENDED_PLAN_FALLBACK);
+
+  // Social proof
+  const [onlineStats, setOnlineStats] = useState<{ online: number; prime: number } | null>(null);
+
+  // Countdown to promo deadline (end of month)
+  const PROMO_DEADLINE = new Date("2026-09-30T23:59:59");
+  const [countdown, setCountdown] = useState(() => {
+    const diff = PROMO_DEADLINE.getTime() - Date.now();
+    return Math.max(0, diff);
+  });
+  useEffect(() => {
+    const t = setInterval(() => setCountdown(Math.max(0, PROMO_DEADLINE.getTime() - Date.now())), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const cdHours = Math.floor(countdown / 3600000);
+  const cdMins  = Math.floor((countdown % 3600000) / 60000);
+  const cdSecs  = Math.floor((countdown % 60000) / 1000);
+  const countdownLabel = countdown > 0
+    ? `${String(cdHours).padStart(2, "0")}:${String(cdMins).padStart(2, "0")}:${String(cdSecs).padStart(2, "0")}`
+    : null;
+
+  // Free trial
+  const [trialClaiming, setTrialClaiming] = useState(false);
+  const [trialClaimed, setTrialClaimed] = useState(false);
+  const [trialAlreadyUsed, setTrialAlreadyUsed] = useState(false);
+
   // NowPayments hook retired 2026-08-09 — Wallet (USDC on Base) is the only
   // crypto path now. Any resumed NP order from sessionStorage is ignored.
 
@@ -198,6 +227,9 @@ export default function Subscribe() {
         })
         .catch(() => {});
     }
+
+    getOnlineStats().then(setOnlineStats).catch(() => {});
+    if (user) logSubscribeVisit().catch(() => {});
 
     // Clean up any stale BTC session storage from before retirement
     sessionStorage.removeItem("pnp_pending_btc_order");
@@ -650,7 +682,7 @@ export default function Subscribe() {
       {promoPlans.length > 0 && (user?.tier || "free") !== "prime" && (
         <div className="mb-5">
           {/* Section header */}
-          <div className="flex items-center gap-2 mb-3">
+          <div className="flex items-center gap-2 mb-2">
             <span className="text-base">🔥</span>
             <span className="text-sm font-bold text-pnp-textPrimary">
               {t.lang === "es" ? "Promos exclusivas" : "Exclusive Deals"}
@@ -661,6 +693,30 @@ export default function Subscribe() {
             >
               {t.lang === "es" ? "Tiempo limitado" : "Limited time"}
             </span>
+          </div>
+
+          {/* Countdown + social proof row */}
+          <div className="flex items-center justify-between mb-3 gap-2">
+            {countdownLabel && (
+              <div className="flex items-center gap-1.5">
+                <svg className="w-3 h-3 text-red-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span className="text-[11px] font-black tabular-nums" style={{ color: "#FF6B6B" }}>
+                  {t.lang === "es" ? `Vence en ${countdownLabel}` : `Ends in ${countdownLabel}`}
+                </span>
+              </div>
+            )}
+            {onlineStats && onlineStats.prime > 0 && (
+              <div className="flex items-center gap-1 ml-auto">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse flex-shrink-0" />
+                <span className="text-[10px] text-white/50">
+                  {t.lang === "es"
+                    ? `${onlineStats.prime} PRIME online`
+                    : `${onlineStats.prime} PRIME online`}
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Two-card grid */}
@@ -769,6 +825,40 @@ export default function Subscribe() {
               );
             })}
           </div>
+
+          {/* Free trial CTA — only for users who haven't used it */}
+          {!trialClaimed && !trialAlreadyUsed && (
+            <div className="mt-3 text-center">
+              {trialClaiming ? (
+                <span className="text-xs text-white/40">{t.lang === "es" ? "Activando prueba…" : "Activating trial…"}</span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setTrialClaiming(true);
+                    try {
+                      const res = await claimTrial();
+                      if (res.alreadyUsed) { setTrialAlreadyUsed(true); return; }
+                      setTrialClaimed(true);
+                      trackEvent("trial_claimed", { plan: "prime-trial-3d" });
+                      setTimeout(() => { window.location.href = "/"; }, 1500);
+                    } catch { setTrialClaiming(false); }
+                  }}
+                  className="text-xs font-semibold underline decoration-dotted transition-colors"
+                  style={{ color: "rgba(255,255,255,0.35)" }}
+                  onMouseEnter={e => (e.currentTarget.style.color = "rgba(255,255,255,0.65)")}
+                  onMouseLeave={e => (e.currentTarget.style.color = "rgba(255,255,255,0.35)")}
+                >
+                  {t.lang === "es" ? "¿Preferís probar 3 días gratis primero? →" : "Want to try 3 days free first? →"}
+                </button>
+              )}
+              {trialClaimed && (
+                <p className="text-xs text-emerald-400 font-semibold">
+                  ✅ {t.lang === "es" ? "¡PRIME activado por 3 días! Redirigiendo…" : "PRIME activated for 3 days! Redirecting…"}
+                </p>
+              )}
+            </div>
+          )}
         </div>
       )}
 

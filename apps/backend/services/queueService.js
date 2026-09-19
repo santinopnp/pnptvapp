@@ -1,5 +1,8 @@
 const Redis = require('ioredis');
+const { Queue } = require('bullmq');
 const logger = require('../utils/logger');
+
+const BULL_PREFIX = 'pnpapp:bull';
 
 const mockQueue = {
   name: 'default',
@@ -37,8 +40,34 @@ function makeBullConnection() {
   return conn;
 }
 
+const DEFAULT_JOB_OPTIONS = {
+  attempts: 3,
+  backoff: { type: 'exponential', delay: 5000 },
+  removeOnComplete: { count: 100 },
+  removeOnFail: { count: 50 },
+};
+
+let _subscribeRetargetQueue = null;
+function getSubscribeRetargetQueue() {
+  if (!_subscribeRetargetQueue) {
+    _subscribeRetargetQueue = new Queue('subscribe-retarget', {
+      connection: makeBullConnection(),
+      prefix: BULL_PREFIX,
+    });
+  }
+  return _subscribeRetargetQueue;
+}
+
+// Lazy getter so callers can do: const { subscribeRetargetQueue } = require('./queueService')
+// and the Queue is only created when first accessed (not at module load).
+const subscribeRetargetQueue = new Proxy({}, {
+  get(_, prop) { return getSubscribeRetargetQueue()[prop]; },
+});
+
 module.exports = {
   makeBullConnection,
+  DEFAULT_JOB_OPTIONS,
+  subscribeRetargetQueue,
   initializeQueues: async () => ({}),
   getAllQueues: () => [],
   getQueue: () => mockQueue,

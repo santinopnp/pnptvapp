@@ -9094,6 +9094,71 @@ app.get('/api/webapp/nearby/event-attendees/:eventId', requireSessionAuth, async
 app.get('/api/webapp/nearby/all-users', requireSessionAuth, asyncHandler((req, res) => NearbyController.allUsers(req, res)));
 app.get('/api/webapp/nearby/online-users', requireSessionAuth, asyncHandler((req, res) => NearbyController.onlineUsers(req, res)));
 
+app.get('/api/webapp/stats/online', asyncHandler(async (req, res) => {
+  const cacheKey = 'pnpapp:online-stats';
+  const cached = await getRedis().get(cacheKey);
+  if (cached) return res.json(JSON.parse(cached));
+
+  const redisGeoService = require('../../services/redisGeoService');
+  const online = await redisGeoService.getOnlineCount();
+
+  let prime = 0;
+  try {
+    const redis = getRedis();
+    let cursor = '0';
+    const userIds = [];
+    do {
+      const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', 'presence:online:*', 'COUNT', 200);
+      cursor = nextCursor;
+      for (const key of keys) userIds.push(key.replace('presence:online:', ''));
+    } while (cursor !== '0');
+
+    if (userIds.length > 0) {
+      const { rows } = await query(
+        `SELECT COUNT(*) AS cnt FROM user_entitlements WHERE user_id = ANY($1::text[]) AND add_on_id = 'prime' AND (expires_at IS NULL OR expires_at > NOW())`,
+        [userIds]
+      );
+      prime = parseInt(rows[0]?.cnt || '0', 10);
+    }
+  } catch (_) {}
+
+  const payload = { online, prime };
+  try { await getRedis().set(cacheKey, JSON.stringify(payload), 'EX', 60); } catch (_) {}
+  return res.json(payload);
+}));
+
+app.post('/api/webapp/claim-trial', requireSessionAuth, asyncHandler(async (req, res) => {
+  const userId = req.session.user.id;
+  const { rows } = await query(
+    `SELECT 1 FROM user_entitlements WHERE user_id = $1 AND source_plan_id = 'prime-trial-3d' LIMIT 1`,
+    [userId]
+  );
+  if (rows.length > 0) return res.json({ success: false, alreadyUsed: true });
+
+  await EntitlementAccessService.grantTrialPrime(userId);
+
+  try {
+    const io = require('../../services/socketSingleton').get();
+    if (io) io.to(`user:${userId}`).emit('user:entitlement-change', {});
+  } catch (_) {}
+
+  return res.json({ success: true });
+}));
+
+app.post('/api/webapp/subscribe-visit', requireSessionAuth, asyncHandler(async (req, res) => {
+  if (req.session?.user?.tier === 'prime') return res.json({ ok: true });
+  const userId = req.session.user.id;
+  await getRedis().set('pnpapp:subscribe-visit:' + userId, Date.now(), 'EX', 172800);
+
+  const { subscribeRetargetQueue, DEFAULT_JOB_OPTIONS } = require('../../services/queueService');
+  await subscribeRetargetQueue.add('subscribe-retarget', { userId, visitedAt: Date.now() }, {
+    ...DEFAULT_JOB_OPTIONS,
+    delay: 86400000,
+  });
+
+  return res.json({ ok: true });
+}));
+
 // Referral: get my code + stats
 app.get('/api/webapp/me/referral', asyncHandler(async (req, res) => {
   const user = req.session?.user;
