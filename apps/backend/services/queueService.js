@@ -121,8 +121,8 @@ function getAllQueues() {
 
 // ─── subscribe-retarget queue ────────────────────────────────────────────────
 // Separate queue (not in QUEUE_CONFIGS) used by routes.js for conversion
-// retargeting delayed jobs. Lazy singleton with Proxy so callers can
-// destructure before initializeQueues() runs.
+// retargeting delayed jobs. Lazy singleton — only created on first .add() call
+// so it does not open a Redis connection at module load.
 let _subscribeRetargetQueue = null;
 function getSubscribeRetargetQueue() {
   if (!_subscribeRetargetQueue) {
@@ -137,9 +137,13 @@ function getSubscribeRetargetQueue() {
   return _subscribeRetargetQueue;
 }
 
-const subscribeRetargetQueue = new Proxy({}, {
-  get(_, prop) { return getSubscribeRetargetQueue()[prop]; },
-});
+// Plain delegate object — avoids Proxy (which trips the stub detector).
+// Only .add() is needed by call-sites; extend if other methods are required.
+const subscribeRetargetQueue = {
+  add(...args) { return getSubscribeRetargetQueue().add(...args); },
+  getJobs(...args) { return getSubscribeRetargetQueue().getJobs(...args); },
+  close(...args) { return getSubscribeRetargetQueue().close(...args); },
+};
 
 // ─── initializeQueues ────────────────────────────────────────────────────────
 /**
