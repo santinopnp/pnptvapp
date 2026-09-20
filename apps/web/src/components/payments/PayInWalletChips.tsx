@@ -467,7 +467,7 @@ export function WalletPayCard({
       // component mounts (user topped up externally or is returning after a
       // cancelled signing), fire handlePay automatically once so they don't
       // have to find and tap the Pay button themselves.
-      if (bal != null && bal >= amountUsd && !autoPayFiredRef.current && isEmbedded) {
+      if (bal != null && priceReady && bal >= amountUsd && !autoPayFiredRef.current && isEmbedded) {
         autoPayFiredRef.current = true;
         setTimeout(() => handlePay(), 400);
       }
@@ -569,6 +569,13 @@ export function WalletPayCard({
 
   const handlePay = async () => {
     if (!activeWallet) return;
+    // Guard: price not yet resolved (amountUsd=0 means parent passed null/NaN/0).
+    // Without this, auto-pay fires for any non-negative balance because 0 <= bal
+    // is always true, and reportWalletClientError logs amountUsd:0 into payment_errors.
+    if (!priceReady) {
+      setError(es ? "Precio no disponible. Recarga la página." : "Price unavailable. Please reload.");
+      return;
+    }
     setError(null); setPaying(true);
     try {
       // Live balance gate: re-fetch before creating the intent so we don't

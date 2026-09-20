@@ -17077,6 +17077,19 @@ app.post('/api/wallet/checkout/initiate', walletSpendLimiter, requireSessionAuth
   const ALLOWED_SURFACES = new Set(['tip', 'creator_sub', 'rush', 'membership', 'prime', 'donation', 'call', 'crystal_self', 'crystal_gift']);
   if (!ALLOWED_SURFACES.has(surface)) return res.status(400).json({ error: 'invalid or unsupported surface' });
 
+  // Guard against zero-amount intents that slip through when the frontend
+  // renders WalletPayCard before the creator price has loaded (amountUsd=0).
+  // For tip/donation, the client amount is user-controlled and validated inside
+  // _resolveCanonicalPurchase. For all other surfaces the server resolves the
+  // canonical price from the DB — but if the client sends amountUsd=0 it means
+  // the price prop was null/NaN at render time and we should reject early rather
+  // than creating an intent that could trigger a $0 transaction attempt.
+  const clientAmountUsd = Number(req.body?.amountUsd);
+  const CLIENT_AMOUNT_REQUIRED_SURFACES = new Set(['tip', 'donation']);
+  if (!CLIENT_AMOUNT_REQUIRED_SURFACES.has(surface) && Number.isFinite(clientAmountUsd) && clientAmountUsd === 0) {
+    return res.status(400).json({ error: 'price_not_loaded', message: 'amount is 0 — price has not loaded yet on the client' });
+  }
+
   // Resolve canonical price + entitlement spec from the DB. Everything below
   // this point is server-derived — never client-controlled.
   let amountUsd, resolvedSpec;
