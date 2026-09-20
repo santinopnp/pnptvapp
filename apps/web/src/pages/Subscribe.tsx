@@ -44,6 +44,10 @@ const RECURRING_PLANS = new Set(["prime-week-pass-7d", "monthly-pass", "prime-di
 
 const RECOMMENDED_PLAN_FALLBACK = "prime-diamond-pass-365d";
 
+// NowPayments raised their minimum payment floor to ~$18.94 USD (2026-09-20).
+// Plans priced below this threshold fall back to Privy USDC only.
+const NOWPAYMENTS_MINIMUM_USD = 18.95;
+
 function formatPrice(amount: number, currency: string): string {
   if (currency === "COP") {
     return new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", minimumFractionDigits: 0 }).format(amount);
@@ -783,18 +787,20 @@ export default function Subscribe() {
                     >
                       {t.lang === "es" ? "💎 Pagar con wallet" : "💎 Pay with wallet"}
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => openNpFallback(plan.id)}
-                      className="w-full py-2 rounded-xl text-[11px] font-semibold transition-all active:scale-[0.97]"
-                      style={{
-                        background: "rgba(255,255,255,0.05)",
-                        border: "1px solid rgba(255,255,255,0.12)",
-                        color: "rgba(255,255,255,0.70)",
-                      }}
-                    >
-                      {t.lang === "es" ? "₿ Otra cripto" : "₿ Other crypto"}
-                    </button>
+                    {parseFloat(String(plan.price)) >= NOWPAYMENTS_MINIMUM_USD && (
+                      <button
+                        type="button"
+                        onClick={() => openNpFallback(plan.id)}
+                        className="w-full py-2 rounded-xl text-[11px] font-semibold transition-all active:scale-[0.97]"
+                        style={{
+                          background: "rgba(255,255,255,0.05)",
+                          border: "1px solid rgba(255,255,255,0.12)",
+                          color: "rgba(255,255,255,0.70)",
+                        }}
+                      >
+                        {t.lang === "es" ? "₿ Otra cripto" : "₿ Other crypto"}
+                      </button>
+                    )}
                   </div>
 
                   {/* Inline wallet checkout panel */}
@@ -1082,13 +1088,15 @@ export default function Subscribe() {
                     ? `💎 Wallet PNPtv o tarjeta · $${parseFloat(String(plan.price)).toFixed(2)}`
                     : `💎 PNPtv Wallet or card · $${parseFloat(String(plan.price)).toFixed(2)}`}
                 </button>
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); openNpFallback(plan.id); }}
-                  className="w-full py-3 rounded-lg font-bold text-sm text-white/80 border border-white/15 bg-white/5 hover:bg-white/10 hover:text-white transition-all"
-                >
-                  {t.lang === "es" ? "₿ Pagar con otra cripto" : "₿ Pay with another crypto"}
-                </button>
+                {parseFloat(String(plan.price)) >= NOWPAYMENTS_MINIMUM_USD && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); openNpFallback(plan.id); }}
+                    className="w-full py-3 rounded-lg font-bold text-sm text-white/80 border border-white/15 bg-white/5 hover:bg-white/10 hover:text-white transition-all"
+                  >
+                    {t.lang === "es" ? "₿ Pagar con otra cripto" : "₿ Pay with another crypto"}
+                  </button>
+                )}
                 {(() => {
                   const cost = Math.round(parseFloat(String(plan.price)) * 6);
                   const isPlatform = MEMBER_PLAN_IDS.has(plan.id) || String(plan.id).startsWith("prime");
@@ -1265,13 +1273,15 @@ export default function Subscribe() {
                     ? `💎 Wallet PNPtv o tarjeta · $${parseFloat(String(plan.price)).toFixed(2)}`
                     : `💎 PNPtv Wallet or card · $${parseFloat(String(plan.price)).toFixed(2)}`}
                 </button>
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); openNpFallback(plan.id); }}
-                  className="w-full py-3 rounded-lg font-bold text-sm text-white/80 border border-white/15 bg-white/5 hover:bg-white/10 hover:text-white transition-all"
-                >
-                  {t.lang === "es" ? "₿ Pagar con otra cripto" : "₿ Pay with another crypto"}
-                </button>
+                {parseFloat(String(plan.price)) >= NOWPAYMENTS_MINIMUM_USD && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); openNpFallback(plan.id); }}
+                    className="w-full py-3 rounded-lg font-bold text-sm text-white/80 border border-white/15 bg-white/5 hover:bg-white/10 hover:text-white transition-all"
+                  >
+                    {t.lang === "es" ? "₿ Pagar con otra cripto" : "₿ Pay with another crypto"}
+                  </button>
+                )}
                 {(() => {
                   const cost = Math.round(parseFloat(String(plan.price)) * 6);
                   const isPlatform = MEMBER_PLAN_IDS.has(plan.id) || String(plan.id).startsWith("prime");
