@@ -1229,7 +1229,35 @@ async function subscribeRetargetProcessor(job) {
   const stillPending = await getRedis().exists(visitKey);
   if (!stillPending) return;
 
-  let invoiceUrl = process.env.WEBAPP_URL + '/subscribe';
+  const webappUrl = (process.env.WEBAPP_URL || 'https://pnptv.app').replace(/\/$/, '');
+  const orderId = `pnptv-nowp-retarget-${userId}-${Date.now()}`;
+
+  // Insert the DSO row BEFORE calling the NowPayments API so the IPN webhook
+  // can find the order by btcpay_invoice_id when the user pays.
+  // If the insert fails we abort: sending a DM with a payment link that would
+  // silently lose the payment is worse than not sending the DM at all.
+  try {
+    await pgQuery(
+      `INSERT INTO dash_subscription_orders
+         (user_id, plan_id, usd_amount, btcpay_invoice_id, status, metadata)
+       VALUES ($1, 'yearly50', 50.00, $2, 'pending', $3)
+       ON CONFLICT (btcpay_invoice_id) DO NOTHING`,
+      [
+        String(userId),
+        orderId,
+        JSON.stringify({
+          provider: 'nowpayments',
+          flow: 'retarget',
+          source: 'subscribe-retarget-worker',
+        }),
+      ]
+    );
+  } catch (dbErr) {
+    logger.error('[BullMQ] subscribeRetargetProcessor: DSO insert failed — aborting DM', { userId, orderId, error: dbErr.message });
+    return;
+  }
+
+  let invoiceUrl = webappUrl + '/subscribe';
   try {
     const npRes = await axios.post(
       'https://api.nowpayments.io/v1/invoice',
@@ -1237,16 +1265,34 @@ async function subscribeRetargetProcessor(job) {
         price_amount: 50,
         price_currency: 'usd',
         pay_currency: 'usdtbsc',
-        order_id: 'retarget-' + userId + '-' + Date.now(),
+        order_id: orderId,
         order_description: 'PNPtv PRIME Annual — $50/yr',
-        ipn_callback_url: process.env.WEBAPP_URL + '/api/webhooks/nowpayments',
-        success_url: process.env.WEBAPP_URL + '/subscribe?nowpayments=success',
+        ipn_callback_url: webappUrl + '/api/webhooks/nowpayments',
+        success_url: webappUrl + '/subscribe?nowpayments=success',
       },
-      { headers: { 'x-api-key': process.env.NOWPAYMENTS_API_KEY } }
+      { headers: { 'x-api-key': process.env.NOWPAYMENTS_API_KEY }, timeout: 10000 }
     );
-    if (npRes.data?.invoice_url) invoiceUrl = npRes.data.invoice_url;
+    if (npRes.data?.invoice_url) {
+      invoiceUrl = npRes.data.invoice_url;
+      // Backfill the invoice URL into metadata so it can be resumed on retry.
+      const nowpaymentsInvoiceId = npRes.data?.id ? String(npRes.data.id) : null;
+      await pgQuery(
+        `UPDATE dash_subscription_orders
+           SET metadata = metadata || $2::jsonb
+         WHERE btcpay_invoice_id = $1 AND status = 'pending'`,
+        [
+          orderId,
+          JSON.stringify({
+            invoiceUrl,
+            ...(nowpaymentsInvoiceId ? { nowpaymentsInvoiceId } : {}),
+          }),
+        ]
+      ).catch((updateErr) => {
+        logger.warn('[BullMQ] subscribeRetargetProcessor: metadata backfill failed (non-fatal)', { userId, orderId, error: updateErr.message });
+      });
+    }
   } catch (err) {
-    logger.warn('[BullMQ] subscribeRetargetProcessor: NowPayments invoice failed', { userId, error: err.message });
+    logger.warn('[BullMQ] subscribeRetargetProcessor: NowPayments invoice failed — DM will use /subscribe fallback', { userId, orderId, error: err.message });
   }
 
   if (user.telegram) {
