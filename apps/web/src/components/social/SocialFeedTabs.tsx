@@ -24,6 +24,7 @@ export interface SocialFeedTabsProps {
   currentUserId: string;
   isAdmin: boolean;
   isAuthenticated: boolean;
+  isPrime?: boolean;
   userLang?: string;
   viewerCity?: string | null;
   viewerCountry?: string | null;
@@ -35,6 +36,91 @@ export interface SocialFeedTabsProps {
   hashtagFilter?: string;
   /** When set, the feed only shows posts from this hangout group */
   hangoutGroupId?: number;
+}
+
+const PRIME_CHANNEL_SLUG = 'pnptv-prime';
+const PRIME_CHANNEL_COVER = '/uploads/channels/channel-209-1788546353680.webp';
+const PRIME_BANNER_DISMISS_KEY = 'pnptv:prime-channel-banner:dismissed';
+
+function PrimeChannelBanner({ isPrime, onNavigate }: { isPrime: boolean; onNavigate: (path: string) => void }) {
+  const [dismissed, setDismissed] = React.useState(() =>
+    sessionStorage.getItem(PRIME_BANNER_DISMISS_KEY) === '1'
+  );
+  if (dismissed) return null;
+
+  const handleClick = () => {
+    if (isPrime) {
+      onNavigate(`/channels?channel=${PRIME_CHANNEL_SLUG}`);
+    } else {
+      onNavigate('/subscribe');
+    }
+  };
+
+  const handleDismiss = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    sessionStorage.setItem(PRIME_BANNER_DISMISS_KEY, '1');
+    setDismissed(true);
+  };
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={handleClick}
+      onKeyDown={(e) => e.key === 'Enter' && handleClick()}
+      className="relative mb-3 rounded-2xl overflow-hidden cursor-pointer select-none"
+      style={{ minHeight: 120 }}
+      aria-label={isPrime ? 'Open PRIME Channel' : 'Get PRIME'}
+    >
+      {/* Cover image */}
+      <img
+        src={PRIME_CHANNEL_COVER}
+        alt="PNPtv! PRIME Channel"
+        className="absolute inset-0 w-full h-full object-cover"
+        draggable={false}
+      />
+      {/* Gradient overlay */}
+      <div
+        className="absolute inset-0"
+        style={{ background: 'linear-gradient(135deg, rgba(10,10,20,0.72) 0%, rgba(212,0,122,0.45) 100%)' }}
+      />
+      {/* Content */}
+      <div className="relative z-10 flex items-center justify-between p-4">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1">
+            <span
+              className="text-xs font-bold px-2 py-0.5 rounded-full"
+              style={{ background: 'linear-gradient(90deg,#d4007a,#ff6600)', color: '#fff', letterSpacing: '0.06em' }}
+            >
+              💎 PRIME CHANNEL
+            </span>
+          </div>
+          <p className="text-white font-bold text-sm leading-snug">
+            @SantinoFurioso &amp; @pnplatinoboy
+          </p>
+          <p className="text-white/70 text-xs mt-0.5">
+            {isPrime ? 'Exclusive content · Watch now →' : 'Get PRIME to unlock exclusive content'}
+          </p>
+        </div>
+        <div
+          className="ml-3 flex-shrink-0 px-3 py-1.5 rounded-xl text-xs font-bold text-white"
+          style={{ background: isPrime ? 'rgba(255,255,255,0.15)' : 'linear-gradient(90deg,#d4007a,#ff6600)' }}
+        >
+          {isPrime ? 'Watch' : 'Get PRIME'}
+        </div>
+      </div>
+      {/* Dismiss */}
+      <button
+        type="button"
+        onClick={handleDismiss}
+        className="absolute top-2 right-2 z-20 w-6 h-6 flex items-center justify-center rounded-full text-white/60 hover:text-white"
+        style={{ background: 'rgba(0,0,0,0.4)' }}
+        aria-label="Dismiss"
+      >
+        ✕
+      </button>
+    </div>
+  );
 }
 
 function FeedSkeleton() {
@@ -60,6 +146,7 @@ export default function SocialFeedTabs({
   currentUserId,
   isAdmin,
   isAuthenticated,
+  isPrime = false,
   userLang = "en",
   viewerCity,
   viewerCountry,
@@ -341,6 +428,11 @@ export default function SocialFeedTabs({
       {/* Section header removed — the tabs + composer are self-explanatory and
           the redundant "PNP Feed" title was eating ~64px of prime mobile
           real-estate before any content appeared. */}
+
+      {/* PRIME Channel featured CTA — non-prime users → /subscribe, prime → channel */}
+      {isAuthenticated && !hangoutGroupId && !hashtagFilter && (
+        <PrimeChannelBanner isPrime={isPrime} onNavigate={onNavigate} />
+      )}
 
       {/* Persistent hashtag filter input — visible on every tab. Enter to apply. */}
       {!hangoutGroupId && (

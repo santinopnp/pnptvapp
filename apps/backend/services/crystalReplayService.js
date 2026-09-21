@@ -212,8 +212,10 @@ async function _createLiveKitIngressForReplay(creatorUserId, show, displayName) 
       // Route through our internal proxy (adds Referer: https://pnptv.app/).
       // Use the 360p sub-playlist directly instead of the master playlist to avoid
       // GStreamer's adaptive bitrate switching logic which triggers a go-glib crash.
+      // Strip query params (Bunny token/expires) before rewriting — the proxy re-signs.
       const APP_ORIGIN = process.env.WEBAPP_URL || 'https://pnptv.app';
-      const ingressUrl = show.source_url
+      const sourceBase = show.source_url.split('?')[0];
+      const ingressUrl = sourceBase
         .replace(/^https?:\/\//, `${APP_ORIGIN}/api/internal/bunny-hls/`)
         .replace(/\/playlist\.m3u8$/, '/360p/video.m3u8');
 

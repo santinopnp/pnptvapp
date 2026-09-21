@@ -459,6 +459,7 @@ export default function Home() {
             currentUserId={user?.dbId ? String(user.dbId) : ""}
             isAdmin={isAdmin}
             isAuthenticated={isAuthenticated}
+            isPrime={isPrime}
             userLang={user?.language}
             viewerCity={user?.city}
             viewerCountry={user?.country}
@@ -473,6 +474,7 @@ export default function Home() {
             currentUserId={user?.dbId ? String(user.dbId) : ""}
             isAdmin={isAdmin}
             isAuthenticated={isAuthenticated}
+            isPrime={isPrime}
             userLang={user?.language}
             viewerCity={user?.city}
             viewerCountry={user?.country}

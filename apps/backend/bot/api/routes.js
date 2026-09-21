@@ -17074,7 +17074,7 @@ app.post('/api/wallet/checkout/initiate', walletSpendLimiter, requireSessionAuth
   const { rail, surface, entitlementSpec: clientSpec = {}, metadata = {} } = req.body || {};
 
   if (!rail || !['usdc', 'rush', 'eth'].includes(rail)) return res.status(400).json({ error: 'invalid rail' });
-  const ALLOWED_SURFACES = new Set(['tip', 'creator_sub', 'rush', 'membership', 'prime', 'donation', 'call', 'crystal_self', 'crystal_gift']);
+  const ALLOWED_SURFACES = new Set(['tip', 'creator_sub', 'rush', 'membership', 'prime', 'donation', 'call', 'crystal_self', 'crystal_gift', 'channel_pass']);
   if (!ALLOWED_SURFACES.has(surface)) return res.status(400).json({ error: 'invalid or unsupported surface' });
 
   // Guard against zero-amount intents that slip through when the frontend
@@ -17319,6 +17319,31 @@ async function _resolveCanonicalPurchase(userId, surface, spec, dbQuery) {
         creatorId: giftCreatorId,
         giftNote: typeof spec?.giftNote === 'string' ? spec.giftNote.slice(0, 500) : null,
         months: 1,
+      },
+    };
+  }
+
+  if (surface === 'channel_pass') {
+    // Frontend sends entitlementSpec.creatorId (camelCase); also accept creator_id for consistency.
+    const channelCreatorId = spec?.creatorId ? String(spec.creatorId) : (spec?.creator_id ? String(spec.creator_id) : null);
+    if (!channelCreatorId) throwErr('creatorId required for channel_pass', 400);
+    if (channelCreatorId === userId) throwErr('cannot subscribe to your own channel pass', 400);
+    const { rows: cpRows } = await dbQuery(
+      `SELECT id, channel_pass_enabled, channel_pass_price_usd
+         FROM users WHERE id::text = $1 AND is_deleted = false LIMIT 1`,
+      [channelCreatorId]
+    );
+    if (cpRows.length === 0) throwErr('creator not found', 404);
+    const cp = cpRows[0];
+    if (!cp.channel_pass_enabled) throwErr('channel pass not available for this creator', 400);
+    if (cp.channel_pass_price_usd == null) throwErr('channel pass has no price configured', 400);
+    const price = Number(cp.channel_pass_price_usd);
+    if (!(price > 0)) throwErr('channel pass price is zero', 400);
+    return {
+      amountUsd: price,
+      resolvedSpec: {
+        creatorId: channelCreatorId,
+        type: 'channel_pass',
       },
     };
   }

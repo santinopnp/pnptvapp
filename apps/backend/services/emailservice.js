@@ -1466,23 +1466,39 @@ class EmailService {
       }
 
       try {
-        await this.sendBroadcastEmail({
-          email: user.email,
-          userName: user.first_name || user.username || 'PNPtv! Member',
-          messageEn,
-          messageEs,
-          userLanguage: user.language || 'en',
-          mediaUrl,
-          buttons,
-          subjectEn,
-          subjectEs,
-          preheaderEn,
-          preheaderEs
-        });
+        let lastErr;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            await this.sendBroadcastEmail({
+              email: user.email,
+              userName: user.first_name || user.username || 'PNPtv! Member',
+              messageEn,
+              messageEs,
+              userLanguage: user.language || 'en',
+              mediaUrl,
+              buttons,
+              subjectEn,
+              subjectEs,
+              preheaderEn,
+              preheaderEs
+            });
+            lastErr = null;
+            break;
+          } catch (e) {
+            lastErr = e;
+            // 451 = rate limit — back off before retrying
+            if (e.responseCode === 451 || (e.message && e.message.includes('451'))) {
+              await new Promise(resolve => setTimeout(resolve, 3000 * (attempt + 1)));
+            } else {
+              break;
+            }
+          }
+        }
+        if (lastErr) throw lastErr;
         sent++;
 
-        // Small delay to avoid rate limiting
-        await new Promise(resolve => setTimeout(resolve, 100));
+        // Throttle to stay within Hostinger SMTP rate limits (~2/sec)
+        await new Promise(resolve => setTimeout(resolve, 500));
       } catch (error) {
         failed++;
         errors.push({ email: user.email, error: error.message });
