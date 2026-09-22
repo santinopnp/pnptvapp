@@ -574,13 +574,12 @@ export default function App() {
                         primary: ["email", "google", "telegram", "twitter"],
                         overflow: ["wallet"],
                       },
-                      // "all-users" ensures every user gets a PNPtv embedded wallet
-                      // regardless of login method. Previously "users-without-wallets"
-                      // meant a user who signed up by connecting Trust/MetaMask via
-                      // WalletConnect never got an embedded wallet — leaving them
-                      // stuck on the external wallet with no PNPtv rail to switch to.
-                      // Existing wallet-only users get an embedded wallet on next login.
-                      embeddedWallets: { ethereum: { createOnLogin: "all-users" } },
+                      // "off" prevents auto-creating a Privy embedded wallet at login for
+                      // every user — free tier has a wallet-slot cap and most users never
+                      // pay with crypto. Wallets are created on-demand: creators get one
+                      // via provisionCreatorWallet(); other users get one the moment they
+                      // initiate a crypto payment (Privy SDK creates it inline).
+                      embeddedWallets: { ethereum: { createOnLogin: "off" } },
                       // Own WalletConnect Cloud project id — dedicated rate-limit +
                       // reliable Trust/Rainbow/etc handshake. Falls back to Privy's
                       // shared id if unset (works but with silent throttling).

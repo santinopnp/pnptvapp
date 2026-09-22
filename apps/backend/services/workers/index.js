@@ -606,6 +606,14 @@ async function cronProcessor(job) {
       return;
     }
 
+    case 'privy-wallet-purge': {
+      const PrivyLinkService = _safeRequire('../privyLinkService');
+      if (!PrivyLinkService) { logger.warn('[BullMQ] privy-wallet-purge: service not found'); return; }
+      const result = await PrivyLinkService.purgeUnusedWallets();
+      logger.info('Privy wallet purge completed', result);
+      return;
+    }
+
     case 'creator-eligibility': {
       const CreatorService = _safeRequire('../creatorService');
       if (!CreatorService) { logger.warn('[BullMQ] creator-eligibility: service not found'); return; }

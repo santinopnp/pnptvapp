@@ -170,9 +170,73 @@ async function listWalletAddressesRaw(privyId) {
     .map((a) => String(a.address).toLowerCase());
 }
 
+/**
+ * Delete Privy users (and their embedded wallets) for PNPtv accounts that have
+ * never made any crypto payment. Frees wallet slots on the free Privy tier.
+ *
+ * Safe: skips users with any token_purchase, completed checkout_intent, or
+ * successful gas topup. 200ms delay between API calls to respect rate limits.
+ *
+ * @returns {Promise<{candidates: number, deleted: number, errors: number}>}
+ */
+async function purgeUnusedWallets() {
+  const appId     = process.env.PRIVY_APP_ID;
+  const appSecret = process.env.PRIVY_APP_SECRET;
+  if (!appId || !appSecret) throw new Error('Missing PRIVY_APP_ID / PRIVY_APP_SECRET');
+
+  const { rows } = await query(`
+    SELECT u.id, u.privy_id
+    FROM users u
+    WHERE u.privy_id IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM token_purchases tp WHERE tp.user_id = u.id)
+      AND NOT EXISTS (
+        SELECT 1 FROM gas_topups gt
+        WHERE gt.user_id::text = u.id::text AND gt.status = 'success'
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM checkout_intents ci
+        WHERE ci.user_id = u.id AND ci.status = 'completed'
+      )
+  `);
+
+  const authHeader = 'Basic ' + Buffer.from(`${appId}:${appSecret}`).toString('base64');
+  let deleted = 0;
+  let errors  = 0;
+
+  for (const user of rows) {
+    try {
+      const r = await fetch(
+        `https://auth.privy.io/api/v1/users/${encodeURIComponent(user.privy_id)}`,
+        { method: 'DELETE', headers: { Authorization: authHeader, 'privy-app-id': appId } },
+      );
+      if (!r.ok && r.status !== 404) {
+        const body = await r.text().catch(() => '');
+        throw new Error(`Privy DELETE ${r.status}: ${body.slice(0, 200)}`);
+      }
+      await query(
+        `UPDATE users
+            SET privy_id         = NULL,
+                wallet_address   = NULL,
+                wallet_linked_at = NULL
+          WHERE id = $1`,
+        [user.id],
+      );
+      deleted++;
+    } catch (err) {
+      logger.error('[privy-purge] failed to delete wallet', { privyId: user.privy_id, err: err.message });
+      errors++;
+    }
+    await new Promise((res) => setTimeout(res, 200));
+  }
+
+  logger.info('[privy-purge] completed', { candidates: rows.length, deleted, errors });
+  return { candidates: rows.length, deleted, errors };
+}
+
 module.exports = {
   verifyAndLink,
   extractWalletAddress,
   listWalletAddresses,
   listWalletAddressesRaw,
+  purgeUnusedWallets,
 };
