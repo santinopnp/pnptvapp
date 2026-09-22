@@ -21,6 +21,9 @@
  *   - Users with ANY token_purchases row (any status) are skipped.
  *   - Users with ANY successful gas topup are skipped.
  *   - Users with ANY completed checkout_intent are skipped.
+ *   - Wallets with on-chain ETH > 0.00001 or USDC > $0.001 are SKIPPED
+ *     and listed for manual review — funded slots count against the Privy
+ *     free tier even after account deletion, so we must drain first.
  *   - Dry-run by default. Pass --execute to actually delete.
  *   - 200ms delay between Privy API calls to avoid rate limiting.
  *
@@ -45,7 +48,49 @@ const AUTH_HEADER = 'Basic ' + Buffer.from(`${PRIVY_ID}:${PRIVY_SECRET}`).toStri
 const EXECUTE  = process.argv.includes('--execute');
 const DELAY_MS = 200;
 
+// On-chain balance check (Base mainnet)
+const BASE_RPC        = process.env.BASE_RPC_URL || 'https://mainnet.base.org';
+const USDC_BASE       = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+const ETH_DUST_WEI    = BigInt('10000000000000');  // 0.00001 ETH
+const USDC_DUST_UNITS = BigInt('1000');             // $0.001 USDC (6 decimals)
+
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+async function isAddressFunded(address) {
+  if (!address) return false;
+  const addr = address.toLowerCase();
+  try {
+    const [ethRes, usdcRes] = await Promise.all([
+      fetch(BASE_RPC, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_getBalance', params: [addr, 'latest'] }),
+      }),
+      fetch(BASE_RPC, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0', id: 2, method: 'eth_call',
+          params: [{ to: USDC_BASE, data: '0x70a08231000000000000000000000000' + addr.slice(2) }, 'latest'],
+        }),
+      }),
+    ]);
+    const ethBal  = BigInt((await ethRes.json()).result  || '0x0');
+    const usdcBal = BigInt((await usdcRes.json()).result || '0x0');
+    return ethBal > ETH_DUST_WEI || usdcBal > USDC_DUST_UNITS;
+  } catch {
+    return true; // RPC error → skip delete to be safe
+  }
+}
+
+async function anyLinkedWalletFunded(linkedAccounts) {
+  const wallets = (Array.isArray(linkedAccounts) ? linkedAccounts : [])
+    .filter(a => a?.type === 'wallet' && a.address);
+  for (const w of wallets) {
+    if (await isAddressFunded(w.address)) return true;
+  }
+  return false;
+}
 
 async function deletePrivyUser(privyId) {
   const url = `https://auth.privy.io/api/v1/users/${encodeURIComponent(privyId)}`;
@@ -104,10 +149,15 @@ async function runPass1() {
   console.log(`Candidates: ${rows.length}`);
   if (rows.length === 0) { console.log('Pass 1: nothing to do.'); return; }
 
-  let deleted = 0, skipped = 0, errors = 0;
+  let deleted = 0, skipped = 0, funded = 0, errors = 0;
   for (const user of rows) {
-    process.stdout.write(`  [${deleted + skipped + errors + 1}/${rows.length}] ${user.privy_id} (pnptv: ${user.id}) … `);
+    process.stdout.write(`  [${deleted + skipped + funded + errors + 1}/${rows.length}] ${user.privy_id} (pnptv: ${user.id}) … `);
     if (!EXECUTE) { console.log('DRY RUN'); skipped++; continue; }
+    if (user.wallet_address && await isAddressFunded(user.wallet_address)) {
+      console.log('SKIP (funded wallet — drain before deleting)');
+      funded++;
+      continue;
+    }
     try {
       const status = await deletePrivyUser(user.privy_id);
       await query(
@@ -122,13 +172,12 @@ async function runPass1() {
     }
     await sleep(DELAY_MS);
   }
-  console.log(`\nPass 1 done. deleted=${deleted}  skipped=${skipped}  errors=${errors}`);
+  console.log(`\nPass 1 done. deleted=${deleted}  skipped=${skipped}  funded=${funded}  errors=${errors}`);
 }
 
 async function runPass2() {
   console.log('\n--- Pass 2: Privy-first (orphan accounts not in our DB) ---\n');
 
-  // Load our DB state: known privy_ids and known wallet addresses (for cross-ref)
   const [linkedRes, walletRes] = await Promise.all([
     query(`SELECT privy_id FROM users WHERE privy_id IS NOT NULL`),
     query(`SELECT LOWER(wallet_address) AS addr FROM users WHERE wallet_address IS NOT NULL AND wallet_address <> ''`),
@@ -142,11 +191,8 @@ async function runPass2() {
   const allPrivyUsers = await listAllPrivyUsers();
   console.log(`Total Privy users fetched: ${allPrivyUsers.length}\n`);
 
-  // Candidates: Privy user not in our DB (by privy_id) AND no DB-known wallet address
   const orphans = allPrivyUsers.filter(pu => {
-    if (knownPrivyIds.has(pu.id)) return false; // linked to our DB
-    // Cross-check wallet addresses — if any linked account of this Privy user
-    // matches a wallet we know, it's not truly orphaned.
+    if (knownPrivyIds.has(pu.id)) return false;
     const linked = Array.isArray(pu.linked_accounts) ? pu.linked_accounts : [];
     const wallets = linked.filter(a => a.type === 'wallet' && a.address);
     if (wallets.some(w => knownWalletAddrs.has(String(w.address).toLowerCase()))) return false;
@@ -156,10 +202,21 @@ async function runPass2() {
   console.log(`Orphan candidates: ${orphans.length}`);
   if (orphans.length === 0) { console.log('Pass 2: nothing to do.'); return; }
 
-  let deleted = 0, skipped = 0, errors = 0;
+  let deleted = 0, skipped = 0, funded = 0, errors = 0;
+  const fundedList = [];
+
   for (const pu of orphans) {
-    process.stdout.write(`  [${deleted + skipped + errors + 1}/${orphans.length}] ${pu.id} … `);
+    process.stdout.write(`  [${deleted + skipped + funded + errors + 1}/${orphans.length}] ${pu.id} … `);
     if (!EXECUTE) { console.log('DRY RUN'); skipped++; continue; }
+    if (await anyLinkedWalletFunded(pu.linked_accounts)) {
+      const addrs = (Array.isArray(pu.linked_accounts) ? pu.linked_accounts : [])
+        .filter(a => a?.type === 'wallet' && a.address)
+        .map(a => a.address);
+      console.log(`SKIP (funded: ${addrs.join(', ')})`);
+      fundedList.push({ privyId: pu.id, addrs });
+      funded++;
+      continue;
+    }
     try {
       const status = await deletePrivyUser(pu.id);
       console.log(`deleted (privy ${status})`);
@@ -170,7 +227,15 @@ async function runPass2() {
     }
     await sleep(DELAY_MS);
   }
-  console.log(`\nPass 2 done. deleted=${deleted}  skipped=${skipped}  errors=${errors}`);
+
+  if (fundedList.length > 0) {
+    console.log('\nFunded orphan wallets skipped (manual review / drain needed):');
+    for (const { privyId, addrs } of fundedList) {
+      console.log(`  privy: ${privyId}  wallet(s): ${addrs.join(', ')}`);
+    }
+  }
+
+  console.log(`\nPass 2 done. deleted=${deleted}  skipped=${skipped}  funded=${funded}  errors=${errors}`);
 }
 
 async function main() {
