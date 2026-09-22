@@ -2163,13 +2163,8 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
               skipped and he saw an empty broken sheet. This makes the recovery
               step explicit. */}
           {recovery.status !== "ready" && (recovery.serverWalletAddr || sessionWalletAddress) ? renderRecoveryPanel() :
-          (!authenticated || !activeWallet) && !sessionWalletAddress ? (() => {
-            // No local Privy session AND no session-linked wallet: truly new
-            // user. Copy is inclusive for both returning users (whose Privy
-            // session is fresh on this browser — e.g. desktop when they usually
-            // use phone) and brand-new users. Signing in with the same email /
-            // Google / Telegram / X they used elsewhere recovers the same
-            // embedded wallet — Privy links wallets to accounts, not browsers.
+          // Not signed in with Privy AND no server-linked wallet → show login prompt
+          !authenticated && !sessionWalletAddress ? (() => {
             const _isEs = typeof navigator !== "undefined" && navigator.language?.toLowerCase().startsWith("es");
             return (
               <div className="py-6 space-y-4">
@@ -2223,6 +2218,43 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
                     ? "Mismo login en cualquier dispositivo → misma billetera."
                     : "Same login on any device → same wallet."}
                 </p>
+              </div>
+            );
+          })() :
+          // Signed in with Privy but no embedded wallet and no external wallets → create on demand
+          authenticated && !embeddedWallet && externalWallets.length === 0 && !sessionWalletAddress ? (() => {
+            const _isEs = typeof navigator !== "undefined" && navigator.language?.toLowerCase().startsWith("es");
+            return (
+              <div className="py-6 space-y-4">
+                <div className="text-center space-y-1">
+                  <p className="text-4xl">💎</p>
+                  <p className="text-sm font-bold text-white">
+                    {_isEs ? "Tu billetera PNPtv" : "Your PNPtv Wallet"}
+                  </p>
+                  <p className="text-[11px] text-white/60 leading-snug max-w-xs mx-auto">
+                    {_isEs
+                      ? "Ya estás conectado. Tap para activar tu billetera cripto gratuita."
+                      : "You're signed in. Tap to activate your free crypto wallet."}
+                  </p>
+                </div>
+                <div className="flex flex-col gap-2 max-w-xs mx-auto w-full">
+                  <button
+                    type="button"
+                    onClick={handleCreateEmbeddedWallet}
+                    disabled={creatingWallet}
+                    className="min-h-[44px] px-6 rounded-xl text-sm font-bold text-white disabled:opacity-60 active:scale-95 transition-all"
+                    style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}
+                  >
+                    {creatingWallet
+                      ? (_isEs ? "Creando billetera…" : "Creating wallet…")
+                      : (_isEs ? "✨ Crear mi billetera PNPtv" : "✨ Create my PNPtv Wallet")}
+                  </button>
+                </div>
+                {connectError && (
+                  <div className="text-[10px] leading-snug text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-3 py-2 max-w-xs mx-auto">
+                    {connectError}
+                  </div>
+                )}
               </div>
             );
           })() : sendOpen ? (
