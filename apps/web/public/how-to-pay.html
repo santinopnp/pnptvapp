@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>How to Pay — PNPtv</title>
+  <meta name="description" content="Two ways to get PRIME access right now — with your crypto wallet or any cryptocurrency. Step-by-step guide.">
+  <meta property="og:title" content="How to Pay — PNPtv">
+  <meta property="og:description" content="Get PRIME access in minutes using your crypto wallet or any crypto.">
+  <meta property="og:image" content="https://pnptv.app/pnptv-og.png">
+  <meta property="og:url" content="https://pnptv.app/how-to-pay.html">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #090909;
+      color: #f0f0f0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a { color: inherit; text-decoration: none; }
+
+    /* ── Layout ── */
+    .page {
+      max-width: 520px;
+      margin: 0 auto;
+      padding: 0 20px 60px;
+    }
+
+    /* ── Header ── */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 24px 0 32px;
+    }
+
+    .logo {
+      font-size: 22px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      background: linear-gradient(135deg, #f59e0b, #ef4444);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .header-cta {
+      background: linear-gradient(135deg, #f59e0b, #d97706);
+      color: #000;
+      font-weight: 700;
+      font-size: 13px;
+      padding: 8px 18px;
+      border-radius: 999px;
+      letter-spacing: 0.2px;
+    }
+
+    /* ── Hero ── */
+    .hero {
+      text-align: center;
+      padding: 8px 0 40px;
+    }
+
+    .hero-badge {
+      display: inline-block;
+      background: rgba(245, 158, 11, 0.15);
+      border: 1px solid rgba(245, 158, 11, 0.4);
+      color: #f59e0b;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      padding: 5px 14px;
+      border-radius: 999px;
+      margin-bottom: 20px;
+    }
+
+    .hero h1 {
+      font-size: clamp(28px, 7vw, 38px);
+      font-weight: 900;
+      line-height: 1.1;
+      letter-spacing: -1px;
+      margin-bottom: 14px;
+    }
+
+    .hero h1 span {
+      background: linear-gradient(135deg, #f59e0b, #ef4444);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .hero p {
+      font-size: 16px;
+      color: #aaa;
+      line-height: 1.6;
+      max-width: 380px;
+      margin: 0 auto;
+    }
+
+    /* ── Method cards ── */
+    .method {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 20px;
+      padding: 28px 24px;
+      margin-bottom: 20px;
+    }
+
+    .method-header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 24px;
+    }
+
+    .method-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      flex-shrink: 0;
+    }
+
+    .method-icon.wallet { background: rgba(245, 158, 11, 0.15); }
+    .method-icon.crypto { background: rgba(139, 92, 246, 0.15); }
+
+    .method-title {
+      font-size: 18px;
+      font-weight: 800;
+      letter-spacing: -0.3px;
+      line-height: 1.2;
+    }
+
+    .method-subtitle {
+      font-size: 13px;
+      color: #888;
+      margin-top: 2px;
+    }
+
+    .method-badge {
+      margin-left: auto;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 10px;
+      border-radius: 999px;
+      flex-shrink: 0;
+    }
+
+    .method-badge.recommended {
+      background: rgba(245, 158, 11, 0.2);
+      color: #f59e0b;
+      border: 1px solid rgba(245, 158, 11, 0.3);
+    }
+
+    .method-badge.any-coin {
+      background: rgba(139, 92, 246, 0.2);
+      color: #a78bfa;
+      border: 1px solid rgba(139, 92, 246, 0.3);
+    }
+
+    /* ── Steps ── */
+    .steps { display: flex; flex-direction: column; gap: 16px; }
+
+    .step {
+      display: flex;
+      gap: 14px;
+      align-items: flex-start;
+    }
+
+    .step-num {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      font-weight: 800;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+
+    .step-num.amber { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
+    .step-num.violet { background: rgba(139, 92, 246, 0.2); color: #a78bfa; }
+
+    .step-body {}
+
+    .step-title {
+      font-size: 15px;
+      font-weight: 700;
+      line-height: 1.3;
+      margin-bottom: 3px;
+    }
+
+    .step-desc {
+      font-size: 13px;
+      color: #888;
+      line-height: 1.5;
+    }
+
+    .step-desc strong { color: #bbb; font-weight: 600; }
+
+    /* ── Coin chips ── */
+    .coins {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 10px;
+    }
+
+    .coin {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 4px 12px;
+      color: #ccc;
+    }
+
+    /* ── Divider ── */
+    .divider {
+      text-align: center;
+      color: #444;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 1px;
+      margin: 4px 0 20px;
+      position: relative;
+    }
+
+    .divider::before, .divider::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      width: 38%;
+      height: 1px;
+      background: rgba(255,255,255,0.07);
+    }
+
+    .divider::before { left: 0; }
+    .divider::after  { right: 0; }
+
+    /* ── Bottom CTA ── */
+    .bottom-cta {
+      text-align: center;
+      padding-top: 12px;
+    }
+
+    .cta-note {
+      font-size: 13px;
+      color: #666;
+      margin-bottom: 18px;
+    }
+
+    .cta-btn {
+      display: inline-block;
+      background: linear-gradient(135deg, #f59e0b, #ef4444);
+      color: #000;
+      font-size: 17px;
+      font-weight: 900;
+      padding: 16px 48px;
+      border-radius: 999px;
+      letter-spacing: -0.3px;
+      width: 100%;
+      max-width: 340px;
+      text-align: center;
+      box-shadow: 0 8px 32px rgba(245, 158, 11, 0.25);
+      transition: opacity 0.15s;
+    }
+
+    .cta-btn:active { opacity: 0.85; }
+
+    .cta-sub {
+      margin-top: 14px;
+      font-size: 12px;
+      color: #555;
+    }
+
+    /* ── Note box ── */
+    .note {
+      background: rgba(245, 158, 11, 0.07);
+      border: 1px solid rgba(245, 158, 11, 0.2);
+      border-radius: 12px;
+      padding: 14px 16px;
+      margin-top: 20px;
+      font-size: 13px;
+      color: #aaa;
+      line-height: 1.5;
+    }
+
+    .note strong { color: #f59e0b; }
+  </style>
+</head>
+<body>
+  <div class="page">
+
+    <!-- Header -->
+    <div class="header">
+      <div class="logo">PNPtv</div>
+      <a href="https://pnptv.app/subscribe" class="header-cta">Get PRIME →</a>
+    </div>
+
+    <!-- Hero -->
+    <div class="hero">
+      <div class="hero-badge">Payment Guide</div>
+      <h1>Get <span>PRIME</span> with crypto.<br>Two ways. Both instant.</h1>
+      <p>No credit card needed. Use your own wallet or pay with any cryptocurrency — access unlocks the moment your payment confirms.</p>
+    </div>
+
+    <!-- Method 1: PNPtv Wallet -->
+    <div class="method">
+      <div class="method-header">
+        <div class="method-icon wallet">💎</div>
+        <div>
+          <div class="method-title">PNPtv Wallet</div>
+          <div class="method-subtitle">USDC on Base network</div>
+        </div>
+        <div class="method-badge recommended">Recommended</div>
+      </div>
+
+      <div class="steps">
+        <div class="step">
+          <div class="step-num amber">1</div>
+          <div class="step-body">
+            <div class="step-title">Open the app &amp; create your wallet</div>
+            <div class="step-desc">Tap the <strong>💎</strong> icon → <strong>"Create my PNPtv Wallet."</strong> Your embedded wallet is generated in seconds — no seed phrases to write down.</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num amber">2</div>
+          <div class="step-body">
+            <div class="step-title">Fund with USDC on Base</div>
+            <div class="step-desc">Send <strong>USDC</strong> to your wallet address using the <strong>Base network</strong>. You can send from Coinbase, MetaMask, Trust Wallet, or any wallet that supports Base.</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num amber">3</div>
+          <div class="step-body">
+            <div class="step-title">Go to Subscribe → choose PRIME</div>
+            <div class="step-desc">Open <strong>pnptv.app/subscribe</strong>, pick your plan (monthly or yearly), and tap <strong>"Pay with wallet."</strong></div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num amber">4</div>
+          <div class="step-body">
+            <div class="step-title">Confirm — instant access</div>
+            <div class="step-desc">Approve the transaction. Your PRIME membership activates immediately. No waiting.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="note">
+        <strong>New to Base?</strong> Base is Coinbase's fast, low-fee network. A USDC transfer costs less than $0.01 in gas fees. You can buy USDC directly in Coinbase and send it to your PNPtv Wallet.
+      </div>
+    </div>
+
+    <div class="divider">OR</div>
+
+    <!-- Method 2: Any Crypto -->
+    <div class="method">
+      <div class="method-header">
+        <div class="method-icon crypto">🌐</div>
+        <div>
+          <div class="method-title">Pay with Any Crypto</div>
+          <div class="method-subtitle">BTC, ETH, LTC, DOGE &amp; more</div>
+        </div>
+        <div class="method-badge any-coin">30+ coins</div>
+      </div>
+
+      <div class="steps">
+        <div class="step">
+          <div class="step-num violet">1</div>
+          <div class="step-body">
+            <div class="step-title">Go to Subscribe</div>
+            <div class="step-desc">Open <strong>pnptv.app/subscribe</strong> and choose your PRIME plan.</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num violet">2</div>
+          <div class="step-body">
+            <div class="step-title">Tap "Pay with crypto"</div>
+            <div class="step-desc">A secure payment window opens. Select your coin from the list.</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num violet">3</div>
+          <div class="step-body">
+            <div class="step-title">Send the exact amount shown</div>
+            <div class="step-desc">Copy the payment address and send <strong>exactly</strong> the amount displayed. The address is unique to your order — do not reuse it.</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num violet">4</div>
+          <div class="step-body">
+            <div class="step-title">Wait for confirmation</div>
+            <div class="step-desc">Payment is detected automatically. Most coins confirm within <strong>1–10 minutes</strong>. Your PRIME access activates as soon as the network confirms.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="coins">
+        <span class="coin">₿ BTC</span>
+        <span class="coin">Ξ ETH</span>
+        <span class="coin">◎ SOL</span>
+        <span class="coin">✕ XRP</span>
+        <span class="coin">Ł LTC</span>
+        <span class="coin">Ð DOGE</span>
+        <span class="coin">◈ USDT</span>
+        <span class="coin">◎ USDC</span>
+        <span class="coin">+ many more</span>
+      </div>
+    </div>
+
+    <!-- CTA -->
+    <div class="bottom-cta">
+      <p class="cta-note">Ready? Your PRIME access is waiting.</p>
+      <a href="https://pnptv.app/subscribe" class="cta-btn">Get PRIME Now</a>
+      <p class="cta-sub">Questions? DM us on the app — we're here.</p>
+    </div>
+
+  </div>
+</body>
+</html>
