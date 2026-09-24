@@ -131,7 +131,7 @@ class CallBookingService {
       // 1. Lock the credit FOR UPDATE to prevent double-spending
       // SEC: bind creator_id to prevent a member from using another creator's credit for a different creator
       const creditResult = await client.query(
-        `SELECT cc.*, cp.duration_minutes as pkg_duration
+        `SELECT cc.*, cp.duration_minutes + COALESCE(cc.bonus_minutes, 0) as pkg_duration
          FROM call_credits cc
          JOIN call_packages cp ON cp.id = cc.package_id
          WHERE cc.id = $1 AND cc.member_id = $2 AND cc.creator_id = $3

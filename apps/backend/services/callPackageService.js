@@ -123,7 +123,7 @@ async function grantCallCredits(memberId, packageId, paymentId = null) {
 async function getMemberCredits(memberId, creatorId = null) {
   if (creatorId) {
     const result = await query(
-      `SELECT cc.*, cp.duration_minutes, cp.title AS package_title
+      `SELECT cc.*, cp.duration_minutes + COALESCE(cc.bonus_minutes, 0) AS duration_minutes, cp.title AS package_title
        FROM call_credits cc
        JOIN call_packages cp ON cp.id = cc.package_id
        WHERE cc.member_id = $1 AND cc.creator_id = $2
@@ -136,7 +136,7 @@ async function getMemberCredits(memberId, creatorId = null) {
   }
 
   const result = await query(
-    `SELECT cc.*, cp.duration_minutes, cp.title AS package_title,
+    `SELECT cc.*, cp.duration_minutes + COALESCE(cc.bonus_minutes, 0) AS duration_minutes, cp.title AS package_title,
             u.username AS creator_username, u.photo_file_id AS creator_photo
      FROM call_credits cc
      JOIN call_packages cp ON cp.id = cc.package_id

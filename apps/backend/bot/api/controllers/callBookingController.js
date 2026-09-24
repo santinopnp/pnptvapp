@@ -46,7 +46,7 @@ async function resolveBooking(rawId, callerUserId) {
               cc.status        AS status,
               COALESCE(cc.creator_id, prf.user_id) AS creator_id,
               COALESCE(cc.member_id,  b.user_id)   AS member_id,
-              COALESCE(cp.duration_minutes, b.duration_minutes) AS duration_minutes,
+              COALESCE(cp.duration_minutes + COALESCE(cc.bonus_minutes, 0), b.duration_minutes) AS duration_minutes,
               cp.title AS package_title,
               -- user display info
               u_creator.username AS creator_username,
@@ -87,7 +87,7 @@ async function resolveBooking(rawId, callerUserId) {
     if (!Number.isInteger(creditId) || creditId < 1) return null;
     const result = await query(
       `SELECT cc.*,
-              cp.duration_minutes, cp.title AS package_title,
+              cp.duration_minutes + COALESCE(cc.bonus_minutes, 0) AS duration_minutes, cp.title AS package_title,
               u_creator.username AS creator_username,
               COALESCE(u_creator.first_name, u_creator.username) AS creator_display_name,
               u_creator.photo_file_id AS creator_photo,
