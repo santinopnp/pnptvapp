@@ -908,11 +908,16 @@ You can visit the link 15 minutes before the call. You will see a waiting room a
       }
 
       // 2. Send post-call survey prompt to member
+      const creatorUserRow = await query(
+        `SELECT username FROM users WHERE id = $1 LIMIT 1`,
+        [performer.userId]
+      );
       const callNotificationService = require('./callNotificationService');
       await callNotificationService.sendPostCallSurveyPrompt(
         booking.userId,
         bookingId,
-        performer.displayName || 'the creator'
+        performer.displayName || 'the creator',
+        creatorUserRow.rows[0]?.username || null
       );
     } catch (err) {
       logger.warn('[privateCallBookingService] _onCallCompleted hook failed', { bookingId, error: err.message });

@@ -577,6 +577,18 @@ export default function CreatorProfilePage() {
     setShowBookCall(true);
   }, [data?.creator?.id, isAuthenticated, spAction, spDuration]);
 
+  const tipActionHandled = useRef(false);
+  useEffect(() => {
+    if (tipActionHandled.current) return;
+    if (!data?.creator?.id || !isAuthenticated) return;
+    if (spAction !== "tip") return;
+    tipActionHandled.current = true;
+    setTipPanelOpen(true);
+    setTimeout(() => {
+      tipPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 150);
+  }, [data?.creator?.id, isAuthenticated, spAction]);
+
   const [showVideoUploadModal, setShowVideoUploadModal] = useState(false);
 
   // Load manual lazily when the collapsible card is first expanded

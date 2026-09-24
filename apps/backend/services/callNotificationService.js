@@ -682,14 +682,19 @@ async function reconcileReminders() {
 // Post-call survey prompt
 // ---------------------------------------------------------------------------
 
-function postCallSurveyHtml({ creatorName, surveyUrl }) {
+function postCallSurveyHtml({ creatorName, surveyUrl, creatorUsername }) {
+  const tipCta = creatorUsername
+    ? `<div style="text-align:center;margin:16px 0;">
+         <a href="${escHtml(`${APP_URL}/c/${encodeURIComponent(creatorUsername)}?action=tip`)}" style="display:inline-block;background:#9b59b6;color:#fff;text-decoration:none;padding:10px 24px;border-radius:24px;font-weight:600;font-size:14px;">💸 Tip ${escHtml(creatorName)}</a>
+       </div>`
+    : '';
   return buildBaseEmailHtml({
     headerSubtitle: 'Book a Call',
     title: `How was your call with ${escHtml(creatorName)}?`,
     contentHtml: `
     <p>Hi there,</p>
     <p>Your private call with <strong>${escHtml(creatorName)}</strong> has ended. We hope it was an amazing experience!</p>
-    <p>We'd love your feedback — it takes less than 2 minutes and helps improve the experience for everyone.</p>
+    <p>We'd love your feedback — it takes less than 2 minutes and helps improve the experience for everyone. Complete the survey to <strong>earn 15 free minutes</strong> on your next call!</p>
     <p style="margin:16px 0 8px;font-weight:600;">You'll be asked to rate:</p>
     <ul style="margin:0 0 16px;padding-left:20px;line-height:1.8;">
       <li>&#11088; <strong>Tech Quality</strong> — How was the video/audio connection?</li>
@@ -698,7 +703,8 @@ function postCallSurveyHtml({ creatorName, surveyUrl }) {
       <li>&#11088; <strong>Politeness</strong> — How courteous and professional was the creator?</li>
     </ul>
     <p style="margin:0 0 8px;">Plus a few quick questions about what we could improve in tech quality, your thoughts on the app, and the creator's equipment setup.</p>
-    <div style="text-align:center;margin:24px 0;"><a href="${escHtml(surveyUrl)}" class="btn">Rate Your Call</a></div>
+    <div style="text-align:center;margin:24px 0;"><a href="${escHtml(surveyUrl)}" class="btn">Rate Your Call &amp; Earn 15 Min Free</a></div>
+    ${tipCta}
     <p>Your feedback is private by default. You'll have the option to share it directly with ${escHtml(creatorName)} if you'd like.</p>
     <p>Thank you!<br><strong>The PNPtv Team</strong></p>
     `,
@@ -712,29 +718,38 @@ function postCallSurveyHtml({ creatorName, surveyUrl }) {
  * @param {string} memberId
  * @param {string} bookingId
  * @param {string} creatorDisplayName
+ * @param {string} [creatorUsername]  - used for tip CTA link
  */
-async function sendPostCallSurveyPrompt(memberId, bookingId, creatorDisplayName) {
+async function sendPostCallSurveyPrompt(memberId, bookingId, creatorDisplayName, creatorUsername) {
   try {
     const memberInfo = await fetchUserInfo(memberId);
     const surveyUrl = `${APP_URL}/booking/${encodeURIComponent(bookingId)}/confirm?survey=1`;
     const creatorName = creatorDisplayName || 'the creator';
+    const tipUrl = creatorUsername
+      ? `${APP_URL}/c/${encodeURIComponent(creatorUsername)}?action=tip`
+      : null;
 
     const tgMsg =
       `✅ Your call with ${creatorName} has ended!\n\n` +
-      `How did it go? Leave a quick rating (takes 30 seconds):\n${surveyUrl}`;
+      `How did it go? Leave a quick rating and <b>earn 15 free minutes</b> on your next call:\n${surveyUrl}`;
+
+    const tgInlineKb = tipUrl
+      ? { inline_keyboard: [[{ text: `💸 Tip ${creatorName}`, url: tipUrl }]] }
+      : undefined;
 
     await sendNotificationViaTelegram(memberId, {
       type: 'hangout_call',
       message: tgMsg,
       entityType: 'call',
       entityId: null,
+      extra: tgInlineKb ? { reply_markup: tgInlineKb } : undefined,
     });
 
     if (memberInfo.email) {
       await sendBookingEmail({
         to: memberInfo.email,
         subject: `How was your call with ${creatorName}?`,
-        html: postCallSurveyHtml({ creatorName, surveyUrl }),
+        html: postCallSurveyHtml({ creatorName, surveyUrl, creatorUsername }),
       });
     }
 
@@ -745,8 +760,8 @@ async function sendPostCallSurveyPrompt(memberId, bookingId, creatorDisplayName)
       const ok = await redis.set(remKey, '1', 'NX', 'EX', 86400);
       if (ok) {
         await PushNotificationService.sendToUser(memberId, {
-          title: '⭐ ¿Cómo fue tu llamada?',
-          body: 'Deja tu calificación — solo toma 10 segundos.',
+          title: '⭐ Rate your call — earn 15 min free!',
+          body: `How was your call with ${creatorName}? Leave a quick review.`,
           url: `/booking/${encodeURIComponent(bookingId)}/confirm?survey=1`,
           tag: `call_survey_${bookingId}`,
         }, { notifType: 'call_survey' });
@@ -757,7 +772,7 @@ async function sendPostCallSurveyPrompt(memberId, bookingId, creatorDisplayName)
 
     // System DM
     try {
-      await sendSystemDM(SYSTEM_DM_SENDER_ID, String(memberId), `⭐ ¿Cómo estuvo tu llamada?\n\nTu opinión ayuda a la comunidad. Deja tu calificación aquí:\n${surveyUrl}`, query);
+      await sendSystemDM(SYSTEM_DM_SENDER_ID, String(memberId), `⭐ ¿Cómo estuvo tu llamada?\n\nTu opinión ayuda a la comunidad. Deja tu calificación aquí y <b>gana 15 minutos gratis</b>:\n${surveyUrl}`, query);
     } catch (dmErr) {
       logger.warn('[callNotificationService] system DM (survey) failed', { error: dmErr.message });
     }

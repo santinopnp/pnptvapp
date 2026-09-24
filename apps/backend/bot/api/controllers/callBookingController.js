@@ -46,7 +46,7 @@ async function resolveBooking(rawId, callerUserId) {
               cc.status        AS status,
               COALESCE(cc.creator_id, prf.user_id) AS creator_id,
               COALESCE(cc.member_id,  b.user_id)   AS member_id,
-              COALESCE(cp.duration_minutes + COALESCE(cc.bonus_minutes, 0), b.duration_minutes) AS duration_minutes,
+              COALESCE(cc.duration_minutes_override, cp.duration_minutes + COALESCE(cc.bonus_minutes, 0), b.duration_minutes) AS duration_minutes,
               cp.title AS package_title,
               -- user display info
               u_creator.username AS creator_username,
@@ -87,7 +87,7 @@ async function resolveBooking(rawId, callerUserId) {
     if (!Number.isInteger(creditId) || creditId < 1) return null;
     const result = await query(
       `SELECT cc.*,
-              cp.duration_minutes + COALESCE(cc.bonus_minutes, 0) AS duration_minutes, cp.title AS package_title,
+              COALESCE(cc.duration_minutes_override, cp.duration_minutes + COALESCE(cc.bonus_minutes, 0)) AS duration_minutes, cp.title AS package_title,
               u_creator.username AS creator_username,
               COALESCE(u_creator.first_name, u_creator.username) AS creator_display_name,
               u_creator.photo_file_id AS creator_photo,
@@ -511,6 +511,46 @@ async function submitSurvey(req, res) {
       throw insertErr;
     }
 
+    // Grant a 15-minute reward credit (available next week, expires 48 h after that)
+    let rewardCreditId = null;
+    try {
+      // Find cheapest active package for this creator to satisfy the NOT NULL FK
+      const pkgResult = await query(
+        `SELECT id FROM call_packages
+          WHERE creator_id = $1 AND is_active = true
+          ORDER BY price_usd ASC LIMIT 1`,
+        [credit.creator_id]
+      );
+      const rewardPackageId = pkgResult.rows[0]?.id || null;
+      if (rewardPackageId) {
+        const rewardResult = await query(
+          `INSERT INTO call_credits
+             (member_id, creator_id, package_id, quantity_total, quantity_used,
+              status, source, duration_minutes_override, available_from, expires_at)
+           VALUES ($1, $2, $3, 1, 0,
+                   'unused', 'survey_reward', 15,
+                   NOW() + INTERVAL '7 days',
+                   NOW() + INTERVAL '9 days')
+           RETURNING id`,
+          [memberId, credit.creator_id, rewardPackageId]
+        );
+        rewardCreditId = rewardResult.rows[0]?.id || null;
+        if (rewardCreditId) {
+          await query(
+            `UPDATE call_booking_surveys
+                SET reward_granted_at = NOW(), reward_credit_id = $1
+              WHERE credit_id = $2`,
+            [rewardCreditId, creditId]
+          );
+          logger.info('[callBookingController] survey reward credit granted', { memberId, creditId, rewardCreditId });
+        }
+      } else {
+        logger.warn('[callBookingController] no active package found for survey reward', { creatorId: credit.creator_id });
+      }
+    } catch (rewardErr) {
+      logger.warn('[callBookingController] survey reward grant failed', { error: rewardErr.message });
+    }
+
     // Fire-and-forget: send survey copy to creator when member opted in
     if (shareWithModel) {
       const callNotificationService = require('../../../services/callNotificationService');
@@ -530,7 +570,7 @@ async function submitSurvey(req, res) {
     }
 
     logger.info('[callBookingController] survey submitted', { creditId, memberId, rating: numRating });
-    return res.json({ success: true });
+    return res.json({ success: true, rewardGranted: !!rewardCreditId });
   } catch (err) {
     logger.error('[callBookingController] submitSurvey error', { error: err.message });
     return res.status(500).json({ success: false, error: 'Failed to submit survey' });
