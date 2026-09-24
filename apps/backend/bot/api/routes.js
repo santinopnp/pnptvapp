@@ -369,19 +369,17 @@ const bindAuthenticatedUserId = (req, res, next) => {
 
 const app = express();
 
-// Initialize Sentry for error tracking
+// Initialize Sentry for error tracking (v8+ API — Integrations.Http removed)
 if (process.env.SENTRY_DSN) {
   Sentry.init({
     dsn: process.env.SENTRY_DSN,
     environment: process.env.NODE_ENV,
     integrations: [
-      new Sentry.Integrations.Http({ tracing: true }),
-      new Sentry.Integrations.Express({ app }),
-    ],
+      Sentry.httpIntegration?.() ?? undefined,
+      Sentry.expressIntegration?.({ app }) ?? undefined,
+    ].filter(Boolean),
     tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.1 : 1.0,
   });
-  app.use(Sentry.Handlers.requestHandler());
-  app.use(Sentry.Handlers.tracingHandler());
   logger.info('Sentry error tracking initialized');
 }
 
@@ -24243,9 +24241,13 @@ app.get('/api/webapp/admin/moderation/warnings', adminGuard, asyncHandler(async 
 
 // ── End Moderation Dashboard ──────────────────────────────────────────────────
 
-// Sentry error handler - must be last
+// Sentry error handler - must be last (v8+: setupExpressErrorHandler)
 if (process.env.SENTRY_DSN) {
-  app.use(Sentry.Handlers.errorHandler());
+  if (Sentry.setupExpressErrorHandler) {
+    Sentry.setupExpressErrorHandler(app);
+  } else if (Sentry.Handlers?.errorHandler) {
+    app.use(Sentry.Handlers.errorHandler());
+  }
 }
 
 // ── DRM License Proxy ──────────────────────────────────────────────────────────

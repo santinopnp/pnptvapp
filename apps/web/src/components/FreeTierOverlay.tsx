@@ -29,17 +29,21 @@ export default function FreeTierOverlay({ label, requiredTier = 'member', childr
 
   const launchNp = useCallback(async (planId: string) => {
     setNpLaunching(true);
+    // Open the popup immediately within the click gesture — browsers block window.open after async awaits
+    const popW = Math.min(540, Math.round(window.innerWidth * 0.95));
+    const popH = Math.min(700, Math.round(window.innerHeight * 0.9));
+    const left = Math.round((window.screen.width - popW) / 2);
+    const top = Math.round((window.screen.height - popH) / 2);
+    const specs = `width=${popW},height=${popH},left=${left},top=${top},resizable=yes,scrollbars=yes`;
+    const popup = window.open('', 'pnp_np_wallet', specs);
     try {
       const res = await prepareUsdcSubscription(planId, undefined, undefined, 'btc');
       const src = `https://nowpayments.io/embeds/payment-widget?iid=${res.nowpaymentsInvoiceId}`;
-      const popW = Math.min(540, Math.round(window.innerWidth * 0.95));
-      const popH = Math.min(700, Math.round(window.innerHeight * 0.9));
-      const left = Math.round((window.innerWidth - popW) / 2);
-      const top = Math.round((window.innerHeight - popH) / 2);
-      const specs = `width=${popW},height=${popH},left=${left},top=${top},resizable=yes,scrollbars=yes`;
-      npPopupRef.current = window.open(src, 'pnp_np_wallet', specs);
+      if (popup) { popup.location.href = src; } else { window.open(src, 'pnp_np_wallet', specs); }
+      npPopupRef.current = popup;
       setNpPickerPlanId(null);
     } catch {
+      if (popup) popup.close();
       navigate('/subscribe');
     } finally {
       setNpLaunching(false);
@@ -149,7 +153,8 @@ export default function FreeTierOverlay({ label, requiredTier = 'member', childr
                         className="w-full py-2 rounded-xl text-[11px] font-semibold transition-all active:scale-[0.97]"
                         style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.70)' }}
                       >
-                        {es ? '₿ Pagar con cripto' : '₿ Pay with crypto'}
+                        <span className="block">{es ? '₿ Pagar con apps populares' : '₿ Pay with popular apps'}</span>
+                        <span className="block text-[10px] font-normal opacity-50 mt-0.5">Revolut · Cash App · PayPal · Venmo · Binance · Coinbase</span>
                       </button>
                     </div>
                     {isWalletOpen && (

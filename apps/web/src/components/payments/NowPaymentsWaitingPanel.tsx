@@ -173,7 +173,7 @@ export function NpAppPickerSheet({
 
         <div className="text-center">
           <p className="text-base font-black text-white">
-            {es ? '₿ Paga con Bitcoin' : '₿ Pay with Bitcoin'}
+            {es ? '₿ Pagar con apps populares' : '₿ Pay with popular apps'}
           </p>
           {planLabel && (
             <p className="text-xs text-white/40 mt-0.5">{planLabel}</p>

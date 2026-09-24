@@ -489,14 +489,22 @@ export default function SocialPostCard({
   const launchNpCheckout = useCallback(async (planId: string) => {
     setNpLaunching(true);
     setNpError(null);
+    // Open the popup immediately within the click gesture — browsers block window.open after async awaits
+    const popW = Math.min(540, Math.round(window.innerWidth * 0.95));
+    const popH = Math.min(700, Math.round(window.innerHeight * 0.9));
+    const left = Math.round((window.screen.width - popW) / 2);
+    const top = Math.round((window.screen.height - popH) / 2);
+    const popup = window.open("", "pnp_np_wallet", `width=${popW},height=${popH},left=${left},top=${top},resizable=yes,scrollbars=yes`);
     try {
       const res = await prepareUsdcSubscription(planId, undefined, undefined, "btc");
       if (!res.success || !res.nowpaymentsInvoiceId) throw new Error(res.error || "Could not create invoice.");
       assertPaymentUrl(res.invoiceUrl);
       const src = `https://nowpayments.io/embeds/payment-widget?iid=${encodeURIComponent(String(res.nowpaymentsInvoiceId))}`;
-      npPopupRef.current = window.open(src, "pnp_np_wallet", "width=540,height=700,left=200,top=100");
+      if (popup) { popup.location.href = src; } else { window.open(src, "pnp_np_wallet", `width=${popW},height=${popH},left=${left},top=${top}`); }
+      npPopupRef.current = popup;
       setNpPickerPlanId(null);
     } catch (e) {
+      if (popup) popup.close();
       setNpError(e instanceof Error ? e.message : "Could not open checkout.");
     } finally {
       setNpLaunching(false);
@@ -2458,9 +2466,14 @@ export default function SocialPostCard({
                     </div>
                     <button
                       onClick={() => setNpPickerPlanId(selectedPlan.id)}
-                      className="w-full py-3 rounded-xl border border-white/15 bg-white/[0.04] hover:bg-white/[0.08] text-sm font-semibold text-white/80 transition-colors"
+                      className="w-full py-3 rounded-xl border border-white/15 bg-white/[0.04] hover:bg-white/[0.08] transition-colors"
                     >
-                      {es ? "₿ Pagar con Bitcoin →" : "₿ Pay with Bitcoin →"}
+                      <span className="block text-sm font-semibold text-white/80">
+                        {es ? "₿ Pagar con apps populares" : "₿ Pay with popular apps"}
+                      </span>
+                      <span className="block text-[10px] text-white/35 mt-0.5">
+                        Revolut · Cash App · PayPal · Venmo · Binance · Coinbase
+                      </span>
                     </button>
                     {npError && (
                       <p className="text-[11px] text-red-400 text-center">{npError}</p>
