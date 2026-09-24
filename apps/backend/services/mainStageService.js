@@ -873,7 +873,9 @@ async function disengagePnptvModeLock(reason = 'unknown') {
   const restoreMode = VALID_MODES.has(prevMode) ? prevMode : 'cinema';
   await redis.set(MODE_KEY, restoreMode, 'EX', STATE_CACHE_TTL_S);
 
-  // Release the pinned spotlight so normal rotation resumes on next tick.
+  // Release the pinned spotlight and immediately advance to the next eligible
+  // cammer so the stage doesn't sit spotless for up to 90s waiting for the
+  // next rotation tick.
   const currentSpot = await redis.get('mainstage:spotlight:cammer');
   if (currentSpot === holder) {
     await redis.del('mainstage:spotlight:cammer');
@@ -887,7 +889,13 @@ async function disengagePnptvModeLock(reason = 'unknown') {
   if (_io) _io.to('mainstage').emit('mainstage:pnptvMode:unlocked',
     { restoreMode, reason });
 
-  await emitState();
+  // Advance spotlight immediately (only meaningful in spotlight mode; advanceSpotlight
+  // is a no-op / emitState when the queue is empty or mode isn't spotlight).
+  if (restoreMode === 'spotlight') {
+    await advanceSpotlight();
+  } else {
+    await emitState();
+  }
 }
 
 // Sentinel error the route layer converts to HTTP 423.
@@ -1651,9 +1659,13 @@ async function advanceVideo() {
   await redis.expire(PLAYLIST_KEY, STATE_CACHE_TTL_S);
 
   // Force a media-compatible layout mode when auto-rotating video.
+  // Skip the mode switch (don't throw) when PNPtv! Mode owns the layout.
   const currentMode = await redis.get(MODE_KEY);
   if (currentMode !== 'cinema') {
-    await setMode('cinema');
+    const pnptvHolder = await redis.get(PNPTV_MODE_HOLDER_KEY);
+    if (!pnptvHolder) {
+      await setMode('cinema');
+    }
   }
 
   await setMedia({ kind: 'video', src: publicSrc, title: pick.title, playing: true, _fromAutoRotate: true });
@@ -1736,8 +1748,8 @@ async function autoRotateMedia() {
 
 /**
  * Enable or disable server-side media auto-rotation. When disabled, the
- * rotation timer is a no-op until re-enabled. Persisted in Redis with no
- * TTL so the choice survives restarts. Broadcasts state to all clients.
+ * rotation timer is a no-op until re-enabled. Persisted in Redis with a 24h
+ * TTL (refreshed on every write). Broadcasts state to all clients.
  *
  * @param {boolean} enabled
  */
@@ -2054,8 +2066,9 @@ async function logAdminAction(userId, action, payload = null) {
 async function upsertCammerStats(identity) {
   try {
     const identityStr = String(identity);
-    const userId = (identityStr.startsWith('guest_') || identityStr.startsWith('viewer_'))
-      ? null : identityStr;
+    let userId = identityStr;
+    if (identityStr.startsWith('guest_') || identityStr.startsWith('viewer_')) userId = null;
+    else if (identityStr.startsWith('replay-')) userId = identityStr.slice('replay-'.length);
     const pool = getPool();
     await pool.query(
       `INSERT INTO mainstage_cammer_stats (identity, user_id, last_seen_at)
@@ -2071,8 +2084,9 @@ async function upsertCammerStats(identity) {
 async function updateCammerSpotlightStats(identity) {
   try {
     const identityStr = String(identity);
-    const userId = (identityStr.startsWith('guest_') || identityStr.startsWith('viewer_'))
-      ? null : identityStr;
+    let userId = identityStr;
+    if (identityStr.startsWith('guest_') || identityStr.startsWith('viewer_')) userId = null;
+    else if (identityStr.startsWith('replay-')) userId = identityStr.slice('replay-'.length);
     const pool = getPool();
     await pool.query(
       `INSERT INTO mainstage_cammer_stats (identity, user_id, last_spotlight_at, total_seconds)
