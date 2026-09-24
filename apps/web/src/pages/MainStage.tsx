@@ -1931,6 +1931,11 @@ export default function MainStage() {
     (localViewMode ?? (effectiveState?.mode as ModeId | undefined) ?? "cinema");
   const liveParticipants = effectiveState?.counts?.participants ?? effectiveState?.counts?.cammers ?? 0;
 
+  // True when every performer currently on stage is a replay (pre-recorded encore).
+  // Tips and book-a-call are disabled in this state — replays are for engagement only.
+  const isReplayMode = (state?.spotlight?.onStage ?? []).length > 0 &&
+    (state?.spotlight?.onStage ?? []).every((e) => e.isReplay);
+
   // i18n mode label lookup — used in header and toolbar aria-labels.
   const modeLabels: Record<ModeId, string> = {
     cinema: t.live.mainStageModeCinema,
@@ -2017,6 +2022,18 @@ export default function MainStage() {
         )}
 
         <div className="flex items-center gap-1 sm:gap-1.5 flex-shrink-0">
+          {isReplayMode && (
+            <span
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold"
+              style={{
+                background: "rgba(120,80,220,0.18)",
+                border:     "1px solid rgba(160,120,255,0.45)",
+                color:      "#C4A8FF",
+              }}
+            >
+              🎬 Encore Replay
+            </span>
+          )}
           {isViewerMode && (
             <span
               className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold"
@@ -2029,10 +2046,10 @@ export default function MainStage() {
               Viewer
             </span>
           )}
-          {/* 💸 Tip button — always visible on mobile + desktop for signed-in
+          {/* 💸 Tip button — hidden during encore replays (pre-recorded, not live)
               non-Santino users. Recipient defaults to the spotlighted cammer;
               falls back to Santino (SANTINO_USER_ID) when nobody is on stage. */}
-          {!isGuestMode && user?.id && String(user.id) !== "8599671840" &&
+          {!isGuestMode && !isReplayMode && user?.id && String(user.id) !== "8599671840" &&
            String(state?.spotlight?.cammer || "") !== String(user.id) && (
             <button
               onClick={() => setShowTipSheet(true)}
@@ -2431,8 +2448,8 @@ export default function MainStage() {
                 onPlayNext={canPlayNext ? handlePlayNext : undefined}
                 playNextCooldown={playNextCooldown}
                 onStage={state?.spotlight?.onStage}
-                onTipCreator={(userId, username) => { setTipSelectedCreatorId(userId); setShowTipSheet(true); void username; }}
-                onBookCreator={(c) => setBookCallCreator({ id: c.id, username: c.username, photo_url: null, creator_type: "occasional", creator_price_usd: 0, crystalCreator: c.isCrystal })}
+                onTipCreator={isReplayMode ? undefined : (userId, username) => { setTipSelectedCreatorId(userId); setShowTipSheet(true); void username; }}
+                onBookCreator={isReplayMode ? undefined : (c) => setBookCallCreator({ id: c.id, username: c.username, photo_url: null, creator_type: "occasional", creator_price_usd: 0, crystalCreator: c.isCrystal })}
                 onUpgradeForMic={() => navigate("/subscribe?ref=mainstage-mic&plan=monthly")}
               />
             </LiveKitRoom>
@@ -2469,8 +2486,8 @@ export default function MainStage() {
                   showTips={false}
                   showBottomBar={false}
                   onStage={(viewerStateOverride ?? state)?.spotlight?.onStage}
-                  onTipCreator={(userId, username) => { setTipSelectedCreatorId(userId); setShowTipSheet(true); void username; }}
-                  onBookCreator={(c) => setBookCallCreator({ id: c.id, username: c.username, photo_url: null, creator_type: "occasional", creator_price_usd: 0, crystalCreator: c.isCrystal })}
+                  onTipCreator={isReplayMode ? undefined : (userId, username) => { setTipSelectedCreatorId(userId); setShowTipSheet(true); void username; }}
+                  onBookCreator={isReplayMode ? undefined : (c) => setBookCallCreator({ id: c.id, username: c.username, photo_url: null, creator_type: "occasional", creator_price_usd: 0, crystalCreator: c.isCrystal })}
                 />
               </LiveKitRoom>
 
@@ -2585,8 +2602,8 @@ export default function MainStage() {
                 onPlayNext={canPlayNext ? handlePlayNext : undefined}
                 playNextCooldown={playNextCooldown}
                 onStage={state?.spotlight?.onStage}
-                onTipCreator={(userId, username) => { setTipSelectedCreatorId(userId); setShowTipSheet(true); void username; }}
-                onBookCreator={(c) => setBookCallCreator({ id: c.id, username: c.username, photo_url: null, creator_type: "occasional", creator_price_usd: 0, crystalCreator: c.isCrystal })}
+                onTipCreator={isReplayMode ? undefined : (userId, username) => { setTipSelectedCreatorId(userId); setShowTipSheet(true); void username; }}
+                onBookCreator={isReplayMode ? undefined : (c) => setBookCallCreator({ id: c.id, username: c.username, photo_url: null, creator_type: "occasional", creator_price_usd: 0, crystalCreator: c.isCrystal })}
                 onUpgradeForMic={() => navigate("/subscribe?ref=mainstage-mic&plan=monthly")}
               />
             </LiveKitRoom>
