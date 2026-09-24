@@ -70,7 +70,7 @@ function PriceDisplay({ amount, className = "" }: { amount: number; className?: 
 }
 
 function durationLabel(days: number): string {
-  if (days >= 36500) return "Lifetime";
+  if (days >= 36500) return "Founders";
   const years = Math.round(days / 365);
   if (days >= 365) return `${years} ${years === 1 ? "Year" : "Years"}`;
   const months = Math.round(days / 30);
@@ -734,11 +734,11 @@ export default function Subscribe() {
               const tagBorder = isLifetime ? "rgba(230,145,56,0.40)" : "rgba(212,0,122,0.40)";
 
               const tagLabel = isLifetime
-                ? (t.lang === "es" ? "🖤 Siempre" : "🖤 Forever")
+                ? (t.lang === "es" ? "🖤 Fundadores" : "🖤 Founders")
                 : (t.lang === "es" ? "🔥 Mejor precio" : "🔥 Best deal");
 
               const subline = isLifetime
-                ? (t.lang === "es" ? "Un solo pago — acceso de por vida" : "One payment — lifetime access")
+                ? (t.lang === "es" ? "18 meses PRIME + ✨ Prime Channel" : "18 mo PRIME + ✨ Prime Channel")
                 : (t.lang === "es" ? "Ahorrás vs mensual" : "Save vs monthly");
 
               return (
@@ -766,7 +766,7 @@ export default function Subscribe() {
                     {/* Name + subline */}
                     <p className="text-[11px] font-bold text-white leading-tight">
                       {isLifetime
-                        ? (t.lang === "es" ? "PRIME de por vida" : "Lifetime PRIME")
+                        ? "PNPtv Founders"
                         : (t.lang === "es" ? "PRIME anual" : "PRIME Annual")}
                     </p>
                     <p className="text-[10px] text-white/50 leading-snug">{subline}</p>
@@ -812,8 +812,8 @@ export default function Subscribe() {
                         entitlementSpec={{ planId: plan.id }}
                         metadata={{ source: "subscribe_promo", planId: plan.id }}
                         label={t.lang === "es"
-                          ? `Pagar $${parseFloat(String(plan.price)).toFixed(0)} · ${isLifetime ? "Lifetime PRIME" : "PRIME anual"}`
-                          : `Pay $${parseFloat(String(plan.price)).toFixed(0)} · ${isLifetime ? "Lifetime PRIME" : "PRIME Annual"}`}
+                          ? `Pagar $${parseFloat(String(plan.price)).toFixed(0)} · ${isLifetime ? "PNPtv Founders" : "PRIME anual"}`
+                          : `Pay $${parseFloat(String(plan.price)).toFixed(0)} · ${isLifetime ? "PNPtv Founders" : "PRIME Annual"}`}
                         lang={(t.lang as "es" | "en")}
                         onSuccess={() => {
                           setWalletPanelPlanId(null);

@@ -26,7 +26,7 @@ const strings = {
     primeDesc: "All Basic features + PNPtv! PRIME channel — exclusive creator profiles, Ru$h for shows & private calls cost extra",
 
     // ── Plan duration labels ──────────────────────────────────────────────────
-    lifetime: "Lifetime",
+    lifetime: "Founders",
     monthly: "Monthly",
     perMonth: "/mo",
     oneTimePayment: "One-time · no auto-renewal",
@@ -81,8 +81,8 @@ const strings = {
     // ── Promo / Meru code section ─────────────────────────────────────────────
     or: "or",
     wantBestDeal: "Want the best deal?",
-    lifetime100Desc: "Founders' lifetime access — a single $100 payment helps us finish building PNPtv while giving you early access forever. Some features are still in development.",
-    checkoutLifetime100: "Check out the Lifetime Prime deal",
+    lifetime100Desc: "PNPtv Founders — $100 once, lifetime access + 18 months PRIME + Prime Channel. Lock in your spot while it lasts.",
+    checkoutLifetime100: "Get the PNPtv Founders deal →",
     lifetime100NoticeTitle: "Before you pay — please read",
     lifetime100NoticeFundraising: "Special fundraising price: your one-time $100 goes directly toward finishing the app.",
     lifetime100NoticeEarlyAccess: "You get early access to PNPtv and every feature we launch, forever.",
@@ -150,7 +150,7 @@ const strings = {
     prime: "PRIME",
     primeDesc: "Todo lo de Basic + canal PNPtv! PRIME — perfiles exclusivos de creadores, Ru$h en shows y llamadas privadas tienen costo adicional",
 
-    lifetime: "De por vida",
+    lifetime: "Founders",
     monthly: "Mensual",
     perMonth: "/mes",
     oneTimePayment: "Pago único · sin renovación automática",
@@ -200,8 +200,8 @@ const strings = {
 
     or: "o",
     wantBestDeal: "¿Quieres la mejor oferta?",
-    lifetime100Desc: "Acceso de por vida para fundadores — un solo pago de $100 nos ayuda a terminar de construir PNPtv mientras obtienes acceso anticipado para siempre. Algunas funciones aún están en desarrollo.",
-    checkoutLifetime100: "Ver la oferta Lifetime Prime",
+    lifetime100Desc: "PNPtv Founders — $100 una vez, acceso de por vida + 18 meses PRIME + Prime Channel. Asegura tu lugar.",
+    checkoutLifetime100: "Consigue el plan PNPtv Founders →",
     lifetime100NoticeTitle: "Antes de pagar — por favor lee",
     lifetime100NoticeFundraising: "Precio especial de recaudación: tu pago único de $100 se destina directamente a terminar la app.",
     lifetime100NoticeEarlyAccess: "Obtienes acceso anticipado a PNPtv y a cada función que lancemos, para siempre.",

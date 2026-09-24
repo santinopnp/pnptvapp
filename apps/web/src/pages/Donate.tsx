@@ -38,7 +38,7 @@ function fmtPrice(amount: number) {
 }
 
 function durationLabel(days: number) {
-  if (days >= 36500) return "Lifetime";
+  if (days >= 36500) return "Founders";
   const y = Math.round(days / 365);
   if (days >= 365) return `${y} ${y === 1 ? "Year" : "Years"}`;
   const m = Math.round(days / 30);

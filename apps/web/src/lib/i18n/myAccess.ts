@@ -42,7 +42,7 @@ const strings = {
     rowCallCreditBook: "Book",
 
     // Expiry formatter
-    lifetime: "Lifetime",
+    lifetime: "Founders",
     dash: "—",
     expired: "Expired",
     expiresToday: "Expires today",
@@ -101,7 +101,7 @@ const strings = {
     rowCallCreditBook: "Reservar",
 
     // Expiry formatter
-    lifetime: "Permanente",
+    lifetime: "Founders",
     dash: "—",
     expired: "Vencido",
     expiresToday: "Vence hoy",

@@ -11,8 +11,8 @@ interface FreeTierOverlayProps {
 }
 
 const PROMO_PLANS = [
-  { id: 'yearly50',    price: 50,  labelEn: 'PRIME Annual',   labelEs: 'PRIME anual',     tagEn: '🔥 Best deal', tagEs: '🔥 Mejor precio', subEn: '1 year · $50',      subEs: '1 año · $50'      },
-  { id: 'lifetime100', price: 100, labelEn: 'Lifetime PRIME', labelEs: 'PRIME de por vida', tagEn: '🖤 Forever',   tagEs: '🖤 Siempre',      subEn: '$100 once, forever', subEs: '$100 una vez, siempre' },
+  { id: 'yearly50',    price: 50,  labelEn: 'PRIME Annual',    labelEs: 'PRIME anual',        tagEn: '🔥 Best deal',  tagEs: '🔥 Mejor precio', subEn: '1 year · $50',                  subEs: '1 año · $50'                      },
+  { id: 'lifetime100', price: 100, labelEn: 'PNPtv Founders',  labelEs: 'PNPtv Founders',     tagEn: '🖤 Founders',   tagEs: '🖤 Fundadores',   subEn: '$100 once · 18 mo PRIME + ✨ Prime Channel', subEs: '$100 una vez · 18 meses PRIME + ✨ Prime Channel' },
 ] as const;
 
 export default function FreeTierOverlay({ label, requiredTier = 'member', children }: FreeTierOverlayProps) {

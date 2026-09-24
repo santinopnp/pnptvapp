@@ -4,17 +4,17 @@ export const strings = {
     pageTitle: "Founder Lifetime Prime — PNPtv!",
 
     // ── Hero ───────────────────────────────────────────────────────────────────
-    heroTitle: "Lifetime PRIME Member",
-    heroSubtitle: "Pay once. Yours forever.",
+    heroTitle: "PNPtv Founders",
+    heroSubtitle: "Pay once. All access — forever.",
 
     // ── Pricing card ──────────────────────────────────────────────────────────
     oldPrice: "$250",
     newPrice: "$100",
-    limitedBadge: "FOUNDERS PRICE · LIMITED SPOTS",
+    limitedBadge: "PNPtv FOUNDERS · LIMITED SPOTS",
     chargeCurrencyNote: "Pay with USDC · USDT · ETH · BTC — no card needed",
 
     // ── Crypto payment modal ──────────────────────────────────────────────────
-    cryptoModalTitle: "Pay Lifetime PRIME with crypto",
+    cryptoModalTitle: "Pay PNPtv Founders with crypto",
     cryptoModalSubtitle:
       "Enter your email, pick your coin, and complete the payment. PRIME activates automatically the moment your payment confirms — no waiting on a code.",
     cryptoPickCurrency: "Choose your currency",
@@ -45,9 +45,9 @@ export const strings = {
 
     // ── Benefits list ─────────────────────────────────────────────────────────
     benefits: [
-      "Pay once — full PRIME access forever, no renewals ever.",
-      "Every exclusive drop unlocked for life — from day one, no expirations.",
-      "Everything: Live, Hangouts, Feed, DMs, Nearby, and more.",
+      "Pay once — lifetime access to everything PNPtv! will ever ship.",
+      "18 months of full PRIME included — watch everything, no limits.",
+      "✨ Prime Channel access: exclusive creator content, included.",
       "Private sessions with creators + founding member status.",
       "Priority support, always.",
     ],
@@ -78,7 +78,7 @@ export const strings = {
     // ── Wallet (USDC on Base via Privy) modal ─────────────────────────────────
     walletModalTitle: "Pay with Card — USDC on Base",
     walletModalSubtitle: "Pay with your credit/debit card, Apple Pay, Google Pay, or connect Trust / MetaMask. Settles instantly as USDC on Base — PRIME activates the moment the payment confirms.",
-    walletPayLabel: "Pay $100 · Lifetime PRIME",
+    walletPayLabel: "Pay $100 · PNPtv Founders",
 
     // ── Dash Direct modal ─────────────────────────────────────────────────────
     dashModalTitle: "🐎 Dash Direct",
@@ -184,17 +184,17 @@ export const strings = {
     pageTitle: "Fundador Lifetime Prime — PNPtv!",
 
     // ── Hero ───────────────────────────────────────────────────────────────────
-    heroTitle: "Miembro PRIME de por vida",
-    heroSubtitle: "Paga una vez. Tuyo para siempre.",
+    heroTitle: "PNPtv Founders",
+    heroSubtitle: "Paga una vez. Acceso total — para siempre.",
 
     // ── Pricing card ──────────────────────────────────────────────────────────
     oldPrice: "$250",
     newPrice: "$100",
-    limitedBadge: "PRECIO DE FUNDADORES · CUPOS LIMITADOS",
+    limitedBadge: "PNPtv FOUNDERS · CUPOS LIMITADOS",
     chargeCurrencyNote: "Paga con USDC · USDT · ETH · BTC — sin tarjeta",
 
     // ── Crypto payment modal ──────────────────────────────────────────────────
-    cryptoModalTitle: "Paga Lifetime PRIME con cripto",
+    cryptoModalTitle: "Paga PNPtv Founders con cripto",
     cryptoModalSubtitle:
       "Escribe tu correo, escoge la moneda y completa el pago. PRIME se activa automáticamente en cuanto tu pago confirme — sin esperar códigos.",
     cryptoPickCurrency: "Escoge tu moneda",
@@ -225,9 +225,9 @@ export const strings = {
 
     // ── Benefits list ─────────────────────────────────────────────────────────
     benefits: [
-      "Paga una vez — acceso PRIME completo para siempre, sin renovaciones.",
-      "Cada estreno exclusivo desbloqueado de por vida — desde el primer día, sin expiraciones.",
-      "Todo: Live, Hangouts, Feed, DMs, Nearby y más.",
+      "Paga una vez — acceso de por vida a todo lo que PNPtv! lance.",
+      "18 meses de PRIME completo incluidos — ve todo, sin límites.",
+      "✨ Acceso al Prime Channel: contenido exclusivo de creadores, incluido.",
       "Sesiones privadas con creadores + estatus de miembro fundador.",
       "Soporte prioritario, siempre.",
     ],
@@ -258,7 +258,7 @@ export const strings = {
     // ── Wallet (USDC on Base via Privy) modal ─────────────────────────────────
     walletModalTitle: "Pagar con Tarjeta — USDC en Base",
     walletModalSubtitle: "Paga con tu tarjeta de crédito/débito, Apple Pay, Google Pay, o conecta Trust / MetaMask. Se acredita al instante como USDC en Base — PRIME se activa apenas confirme el pago.",
-    walletPayLabel: "Pagar $100 · PRIME de por vida",
+    walletPayLabel: "Pagar $100 · PNPtv Founders",
 
     // ── Dash Direct modal ─────────────────────────────────────────────────────
     dashModalTitle: "🐎 Dash Directo",

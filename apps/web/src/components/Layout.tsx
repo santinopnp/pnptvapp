@@ -2890,7 +2890,7 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
   // ── Shared helpers (defined before early returns so they're always in scope) ─
 
   const formatPlanDuration = (days: number) => {
-    if (days >= 36500) return "Lifetime";
+    if (days >= 36500) return "Founders";
     if (days >= 365) return `${Math.round(days / 365)}y`;
     if (days >= 30) return `${Math.round(days / 30)}mo`;
     return `${days}d`;
