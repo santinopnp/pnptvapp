@@ -498,6 +498,59 @@ interface DmMessage {
 }
 interface FloatingReaction { id: string; emoji: string; x: number; }
 
+function PeopleList({ onlineUsers, cammerInfos, selfId, onDm }: {
+  onlineUsers: OnlineUser[];
+  cammerInfos: CammerInfo[];
+  selfId: string;
+  onDm: (u: OnlineUser) => void;
+}) {
+  const cammerIdSet = new Set(cammerInfos.map(c => c.identity));
+  const onlineIdSet = new Set(onlineUsers.map(u => u.id));
+  const cammerExtras = cammerInfos.filter(c => c.identity !== selfId && !onlineIdSet.has(c.identity));
+  const allPeople = [
+    ...onlineUsers.map(u => ({ ...u, isCamming: cammerIdSet.has(u.id) })),
+    ...cammerExtras.map(c => ({ id: c.identity, username: '', displayName: c.name, photo: null as null, isCamming: true })),
+  ];
+  if (allPeople.length === 0) {
+    return (
+      <div className="flex-1 min-h-0 overflow-y-auto flex flex-col items-center justify-center gap-2 py-8 px-4 text-center">
+        <span className="text-2xl">👥</span>
+        <p className="text-xs text-white/30">No other members online right now</p>
+      </div>
+    );
+  }
+  return (
+    <div className="flex-1 min-h-0 overflow-y-auto flex flex-col" style={{ scrollbarWidth: "thin", scrollbarColor: "rgba(255,255,255,0.08) transparent" }}>
+      {allPeople.map((u) => (
+        <button
+          key={u.id}
+          type="button"
+          onClick={() => void onDm(u)}
+          className="flex items-center gap-3 px-3 py-2.5 hover:bg-white/[0.05] transition-colors text-left w-full"
+          style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}
+        >
+          <div className="relative flex-shrink-0">
+            {u.photo
+              ? <img src={u.photo.startsWith('/') ? u.photo : `/${u.photo}`} alt="" className="w-8 h-8 rounded-full object-cover" />
+              : <div className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold text-white" style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}>{u.displayName[0]?.toUpperCase()}</div>
+            }
+            {u.isCamming && (
+              <span className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full flex items-center justify-center" style={{ background: "#22c55e", border: "1.5px solid #0f172a" }}>
+                <svg className="w-2 h-2 text-white" fill="currentColor" viewBox="0 0 20 20"><path d="M2 6a2 2 0 012-2h6a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V6zm14.553 1.106A1 1 0 0116 8v4a1 1 0 01-1.447.894L12 11.618V8.382l2.553-1.276a1 1 0 011 0z"/></svg>
+              </span>
+            )}
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-[12px] font-semibold text-white truncate">{u.displayName}</p>
+            {u.username && <p className="text-[10px] text-white/40 truncate">@{u.username}</p>}
+          </div>
+          <svg className="w-3.5 h-3.5 text-white/20 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function fmtMmSs(secs: number): string {
   const m = Math.floor(secs / 60);
   const s = secs % 60;
@@ -677,6 +730,8 @@ export default function MainStage() {
   const chatInputRef = useRef<HTMLInputElement>(null);
   // ── Sidebar tabs + People / mini-DM ─────────────────────────────────────────
   const [sidebarTab, setSidebarTab] = useState<'chat' | 'people'>('chat');
+  const sidebarTabRef = useRef<'chat' | 'people'>('chat');
+  const [unreadChatCount, setUnreadChatCount] = useState(0);
   const [onlineUsers, setOnlineUsers] = useState<OnlineUser[]>([]);
   const [dmTarget, setDmTarget] = useState<OnlineUser | null>(null);
   const [dmMessages, setDmMessages] = useState<DmMessage[]>([]);
@@ -710,6 +765,8 @@ export default function MainStage() {
 
   const visiblePin = pin && pin.id !== dismissedPinId && Date.now() < pin.expiresAt ? pin : null;
 
+  useEffect(() => { sidebarTabRef.current = sidebarTab; }, [sidebarTab]);
+
   useEffect(() => {
     const socket = getSocket();
     const onChatMessage = (msg: ChatMessage) => {
@@ -717,6 +774,9 @@ export default function MainStage() {
         const next = [...prev, msg];
         return next.length > 200 ? next.slice(next.length - 200) : next;
       });
+      if (sidebarTabRef.current !== 'chat') {
+        setUnreadChatCount((n) => n + 1);
+      }
     };
     socket.on('mainstage:chat-message', onChatMessage);
     return () => { socket.off('mainstage:chat-message', onChatMessage); };
@@ -2433,14 +2493,23 @@ export default function MainStage() {
                   onClick={() => {
                     setSidebarTab(tab);
                     if (tab === 'people') { setDmTarget(null); fetchOnlineUsers(); }
+                    if (tab === 'chat') { setUnreadChatCount(0); }
                   }}
-                  className="flex-1 py-1.5 text-[11px] font-semibold rounded-lg transition-all capitalize"
+                  className="flex-1 py-1.5 text-[11px] font-semibold rounded-lg transition-all capitalize relative"
                   style={sidebarTab === tab
                     ? { background: "linear-gradient(135deg,rgba(212,0,122,0.25),rgba(123,97,255,0.25))", color: "white", border: "1px solid rgba(212,0,122,0.30)" }
                     : { background: "transparent", color: "rgba(255,255,255,0.40)", border: "1px solid transparent" }
                   }
                 >
-                  {tab === 'people' ? `People${onlineUsers.length ? ` (${onlineUsers.length})` : ''}` : 'Chat'}
+                  {tab === 'people'
+                    ? `People${onlineUsers.length ? ` (${onlineUsers.length})` : ''}`
+                    : (<>Chat{unreadChatCount > 0 && sidebarTab !== 'chat' && (
+                        <span
+                          className="absolute -top-1.5 -right-1 min-w-[16px] h-4 px-1 rounded-full text-[9px] font-bold text-white flex items-center justify-center"
+                          style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}
+                        >{unreadChatCount > 9 ? '9+' : unreadChatCount}</span>
+                      )}</>)
+                  }
                 </button>
               ))}
             </div>
@@ -2488,11 +2557,11 @@ export default function MainStage() {
                   return (
                     <div
                       key={msg.id}
-                      className="flex flex-col"
+                      className={`flex flex-col${isMe ? ' items-end' : ' items-start'}`}
                       style={{ animation: "chat-msg-in 0.2s ease-out" }}
                     >
                       <div
-                        className="inline-flex flex-col px-2.5 py-1 rounded-2xl self-start max-w-full"
+                        className="inline-flex flex-col px-2.5 py-1 rounded-2xl max-w-[85%]"
                         style={{
                           background: isAuto
                             ? "linear-gradient(135deg,rgba(123,97,255,0.30),rgba(212,0,122,0.20))"
@@ -2507,11 +2576,12 @@ export default function MainStage() {
                               : "1px solid rgba(255,255,255,0.06)",
                         }}
                       >
+                        {(!isMe || isAuto) && (
                         <span className="flex items-center gap-1">
                           <span
                             className="text-[10px] font-bold leading-tight"
                             style={{
-                              background: isMe ? "rgba(255,255,255,0.9)" : "linear-gradient(90deg,#FF6BB0,#A990FF)",
+                              background: "linear-gradient(90deg,#FF6BB0,#A990FF)",
                               WebkitBackgroundClip: "text",
                               WebkitTextFillColor: "transparent",
                             }}
@@ -2531,6 +2601,7 @@ export default function MainStage() {
                             </span>
                           )}
                         </span>
+                        )}
                         <span className="text-[12px] leading-snug text-white/90 break-words">{msg.text}</span>
                         {msg.cta && (
                           msg.cta.action === 'open-tip' ? (
@@ -2667,35 +2738,15 @@ export default function MainStage() {
                   </div>
                 </div>
               ) : (
-                /* Online users list */
-                <div className="flex-1 min-h-0 overflow-y-auto flex flex-col" style={{ scrollbarWidth: "thin", scrollbarColor: "rgba(255,255,255,0.08) transparent" }}>
-                  {onlineUsers.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center flex-1 gap-2 py-8 px-4 text-center">
-                      <span className="text-2xl">👥</span>
-                      <p className="text-xs text-white/30">No other members online right now</p>
-                    </div>
-                  ) : (
-                    onlineUsers.map((u) => (
-                      <button
-                        key={u.id}
-                        type="button"
-                        onClick={() => void openDm(u)}
-                        className="flex items-center gap-3 px-3 py-2.5 hover:bg-white/[0.05] transition-colors text-left w-full"
-                        style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}
-                      >
-                        {u.photo
-                          ? <img src={u.photo.startsWith('/') ? u.photo : `/${u.photo}`} alt="" className="w-8 h-8 rounded-full object-cover flex-shrink-0" />
-                          : <div className="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center text-sm font-bold text-white" style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}>{u.displayName[0]?.toUpperCase()}</div>
-                        }
-                        <div className="flex-1 min-w-0">
-                          <p className="text-[12px] font-semibold text-white truncate">{u.displayName}</p>
-                          <p className="text-[10px] text-white/40 truncate">@{u.username}</p>
-                        </div>
-                        <svg className="w-3.5 h-3.5 text-white/20 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
-                      </button>
-                    ))
-                  )}
-                </div>
+                /* Online users list — merged with LiveKit cammers so anyone
+                   broadcasting their camera is always visible even if their
+                   Socket.IO presence event was missed. */
+                <PeopleList
+                  onlineUsers={onlineUsers}
+                  cammerInfos={cammerInfos}
+                  selfId={String(user?.id ?? '')}
+                  onDm={openDm}
+                />
               )
             )}
 
