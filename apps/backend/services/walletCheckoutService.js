@@ -193,17 +193,17 @@ async function initiateRushPurchase(opts) {
  */
 async function initiateUsdcPurchase(opts) {
   const {
-    userId, surface, amountUsd, entitlementSpec = {}, metadata = {},
+    userId, surface, amountUsd: amountUsdInput, entitlementSpec = {}, metadata = {},
   } = opts || {};
 
   if (!userId) throw new Error('walletCheckout: userId required');
   if (!VALID_SURFACES.has(surface)) throw new Error(`walletCheckout: invalid surface "${surface}"`);
-  if (!Number.isFinite(amountUsd) || amountUsd <= 0) throw new Error('walletCheckout: amountUsd must be > 0');
+  if (!Number.isFinite(amountUsdInput) || amountUsdInput <= 0) throw new Error('walletCheckout: amountUsd must be > 0');
   _validateEntitlementSpecForIntent(surface, entitlementSpec);
 
-  if (surface === 'crystal_self' || surface === 'crystal_gift') {
-    amountUsd = CRYSTAL_PRICES[surface];
-  }
+  const amountUsd = (surface === 'crystal_self' || surface === 'crystal_gift')
+    ? CRYSTAL_PRICES[surface]
+    : amountUsdInput;
 
   const receivingAddress = RECEIVING_ADDRESS();
   if (!receivingAddress) throw new Error('CRYPTO_RECEIVING_ADDRESS not configured');
@@ -256,18 +256,18 @@ async function initiateUsdcPurchase(opts) {
  */
 async function initiateEthPurchase(opts) {
   const {
-    userId, surface, amountUsd, ethUsdPrice, entitlementSpec = {}, metadata = {},
+    userId, surface, amountUsd: amountUsdInput, ethUsdPrice, entitlementSpec = {}, metadata = {},
   } = opts || {};
 
   if (!userId) throw new Error('walletCheckout: userId required');
   if (!VALID_SURFACES.has(surface)) throw new Error(`walletCheckout: invalid surface "${surface}"`);
-  if (!Number.isFinite(amountUsd) || amountUsd <= 0) throw new Error('walletCheckout: amountUsd must be > 0');
+  if (!Number.isFinite(amountUsdInput) || amountUsdInput <= 0) throw new Error('walletCheckout: amountUsd must be > 0');
   _validateEntitlementSpecForIntent(surface, entitlementSpec);
   if (!Number.isFinite(ethUsdPrice) || ethUsdPrice <= 0) throw new Error('walletCheckout: ethUsdPrice must be > 0');
 
-  if (surface === 'crystal_self' || surface === 'crystal_gift') {
-    amountUsd = CRYSTAL_PRICES[surface];
-  }
+  const amountUsd = (surface === 'crystal_self' || surface === 'crystal_gift')
+    ? CRYSTAL_PRICES[surface]
+    : amountUsdInput;
 
   const receivingAddress = RECEIVING_ADDRESS();
   if (!receivingAddress) throw new Error('CRYPTO_RECEIVING_ADDRESS not configured');
@@ -989,7 +989,7 @@ async function _fulfillCrystalPass(client, { userId, entitlementSpec, provider, 
       creatorId: String(targetCreatorId),
       months: Number(months) || 1,
       grantType: isGift ? 'gift' : 'purchase',
-      source: provider === 'wallet' ? 'wallet' : 'nowpayments',
+      source: provider.startsWith('wallet') ? 'wallet' : 'nowpayments',
       // Quien paga, que no siempre es quien recibe: en un regalo es el cliente.
       grantedBy: String(giftedBy || targetCreatorId),
       amountUsd: priceCents != null ? Number(priceCents) / 100 : null,
