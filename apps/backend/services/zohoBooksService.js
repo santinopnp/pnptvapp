@@ -356,4 +356,4 @@ async function logRevenue(opts) {
   }
 }
 
-module.exports = { isConfigured, logCrystalPassPayment, logRevenue };
+module.exports = { isConfigured, getAccessToken, logCrystalPassPayment, logRevenue };

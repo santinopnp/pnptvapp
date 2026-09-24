@@ -1028,7 +1028,7 @@ services:
     command:
       - /app/node_modules/.bin/supergateway
       - --stdio
-      - node /app/node_modules/@modelcontextprotocol/server-postgres/dist/index.js postgresql://lex_readonly:${LEX_DB_PASS}@pg-pnptv:5432/pnptvbot
+      - node /app/node_modules/@modelcontextprotocol/server-postgres/dist/index.js postgresql://mcp_ops:${MCP_OPS_PASS}@pg-pnptv:5432/pnptvbot
       - --outputTransport
       - streamableHttp
       - --port
@@ -1119,6 +1119,9 @@ services:
       LEX_MCP_CLIENT_ID: ${LEX_MCP_CLIENT_ID}
       LEX_MCP_CLIENT_SECRET: ${LEX_MCP_CLIENT_SECRET}
       LEX_MCP_TOKEN: ${LEX_MCP_TOKEN}
+      SANTINO_MCP_CLIENT_ID: ${SANTINO_MCP_CLIENT_ID}
+      SANTINO_MCP_CLIENT_SECRET: ${SANTINO_MCP_CLIENT_SECRET}
+      SANTINO_MCP_TOKEN: ${SANTINO_MCP_TOKEN}
       PUBLIC_BASE: https://pnptv.app
     networks:
       - pnptvapp_net
@@ -1139,6 +1142,8 @@ services:
       OFFICIAL_USER_ID: "8552451957"
       LEX_USER_ID: "8f5f4dd1-7bdb-4571-b026-e09d91113c91"
       OPS_ADMIN_CHANNEL: "C0BP14DLNHJ"
+      PNPTV_BOT_URL: "http://pnptv-bot:3000"
+      INTERNAL_ZOHO_SECRET: ${INTERNAL_ZOHO_SECRET}
     networks:
       - pnptvapp_net
     depends_on:

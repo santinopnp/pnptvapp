@@ -209,6 +209,7 @@ async function removeFromRejectedApplicants(email) {
 
 module.exports = {
   isConfigured,
+  getAccessToken,
   addToCrystalCreators, removeFromCrystalCreators,
   addToPnptvFam, removeFromPnptvFam,
   addToCreatorApplicants, removeFromCreatorApplicants,

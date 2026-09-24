@@ -24670,6 +24670,238 @@ app.post('/api/webapp/cc/transcribe', requireSessionAuth, ccAudioUpload.single('
 }));
 // ── End CC transcription ──────────────────────────────────────────────────────
 
+// ── Internal Zoho proxy routes (mcp-admin container only) ────────────────────
+// Protected by a shared secret header — NOT for public/user access.
+
+function requireInternalSecret(req, res, next) {
+  const secret = process.env.INTERNAL_ZOHO_SECRET;
+  if (!secret || req.headers['x-internal-secret'] !== secret) {
+    return res.status(403).json({ error: 'forbidden' });
+  }
+  next();
+}
+
+// GET /internal/zoho/crm/search?q=<term>&field=<email|username|name>
+app.get('/internal/zoho/crm/search', requireInternalSecret, asyncHandler(async (req, res) => {
+  try {
+    const zoho = require('../../services/zohoService');
+    if (!zoho.isConfigured()) return res.status(503).json({ error: 'Zoho CRM not configured' });
+
+    const q = String(req.query.q || '').trim();
+    if (!q) return res.status(400).json({ error: 'q param required' });
+    const field = String(req.query.field || 'email').toLowerCase();
+
+    const fieldMap = { email: 'Email', username: 'Telegram_Handle', name: 'Full_Name' };
+    const zohoField = fieldMap[field] || 'Email';
+
+    const axios = require('axios');
+    const token = await zoho.getAccessToken();
+    const apiDomain = process.env.ZOHO_API_DOMAIN || 'https://www.zohoapis.com';
+
+    const resp = await axios.get(`${apiDomain}/crm/v2/Contacts/search`, {
+      params: { criteria: `(${zohoField}:contains:${q})` },
+      headers: { Authorization: `Zoho-oauthtoken ${token}` },
+      timeout: 15000,
+    });
+    const contacts = resp.data?.data || [];
+    return res.json(contacts);
+  } catch (e) {
+    if (e.response?.status === 204) return res.json([]);
+    logger.error('[internal/zoho] crm/search error', { error: e.message });
+    return res.status(500).json({ error: e.message });
+  }
+}));
+
+// PATCH /internal/zoho/crm/contacts/:contactId
+app.patch('/internal/zoho/crm/contacts/:contactId', requireInternalSecret, asyncHandler(async (req, res) => {
+  try {
+    const zoho = require('../../services/zohoService');
+    if (!zoho.isConfigured()) return res.status(503).json({ error: 'Zoho CRM not configured' });
+
+    const { contactId } = req.params;
+    const fields = req.body?.fields;
+    if (!fields || typeof fields !== 'object') return res.status(400).json({ error: 'body.fields object required' });
+
+    const axios = require('axios');
+    const token = await zoho.getAccessToken();
+    const apiDomain = process.env.ZOHO_API_DOMAIN || 'https://www.zohoapis.com';
+
+    const resp = await axios.put(`${apiDomain}/crm/v2/Contacts/${contactId}`, {
+      data: [fields],
+    }, {
+      headers: { Authorization: `Zoho-oauthtoken ${token}`, 'Content-Type': 'application/json' },
+      timeout: 15000,
+    });
+    const result = resp.data?.data?.[0] || {};
+    return res.json({ ok: result.status === 'success', result });
+  } catch (e) {
+    logger.error('[internal/zoho] crm/contacts patch error', { error: e.message });
+    return res.status(500).json({ error: e.message });
+  }
+}));
+
+// GET /internal/zoho/books/revenue?from=YYYY-MM-DD&to=YYYY-MM-DD&group_by=day|week|month
+app.get('/internal/zoho/books/revenue', requireInternalSecret, asyncHandler(async (req, res) => {
+  try {
+    const zohoBooks = require('../../services/zohoBooksService');
+    if (!zohoBooks.isConfigured()) return res.status(503).json({ error: 'Zoho Books not configured' });
+
+    const from = String(req.query.from || '');
+    const to = String(req.query.to || '');
+    const groupBy = String(req.query.group_by || 'day').toLowerCase();
+
+    if (!from || !to) return res.status(400).json({ error: 'from and to params required (YYYY-MM-DD)' });
+
+    const axios = require('axios');
+    const token = await zohoBooks.getAccessToken();
+    const booksApi = process.env.ZOHO_BOOKS_API_URL || 'https://www.zohoapis.com/books/v3';
+    const orgId = process.env.ZOHO_BOOKS_ORG_ID;
+    const headers = {
+      Authorization: `Zoho-oauthtoken ${token}`,
+      'Content-Type': 'application/json',
+      'X-com-zoho-books-organizationid': orgId,
+    };
+
+    // Fetch paid invoices in range — paginate up to 200 (Books max per page)
+    const allInvoices = [];
+    let page = 1;
+    let hasMore = true;
+    while (hasMore) {
+      const resp = await axios.get(`${booksApi}/invoices`, {
+        headers,
+        params: {
+          organization_id: orgId,
+          date_start: from,
+          date_end: to,
+          status: 'paid',
+          per_page: 200,
+          page,
+        },
+        timeout: 20000,
+      });
+      const invoices = resp.data?.invoices || [];
+      allInvoices.push(...invoices);
+      hasMore = resp.data?.page_context?.has_more_page === true;
+      page++;
+      if (page > 20) break; // safety cap
+    }
+
+    // Aggregate
+    let totalCents = 0;
+    const buckets = {};
+    for (const inv of allInvoices) {
+      const usd = Number(inv.total) || 0;
+      totalCents += Math.round(usd * 100);
+      const dateStr = (inv.date || '').slice(0, 10);
+      let key = dateStr;
+      if (groupBy === 'week') {
+        const d = new Date(dateStr);
+        const startOfWeek = new Date(d);
+        startOfWeek.setDate(d.getDate() - d.getDay());
+        key = startOfWeek.toISOString().slice(0, 10);
+      } else if (groupBy === 'month') {
+        key = dateStr.slice(0, 7);
+      }
+      if (!buckets[key]) buckets[key] = { period: key, total_usd: 0, count: 0 };
+      buckets[key].total_usd = Math.round((buckets[key].total_usd + usd) * 100) / 100;
+      buckets[key].count++;
+    }
+
+    const breakdown = Object.values(buckets).sort((a, b) => a.period.localeCompare(b.period));
+    return res.json({
+      total_usd: Math.round(totalCents) / 100,
+      count: allInvoices.length,
+      breakdown,
+    });
+  } catch (e) {
+    logger.error('[internal/zoho] books/revenue error', { error: e.message });
+    return res.status(500).json({ error: e.message });
+  }
+}));
+
+// GET /internal/zoho/campaigns/stats?list=<name-filter>
+app.get('/internal/zoho/campaigns/stats', requireInternalSecret, asyncHandler(async (req, res) => {
+  try {
+    const zohoCampaigns = require('../../services/zohoCampaignsService');
+    if (!zohoCampaigns.isConfigured()) return res.status(503).json({ error: 'Zoho Campaigns not configured' });
+
+    const listFilter = String(req.query.list || '').toLowerCase();
+
+    const axios = require('axios');
+    const token = await zohoCampaigns.getAccessToken();
+    const campaignsApi = process.env.ZOHO_CAMPAIGNS_API_URL || 'https://www.zohoapis.com/campaigns/v1.1';
+
+    const resp = await axios.get(`${campaignsApi}/getlistdetails`, {
+      params: { resfmt: 'JSON' },
+      headers: { Authorization: `Zoho-oauthtoken ${token}` },
+      timeout: 15000,
+    });
+
+    let lists = resp.data?.list_of_details || [];
+    if (!Array.isArray(lists)) lists = [];
+
+    if (listFilter) {
+      lists = lists.filter(l => (l.listname || l.listkey || '').toLowerCase().includes(listFilter));
+    }
+
+    const result = lists.map(l => ({
+      list_name: l.listname || l.listkey || '',
+      list_key: l.listkey || '',
+      subscriber_count: Number(l.noofsubscribers || l.subscribers_count || 0),
+      status: l.status || '',
+    }));
+
+    return res.json(result);
+  } catch (e) {
+    logger.error('[internal/zoho] campaigns/stats error', { error: e.message });
+    return res.status(500).json({ error: e.message });
+  }
+}));
+
+// GET /internal/zoho/desk/tickets?status=open|pending|resolved|closed&limit=20
+app.get('/internal/zoho/desk/tickets', requireInternalSecret, asyncHandler(async (req, res) => {
+  try {
+    const zohoDesk = require('../../services/zohoDeskService');
+    if (!zohoDesk.isConfigured()) return res.status(503).json({ error: 'Zoho Desk not configured' });
+
+    const status = String(req.query.status || 'open');
+    const limit = Math.min(Number(req.query.limit) || 20, 100);
+
+    const statusMap = { open: 'Open', pending: 'On Hold', resolved: 'Closed', closed: 'Closed' };
+    const deskStatus = statusMap[status.toLowerCase()] || 'Open';
+
+    const axios = require('axios');
+    const token = await zohoDesk.getAccessToken();
+    const deskApi = process.env.ZOHO_DESK_API_URL || 'https://desk.zoho.com/api/v1';
+    const headers = {
+      Authorization: `Zoho-oauthtoken ${token}`,
+      orgId: process.env.ZOHO_DESK_ORG_ID,
+      'Content-Type': 'application/json',
+    };
+
+    const resp = await axios.get(`${deskApi}/tickets`, {
+      headers,
+      params: { status: deskStatus, limit, departmentId: process.env.ZOHO_DESK_DEPARTMENT_ID },
+      timeout: 15000,
+    });
+
+    const tickets = (resp.data?.data || []).map(t => ({
+      id: t.id,
+      subject: t.subject || '',
+      status: t.status || '',
+      created_at: t.createdTime || t.created_at || null,
+      contact_email: t.contact?.email || t.email || null,
+    }));
+
+    return res.json(tickets);
+  } catch (e) {
+    logger.error('[internal/zoho] desk/tickets error', { error: e.message });
+    return res.status(500).json({ error: e.message });
+  }
+}));
+
+// ── End internal Zoho proxy routes ───────────────────────────────────────────
+
 // Export app WITHOUT 404/error handlers
 // These will be added in bot.js AFTER the webhook callback
 module.exports = app;
