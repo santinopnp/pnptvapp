@@ -340,13 +340,13 @@ class PushNotificationService {
               u.notification_preferences->'quiet_hours'->>'enabled' != 'true'
               OR NOT (
                 CASE
-                  WHEN (u.notification_preferences->'quiet_hours'->>'start')::int
-                       <= (u.notification_preferences->'quiet_hours'->>'end')::int
+                  WHEN SPLIT_PART(u.notification_preferences->'quiet_hours'->>'start', ':', 1)::int
+                       <= SPLIT_PART(u.notification_preferences->'quiet_hours'->>'end', ':', 1)::int
                   THEN EXTRACT(HOUR FROM NOW()) BETWEEN
-                         (u.notification_preferences->'quiet_hours'->>'start')::int
-                       AND (u.notification_preferences->'quiet_hours'->>'end')::int
-                  ELSE EXTRACT(HOUR FROM NOW()) >= (u.notification_preferences->'quiet_hours'->>'start')::int
-                    OR EXTRACT(HOUR FROM NOW()) <= (u.notification_preferences->'quiet_hours'->>'end')::int
+                         SPLIT_PART(u.notification_preferences->'quiet_hours'->>'start', ':', 1)::int
+                       AND SPLIT_PART(u.notification_preferences->'quiet_hours'->>'end', ':', 1)::int
+                  ELSE EXTRACT(HOUR FROM NOW()) >= SPLIT_PART(u.notification_preferences->'quiet_hours'->>'start', ':', 1)::int
+                    OR EXTRACT(HOUR FROM NOW()) <= SPLIT_PART(u.notification_preferences->'quiet_hours'->>'end', ':', 1)::int
                 END
               )
             )`
@@ -408,13 +408,13 @@ class PushNotificationService {
               u.notification_preferences->'quiet_hours'->>'enabled' != 'true'
               OR NOT (
                 CASE
-                  WHEN (u.notification_preferences->'quiet_hours'->>'start')::int
-                       <= (u.notification_preferences->'quiet_hours'->>'end')::int
+                  WHEN SPLIT_PART(u.notification_preferences->'quiet_hours'->>'start', ':', 1)::int
+                       <= SPLIT_PART(u.notification_preferences->'quiet_hours'->>'end', ':', 1)::int
                   THEN EXTRACT(HOUR FROM NOW()) BETWEEN
-                         (u.notification_preferences->'quiet_hours'->>'start')::int
-                       AND (u.notification_preferences->'quiet_hours'->>'end')::int
-                  ELSE EXTRACT(HOUR FROM NOW()) >= (u.notification_preferences->'quiet_hours'->>'start')::int
-                    OR EXTRACT(HOUR FROM NOW()) <= (u.notification_preferences->'quiet_hours'->>'end')::int
+                         SPLIT_PART(u.notification_preferences->'quiet_hours'->>'start', ':', 1)::int
+                       AND SPLIT_PART(u.notification_preferences->'quiet_hours'->>'end', ':', 1)::int
+                  ELSE EXTRACT(HOUR FROM NOW()) >= SPLIT_PART(u.notification_preferences->'quiet_hours'->>'start', ':', 1)::int
+                    OR EXTRACT(HOUR FROM NOW()) <= SPLIT_PART(u.notification_preferences->'quiet_hours'->>'end', ':', 1)::int
                 END
               )
             )`
@@ -531,13 +531,13 @@ class PushNotificationService {
               u.notification_preferences->'quiet_hours'->>'enabled' != 'true'
               OR NOT (
                 CASE
-                  WHEN (u.notification_preferences->'quiet_hours'->>'start')::int
-                       <= (u.notification_preferences->'quiet_hours'->>'end')::int
+                  WHEN SPLIT_PART(u.notification_preferences->'quiet_hours'->>'start', ':', 1)::int
+                       <= SPLIT_PART(u.notification_preferences->'quiet_hours'->>'end', ':', 1)::int
                   THEN EXTRACT(HOUR FROM NOW()) BETWEEN
-                         (u.notification_preferences->'quiet_hours'->>'start')::int
-                       AND (u.notification_preferences->'quiet_hours'->>'end')::int
-                  ELSE EXTRACT(HOUR FROM NOW()) >= (u.notification_preferences->'quiet_hours'->>'start')::int
-                    OR EXTRACT(HOUR FROM NOW()) <= (u.notification_preferences->'quiet_hours'->>'end')::int
+                         SPLIT_PART(u.notification_preferences->'quiet_hours'->>'start', ':', 1)::int
+                       AND SPLIT_PART(u.notification_preferences->'quiet_hours'->>'end', ':', 1)::int
+                  ELSE EXTRACT(HOUR FROM NOW()) >= SPLIT_PART(u.notification_preferences->'quiet_hours'->>'start', ':', 1)::int
+                    OR EXTRACT(HOUR FROM NOW()) <= SPLIT_PART(u.notification_preferences->'quiet_hours'->>'end', ':', 1)::int
                 END
               )
             )`

@@ -11,7 +11,7 @@ import {
 import { ConnectionState, RoomEvent, Track } from "livekit-client";
 import { useMainStage, type MainStageState } from "@/hooks/useMainStage";
 import { useMainStageRoom } from "@/components/mainstage/MainStageProvider";
-import { getMainStageJoinCheck, acceptMainStageConsents, getWalletBalance, getMainStageViewerToken, getMainStageFreeViewerToken, getMainStageState, voteSkipMainStage, playNextMainStage, getHangoutGroup, getMainStagePin, ApiError, type MainStageJoinCheck, type MainStagePin, type TopicLite, type MainStageOnStageEntry } from "@/lib/api";
+import { getMainStageJoinCheck, acceptMainStageConsents, getWalletBalance, getMainStageViewerToken, getMainStageFreeViewerToken, getMainStageState, voteSkipMainStage, playNextMainStage, getHangoutGroup, getMainStagePin, getPublicCreatorProfile, ApiError, type MainStageJoinCheck, type MainStagePin, type TopicLite, type MainStageOnStageEntry, type CreatorPublicProfile } from "@/lib/api";
 import { getSocket } from "@/lib/socket";
 import { useAuth } from "@/hooks/useAuth";
 import { useMusicPlayer } from "@/hooks/useMusicPlayer";
@@ -39,6 +39,7 @@ import { BuyTokensModal } from "@/components/BuyTokensModal";
 import { WalletPayCard, TIP_PRESETS_USD, TIP_PRESETS_RUSH } from "@/components/payments/PayInWalletChips";
 import { BookCallModal } from "@/components/creators/BookCallModal";
 import type { CreatorCardCreator } from "@/components/creators/CreatorCard";
+import CreatorSubscribeWizard from "@/components/creators/CreatorSubscribeWizard";
 import { TipRushRail } from "@/components/payments/TipRushRail";
 import { usePrivy } from "@privy-io/react-auth";
 
@@ -509,8 +510,44 @@ function PeopleList({ onlineUsers, cammerInfos, selfId, onDm }: {
   const cammerExtras = cammerInfos.filter(c => c.identity !== selfId && !onlineIdSet.has(c.identity));
   const allPeople = [
     ...onlineUsers.map(u => ({ ...u, isCamming: cammerIdSet.has(u.id) })),
-    ...cammerExtras.map(c => ({ id: c.identity, username: '', displayName: c.name, photo: null as null, isCamming: true })),
+    ...cammerExtras.map(c => ({ id: c.identity, username: '' as string, displayName: c.name, photo: null as string | null, isCamming: true })),
   ];
+
+  type PersonEntry = typeof allPeople[0];
+
+  const [selectedPerson, setSelectedPerson] = useState<PersonEntry | null>(null);
+  const [personCreatorInfo, setPersonCreatorInfo] = useState<CreatorPublicProfile | null>(null);
+  const [personCreatorLoading, setPersonCreatorLoading] = useState(false);
+  const [personCreatorFetched, setPersonCreatorFetched] = useState(false);
+  const [personShowMore, setPersonShowMore] = useState(false);
+  const [personShowBookModal, setPersonShowBookModal] = useState(false);
+  const [personShowSubscribeWizard, setPersonShowSubscribeWizard] = useState(false);
+
+  const openPersonProfile = (person: PersonEntry) => {
+    setSelectedPerson(person);
+    setPersonCreatorInfo(null);
+    setPersonCreatorFetched(false);
+    setPersonShowMore(false);
+    setPersonShowBookModal(false);
+    setPersonShowSubscribeWizard(false);
+  };
+
+  const handlePersonMoreToggle = async () => {
+    if (personShowMore) { setPersonShowMore(false); return; }
+    setPersonShowMore(true);
+    if (personCreatorFetched || !selectedPerson?.username) return;
+    setPersonCreatorLoading(true);
+    setPersonCreatorFetched(true);
+    try {
+      const info = await getPublicCreatorProfile(selectedPerson.username);
+      setPersonCreatorInfo(info);
+    } catch {
+      // 404 = not a creator; info stays null
+    } finally {
+      setPersonCreatorLoading(false);
+    }
+  };
+
   if (allPeople.length === 0) {
     return (
       <div className="flex-1 min-h-0 overflow-y-auto flex flex-col items-center justify-center gap-2 py-8 px-4 text-center">
@@ -519,33 +556,189 @@ function PeopleList({ onlineUsers, cammerInfos, selfId, onDm }: {
       </div>
     );
   }
+
+  if (selectedPerson) {
+    return (
+      <div className="flex-1 min-h-0 overflow-y-auto flex flex-col" style={{ scrollbarWidth: "thin", scrollbarColor: "rgba(255,255,255,0.08) transparent" }}>
+        <div className="flex-shrink-0 flex items-center gap-2 px-3 py-2" style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+          <button
+            type="button"
+            onClick={() => { setSelectedPerson(null); setPersonShowMore(false); setPersonCreatorInfo(null); setPersonCreatorFetched(false); }}
+            className="text-white/50 hover:text-white/90 transition-colors text-lg leading-none px-1"
+          >←</button>
+          <span className="text-[12px] font-semibold text-white truncate">{selectedPerson.displayName}</span>
+        </div>
+        <div className="flex flex-col items-center py-4 px-4 gap-3 text-center">
+          {selectedPerson.photo
+            ? <img src={selectedPerson.photo.startsWith('/') ? selectedPerson.photo : `/${selectedPerson.photo}`} alt="" className="w-16 h-16 rounded-full object-cover" />
+            : <div className="w-16 h-16 rounded-full flex items-center justify-center text-xl font-bold text-white" style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}>{selectedPerson.displayName[0]?.toUpperCase()}</div>
+          }
+          <div>
+            <p className="text-sm font-bold text-white">{selectedPerson.displayName}</p>
+            {selectedPerson.username && <p className="text-[11px] text-white/40">@{selectedPerson.username}</p>}
+          </div>
+          <button
+            type="button"
+            onClick={() => void onDm(selectedPerson as OnlineUser)}
+            className="w-full py-2 rounded-xl text-xs font-bold text-white"
+            style={{ background: "linear-gradient(135deg,rgba(212,0,122,0.6),rgba(123,97,255,0.6))", border: "1px solid rgba(212,0,122,0.3)" }}
+          >
+            Message
+          </button>
+          {selectedPerson.username && (
+            <button
+              type="button"
+              onClick={() => void handlePersonMoreToggle()}
+              className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-semibold transition-colors"
+              style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", color: personShowMore ? "#D4007A" : "rgba(255,255,255,0.5)" }}
+            >
+              {personShowMore ? "▲ Less" : "▼ More"}
+            </button>
+          )}
+          {personShowMore && (
+            <div className="w-full flex flex-col gap-3 pb-2">
+              {personCreatorLoading ? (
+                <div className="flex justify-center py-3">
+                  <div className="w-4 h-4 border-2 border-pnp-accent border-t-transparent rounded-full animate-spin" />
+                </div>
+              ) : personCreatorInfo ? (
+                <>
+                  {personCreatorInfo.callPackages.filter(p => p.is_active).length > 0 && (
+                    <div className="rounded-xl p-3 text-left" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)" }}>
+                      <p className="text-[10px] font-bold text-white/50 uppercase tracking-wider mb-2">Book a Call</p>
+                      {personCreatorInfo.nextAvailability && (
+                        <p className="text-[10px] text-pnp-accent mb-2">
+                          Next: {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][personCreatorInfo.nextAvailability.day_of_week]} · {personCreatorInfo.nextAvailability.start_time}
+                        </p>
+                      )}
+                      <div className="flex flex-wrap gap-1.5 mb-2.5">
+                        {personCreatorInfo.callPackages.filter(p => p.is_active).map(pkg => (
+                          <span key={pkg.id} className="px-2 py-0.5 rounded-lg text-[10px] font-semibold" style={{ background: "rgba(212,0,122,0.15)", border: "1px solid rgba(212,0,122,0.2)", color: "rgba(255,255,255,0.8)" }}>
+                            {pkg.duration_minutes}min · ${pkg.price_usd}
+                          </span>
+                        ))}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setPersonShowBookModal(true)}
+                        className="w-full py-2 rounded-xl text-xs font-bold text-white"
+                        style={{ background: "linear-gradient(135deg,#D4007A,#E69138)" }}
+                      >
+                        Book a Call
+                      </button>
+                    </div>
+                  )}
+                  {personCreatorInfo.creator.creator_price_usd > 0 && !personCreatorInfo.isSubscribed && (
+                    <div className="rounded-xl p-3 text-left" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)" }}>
+                      <p className="text-[10px] font-bold text-white/50 uppercase tracking-wider mb-1">Subscribe</p>
+                      <p className="text-[10px] text-white/40 mb-2.5">
+                        Exclusive content · private channel
+                        {personCreatorInfo.channels.filter(c => c.access_type !== 'free' && c.price_usd > 0).length > 0 && ` · ${personCreatorInfo.channels.filter(c => c.access_type !== 'free' && c.price_usd > 0).length} channel${personCreatorInfo.channels.filter(c => c.access_type !== 'free' && c.price_usd > 0).length > 1 ? 's' : ''}`}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setPersonShowSubscribeWizard(true)}
+                        className="w-full py-2 rounded-xl text-xs font-bold text-white"
+                        style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}
+                      >
+                        Subscribe · ${personCreatorInfo.creator.creator_price_usd}/mo
+                      </button>
+                    </div>
+                  )}
+                  {personCreatorInfo.isSubscribed && (
+                    <div className="rounded-xl px-3 py-2 flex items-center gap-2" style={{ background: "rgba(94,209,196,0.08)", border: "1px solid rgba(94,209,196,0.25)" }}>
+                      <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="#5ED1C4" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+                      <p className="text-xs font-semibold" style={{ color: "#5ED1C4" }}>Already subscribed</p>
+                    </div>
+                  )}
+                </>
+              ) : personCreatorFetched ? (
+                <p className="text-[11px] text-white/25 text-center py-1">No bookings available</p>
+              ) : null}
+            </div>
+          )}
+        </div>
+
+        {personShowBookModal && personCreatorInfo && (
+          <BookCallModal
+            creator={{
+              id: personCreatorInfo.creator.id,
+              username: personCreatorInfo.creator.username,
+              photo_url: personCreatorInfo.creator.photo_url,
+              creator_type: personCreatorInfo.creator.creator_type as CreatorCardCreator["creator_type"],
+              creator_price_usd: personCreatorInfo.creator.creator_price_usd,
+              bio: personCreatorInfo.creator.bio,
+            }}
+            isOnline={false}
+            open={personShowBookModal}
+            onClose={() => setPersonShowBookModal(false)}
+          />
+        )}
+
+        {personShowSubscribeWizard && personCreatorInfo && (
+          <div
+            className="fixed inset-0 z-[200] flex items-end justify-center p-4"
+            style={{ background: "rgba(0,0,0,0.75)" }}
+            onClick={() => setPersonShowSubscribeWizard(false)}
+          >
+            <div className="w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
+              <CreatorSubscribeWizard
+                creatorId={personCreatorInfo.creator.id}
+                creatorName={personCreatorInfo.creator.first_name}
+                priceUsd={personCreatorInfo.creator.creator_price_usd}
+                username={personCreatorInfo.creator.username}
+                onSuccess={() => {
+                  setPersonCreatorInfo(prev => prev ? { ...prev, isSubscribed: true } : prev);
+                  setPersonShowSubscribeWizard(false);
+                }}
+                onClose={() => setPersonShowSubscribeWizard(false)}
+                compact
+              />
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="flex-1 min-h-0 overflow-y-auto flex flex-col" style={{ scrollbarWidth: "thin", scrollbarColor: "rgba(255,255,255,0.08) transparent" }}>
       {allPeople.map((u) => (
-        <button
+        <div
           key={u.id}
-          type="button"
-          onClick={() => void onDm(u)}
-          className="flex items-center gap-3 px-3 py-2.5 hover:bg-white/[0.05] transition-colors text-left w-full"
+          className="flex items-center hover:bg-white/[0.05] transition-colors w-full"
           style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}
         >
-          <div className="relative flex-shrink-0">
-            {u.photo
-              ? <img src={u.photo.startsWith('/') ? u.photo : `/${u.photo}`} alt="" className="w-8 h-8 rounded-full object-cover" />
-              : <div className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold text-white" style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}>{u.displayName[0]?.toUpperCase()}</div>
-            }
-            {u.isCamming && (
-              <span className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full flex items-center justify-center" style={{ background: "#22c55e", border: "1.5px solid #0f172a" }}>
-                <svg className="w-2 h-2 text-white" fill="currentColor" viewBox="0 0 20 20"><path d="M2 6a2 2 0 012-2h6a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V6zm14.553 1.106A1 1 0 0116 8v4a1 1 0 01-1.447.894L12 11.618V8.382l2.553-1.276a1 1 0 011 0z"/></svg>
-              </span>
-            )}
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-[12px] font-semibold text-white truncate">{u.displayName}</p>
-            {u.username && <p className="text-[10px] text-white/40 truncate">@{u.username}</p>}
-          </div>
-          <svg className="w-3.5 h-3.5 text-white/20 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
-        </button>
+          <button
+            type="button"
+            onClick={() => openPersonProfile(u)}
+            className="flex-shrink-0 pl-3 py-2.5 focus:outline-none"
+            aria-label={`View ${u.displayName}'s profile`}
+          >
+            <div className="relative">
+              {u.photo
+                ? <img src={u.photo.startsWith('/') ? u.photo : `/${u.photo}`} alt="" className="w-8 h-8 rounded-full object-cover" />
+                : <div className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold text-white" style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}>{u.displayName[0]?.toUpperCase()}</div>
+              }
+              {u.isCamming && (
+                <span className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full flex items-center justify-center" style={{ background: "#22c55e", border: "1.5px solid #0f172a" }}>
+                  <svg className="w-2 h-2 text-white" fill="currentColor" viewBox="0 0 20 20"><path d="M2 6a2 2 0 012-2h6a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V6zm14.553 1.106A1 1 0 0116 8v4a1 1 0 01-1.447.894L12 11.618V8.382l2.553-1.276a1 1 0 011 0z"/></svg>
+                </span>
+              )}
+            </div>
+          </button>
+          <button
+            type="button"
+            onClick={() => void onDm(u as OnlineUser)}
+            className="flex-1 min-w-0 py-2.5 pr-3 pl-3 text-left flex items-center gap-2"
+          >
+            <div className="flex-1 min-w-0">
+              <p className="text-[12px] font-semibold text-white truncate">{u.displayName}</p>
+              {u.username && <p className="text-[10px] text-white/40 truncate">@{u.username}</p>}
+            </div>
+            <svg className="w-3.5 h-3.5 text-white/20 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+          </button>
+        </div>
       ))}
     </div>
   );
@@ -782,6 +975,10 @@ export default function MainStage() {
     return () => { socket.off('mainstage:chat-message', onChatMessage); };
   }, []);
 
+  const fetchOnlineUsers = useCallback(() => {
+    getSocket().emit('mainstage:request-users-online');
+  }, []);
+
   // ── Online users socket listeners ────────────────────────────────────────────
   useEffect(() => {
     const socket = getSocket();
@@ -794,16 +991,17 @@ export default function MainStage() {
     socket.on('mainstage:users-online', onUsersOnline);
     socket.on('mainstage:user-joined-room', onUserJoined);
     socket.on('mainstage:user-left-room', onUserLeft);
+    // Populate the count immediately on connect/reconnect so the People tab
+    // badge is live even when the user never switches to it.
+    socket.on('connect', fetchOnlineUsers);
+    if (socket.connected) fetchOnlineUsers();
     return () => {
       socket.off('mainstage:users-online', onUsersOnline);
       socket.off('mainstage:user-joined-room', onUserJoined);
       socket.off('mainstage:user-left-room', onUserLeft);
+      socket.off('connect', fetchOnlineUsers);
     };
-  }, [user]);
-
-  const fetchOnlineUsers = useCallback(() => {
-    getSocket().emit('mainstage:request-users-online');
-  }, []);
+  }, [user, fetchOnlineUsers]);
 
   const openDm = useCallback(async (target: OnlineUser) => {
     setDmTarget(target);
@@ -1157,25 +1355,7 @@ export default function MainStage() {
     else localStorage.setItem(LOCAL_MODE_KEY, localViewMode);
   }, [localViewMode]);
 
-  // Auto-start Cristina's radio when entering Main Stage so the room has
-  // music over the silent video. Fires at most once per page mount. If the
-  // user pauses, we don't restart. If tracks refetch after a pause, we
-  // don't restart. Ref guard is the source of truth.
-  const { play: playMusic, pause: pauseMusic, isPlaying: musicIsPlaying, tracks: musicTracks } = useMusicPlayer();
-  const hasAutoStartedMusicRef = useRef(false);
-  useEffect(() => {
-    if (hasAutoStartedMusicRef.current) return;
-    if (musicIsPlaying) { hasAutoStartedMusicRef.current = true; return; }
-    if (!musicTracks || musicTracks.length === 0) return; // provider still loading
-    // Skip if the admin has music streaming via LiveKit ingress — playing our
-    // local radio on top would double-up audio.
-    if (state?.media?.kind === "music" && state?.media?.playing === true) {
-      hasAutoStartedMusicRef.current = true;
-      return;
-    }
-    hasAutoStartedMusicRef.current = true;
-    playMusic();
-  }, [musicTracks, musicIsPlaying, playMusic, state?.media?.kind, state?.media?.playing]);
+  const { play: playMusic, pause: pauseMusic, isPlaying: musicIsPlaying } = useMusicPlayer();
 
   // Background radio yields to live cammers — once anyone is on stage, the
   // Cristina radio pauses so it doesn't compete with cam audio. Manual: no

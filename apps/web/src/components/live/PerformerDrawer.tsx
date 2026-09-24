@@ -29,6 +29,7 @@ import {
   type FeaturedPerformer,
 } from "@/lib/api";
 import type { CreatorCardCreator } from "@/components/creators/CreatorCard";
+import CreatorSubscribeWizard from "@/components/creators/CreatorSubscribeWizard";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -195,6 +196,7 @@ export function PerformerDrawer({ performer, liveStreamId, onClose, currentUserI
   const [subLoading, setSubLoading] = useState(false);
   const [showBookModal, setShowBookModal] = useState(false);
   const [showSubscribePrompt, setShowSubscribePrompt] = useState(false);
+  const [showSubscribeWizard, setShowSubscribeWizard] = useState(false);
   const [recordings, setRecordings] = useState<StreamRecording[]>([]);
   const [recordingsLoading, setRecordingsLoading] = useState(false);
   const [replayUrl, setReplayUrl] = useState<string | null>(null);
@@ -326,10 +328,8 @@ export function PerformerDrawer({ performer, liveStreamId, onClose, currentUserI
   const handleSubscribe = () => {
     if (!isAuthenticated) { navigate("/login"); return; }
     if (!creatorId) return;
-    // Navigate to the creator's profile page where the proper payment-gated
-    // subscribe flow lives. Direct API subscription without payment is not allowed.
-    navigate(`/profile/${creatorId}`);
-    onClose();
+    setShowSubscribeWizard(true);
+    setShowSubscribePrompt(false);
   };
 
   if (!performer) return null;
@@ -757,6 +757,32 @@ export function PerformerDrawer({ performer, liveStreamId, onClose, currentUserI
           </div>
         </div>
       </div>
+
+      {/* Subscribe wizard — full overlay within drawer, no redirect */}
+      {showSubscribeWizard && creatorId && (
+        <div className="absolute inset-0 z-30 flex flex-col bg-pnp-bg overflow-y-auto overscroll-contain">
+          <div className="flex items-center gap-2 px-4 py-3 flex-shrink-0" style={{ borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+            <button
+              onClick={() => setShowSubscribeWizard(false)}
+              className="w-8 h-8 rounded-full flex items-center justify-center text-white/60 hover:text-white transition-colors"
+              aria-label="Back"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
+            </button>
+            <span className="text-sm font-semibold text-pnp-textPrimary">Subscribe to {displayName}</span>
+          </div>
+          <div className="flex-1 px-4 py-4">
+            <CreatorSubscribeWizard
+              creatorId={String(creatorId)}
+              creatorName={displayName}
+              priceUsd={subPrice}
+              username={performer.slug || undefined}
+              onSuccess={() => { setSubscribed(true); setShowSubscribeWizard(false); setShowSubscribePrompt(false); }}
+              onClose={() => setShowSubscribeWizard(false)}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Book Call Modal */}
       {showBookModal && (

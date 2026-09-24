@@ -2161,7 +2161,7 @@ const hangoutMediaUpload = multer({
     // Strip codec parameters before matching (MediaRecorder sends e.g. "video/webm;codecs=vp9,opus")
     const baseMime = (file.mimetype || '').toLowerCase().split(';')[0].trim();
     const isImage = /^image\/(jpeg|jpg|png|webp|gif|heic|heif)$/.test(baseMime);
-    const isVideo = /^video\/(mp4|webm|quicktime|x-m4v)$/.test(baseMime);
+    const isVideo = baseMime.startsWith('video/');
     const isAudio = /^audio\/(webm|ogg|mp4|mpeg|mp3|m4a|x-m4a|wav)$/.test(baseMime);
     // iOS + some Android browsers send application/octet-stream for HEIC/MOV;
     // verifyMagicBytes(HANGOUT_MEDIA_MIMES) below still enforces the actual type.

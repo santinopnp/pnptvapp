@@ -1937,6 +1937,17 @@ const handleJoinRequest = async (req, res) => {
             return res.status(409).json({ error: 'Group is full' });
           }
         }
+        // Auto-join all topics (child groups) — mirrors joinGroup so accepted users
+        // can join topic socket rooms (the socket handler does a direct membership check,
+        // not the COALESCE parent-group check that isMember() uses).
+        await client.query(
+          `INSERT INTO hangout_group_members (group_id, user_id, role)
+           SELECT id, $1, 'member'
+           FROM hangout_groups
+           WHERE parent_group_id = $2
+           ON CONFLICT (group_id, user_id) DO NOTHING`,
+          [String(joinRequest.user_id), groupId]
+        );
         // If already a member, accept is a no-op (idempotent) — commit the status update
       }
 
@@ -1949,6 +1960,18 @@ const handleJoinRequest = async (req, res) => {
     }
 
     if (action === 'accept') {
+      // Push a real-time socket event so the accepted user's group list refreshes
+      // without requiring a manual page reload. Mirrors the hangout:invite:received flow.
+      try {
+        const io = socketSingleton.get ? socketSingleton.get() : socketSingleton;
+        if (io && joinRequest.user_id) {
+          io.to(`user:${joinRequest.user_id}`).emit('hangout:joined', {
+            groupId,
+            groupName: groupRows[0].name,
+          });
+        }
+      } catch (_) { /* non-fatal */ }
+
       // Notify the requester (fire-and-forget after transaction committed)
       NotificationEmitter.emit({
         type: 'group_request_accepted', category: 'hangouts', priority: 'normal',
@@ -3870,12 +3893,15 @@ async function generateCallAccess(groupId, callId, roomName, user) {
   const ttl = isModerator ? 4 * 3600 : 2 * 3600;
   const suffix = randomBytes(4).toString('hex');
   const identityOverride = `${user.id}-${suffix}`;
+  // All hangout participants can publish audio + video — only roomAdmin and
+  // canPublishData are restricted to moderators. Without this override, non-mods
+  // receive canPublish=false from the LiveKit service default and join as audience-only.
   const token = await livekitService.generateToken(
     roomName,
     String(user.id),
     displayName,
     isModerator,
-    { ttlSeconds: ttl, identityOverride },
+    { ttlSeconds: ttl, identityOverride, canPublishAudio: true, canPublishVideo: true },
   );
   // Super-god: skip participant row so participant_count trigger doesn't bump.
   const EntitlementAccessServiceHo = require('../../../services/entitlementAccessService');
@@ -4106,7 +4132,8 @@ async function leaveCall(req, res) {
     getRedis().del(`hangout:active_call:${groupId}`).catch(() => {});
     emitToHangoutGroup(groupId, 'hangout:call:participant-left', {
       callId,
-      userId: user.id,
+      groupId,
+      user: { userId: user.id },
       participantCount: count,
     });
 

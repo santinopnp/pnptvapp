@@ -61,6 +61,7 @@ import {
   getCreatorChannelPass,
   checkoutChannelPass,
   getUserChannelPasses,
+  ApiError,
   type ChannelPassViewerInfo,
   type CreatorPublicProfile,
   type SocialPostItem,
@@ -459,7 +460,14 @@ export default function CreatorProfilePage() {
         }
       })
       .catch((err) => {
-        setError(err instanceof Error ? err.message : "Creator not found");
+        // 404 from the creator endpoint means this username belongs to a regular
+        // member (not an active creator). Redirect silently to the member profile
+        // so /c/:username works as a universal profile link.
+        if (err instanceof ApiError && err.status === 404 && username) {
+          navigate(`/${username}`, { replace: true });
+        } else {
+          setError(err instanceof Error ? err.message : "Creator not found");
+        }
       })
       .finally(() => setLoading(false));
   }, [username]);

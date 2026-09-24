@@ -3,7 +3,7 @@ import { useAuth } from "@/hooks/useAuth";
 
 export interface MediaGroupItem {
   mediaUrl: string;
-  mediaType: "image" | "video" | "audio";
+  mediaType: "image" | "video" | "audio" | "video_note";
   thumbUrl?: string | null;
   width?: number | null;
   height?: number | null;
@@ -12,7 +12,7 @@ export interface MediaGroupItem {
 
 interface MediaMessageProps {
   mediaUrl: string;
-  mediaType: "image" | "video" | "audio";
+  mediaType: "image" | "video" | "audio" | "video_note";
   thumbUrl?: string | null;
   width?: number | null;
   height?: number | null;
@@ -523,7 +523,7 @@ export function MediaMessage({
 
   // ─── Video note (circular) ─────────────────────────────────────────────────
 
-  if (messageType === "video_note" && mediaType === "video" && mediaUrl) {
+  if (messageType === "video_note" && (mediaType === "video" || mediaType === "video_note") && mediaUrl) {
     return <VideoNotePlayer src={mediaUrl} isMe={isMe} />;
   }
 

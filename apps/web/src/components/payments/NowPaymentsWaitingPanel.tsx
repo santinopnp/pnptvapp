@@ -12,167 +12,117 @@ interface NowPaymentsWaitingPanelProps {
   payCurrency?: string | null;
 }
 
-// ── Crypto beginner guide (collapsed by default) ──────────────────────────────
+// ── App picker guide — collapsed by default, replaces raw coin instructions ───
 
-const GUIDE_EN = {
-  trigger: "New to crypto? Here's how to pay",
-  buyTitle: "Step 1 — Buy crypto",
-  buyIntro: "The easiest option for beginners: use Binance. You can buy AND send crypto from the same app — no separate wallet needed.",
-  exchanges: [
-    { name: "Binance ⭐ Recommended", note: "World's largest exchange. Buy with a card, then send directly — one app does everything. Works in Latin America and worldwide.", url: "https://www.binance.com/en/register" },
-    { name: "Coinbase", note: "Most beginner-friendly. Buy with a debit card in minutes. Works in most countries.", url: "https://www.coinbase.com/signup" },
-    { name: "MoonPay", note: "Buy with a credit or debit card instantly. No full account needed in some regions.", url: "https://www.moonpay.com/" },
-  ],
-  sendTitle: "Step 2 — Send from Binance",
-  sendSteps: [
-    "In the Binance app tap Wallets → Spot → the coin you bought (e.g. USDT).",
-    'Tap "Send" (or "Withdraw").',
-    "Select the correct network — choose BNB Smart Chain for USDT, or Bitcoin for BTC.",
-    "Paste the payment address shown above, or scan the QR code.",
-    "Enter the exact amount shown and tap Confirm.",
-    "Done — your payment is detected automatically within a few minutes.",
-  ],
-  tipsTitle: "Tips",
-  tips: [
-    "Send the EXACT amount shown — even a few cents off can cause a mismatch.",
-    "For USDT: always choose BNB Smart Chain (BSC/BEP20) as the network — it's the cheapest and fastest.",
-    "Payments usually confirm in 1–10 minutes. Bitcoin can take longer.",
-  ],
-  guideLink: "Full crypto guide →",
+const PANEL_APPS = [
+  { id: 'revolut',  label: 'Revolut',  geo: 'EU',     emoji: '🟣', bg: 'rgba(91,106,208,0.22)',  border: 'rgba(91,106,208,0.55)'  },
+  { id: 'cashapp',  label: 'Cash App', geo: 'US/UK',  emoji: '💚', bg: 'rgba(0,214,79,0.15)',    border: 'rgba(0,214,79,0.50)'    },
+  { id: 'paypal',   label: 'PayPal',   geo: 'Global', emoji: '🔵', bg: 'rgba(0,48,135,0.40)',    border: 'rgba(0,112,255,0.50)'   },
+  { id: 'venmo',    label: 'Venmo',    geo: 'US',     emoji: '🔵', bg: 'rgba(0,140,255,0.22)',   border: 'rgba(0,140,255,0.50)'   },
+  { id: 'n26',      label: 'N26',      geo: 'EU',     emoji: '⚫', bg: 'rgba(80,80,80,0.30)',    border: 'rgba(120,120,120,0.50)' },
+  { id: 'binance',  label: 'Binance',  geo: 'Global', emoji: '🟡', bg: 'rgba(240,185,11,0.15)',  border: 'rgba(240,185,11,0.45)'  },
+  { id: 'coinbase', label: 'Coinbase', geo: 'Global', emoji: '🔵', bg: 'rgba(0,82,255,0.22)',    border: 'rgba(0,82,255,0.50)'    },
+] as const;
+
+const PANEL_STEPS_EN: Record<string, string[]> = {
+  revolut:  ["Open Revolut → search 'Bitcoin' in the top search bar", "Tap Bitcoin (BTC) → tap 'Send'", "Tap 'Send to crypto address'", "Paste the address shown above (or scan the QR)", "Enter the exact amount shown → Confirm"],
+  cashapp:  ["Open Cash App → tap the Bitcoin tab (₿) at the bottom", "Tap 'Send Bitcoin'", "Paste the address shown above (or scan the QR)", "Enter the exact amount shown → Confirm"],
+  paypal:   ["Open PayPal → tap 'Crypto'", "Tap 'Bitcoin (BTC)'", "Tap 'Transfer' → 'External wallet'", "Paste the address shown above (or scan the QR)", "Enter the exact amount → Review → Send"],
+  venmo:    ["Open Venmo → tap 'Crypto' in the bottom menu", "Tap 'Bitcoin (BTC)'", "Tap 'Transfer out' → 'External wallet'", "Paste the address shown above (or scan the QR)", "Enter the exact amount → Confirm"],
+  n26:      ["Open N26 → tap 'Crypto' in the bottom menu", "Tap 'Bitcoin (BTC)'", "Tap 'Send' → 'External address'", "Paste the address shown above (or scan the QR)", "Enter the exact amount → Confirm"],
+  binance:  ["Open Binance → tap 'Wallets' → 'Spot'", "Find Bitcoin (BTC) → tap 'Send'", "⚠️ Select network: Bitcoin (BTC) — do NOT pick BNB or other networks", "Paste the address shown above (or scan the QR)", "Enter the exact amount → Confirm"],
+  coinbase: ["Open Coinbase → tap 'Assets' → find 'Bitcoin'", "Tap 'Send'", "Paste the address shown above (or scan the QR)", "Enter the exact amount → Continue → Send now"],
 };
 
-const GUIDE_ES = {
-  trigger: "¿Nuevo en cripto? Así se paga",
-  buyTitle: "Paso 1 — Compra cripto",
-  buyIntro: "La opción más fácil para principiantes: usa Binance. Puedes comprar Y enviar cripto desde la misma app — sin wallet separada.",
-  exchanges: [
-    { name: "Binance ⭐ Recomendado", note: "El exchange más grande del mundo. Compra con tarjeta y envía directamente — una sola app hace todo. Disponible en Latinoamérica y todo el mundo.", url: "https://www.binance.com/en/register" },
-    { name: "Coinbase", note: "El más fácil para principiantes. Compra con tarjeta de débito en minutos. Disponible en la mayoría de países.", url: "https://www.coinbase.com/signup" },
-    { name: "MoonPay", note: "Compra con tarjeta al instante. Sin registro completo en algunos países.", url: "https://www.moonpay.com/" },
-  ],
-  sendTitle: "Paso 2 — Envía desde Binance",
-  sendSteps: [
-    "En la app de Binance toca Billeteras → Spot → la moneda que compraste (ej. USDT).",
-    'Toca "Enviar" (o "Retirar").',
-    "Elige la red correcta — BNB Smart Chain para USDT, o Bitcoin para BTC.",
-    "Pega la dirección de pago que aparece arriba, o escanea el código QR.",
-    "Ingresa el monto exacto y toca Confirmar.",
-    "Listo — tu pago se detecta automáticamente en unos minutos.",
-  ],
-  tipsTitle: "Consejos",
-  tips: [
-    "Envía el monto EXACTO que se muestra — incluso centavos de diferencia pueden causar problemas.",
-    "Para USDT: selecciona siempre la red BNB Smart Chain (BSC/BEP20) — es la más barata y rápida.",
-    "Los pagos se confirman en 1–10 minutos. Bitcoin puede tardar más.",
-  ],
-  guideLink: "Guía completa de cripto →",
+const PANEL_STEPS_ES: Record<string, string[]> = {
+  revolut:  ["Abre Revolut → busca 'Bitcoin' en la barra de búsqueda", "Toca Bitcoin (BTC) → toca 'Enviar'", "Toca 'Enviar a dirección cripto'", "Pega la dirección de arriba (o escanea el QR)", "Ingresa el monto exacto → Confirma"],
+  cashapp:  ["Abre Cash App → toca la pestaña Bitcoin (₿) abajo", "Toca 'Enviar Bitcoin'", "Pega la dirección de arriba (o escanea el QR)", "Ingresa el monto exacto → Confirma"],
+  paypal:   ["Abre PayPal → toca 'Criptomonedas'", "Toca 'Bitcoin (BTC)'", "Toca 'Transferir' → 'Billetera externa'", "Pega la dirección de arriba (o escanea el QR)", "Ingresa el monto exacto → Revisar → Enviar"],
+  venmo:    ["Abre Venmo → toca 'Cripto' en el menú inferior", "Toca 'Bitcoin (BTC)'", "Toca 'Transferir' → 'Billetera externa'", "Pega la dirección de arriba (o escanea el QR)", "Ingresa el monto exacto → Confirma"],
+  n26:      ["Abre N26 → toca 'Cripto' en el menú inferior", "Toca 'Bitcoin (BTC)'", "Toca 'Enviar' → 'Dirección externa'", "Pega la dirección de arriba (o escanea el QR)", "Ingresa el monto exacto → Confirma"],
+  binance:  ["Abre Binance → toca 'Billeteras' → 'Spot'", "Busca Bitcoin (BTC) → toca 'Enviar'", "⚠️ Elige la red: Bitcoin (BTC) — NO elijas BNB ni otra red", "Pega la dirección de arriba (o escanea el QR)", "Ingresa el monto exacto → Confirma"],
+  coinbase: ["Abre Coinbase → toca 'Activos' → busca 'Bitcoin'", "Toca 'Enviar'", "Pega la dirección de arriba (o escanea el QR)", "Ingresa el monto exacto → Continuar → Enviar ahora"],
 };
 
-function CryptoBeginnerGuide({ es, payCurrency }: { es: boolean; payCurrency?: string | null }) {
+function AppGuidePanel({ es }: { es: boolean }) {
   const [open, setOpen] = useState(false);
-  const baseGuide = es ? GUIDE_ES : GUIDE_EN;
-
-  // Replace the hardcoded BSC/USDT network tip with one that matches the actual invoice network
-  const networkTip = (() => {
-    if (!payCurrency) return null;
-    if (payCurrency === "usdtbsc" || payCurrency === "usdcbsc")
-      return es ? "Para USDT/USDC: selecciona la red BNB Smart Chain (BSC/BEP20)." : "For USDT/USDC: select the BNB Smart Chain (BSC/BEP20) network.";
-    if (payCurrency === "usdttrc20" || payCurrency === "usdctrc20")
-      return es ? "Para USDT/USDC: selecciona la red TRON (TRC-20)." : "For USDT/USDC: select the TRON (TRC-20) network.";
-    if (payCurrency === "usdcsol" || payCurrency === "sol")
-      return es ? "Para SOL/USDC: selecciona la red Solana." : "For SOL/USDC: select the Solana network.";
-    if (payCurrency === "btc")
-      return es ? "Usa la red Bitcoin (no Lightning a menos que se indique)." : "Use the Bitcoin network (not Lightning unless specified).";
-    if (payCurrency === "eth" || payCurrency === "usdterc20")
-      return es ? "Para ETH/USDT: selecciona la red Ethereum (ERC-20)." : "For ETH/USDT: select the Ethereum (ERC-20) network.";
-    return null;
-  })();
-
-  const tips = networkTip
-    ? [baseGuide.tips[0], networkTip, baseGuide.tips[2]]
-    : baseGuide.tips;
-
-  const g = { ...baseGuide, tips };
+  const [selectedApp, setSelectedApp] = useState<string | null>(null);
+  const steps = selectedApp ? (es ? PANEL_STEPS_ES : PANEL_STEPS_EN)[selectedApp] ?? [] : [];
+  const appLabel = PANEL_APPS.find(a => a.id === selectedApp)?.label ?? '';
 
   return (
     <div className="mt-2 rounded-xl border border-white/10 overflow-hidden">
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => setOpen(v => !v)}
         aria-expanded={open}
         className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-white/5 transition-colors"
       >
-        <span className="text-[11px] font-semibold text-pnp-textSecondary">{g.trigger}</span>
-        <svg
-          className={`w-3.5 h-3.5 text-pnp-textSecondary flex-shrink-0 ml-2 transition-transform duration-200 ${open ? "rotate-180" : ""}`}
-          fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}
-          aria-hidden="true"
-        >
+        <span className="text-[11px] font-semibold text-pnp-textSecondary">
+          {es ? "¿No tienes wallet? Paga desde tu app →" : "No wallet? Pay from your app →"}
+        </span>
+        <svg className={`w-3.5 h-3.5 text-pnp-textSecondary flex-shrink-0 ml-2 transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+          fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
           <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
         </svg>
       </button>
 
       {open && (
-        <div className="px-3 pb-4 border-t border-white/10 pt-3 space-y-4 animate-in fade-in slide-in-from-top-1 duration-200">
+        <div className="px-3 pb-4 border-t border-white/10 pt-3 animate-in fade-in slide-in-from-top-1 duration-200">
+          <p className="text-[10px] text-pnp-textSecondary/70 mb-2.5 leading-relaxed">
+            {es
+              ? "Elige tu app y te damos los pasos exactos para pagar con Bitcoin desde ella:"
+              : "Pick your app and we'll show you the exact steps to pay with Bitcoin from it:"}
+          </p>
 
-          {/* Step 1: Buy */}
-          <div>
-            <p className="text-[11px] font-bold text-pnp-textPrimary mb-1.5 uppercase tracking-wide">{g.buyTitle}</p>
-            <p className="text-[10px] text-pnp-textSecondary/80 mb-2 leading-relaxed">{g.buyIntro}</p>
-            <div className="space-y-1.5">
-              {g.exchanges.map((ex) => (
-                <div key={ex.name} className="rounded-lg border border-white/8 bg-white/[0.03] px-2.5 py-2">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <span className="text-[11px] font-bold text-pnp-textPrimary">{ex.name}</span>
-                      <p className="text-[10px] text-pnp-textSecondary/70 leading-relaxed mt-0.5">{ex.note}</p>
-                    </div>
-                    <a
-                      href={ex.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex-shrink-0 text-[10px] font-semibold text-pnp-accent hover:text-pnp-accentHover transition-colors whitespace-nowrap"
-                    >
-                      {es ? "Abrir" : "Open"} ↗
-                    </a>
-                  </div>
-                </div>
-              ))}
+          {/* App grid */}
+          <div className="grid grid-cols-4 gap-1.5 mb-3">
+            {PANEL_APPS.map(app => {
+              const isSel = selectedApp === app.id;
+              return (
+                <button
+                  key={app.id}
+                  type="button"
+                  onClick={() => setSelectedApp(isSel ? null : app.id)}
+                  className="flex flex-col items-center gap-0.5 py-2.5 px-1 rounded-xl border transition active:scale-[0.95]"
+                  style={isSel
+                    ? { background: app.bg, borderColor: app.border }
+                    : { background: 'rgba(255,255,255,0.03)', borderColor: 'rgba(255,255,255,0.08)' }
+                  }
+                >
+                  <span className="text-[16px] leading-none">{app.emoji}</span>
+                  <span className="text-[9px] font-semibold text-white/80 text-center leading-tight">{app.label}</span>
+                  <span className="text-[7.5px] text-white/30 leading-none">{app.geo}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Steps for selected app */}
+          {selectedApp && steps.length > 0 && (
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 animate-in fade-in slide-in-from-top-1 duration-150">
+              <p className="text-[10px] font-semibold text-white/45 uppercase tracking-wide mb-2">
+                {es ? `Pasos en ${appLabel}` : `Steps in ${appLabel}`}
+              </p>
+              <ol className="space-y-1.5 mb-2">
+                {steps.map((step, i) => (
+                  <li key={i} className="flex items-start gap-2">
+                    <span className="flex-shrink-0 w-4 h-4 rounded-full bg-white/10 flex items-center justify-center text-[9px] font-bold text-white/55 mt-0.5">{i + 1}</span>
+                    <span className="text-[11px] text-white/75 leading-relaxed">{step}</span>
+                  </li>
+                ))}
+              </ol>
+              <p className="text-[10px] text-white/30 leading-relaxed">
+                {es
+                  ? "⚡ El pago se detecta automáticamente — no necesitas hacer nada más."
+                  : "⚡ Payment is detected automatically — nothing else needed."}
+              </p>
             </div>
-          </div>
+          )}
 
-          {/* Step 2: Send */}
-          <div>
-            <p className="text-[11px] font-bold text-pnp-textPrimary mb-2 uppercase tracking-wide">{g.sendTitle}</p>
-            <ol className="space-y-1.5">
-              {g.sendSteps.map((step, i) => (
-                <li key={i} className="flex items-start gap-2">
-                  <span className="flex-shrink-0 w-4 h-4 rounded-full bg-white/10 flex items-center justify-center text-[9px] font-bold text-pnp-textSecondary mt-0.5">{i + 1}</span>
-                  <span className="text-[10px] text-pnp-textSecondary/80 leading-relaxed">{step}</span>
-                </li>
-              ))}
-            </ol>
-          </div>
-
-          {/* Tips */}
-          <div className="rounded-lg border border-yellow-500/20 bg-yellow-500/5 px-2.5 py-2">
-            <p className="text-[10px] font-bold text-yellow-400 mb-1.5 uppercase tracking-wide">{g.tipsTitle}</p>
-            <ul className="space-y-1">
-              {g.tips.map((tip, i) => (
-                <li key={i} className="flex items-start gap-1.5 text-[10px] text-pnp-textSecondary/70 leading-relaxed">
-                  <span className="text-yellow-400/60 flex-shrink-0 mt-px">•</span>
-                  <span>{tip}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          {/* Link to full guide */}
-          <a
-            href="/crypto-guide"
-            className="block text-center text-[10px] font-semibold text-pnp-textSecondary/60 hover:text-pnp-textSecondary transition-colors underline decoration-dotted"
-          >
-            {g.guideLink}
+          <a href="/crypto-guide"
+            className="block text-center text-[10px] font-semibold text-pnp-textSecondary/50 hover:text-pnp-textSecondary transition-colors underline decoration-dotted mt-3">
+            {es ? "Guía completa →" : "Full crypto guide →"}
           </a>
         </div>
       )}
@@ -338,8 +288,8 @@ export const NowPaymentsWaitingPanel: React.FC<NowPaymentsWaitingPanelProps> = (
         </a>
       </div>
 
-      {/* Beginner guide — collapsed by default */}
-      <CryptoBeginnerGuide es={es} payCurrency={payCurrency} />
+      {/* App guide — collapsed by default */}
+      <AppGuidePanel es={es} />
 
       <button
         onClick={onCancel}

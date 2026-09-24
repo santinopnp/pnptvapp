@@ -296,6 +296,25 @@ const handleLiveKitWebhook = async (req, res) => {
       }
     }
 
+    // Main Stage: remove cammer from spotlight queue on participant_left.
+    // The socket disconnect handler also calls removeCammer, but webhooks are
+    // faster and fire even when the socket is still connected (e.g. user stops
+    // publishing without disconnecting). Without this, ghost cammers stay for
+    // up to 90s until sweepGhostCammers runs.
+    if (roomName === 'main-stage-prime' && eventType === 'participant_left') {
+      try {
+        const rawIdentity = String(event.participant?.identity || '');
+        const userId = rawIdentity.split('-')[0];
+        if (userId) {
+          const mainStageService = require('../../../services/mainStageService');
+          await mainStageService.removeCammer(userId);
+          logger.info('LiveKit participant_left: removed main-stage cammer', { userId });
+        }
+      } catch (msErr) {
+        logger.warn('LiveKit participant_left: main-stage removeCammer failed', { message: msErr.message });
+      }
+    }
+
     // Only act on hangout rooms (named "hangout-{groupId}")
     if (roomName.startsWith(HANGOUT_ROOM_PREFIX)) {
       const groupId = roomName.slice(HANGOUT_ROOM_PREFIX.length);

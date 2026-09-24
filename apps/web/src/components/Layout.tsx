@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense, Component } from "react";
+import type { ErrorInfo, ReactNode } from "react";
 
 // ── Feature flag — set to false to re-enable live streaming ──────────────────
 const STREAMS_DEPRECATED = false;
@@ -39,6 +40,57 @@ import { SelfCamFloater } from "@/components/mainstage/SelfCamFloater";
 import { ThreadListView, DmChatView } from "@/pages/DirectMessages";
 
 const SIDEBAR_DM_BASE = import.meta.env.VITE_API_URL || "";
+
+// Catches errors thrown by lazy-loaded wallet components (chunk-load failures
+// after a deploy, or Privy hook crashes) so they don't bubble to the root
+// ErrorBoundary and trigger a full-page reload. Shows an inline "tap to
+// reload" prompt instead.
+class WalletBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { failed: false };
+  }
+  static getDerivedStateFromError() { return { failed: true }; }
+  componentDidCatch(err: Error, info: ErrorInfo) {
+    console.error("WalletBoundary caught:", err, info);
+  }
+  render() {
+    if (this.state.failed) {
+      return (
+        <div
+          style={{
+            position: "fixed", inset: 0, zIndex: 60,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            background: "rgba(0,0,0,0.75)",
+          }}
+          onClick={() => { this.setState({ failed: false }); window.location.reload(); }}
+        >
+          <div style={{
+            background: "rgba(19,16,26,0.98)", border: "1px solid rgba(212,0,122,0.35)",
+            borderRadius: 16, padding: "24px 28px", maxWidth: 320, textAlign: "center",
+          }}>
+            <p style={{ fontSize: 32, marginBottom: 8 }}>💎</p>
+            <p style={{ color: "#fff", fontWeight: 700, marginBottom: 4 }}>Wallet not available</p>
+            <p style={{ color: "rgba(255,255,255,0.55)", fontSize: 12, marginBottom: 16 }}>
+              Tap to reload and try again.
+            </p>
+            <button
+              style={{
+                background: "linear-gradient(135deg,#D4007A,#E69138)",
+                border: "none", borderRadius: 10, color: "#fff",
+                fontWeight: 700, padding: "10px 24px", cursor: "pointer",
+              }}
+              onClick={() => window.location.reload()}
+            >
+              Reload
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 // ── FlashBanner ───────────────────────────────────────────────────────────────
 // Reads a one-shot message stashed by another route (e.g. HangoutInviteRedirect
@@ -2991,22 +3043,26 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
 
         {/* BuyTokensModal — mounted outside panel so it persists after panel closes */}
         {liveBuyOpen && (
-          <Suspense fallback={null}>
-            <LazyBuyTokensModal
-              isOpen={liveBuyOpen}
-              onClose={() => { setLiveBuyOpen(false); setLiveBuyUsd(undefined); setLiveBuyPackageId(undefined); }}
-              onSuccess={(nb) => { setLiveRushBalance(nb); setLiveBuyOpen(false); setLiveBuyUsd(undefined); setLiveBuyPackageId(undefined); }}
-              initialAmountUsd={liveBuyUsd}
-              initialPackageId={liveBuyPackageId}
-            />
-          </Suspense>
+          <WalletBoundary>
+            <Suspense fallback={null}>
+              <LazyBuyTokensModal
+                isOpen={liveBuyOpen}
+                onClose={() => { setLiveBuyOpen(false); setLiveBuyUsd(undefined); setLiveBuyPackageId(undefined); }}
+                onSuccess={(nb) => { setLiveRushBalance(nb); setLiveBuyOpen(false); setLiveBuyUsd(undefined); setLiveBuyPackageId(undefined); }}
+                initialAmountUsd={liveBuyUsd}
+                initialPackageId={liveBuyPackageId}
+              />
+            </Suspense>
+          </WalletBoundary>
         )}
 
         {/* WalletHomeSheet — "Ver billetera completa" in PanelChrome header */}
         {open && (
-          <Suspense fallback={null}>
-            <LazyWalletHomeSheet onClose={() => setOpen(false)} />
-          </Suspense>
+          <WalletBoundary>
+            <Suspense fallback={null}>
+              <LazyWalletHomeSheet onClose={() => setOpen(false)} />
+            </Suspense>
+          </WalletBoundary>
         )}
       </>
     );
@@ -3192,9 +3248,11 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
 
         {/* WalletHomeSheet — opened via "Ver billetera completa" button */}
         {open && (
-          <Suspense fallback={null}>
-            <LazyWalletHomeSheet onClose={() => setOpen(false)} />
-          </Suspense>
+          <WalletBoundary>
+            <Suspense fallback={null}>
+              <LazyWalletHomeSheet onClose={() => setOpen(false)} />
+            </Suspense>
+          </WalletBoundary>
         )}
       </>
     );
@@ -3513,9 +3571,11 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
         )}
       </button>
       {open && (
-        <Suspense fallback={null}>
-          <LazyWalletHomeSheet onClose={() => setOpen(false)} />
-        </Suspense>
+        <WalletBoundary>
+          <Suspense fallback={null}>
+            <LazyWalletHomeSheet onClose={() => setOpen(false)} />
+          </Suspense>
+        </WalletBoundary>
       )}
     </>
   );

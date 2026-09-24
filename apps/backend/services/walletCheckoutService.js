@@ -1324,16 +1324,13 @@ async function _fulfillEntitlement(client, { userId, entitlementSpec, surface, p
       const gross = Number(amountUsd);
       const amountCreator = Math.round(gross * CREATOR_REVENUE_RATE * 100) / 100;
       const amountPlatform = Math.round((gross - amountCreator) * 100) / 100;
-      // The unique index `creator_earnings_source_payment_creator_unique` is
-      // partial (WHERE source_payment_id IS NOT NULL) — Postgres needs the
-      // constraint referenced by name in ON CONFLICT for partial indexes.
       await client.query(
         `INSERT INTO creator_earnings
            (creator_id, amount_gross, amount_creator, amount_platform, status,
             available_at, source_payment_id, period_month)
          VALUES ($1, $2, $3, $4, 'holding', NOW() + ($5 || ' hours')::interval, $6,
                  date_trunc('month', CURRENT_DATE))
-         ON CONFLICT ON CONSTRAINT creator_earnings_source_payment_creator_unique
+         ON CONFLICT (source_payment_id, creator_id) WHERE source_payment_id IS NOT NULL
            DO NOTHING`,
         [String(creator_id), gross, amountCreator, amountPlatform,
          String(EARNINGS_HOLD_HOURS), `checkout_intent:${intentId}`]
