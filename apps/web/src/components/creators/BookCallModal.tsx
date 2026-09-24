@@ -19,6 +19,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import clsx from "clsx";
+import { useFloatingCall } from "@/context/FloatingCallContext";
 import { useI18n } from "@/lib/i18n";
 import {
   getCreatorCallPackages,
@@ -144,6 +145,7 @@ export function BookCallModal({
 }: BookCallModalProps) {
   const navigate = useNavigate();
   const t = useI18n();
+  const { openCall } = useFloatingCall();
 
   // ── Wizard state ────────────────────────────────────────────────────────────
   const needsModelStep = skipPackageStep && !initialCreator.id;
@@ -1434,11 +1436,46 @@ export function BookCallModal({
     ? Math.abs(new Date(startTimeForJoin).getTime() - Date.now()) <= 15 * 60 * 1000
     : isOnline; // online + now booking = always in window
 
-  // Navigate to /call/:bookingId — CallRoom page handles LiveKit connection
-  const handleJoinCallWithToken = () => {
+  // Join the booked call — fetches a LiveKit token then opens the floating overlay
+  // so the user can browse the site while on the call.
+  const handleJoinCallWithToken = async () => {
     if (!confirmedBookingId) return;
-    onClose();
-    navigate(`/call/${encodeURIComponent(String(confirmedBookingId))}`);
+    setJoinCallLoading(true);
+    setJoinCallError(null);
+    try {
+      const res = await fetch(
+        `/api/webapp/bookings/${encodeURIComponent(String(confirmedBookingId))}/join`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+        }
+      );
+      if (!res.ok) {
+        let msg = "Could not join call";
+        try { const b = await res.json(); if (typeof b.error === "string") msg = b.error; } catch { /* ignore */ }
+        setJoinCallError(msg);
+        return;
+      }
+      const data = await res.json() as { token?: string; livekitUrl?: string; roomName?: string; creatorUsername?: string };
+      if (!data.token || !data.livekitUrl || !data.roomName) {
+        setJoinCallError("Invalid response from server");
+        return;
+      }
+      onClose();
+      openCall({
+        token: data.token,
+        livekitUrl: data.livekitUrl,
+        roomName: data.roomName,
+        callerName: data.creatorUsername ? `@${data.creatorUsername}` : creator.username ? `@${creator.username}` : "Creator",
+        callerUserId: creator.id ? String(creator.id) : null,
+        callType: "booking",
+      });
+    } catch (err) {
+      setJoinCallError(err instanceof Error ? err.message : "Failed to join call");
+    } finally {
+      setJoinCallLoading(false);
+    }
   };
 
   const renderSuccessStep = () => (

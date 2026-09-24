@@ -33,6 +33,7 @@ import {
 import { connectSocket } from "@/lib/socket";
 import { MediaMessage, type MediaGroupItem } from "@/components/hangouts/MediaMessage";
 import LiveKitCallPanel from "@/components/hangouts/LiveKitCallDock";
+import { useFloatingCall } from "@/context/FloatingCallContext";
 import { SharedPostCard } from "@/components/social/SharedPostCard";
 import { UserAvatar } from "@/components/UserAvatar";
 
@@ -265,6 +266,7 @@ function DmCallSurface({ token, livekitUrl, roomName, partnerName, partnerUserId
 function DmChatView({ userId, myDbId, myUserId, isAdmin, onBack, panelMode }: { userId: string; myDbId: string; myUserId: string; isAdmin: boolean; onBack?: () => void; panelMode?: boolean }) {
   const { user: authUser } = useAuth();
   const navigate = useNavigate();
+  const { openCall: openFloatingCall } = useFloatingCall();
   const [searchParams, setSearchParams] = useSearchParams();
   const [messages, setMessages] = useState<DmMessage[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -619,12 +621,32 @@ function DmChatView({ userId, myDbId, myUserId, isAdmin, onBack, panelMode }: { 
       const session = await joinDmVideoCall(pendingCallRoom);
       setActiveCall(session);
       syncCallParams(session.roomName, session.callerId, session.calleeId);
+      // Open in the global floating overlay so the call persists across navigation
+      openFloatingCall({
+        token: session.token,
+        livekitUrl: session.livekitUrl,
+        roomName: session.roomName,
+        callerName: partnerName || "User",
+        callerUserId: userId,
+        callType: "dm",
+        onEnd: () => {
+          const callId = activeCallIdRef.current;
+          const roomName = session.roomName;
+          if (callId || roomName) {
+            try { connectSocket().emit("dm:call:end", { callId, roomName }); } catch { /* ignore */ }
+          }
+          activeCallIdRef.current = null;
+          setActiveCall(null);
+          setPendingCallRoom(null);
+          clearCallParams();
+        },
+      });
     } catch (err) {
       setChatError(err instanceof Error ? err.message : "Failed to join video call");
     } finally {
       setCallBusy(false);
     }
-  }, [pendingCallRoom, syncCallParams]);
+  }, [pendingCallRoom, syncCallParams, openFloatingCall, partnerName, userId, clearCallParams]);
 
   const handleStartVideoCall = useCallback(async () => {
     if (callBusy) return;
@@ -646,6 +668,7 @@ function DmChatView({ userId, myDbId, myUserId, isAdmin, onBack, panelMode }: { 
       setCallBusy(false);
     }
   }, [callBusy, copyToClipboard, syncCallParams, userId]);
+  // openFloatingCall intentionally not added as dependency — it's stable
 
   const closeActiveCall = useCallback(() => {
     const callId = activeCallIdRef.current;
@@ -2166,16 +2189,7 @@ function DmChatView({ userId, myDbId, myUserId, isAdmin, onBack, panelMode }: { 
         />
       )}
 
-      {activeCall && (
-        <DmCallSurface
-          token={activeCall.token}
-          livekitUrl={activeCall.livekitUrl}
-          roomName={activeCall.roomName}
-          partnerName={partnerName}
-          partnerUserId={userId}
-          onClose={closeActiveCall}
-        />
-      )}
+      {/* DM call is handled by FloatingCallOverlay (global, persists across navigation) */}
 
       {/* Lightbox */}
       {lightboxUrl && (
