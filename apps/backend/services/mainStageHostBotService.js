@@ -171,7 +171,7 @@ async function getCurrentCammerName() {
   try {
     const cammer = await getRedis().get('mainstage:spotlight:cammer');
     if (!cammer) return null;
-    const r = await query('SELECT id::text AS id, first_name, username FROM users WHERE id = $1 OR telegram = $1 LIMIT 1', [String(cammer)]);
+    const r = await query('SELECT id::text AS id, first_name, username FROM users WHERE id = $1 LIMIT 1', [String(cammer)]);
     const row = r.rows && r.rows[0];
     if (!row) return null;
     const name = row.first_name || row.username || null;

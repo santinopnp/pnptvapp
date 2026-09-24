@@ -574,7 +574,7 @@ async function countCreatorsInQueue() {
 async function countHumanCammers() {
   const redis = getRedis();
   const queue = await redis.lrange('mainstage:spotlight:queue', 0, -1);
-  return queue.filter((id) => id !== MEDIA_BOT_IDENTITY).length;
+  return queue.filter((id) => isHumanCammerIdentity(id)).length;
 }
 
 /**
@@ -1651,8 +1651,12 @@ async function advanceVideo() {
   await redis.expire(PLAYLIST_KEY, STATE_CACHE_TTL_S);
 
   // Force a media-compatible layout mode when auto-rotating video.
+  // Skip the mode change when PNPtv! Mode is locked — the lock pins the mode to
+  // 'spotlight' and setMode would throw PNPTV_MODE_LOCKED, which propagates to
+  // voteSkip/playNext callers as an unhandled 500. The video still loads; the
+  // layout stays pinned to spotlight for the duration of the lock.
   const currentMode = await redis.get(MODE_KEY);
-  if (currentMode !== 'cinema') {
+  if (currentMode !== 'cinema' && !(await isPnptvModeLocked())) {
     await setMode('cinema');
   }
 

@@ -824,8 +824,13 @@ const voteSkip = asyncHandler(async (req, res) => {
   const userRow = await fetchUserRow(userId);
   if (!userRow) return res.status(404).json({ success: false, error: 'User not found' });
 
-  const adminUser    = isAdminRole(userRow.role);
-  const hasMembership = adminUser || await EntitlementAccessService.hasEntitlement(String(userId), 'pnp-member');
+  const adminUser = isAdminRole(userRow.role);
+  // Check both pnp-member and prime — a PRIME purchase grants add_on_id='prime'
+  // (not 'pnp-member'), so checking only pnp-member incorrectly blocks PRIME users.
+  const hasMembership = adminUser || (await Promise.all([
+    EntitlementAccessService.hasEntitlement(String(userId), 'pnp-member'),
+    EntitlementAccessService.hasEntitlement(String(userId), 'prime'),
+  ])).some(Boolean);
   if (!hasMembership) {
     return res.status(403).json({ success: false, error: 'Membership required to vote.', code: 'MEMBERSHIP_REQUIRED' });
   }
@@ -862,7 +867,13 @@ const playNext = asyncHandler(async (req, res) => {
   if (!adminUser) {
     let hasMembership = false;
     try {
-      hasMembership = await EntitlementAccessService.hasEntitlement(String(userId), 'pnp-member');
+      // Check both pnp-member and prime — a PRIME purchase grants add_on_id='prime'
+      // (not 'pnp-member'), so checking only pnp-member incorrectly blocks PRIME users.
+      const [hasMember, hasPrimeEnt] = await Promise.all([
+        EntitlementAccessService.hasEntitlement(String(userId), 'pnp-member'),
+        EntitlementAccessService.hasEntitlement(String(userId), 'prime'),
+      ]);
+      hasMembership = hasMember || hasPrimeEnt;
     } catch (entErr) {
       logger.error('[MainStage] play-next: entitlement check failed', { error: entErr.message });
       return res.status(503).json({ success: false, error: 'Service temporarily unavailable.', code: 'SESSION_BACKEND_UNAVAILABLE' });
