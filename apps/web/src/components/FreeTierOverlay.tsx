@@ -153,8 +153,8 @@ export default function FreeTierOverlay({ label, requiredTier = 'member', childr
                         className="w-full py-2 rounded-xl text-[11px] font-semibold transition-all active:scale-[0.97]"
                         style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.70)' }}
                       >
-                        <span className="block">{es ? '₿ Pagar con apps populares' : '₿ Pay with popular apps'}</span>
-                        <span className="block text-[10px] font-normal opacity-50 mt-0.5">Revolut · Cash App · PayPal · Venmo · Binance · Coinbase</span>
+                        <span className="block">{es ? '₿ Pagar con apps y wallets' : '₿ Pay with apps & wallets'}</span>
+                        <span className="block text-[9px] font-normal opacity-50 mt-0.5">BTC · ETH · USDC · USDT · etc.</span>
                       </button>
                     </div>
                     {isWalletOpen && (

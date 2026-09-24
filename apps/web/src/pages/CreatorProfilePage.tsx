@@ -1475,7 +1475,7 @@ export default function CreatorProfilePage() {
                                   border: channelPassTab === tab ? "1px solid rgba(212,0,122,0.4)" : "1px solid transparent",
                                 }}
                               >
-                                {tab === "rush" ? "Ru$h Wallet" : "Pay with crypto"}
+                                {tab === "rush" ? "Ru$h Wallet" : "Apps & Wallets"}
                               </button>
                             ))}
                           </div>

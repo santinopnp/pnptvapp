@@ -63,7 +63,7 @@ export const strings = {
 
     // ── Sticky CTA ─────────────────────────────────────────────────────────────
     ctaGetAccess: "CLAIM YOUR SPOT — $100",
-    ctaPayWithCrypto: "💎 PAY WITH CRYPTO — $100",
+    ctaPayWithCrypto: "💎 PAY WITH APPS & WALLETS — $100",
     ctaPayWithCard: "💳 PAY WITH CARD — $100",
     ctaPayWithWallet: "💎 PAY WITH WALLET OR CARD — $100",
     ctaPayWithDash: "🐎 PAY WITH DASH — $100",
@@ -243,7 +243,7 @@ export const strings = {
 
     // ── Sticky CTA ─────────────────────────────────────────────────────────────
     ctaGetAccess: "RECLAMA TU LUGAR — $100",
-    ctaPayWithCrypto: "💎 PAGAR CON CRIPTO — $100",
+    ctaPayWithCrypto: "💎 PAGAR CON APPS Y WALLETS — $100",
     ctaPayWithCard: "💳 PAGAR CON TARJETA — $100",
     ctaPayWithWallet: "💎 PAGAR CON WALLET O TARJETA — $100",
     ctaPayWithDash: "🐎 PAGAR CON DASH — $100",

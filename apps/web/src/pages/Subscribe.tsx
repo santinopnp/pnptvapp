@@ -1093,9 +1093,10 @@ export default function Subscribe() {
                   <button
                     type="button"
                     onClick={(e) => { e.stopPropagation(); openNpFallback(plan.id); }}
-                    className="w-full py-3 rounded-lg font-bold text-sm text-white/80 border border-white/15 bg-white/5 hover:bg-white/10 hover:text-white transition-all"
+                    className="w-full py-3 rounded-lg font-bold text-sm text-white/80 border border-white/15 bg-white/5 hover:bg-white/10 hover:text-white transition-all leading-tight"
                   >
-                    {t.lang === "es" ? "₿ Pagar con otra cripto" : "₿ Pay with another crypto"}
+                    <span className="block">₿ {t.lang === "es" ? "Pagar con apps y wallets" : "Pay with apps & wallets"}</span>
+                    <span className="block text-[10px] font-normal opacity-50 mt-0.5">BTC · ETH · USDC · USDT · etc.</span>
                   </button>
                 )}
                 {(() => {
@@ -1278,9 +1279,10 @@ export default function Subscribe() {
                   <button
                     type="button"
                     onClick={(e) => { e.stopPropagation(); openNpFallback(plan.id); }}
-                    className="w-full py-3 rounded-lg font-bold text-sm text-white/80 border border-white/15 bg-white/5 hover:bg-white/10 hover:text-white transition-all"
+                    className="w-full py-3 rounded-lg font-bold text-sm text-white/80 border border-white/15 bg-white/5 hover:bg-white/10 hover:text-white transition-all leading-tight"
                   >
-                    {t.lang === "es" ? "₿ Pagar con otra cripto" : "₿ Pay with another crypto"}
+                    <span className="block">₿ {t.lang === "es" ? "Pagar con apps y wallets" : "Pay with apps & wallets"}</span>
+                    <span className="block text-[10px] font-normal opacity-50 mt-0.5">BTC · ETH · USDC · USDT · etc.</span>
                   </button>
                 )}
                 {(() => {
@@ -1829,7 +1831,7 @@ function NowPaymentsWidgetModal({
         ) : (
           <>
             <h2 style={{ margin: "0 0 6px", fontSize: 20, fontWeight: 700, color: "#ffffff" }}>
-              {es ? "Pagar con cripto" : "Pay with crypto"}
+              {es ? "Pagar con apps y wallets" : "Pay with apps & wallets"}
             </h2>
             <p style={{ margin: "0 0 16px", fontSize: 13, color: "#8E8E93", lineHeight: 1.5 }}>
               {es

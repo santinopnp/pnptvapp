@@ -1252,9 +1252,10 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
             aria-disabled={availabilityLoading || isClosed}
             style={{
               display: "flex",
+              flexDirection: "column",
               alignItems: "center",
               justifyContent: "center",
-              gap: 8,
+              gap: 2,
               width: "100%",
               padding: "18px 24px",
               borderRadius: 16,
@@ -1292,7 +1293,7 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
               ? s.ctaLoading
               : isClosed
               ? s.ctaSoldOut
-              : s.ctaPayWithCrypto}
+              : <><span>{s.ctaPayWithCrypto}</span><span style={{ fontSize: 10, fontWeight: 400, opacity: 0.55, letterSpacing: "0.02em", textTransform: "none" }}>BTC · ETH · USDC · USDT · etc.</span></>}
           </button>
 
           {/* Wallet / USDC on Base — requires a pnptv session because
