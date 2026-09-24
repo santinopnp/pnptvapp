@@ -878,7 +878,8 @@ async function disengagePnptvModeLock(reason = 'unknown') {
   // next rotation tick.
   const currentSpot = await redis.get('mainstage:spotlight:cammer');
   if (currentSpot === holder) {
-    await redis.del('mainstage:spotlight:cammer');
+    // Only clear the rotation timer; keep the cammer key so advanceSpotlight()
+    // can read it as "current" and advance past the former holder correctly.
     await redis.del('mainstage:spotlight:nextAt');
   }
 
@@ -889,10 +890,14 @@ async function disengagePnptvModeLock(reason = 'unknown') {
   if (_io) _io.to('mainstage').emit('mainstage:pnptvMode:unlocked',
     { restoreMode, reason });
 
-  // Advance spotlight immediately (only meaningful in spotlight mode; advanceSpotlight
-  // is a no-op / emitState when the queue is empty or mode isn't spotlight).
+  // Advance spotlight immediately, but only when no new PNPtv! holder has
+  // already taken the lock (a race between concurrent disengagements).
   if (restoreMode === 'spotlight') {
-    await advanceSpotlight();
+    if (!(await redis.get(PNPTV_MODE_HOLDER_KEY))) {
+      await advanceSpotlight();
+    } else {
+      await emitState();
+    }
   } else {
     await emitState();
   }
@@ -2073,7 +2078,7 @@ async function upsertCammerStats(identity) {
     await pool.query(
       `INSERT INTO mainstage_cammer_stats (identity, user_id, last_seen_at)
        VALUES ($1, $2::text, NOW())
-       ON CONFLICT (identity) DO UPDATE SET last_seen_at = NOW(), user_id = COALESCE(mainstage_cammer_stats.user_id, EXCLUDED.user_id)`,
+       ON CONFLICT (identity) DO UPDATE SET last_seen_at = NOW(), user_id = CASE WHEN mainstage_cammer_stats.user_id IS NULL THEN EXCLUDED.user_id WHEN mainstage_cammer_stats.user_id LIKE 'replay-%' THEN EXCLUDED.user_id ELSE mainstage_cammer_stats.user_id END`,
       [identityStr, userId]
     );
   } catch (err) {
