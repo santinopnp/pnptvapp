@@ -10,7 +10,7 @@ const PRIME_UPSELL_CREATOR_IDS = new Set(["8599671840", "8552451957", "8f5f4dd1-
 
 const CHECKOUT_MODAL_PLANS = [
   { id: "yearly50",    label: "PRIME Annual",   tag: "1 year",  price: 50.00  },
-  { id: "lifetime100", label: "Lifetime PRIME", tag: "Forever", price: 100.00 },
+  { id: "lifetime100", label: "PNPtv Founders", tag: "18 mo PRIME + ✨ Channel", price: 100.00 },
 ] as const;
 import {
   togglePostLike,

@@ -122,7 +122,7 @@ const strings = {
 
     // Longer plans teaser
     longerPlansTitle: "Save more with longer plans",
-    longerPlansDesc: "Crystal PRIME (6mo) \u00b7 Diamond PRIME (1yr) \u00b7 Lifetime PRIME",
+    longerPlansDesc: "Crystal PRIME (6mo) \u00b7 Diamond PRIME (1yr) \u00b7 PNPtv Founders",
     longerPlansSeeAll: "See all",
 
     // Featured creators section
@@ -894,7 +894,7 @@ const strings = {
     primePlanCta: "PRIME werden",
 
     longerPlansTitle: "Spare mehr mit längeren Plänen",
-    longerPlansDesc: "Crystal PRIME (6 Monate) \u00b7 Diamond PRIME (1 Jahr) \u00b7 Lifetime PRIME",
+    longerPlansDesc: "Crystal PRIME (6 Monate) \u00b7 Diamond PRIME (1 Jahr) \u00b7 PNPtv Founders",
     longerPlansSeeAll: "Alle anzeigen",
 
     meetCreatorsLabel: "Lerne die Creator kennen",
@@ -1534,7 +1534,7 @@ const strings = {
     primePlanCta: "Word PRIME",
 
     longerPlansTitle: "Bespaar meer met langere plannen",
-    longerPlansDesc: "Crystal PRIME (6 mnd) \u00b7 Diamond PRIME (1 jaar) \u00b7 Lifetime PRIME",
+    longerPlansDesc: "Crystal PRIME (6 mnd) \u00b7 Diamond PRIME (1 jaar) \u00b7 PNPtv Founders",
     longerPlansSeeAll: "Alles bekijken",
 
     meetCreatorsLabel: "Maak kennis met de creators",

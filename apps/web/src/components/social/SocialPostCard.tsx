@@ -5,12 +5,12 @@ const PRIME_PLANS = [
   { id: "prime-week-pass-7d",      label: "PRIME Week Pass",   duration: "7 days",   price: "15",    isRecurring: false, recommended: false },
   { id: "monthly-pass",            label: "PRIME Monthly",     duration: "30 days",  price: "24.99", isRecurring: true,  recommended: true  },
   { id: "prime-diamond-pass-365d", label: "PRIME Diamond",     duration: "1 year",   price: "99.99", isRecurring: false, recommended: false },
-  { id: "lifetime80",              label: "Lifetime PRIME",    duration: "Forever",  price: "100",   isRecurring: false, recommended: false },
+  { id: "lifetime80",              label: "PNPtv Founders",    duration: "18 mo PRIME",  price: "100",   isRecurring: false, recommended: false },
 ] as const;
 
 const CHECKOUT_MODAL_PLANS = [
   { id: "yearly50",   label: "PRIME Annual",   tag: "1 year",  price: 50.00, weekend: true  },
-  { id: "lifetime100", label: "Lifetime PRIME", tag: "Forever", price: 99.99, weekend: false },
+  { id: "lifetime100", label: "PNPtv Founders", tag: "18 mo PRIME + ✨ Channel", price: 99.99, weekend: false },
 ] as const;
 import { MentionText } from "@/components/MentionText";
 import { MentionInput } from "@/components/MentionInput";
