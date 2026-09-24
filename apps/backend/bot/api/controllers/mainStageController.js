@@ -824,8 +824,15 @@ const voteSkip = asyncHandler(async (req, res) => {
   const userRow = await fetchUserRow(userId);
   if (!userRow) return res.status(404).json({ success: false, error: 'User not found' });
 
-  const adminUser    = isAdminRole(userRow.role);
-  const hasMembership = adminUser || await EntitlementAccessService.hasEntitlement(String(userId), 'pnp-member');
+  const adminUser = isAdminRole(userRow.role);
+  let hasMembership = adminUser;
+  if (!adminUser) {
+    const [hasMember, hasPrimeEnt] = await Promise.all([
+      EntitlementAccessService.hasEntitlement(String(userId), 'pnp-member'),
+      EntitlementAccessService.hasEntitlement(String(userId), 'prime'),
+    ]);
+    hasMembership = hasMember || hasPrimeEnt;
+  }
   if (!hasMembership) {
     return res.status(403).json({ success: false, error: 'Membership required to vote.', code: 'MEMBERSHIP_REQUIRED' });
   }
