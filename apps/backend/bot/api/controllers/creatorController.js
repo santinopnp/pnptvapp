@@ -967,18 +967,21 @@ const MAX_CHANNELS_PER_CREATOR = 20;
 const createChannel = async (req, res) => {
   try {
     // Verify active creator
-    const userRes = await query('SELECT creator_status FROM users WHERE id = $1', [req.user.id]);
+    const userRes = await query('SELECT creator_status, channel_limit_bypass FROM users WHERE id = $1', [req.user.id]);
     if (!userRes.rows.length || userRes.rows[0].creator_status !== 'active') {
       return res.status(403).json({ error: 'Active creator status required' });
     }
+    const bypassLimits = userRes.rows[0].channel_limit_bypass === true;
 
     // Enforce per-creator channel limit to prevent storage/index abuse.
-    const channelCountRes = await query(
-      'SELECT COUNT(*)::int AS n FROM creator_channels WHERE creator_id = $1 AND is_active = true AND is_system = false',
-      [req.user.id]
-    );
-    if (channelCountRes.rows[0].n >= MAX_CHANNELS_PER_CREATOR) {
-      return res.status(400).json({ error: `Channel limit reached (max ${MAX_CHANNELS_PER_CREATOR} active channels per creator)` });
+    if (!bypassLimits) {
+      const channelCountRes = await query(
+        'SELECT COUNT(*)::int AS n FROM creator_channels WHERE creator_id = $1 AND is_active = true AND is_system = false',
+        [req.user.id]
+      );
+      if (channelCountRes.rows[0].n >= MAX_CHANNELS_PER_CREATOR) {
+        return res.status(400).json({ error: `Channel limit reached (max ${MAX_CHANNELS_PER_CREATOR} active channels per creator)` });
+      }
     }
 
     const { name, description, tags, isPremium, collaborators, telegramChannelId, bridgeEnabled, accessType, priceUsd } = req.body;
@@ -994,8 +997,11 @@ const createChannel = async (req, res) => {
     //   subscription — the canonical channel (auto-provisioned on onboarding)
     //   paid         — [Phase 2 only] separate themed paid channel
     //   prime        — admin-only (system channel 209); creators cannot self-create
-    const ALLOWED_ACCESS_TYPES = new Set(['paid', 'subscription']);
-    if (accessType === 'prime') {
+    //   bts          — Crystal Creator BTS subscription
+    const ALLOWED_ACCESS_TYPES = new Set(
+      bypassLimits ? ['paid', 'subscription', 'bts', 'prime'] : ['paid', 'subscription']
+    );
+    if (!bypassLimits && accessType === 'prime') {
       return res.status(403).json({
         error: 'Creators can only set access to paid or subscription.',
         code: 'ACCESS_TYPE_FORBIDDEN',
@@ -1007,7 +1013,7 @@ const createChannel = async (req, res) => {
       return res.status(400).json({ error: 'Free channels are no longer supported. Post directly to your wall — free posts get a Subscribe CTA in the community feed.', code: 'FREE_CHANNELS_DEPRECATED' });
     }
 
-    if (safeAccessType === 'subscription' || safeAccessType === 'paid') {
+    if (!bypassLimits && (safeAccessType === 'subscription' || safeAccessType === 'paid')) {
       const dup = await query(
         `SELECT id FROM creator_channels
           WHERE creator_id = $1 AND is_active = true
