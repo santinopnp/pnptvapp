@@ -32,6 +32,7 @@ import { WalletPayCard, WalletLoginGate } from "@/components/payments/PayInWalle
 // into /subscribe (which uses the wallet). Local shim below preserves the
 // JSX call sites without pulling in the NP hook.
 import { CryptoOnboardingWizard } from "@/components/payments/CryptoOnboardingWizard";
+import { NpAppPickerSheet } from "@/components/payments/NowPaymentsWaitingPanel";
 import CreatorSubscribeWizard from "@/components/creators/CreatorSubscribeWizard";
 // NearbyBadge removed — PostCard shows city name inline instead
 import { MentionText } from "@/components/MentionText";
@@ -312,14 +313,16 @@ export default function PostCard({
   const [promoModalPlanId, setPromoModalPlanId] = useState<"yearly50" | "lifetime100" | null>(null);
   const [npLaunching, setNpLaunching] = useState(false);
   const [npError, setNpError] = useState<string | null>(null);
+  const [npPickerPlanId, setNpPickerPlanId] = useState<string | null>(null);
   const npPopupRef = useRef<Window | null>(null);
   const launchNpCheckout = useCallback(async (planId: string) => {
     setNpLaunching(true);
     setNpError(null);
     try {
-      const res = await prepareUsdcSubscription(planId, undefined, undefined, "usdcbase");
+      const res = await prepareUsdcSubscription(planId, undefined, undefined, "btc");
       const src = `https://nowpayments.io/embeds/payment-widget?iid=${res.nowpaymentsInvoiceId}`;
       npPopupRef.current = window.open(src, "pnp_np_wallet", "width=540,height=700,left=200,top=100");
+      setNpPickerPlanId(null);
     } catch {
       setNpError(userLang === "es" ? "No se pudo abrir el pago. Intenta de nuevo." : "Could not open payment. Try again.");
     } finally {
@@ -2044,13 +2047,10 @@ export default function PostCard({
                     <div className="flex-1 h-px bg-white/10" />
                   </div>
                   <button
-                    onClick={() => launchNpCheckout(selectedPlan.id)}
-                    disabled={npLaunching}
-                    className="w-full py-3 rounded-xl border border-white/15 bg-white/[0.04] hover:bg-white/[0.08] disabled:opacity-50 text-sm font-semibold text-white/80 transition-colors"
+                    onClick={() => setNpPickerPlanId(selectedPlan.id)}
+                    className="w-full py-3 rounded-xl border border-white/15 bg-white/[0.04] hover:bg-white/[0.08] text-sm font-semibold text-white/80 transition-colors"
                   >
-                    {npLaunching
-                      ? (es ? "Abriendo…" : "Opening…")
-                      : (es ? "💸 Pagar con cualquier cripto →" : "💸 Pay with any crypto →")}
+                    {es ? "₿ Pagar con Bitcoin →" : "₿ Pay with Bitcoin →"}
                   </button>
                   {npError && <p className="text-[11px] text-red-400 text-center">{npError}</p>}
                 </div>
@@ -2059,6 +2059,15 @@ export default function PostCard({
           </div>
         );
       })()}
+
+      <NpAppPickerSheet
+        isOpen={!!npPickerPlanId}
+        onClose={() => setNpPickerPlanId(null)}
+        onLaunch={() => npPickerPlanId && launchNpCheckout(npPickerPlanId)}
+        launching={npLaunching}
+        lang={userLang}
+        planLabel={npPickerPlanId ? (CHECKOUT_MODAL_PLANS.find(p => p.id === npPickerPlanId)?.label ?? 'PRIME') : undefined}
+      />
     </div>
   );
 }

@@ -14,7 +14,7 @@ interface NowPaymentsWaitingPanelProps {
 
 // ── App picker guide — collapsed by default, replaces raw coin instructions ───
 
-const PANEL_APPS = [
+export const PANEL_APPS = [
   { id: 'revolut',  label: 'Revolut',  geo: 'EU',     emoji: '🟣', bg: 'rgba(91,106,208,0.22)',  border: 'rgba(91,106,208,0.55)'  },
   { id: 'cashapp',  label: 'Cash App', geo: 'US/UK',  emoji: '💚', bg: 'rgba(0,214,79,0.15)',    border: 'rgba(0,214,79,0.50)'    },
   { id: 'paypal',   label: 'PayPal',   geo: 'Global', emoji: '🔵', bg: 'rgba(0,48,135,0.40)',    border: 'rgba(0,112,255,0.50)'   },
@@ -24,7 +24,7 @@ const PANEL_APPS = [
   { id: 'coinbase', label: 'Coinbase', geo: 'Global', emoji: '🔵', bg: 'rgba(0,82,255,0.22)',    border: 'rgba(0,82,255,0.50)'    },
 ] as const;
 
-const PANEL_STEPS_EN: Record<string, string[]> = {
+export const PANEL_STEPS_EN: Record<string, string[]> = {
   revolut:  ["Open Revolut → search 'Bitcoin' in the top search bar", "Tap Bitcoin (BTC) → tap 'Send'", "Tap 'Send to crypto address'", "Paste the address shown above (or scan the QR)", "Enter the exact amount shown → Confirm"],
   cashapp:  ["Open Cash App → tap the Bitcoin tab (₿) at the bottom", "Tap 'Send Bitcoin'", "Paste the address shown above (or scan the QR)", "Enter the exact amount shown → Confirm"],
   paypal:   ["Open PayPal → tap 'Crypto'", "Tap 'Bitcoin (BTC)'", "Tap 'Transfer' → 'External wallet'", "Paste the address shown above (or scan the QR)", "Enter the exact amount → Review → Send"],
@@ -34,7 +34,7 @@ const PANEL_STEPS_EN: Record<string, string[]> = {
   coinbase: ["Open Coinbase → tap 'Assets' → find 'Bitcoin'", "Tap 'Send'", "Paste the address shown above (or scan the QR)", "Enter the exact amount → Continue → Send now"],
 };
 
-const PANEL_STEPS_ES: Record<string, string[]> = {
+export const PANEL_STEPS_ES: Record<string, string[]> = {
   revolut:  ["Abre Revolut → busca 'Bitcoin' en la barra de búsqueda", "Toca Bitcoin (BTC) → toca 'Enviar'", "Toca 'Enviar a dirección cripto'", "Pega la dirección de arriba (o escanea el QR)", "Ingresa el monto exacto → Confirma"],
   cashapp:  ["Abre Cash App → toca la pestaña Bitcoin (₿) abajo", "Toca 'Enviar Bitcoin'", "Pega la dirección de arriba (o escanea el QR)", "Ingresa el monto exacto → Confirma"],
   paypal:   ["Abre PayPal → toca 'Criptomonedas'", "Toca 'Bitcoin (BTC)'", "Toca 'Transferir' → 'Billetera externa'", "Pega la dirección de arriba (o escanea el QR)", "Ingresa el monto exacto → Revisar → Enviar"],
@@ -126,6 +126,139 @@ function AppGuidePanel({ es }: { es: boolean }) {
           </a>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Exported pre-checkout app picker sheet ────────────────────────────────────
+// Shows BEFORE the NP popup opens so users pick their familiar app first.
+// Usage: open on "₿ Pay with crypto" click; onLaunch fires the NP popup.
+export function NpAppPickerSheet({
+  isOpen,
+  onClose,
+  onLaunch,
+  launching,
+  lang,
+  planLabel,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onLaunch: () => void;
+  launching: boolean;
+  lang: string;
+  planLabel?: string;
+}) {
+  const es = (lang || 'es').startsWith('es');
+  const [selectedApp, setSelectedApp] = useState<string | null>(null);
+  const steps = selectedApp && selectedApp !== 'other'
+    ? (es ? PANEL_STEPS_ES : PANEL_STEPS_EN)[selectedApp] ?? []
+    : [];
+  const appLabel = PANEL_APPS.find(a => a.id === selectedApp)?.label ?? '';
+
+  if (!isOpen) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end"
+      onClick={onClose}
+    >
+      <div className="absolute inset-0 bg-black/65 backdrop-blur-sm" />
+      <div
+        className="relative w-full rounded-t-2xl p-5 space-y-4"
+        style={{ background: '#111', border: '1px solid rgba(255,255,255,0.08)', maxHeight: '90vh', overflowY: 'auto' }}
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Handle */}
+        <div className="w-10 h-1 rounded-full bg-white/20 mx-auto -mt-1 mb-1" />
+
+        <div className="text-center">
+          <p className="text-base font-black text-white">
+            {es ? '₿ Paga con Bitcoin' : '₿ Pay with Bitcoin'}
+          </p>
+          {planLabel && (
+            <p className="text-xs text-white/40 mt-0.5">{planLabel}</p>
+          )}
+        </div>
+
+        <p className="text-[11px] text-white/50 text-center -mt-1">
+          {es
+            ? 'Elige tu app y te mostramos los pasos exactos:'
+            : 'Pick your app and we\'ll show you the exact steps:'}
+        </p>
+
+        {/* App grid */}
+        <div className="grid grid-cols-4 gap-2">
+          {PANEL_APPS.map(app => {
+            const isSel = selectedApp === app.id;
+            return (
+              <button
+                key={app.id}
+                type="button"
+                onClick={() => setSelectedApp(isSel ? null : app.id)}
+                className="flex flex-col items-center gap-1 py-3 px-1 rounded-xl border transition active:scale-[0.95]"
+                style={isSel
+                  ? { background: app.bg, borderColor: app.border }
+                  : { background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(255,255,255,0.10)' }
+                }
+              >
+                <span className="text-[20px] leading-none">{app.emoji}</span>
+                <span className="text-[10px] font-semibold text-white/80 text-center leading-tight">{app.label}</span>
+                <span className="text-[8px] text-white/30 leading-none">{app.geo}</span>
+              </button>
+            );
+          })}
+          {/* Other / no app */}
+          <button
+            type="button"
+            onClick={() => setSelectedApp(selectedApp === 'other' ? null : 'other')}
+            className="flex flex-col items-center gap-1 py-3 px-1 rounded-xl border transition active:scale-[0.95]"
+            style={selectedApp === 'other'
+              ? { background: 'rgba(255,255,255,0.08)', borderColor: 'rgba(255,255,255,0.30)' }
+              : { background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(255,255,255,0.10)' }
+            }
+          >
+            <span className="text-[20px] leading-none">🔗</span>
+            <span className="text-[10px] font-semibold text-white/80 text-center leading-tight">{es ? 'Otra' : 'Other'}</span>
+            <span className="text-[8px] text-white/30 leading-none">–</span>
+          </button>
+        </div>
+
+        {/* Step instructions */}
+        {selectedApp && steps.length > 0 && (
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 animate-in fade-in slide-in-from-top-1 duration-150">
+            <p className="text-[10px] font-semibold text-white/45 uppercase tracking-wide mb-2">
+              {es ? `Pasos en ${appLabel}` : `Steps in ${appLabel}`}
+            </p>
+            <ol className="space-y-1.5">
+              {steps.map((step, i) => (
+                <li key={i} className="flex items-start gap-2">
+                  <span className="flex-shrink-0 w-4 h-4 rounded-full bg-white/10 flex items-center justify-center text-[9px] font-bold text-white/55 mt-0.5">{i + 1}</span>
+                  <span className="text-[11px] text-white/75 leading-relaxed">{step}</span>
+                </li>
+              ))}
+            </ol>
+          </div>
+        )}
+
+        {/* CTA */}
+        <button
+          type="button"
+          disabled={launching}
+          onClick={onLaunch}
+          className="w-full py-3.5 rounded-2xl text-sm font-black text-white transition-all active:scale-[0.97] disabled:opacity-60"
+          style={{ background: 'linear-gradient(135deg,#ff3377,#ff9933)' }}
+        >
+          {launching
+            ? (es ? 'Abriendo…' : 'Opening…')
+            : (es ? '₿ Abrir pago' : '₿ Open payment')}
+        </button>
+
+        <p className="text-[10px] text-white/30 text-center -mt-1">
+          {es
+            ? 'Se abrirá una ventana de pago — completa el pago y tu plan se activa solo.'
+            : 'A payment window will open — complete the payment and your plan activates automatically.'}
+        </p>
+      </div>
     </div>
   );
 }

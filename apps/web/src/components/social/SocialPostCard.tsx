@@ -22,6 +22,7 @@ import { VideoPlayer } from "@/components/VideoPlayer";
 import { MediaLightbox } from "@/components/hangouts/MediaLightbox";
 // NP inline checkout retired 2026-08-09; PRIME CTAs deep-link to /subscribe.
 import { CryptoOnboardingWizard } from "@/components/payments/CryptoOnboardingWizard";
+import { NpAppPickerSheet } from "@/components/payments/NowPaymentsWaitingPanel";
 import CreatorSubscribeWizard from "@/components/creators/CreatorSubscribeWizard";
 import { WalletPayCard } from "@/components/payments/PayInWalletChips";
 import {
@@ -417,6 +418,7 @@ export default function SocialPostCard({
   const [promoModalPlanId, setPromoModalPlanId] = useState<string | null>(null);
   const [npLaunching, setNpLaunching] = useState(false);
   const [npError, setNpError] = useState<string | null>(null);
+  const [npPickerPlanId, setNpPickerPlanId] = useState<string | null>(null);
   const hypeInFlight = useRef(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const npPopupRef = useRef<Window | null>(null);
@@ -488,11 +490,12 @@ export default function SocialPostCard({
     setNpLaunching(true);
     setNpError(null);
     try {
-      const res = await prepareUsdcSubscription(planId, undefined, undefined, "usdcbase");
+      const res = await prepareUsdcSubscription(planId, undefined, undefined, "btc");
       if (!res.success || !res.nowpaymentsInvoiceId) throw new Error(res.error || "Could not create invoice.");
       assertPaymentUrl(res.invoiceUrl);
       const src = `https://nowpayments.io/embeds/payment-widget?iid=${encodeURIComponent(String(res.nowpaymentsInvoiceId))}`;
       npPopupRef.current = window.open(src, "pnp_np_wallet", "width=540,height=700,left=200,top=100");
+      setNpPickerPlanId(null);
     } catch (e) {
       setNpError(e instanceof Error ? e.message : "Could not open checkout.");
     } finally {
@@ -2454,13 +2457,10 @@ export default function SocialPostCard({
                       <div className="flex-1 h-px bg-white/10" />
                     </div>
                     <button
-                      onClick={() => launchNpCheckout(selectedPlan.id)}
-                      disabled={npLaunching}
-                      className="w-full py-3 rounded-xl border border-white/15 bg-white/[0.04] hover:bg-white/[0.08] disabled:opacity-50 text-sm font-semibold text-white/80 transition-colors"
+                      onClick={() => setNpPickerPlanId(selectedPlan.id)}
+                      className="w-full py-3 rounded-xl border border-white/15 bg-white/[0.04] hover:bg-white/[0.08] text-sm font-semibold text-white/80 transition-colors"
                     >
-                      {npLaunching
-                        ? (es ? "Abriendo…" : "Opening…")
-                        : (es ? "💸 Pagar con cualquier cripto →" : "💸 Pay with any crypto →")}
+                      {es ? "₿ Pagar con Bitcoin →" : "₿ Pay with Bitcoin →"}
                     </button>
                     {npError && (
                       <p className="text-[11px] text-red-400 text-center">{npError}</p>
@@ -2519,6 +2519,15 @@ export default function SocialPostCard({
           </div>
         );
       })()}
+
+      <NpAppPickerSheet
+        isOpen={!!npPickerPlanId}
+        onClose={() => setNpPickerPlanId(null)}
+        onLaunch={() => npPickerPlanId && launchNpCheckout(npPickerPlanId)}
+        launching={npLaunching}
+        lang={lang}
+        planLabel={npPickerPlanId ? (CHECKOUT_MODAL_PLANS.find(p => p.id === npPickerPlanId)?.label ?? 'PRIME') : undefined}
+      />
     </div>
   );
 }

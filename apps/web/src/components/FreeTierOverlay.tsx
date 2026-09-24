@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { WalletPayCard, WalletLoginGate } from '@/components/payments/PayInWalletChips';
+import { NpAppPickerSheet } from '@/components/payments/NowPaymentsWaitingPanel';
 import { prepareUsdcSubscription } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
 
@@ -22,13 +23,14 @@ export default function FreeTierOverlay({ label, requiredTier = 'member', childr
 
   const [sheetOpen, setSheetOpen] = useState(false);
   const [walletPlanId, setWalletPlanId] = useState<string | null>(null);
-  const [npLaunching, setNpLaunching] = useState<string | null>(null);
+  const [npPickerPlanId, setNpPickerPlanId] = useState<string | null>(null);
+  const [npLaunching, setNpLaunching] = useState(false);
   const npPopupRef = React.useRef<Window | null>(null);
 
-  const openNp = useCallback(async (planId: string, price: number) => {
-    setNpLaunching(planId);
+  const launchNp = useCallback(async (planId: string) => {
+    setNpLaunching(true);
     try {
-      const res = await prepareUsdcSubscription(planId, undefined, undefined, 'usdcbase');
+      const res = await prepareUsdcSubscription(planId, undefined, undefined, 'btc');
       const src = `https://nowpayments.io/embeds/payment-widget?iid=${res.nowpaymentsInvoiceId}`;
       const popW = Math.min(540, Math.round(window.innerWidth * 0.95));
       const popH = Math.min(700, Math.round(window.innerHeight * 0.9));
@@ -36,10 +38,11 @@ export default function FreeTierOverlay({ label, requiredTier = 'member', childr
       const top = Math.round((window.innerHeight - popH) / 2);
       const specs = `width=${popW},height=${popH},left=${left},top=${top},resizable=yes,scrollbars=yes`;
       npPopupRef.current = window.open(src, 'pnp_np_wallet', specs);
+      setNpPickerPlanId(null);
     } catch {
       navigate('/subscribe');
     } finally {
-      setNpLaunching(null);
+      setNpLaunching(false);
     }
   }, [navigate]);
 
@@ -142,12 +145,11 @@ export default function FreeTierOverlay({ label, requiredTier = 'member', childr
                       </button>
                       <button
                         type="button"
-                        disabled={npLaunching === plan.id}
-                        onClick={() => openNp(plan.id, plan.price)}
-                        className="w-full py-2 rounded-xl text-[11px] font-semibold transition-all active:scale-[0.97] disabled:opacity-60"
+                        onClick={() => setNpPickerPlanId(plan.id)}
+                        className="w-full py-2 rounded-xl text-[11px] font-semibold transition-all active:scale-[0.97]"
                         style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.70)' }}
                       >
-                        {npLaunching === plan.id ? '…' : (es ? '₿ Otra cripto' : '₿ Other crypto')}
+                        {es ? '₿ Pagar con cripto' : '₿ Pay with crypto'}
                       </button>
                     </div>
                     {isWalletOpen && (
@@ -180,6 +182,15 @@ export default function FreeTierOverlay({ label, requiredTier = 'member', childr
           </div>
         </div>
       )}
+
+      <NpAppPickerSheet
+        isOpen={!!npPickerPlanId}
+        onClose={() => setNpPickerPlanId(null)}
+        onLaunch={() => npPickerPlanId && launchNp(npPickerPlanId)}
+        launching={npLaunching}
+        lang={lang}
+        planLabel={npPickerPlanId === 'lifetime100' ? 'PNPtv Founders' : 'PRIME Annual'}
+      />
     </>
   );
 }

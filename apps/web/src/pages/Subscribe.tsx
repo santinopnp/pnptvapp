@@ -32,6 +32,7 @@ import {
   metaMaskDeepLink,
   isMetaMaskCompatible,
 } from "@/components/payments/PayInWalletChips";
+import { PANEL_APPS, PANEL_STEPS_EN, PANEL_STEPS_ES } from "@/components/payments/NowPaymentsWaitingPanel";
 import { connectSocket } from "@/lib/socket";
 
 const MEMBER_PLAN_IDS = new Set(["member_monthly"]);
@@ -1533,6 +1534,7 @@ function NowPaymentsWidgetModal({
 }) {
   const es = lang === "es";
   const [payCurrency, setPayCurrency] = useState<string>("usdcbase");
+  const [selectedApp, setSelectedApp] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [invoice, setInvoice] = useState<NpInvoice | null>(null);
@@ -1834,6 +1836,81 @@ function NowPaymentsWidgetModal({
                 ? "Elige la moneda. Tu plan se activa apenas la red confirme el pago — sin códigos ni esperas."
                 : "Pick your coin. Your plan activates the moment the network confirms — no codes, no waiting."}
             </p>
+
+            {/* App picker — shows step-by-step instructions per app, auto-selects BTC */}
+            <p style={{ margin: "0 0 8px", fontSize: 12, fontWeight: 600, color: "#8E8E93" }}>
+              {es ? "Paga desde tu app" : "Pay from your app"}
+            </p>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 8, marginBottom: 12 }}>
+              {PANEL_APPS.map(app => {
+                const isSel = selectedApp === app.id;
+                return (
+                  <button
+                    key={app.id}
+                    type="button"
+                    onClick={() => {
+                      const next = isSel ? null : app.id;
+                      setSelectedApp(next);
+                      if (next) setPayCurrency('btc');
+                    }}
+                    disabled={submitting}
+                    style={{
+                      display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
+                      padding: "10px 4px", borderRadius: 12,
+                      border: isSel ? `1.5px solid ${app.border}` : "1px solid rgba(255,255,255,0.12)",
+                      background: isSel ? app.bg : "rgba(0,0,0,0.3)",
+                      cursor: "pointer", transition: "all 0.15s",
+                    }}
+                  >
+                    <span style={{ fontSize: 18 }}>{app.emoji}</span>
+                    <span style={{ fontSize: 9, fontWeight: 700, color: isSel ? "#fff" : "rgba(255,255,255,0.7)", textAlign: "center" }}>{app.label}</span>
+                    <span style={{ fontSize: 7.5, color: "rgba(255,255,255,0.28)" }}>{app.geo}</span>
+                  </button>
+                );
+              })}
+              {/* "Other" — back to coin picker */}
+              <button
+                type="button"
+                onClick={() => { setSelectedApp(selectedApp === 'other' ? null : 'other'); }}
+                disabled={submitting}
+                style={{
+                  display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
+                  padding: "10px 4px", borderRadius: 12,
+                  border: selectedApp === 'other' ? "1.5px solid rgba(255,255,255,0.35)" : "1px solid rgba(255,255,255,0.12)",
+                  background: selectedApp === 'other' ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.3)",
+                  cursor: "pointer", transition: "all 0.15s",
+                }}
+              >
+                <span style={{ fontSize: 18 }}>🔗</span>
+                <span style={{ fontSize: 9, fontWeight: 700, color: "rgba(255,255,255,0.7)", textAlign: "center" }}>{es ? 'Otra' : 'Other'}</span>
+                <span style={{ fontSize: 7.5, color: "rgba(255,255,255,0.28)" }}>–</span>
+              </button>
+            </div>
+
+            {/* Step instructions for selected app */}
+            {selectedApp && selectedApp !== 'other' && (() => {
+              const steps = (es ? PANEL_STEPS_ES : PANEL_STEPS_EN)[selectedApp] ?? [];
+              const appLabel = PANEL_APPS.find(a => a.id === selectedApp)?.label ?? '';
+              return steps.length > 0 ? (
+                <div style={{
+                  margin: "0 0 14px", padding: "12px 14px",
+                  background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.10)",
+                  borderRadius: 12,
+                }}>
+                  <p style={{ margin: "0 0 8px", fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.40)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                    {es ? `Pasos en ${appLabel}` : `Steps in ${appLabel}`}
+                  </p>
+                  <ol style={{ margin: 0, padding: "0 0 0 18px", listStyle: "decimal" }}>
+                    {steps.map((step, i) => (
+                      <li key={i} style={{ fontSize: 11, color: "rgba(255,255,255,0.72)", lineHeight: 1.55, marginBottom: i < steps.length - 1 ? 4 : 0 }}>{step}</li>
+                    ))}
+                  </ol>
+                  <p style={{ margin: "8px 0 0", fontSize: 10, color: "rgba(255,255,255,0.28)" }}>
+                    {es ? "⚡ El plan se activa automáticamente al confirmar." : "⚡ Plan activates automatically once confirmed."}
+                  </p>
+                </div>
+              ) : null;
+            })()}
 
             <p style={{ margin: "0 0 8px", fontSize: 12, fontWeight: 600, color: "#8E8E93" }}>
               {es ? "Elige tu moneda" : "Choose your currency"}
