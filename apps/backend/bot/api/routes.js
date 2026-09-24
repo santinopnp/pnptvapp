@@ -15726,10 +15726,6 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
     if (!isStablecoin) {
       return res.json({ received: true });
     }
-    if (actually_paid == null) {
-      logger.warn('[NOWPayments] IPN: stablecoin confirmed but actually_paid missing — deferring to finished event', { order_id });
-      return res.json({ received: true, deferred: true });
-    }
     logger.info('[NOWPayments] IPN: stablecoin confirmed — falling through to grant', { order_id, pay_currency });
     // fall through to the grant path below
   }
@@ -15745,6 +15741,8 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
 
   // Verify payment exists in NowPayments API before granting (covers both 'finished' and stablecoin 'confirmed').
   // Guards against test IPNs sent from the merchant dashboard (they pass HMAC but have fake payment IDs).
+  // Also used to resolve actually_paid when the IPN body omits it (observed on some stablecoin confirmed IPNs).
+  let _verifiedActuallyPaid = actually_paid;
   try {
     const verifyRes = await fetch(`${NOWPAYMENTS_URL}/payment/${payment_id}`, {
       headers: { 'x-api-key': NOWPAYMENTS_API_KEY },
@@ -15756,6 +15754,19 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
     if (!verifyRes.ok) {
       logger.error('[NOWPayments] IPN: payment verification API error — rejecting for retry', { payment_id, status: verifyRes.status });
       return res.status(500).json({ error: 'payment_verification_unavailable' });
+    }
+    if (_verifiedActuallyPaid == null) {
+      try {
+        const verifyData = await verifyRes.json();
+        if (verifyData.actually_paid != null) {
+          _verifiedActuallyPaid = parseFloat(verifyData.actually_paid);
+          logger.info('[NOWPayments] IPN: resolved actually_paid from API', { payment_id, order_id, actually_paid: _verifiedActuallyPaid });
+        } else if (isStablecoin && verifyData.price_amount != null) {
+          // For stablecoins (USDC/USDT) price_amount ≈ actually_paid; use as safe fallback.
+          _verifiedActuallyPaid = parseFloat(verifyData.price_amount);
+          logger.info('[NOWPayments] IPN: stablecoin actually_paid still null — using price_amount as fallback', { payment_id, order_id, fallback: _verifiedActuallyPaid });
+        }
+      } catch (_) { /* non-fatal: verification body parse error, proceed with null */ }
     }
   } catch (verifyErr) {
     logger.error('[NOWPayments] IPN: payment verification request failed — rejecting for retry', { payment_id, error: verifyErr.message });
@@ -15891,6 +15902,8 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
         const { cache: renewalCache } = require('../../config/redis');
         await renewalCache.del(`user:${existing.user_id}`);
         await renewalCache.del(`session:user:${existing.user_id}`);
+        await renewalCache.del(`entitlements:${existing.user_id}`);
+        await renewalCache.del(`user:tier:${existing.user_id}`);
       } catch {}
 
       logger.info('[NOWPayments] IPN: subscription renewal completed', { userId: existing.user_id, planId: existing.plan_id, renewalOrderId });
@@ -15904,7 +15917,7 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
   const order = lockRes.rows[0];
 
   // NP-M-06: price_amount mismatch guard when actually_paid is null
-  if (actually_paid == null && price_amount != null) {
+  if (_verifiedActuallyPaid == null && price_amount != null) {
     const dbExpected = parseFloat(order.usd_amount);
     const reportedPrice = parseFloat(price_amount);
     if (dbExpected > 0 && Number.isFinite(reportedPrice) && Math.abs(reportedPrice - dbExpected) > 0.01) {
@@ -15918,8 +15931,8 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
   // against pay_amount (both in pay_currency). If pay_amount is missing from the IPN body
   // (observed with some BTC finished IPNs), skip the check entirely — the API verification
   // above already confirmed the payment exists, and the reconciler will catch any real shortfall.
-  if (actually_paid != null) {
-    const paid = parseFloat(actually_paid);
+  if (_verifiedActuallyPaid != null) {
+    const paid = parseFloat(_verifiedActuallyPaid);
     const isCrossCurrency = pay_currency && (price_currency || 'usd').toLowerCase() !== pay_currency.toLowerCase();
     // Only run underpayment check when we can compare amounts in the same currency.
     // Cross-currency with missing pay_amount would compare crypto vs fiat — skip to avoid false positives.
@@ -15928,10 +15941,10 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
         ? parseFloat(pay_amount)
         : (price_amount != null ? parseFloat(price_amount) : null);
       if (referenceAmount != null && Number.isFinite(paid) && Number.isFinite(referenceAmount) && referenceAmount > 0 && paid < referenceAmount * 0.98) {
-        logger.warn('[NOWPayments] IPN: underpayment detected', { order_id, actually_paid, pay_amount, price_amount, pay_currency, isCrossCurrency });
+        logger.warn('[NOWPayments] IPN: underpayment detected', { order_id, actually_paid: _verifiedActuallyPaid, pay_amount, price_amount, pay_currency, isCrossCurrency });
         await dbQuery(
           `UPDATE dash_subscription_orders SET status = 'partially_paid', notes = $2 WHERE btcpay_invoice_id = $1`,
-          [order_id, `nowpayments:${payment_id}:underpaid:${actually_paid}/${referenceAmount}`]
+          [order_id, `nowpayments:${payment_id}:underpaid:${_verifiedActuallyPaid}/${referenceAmount}`]
         );
         return res.json({ received: true });
       }
@@ -16262,6 +16275,24 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
       `UPDATE dash_subscription_orders SET status = 'completed', completed_at = NOW(), notes = $2 WHERE btcpay_invoice_id = $1`,
       [order_id, `nowpayments:crystal_creator:${payment_id}`]
     );
+
+    // Record the grant in crystal_grants (parity with wallet path which calls purchaseMonths).
+    try {
+      const crystalEntSvc = require('../../services/crystalEntitlementService');
+      await crystalEntSvc.purchaseMonths({
+        creatorId: String(targetCreatorId),
+        months: 1,
+        grantType: isGift ? 'gift' : 'purchase',
+        source: 'nowpayments',
+        grantedBy: String(crystalMeta.giftedBy || targetCreatorId),
+        amountUsd: parseFloat(order.usd_amount) || null,
+        externalRef: `np:${payment_id}`,
+      });
+    } catch (crystalEntErr) {
+      logger.warn('[Crystal] IPN: crystalEntitlementService.purchaseMonths failed (non-fatal)', {
+        order_id, targetCreatorId, error: crystalEntErr.message,
+      });
+    }
 
     // Notify target creator via in-app notification (no price disclosed)
     try {
@@ -16808,7 +16839,7 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
         JSON.stringify({
           nowpayments_payment_id: String(payment_id),
           pay_currency,
-          actually_paid,
+          actually_paid: _verifiedActuallyPaid,
           ...(order.creator_id ? { creator_id: String(order.creator_id) } : {}),
         }),
       ]
