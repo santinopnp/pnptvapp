@@ -1142,7 +1142,7 @@ services:
       OFFICIAL_USER_ID: "8552451957"
       LEX_USER_ID: "8f5f4dd1-7bdb-4571-b026-e09d91113c91"
       OPS_ADMIN_CHANNEL: "C0BP14DLNHJ"
-      PNPTV_BOT_URL: "http://pnptv-bot:3000"
+      PNPTV_BOT_URL: "http://pnptv-bot:3001"
       INTERNAL_ZOHO_SECRET: ${INTERNAL_ZOHO_SECRET}
     networks:
       - pnptvapp_net
