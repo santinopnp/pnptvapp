@@ -1044,12 +1044,12 @@ function ChannelDetailView({
               ) : (
                 <>
                   <p className="text-white font-semibold text-base">Premium Channel</p>
-                  <p className="text-sm text-pnp-textSecondary max-w-xs">Subscribe to {channel.creatorName || "this creator"} to watch this video.</p>
+                  <p className="text-sm text-pnp-textSecondary max-w-xs">Subscribe to {channel?.creatorName || "this creator"} to watch this video.</p>
                   <p className="text-xs font-medium px-3 py-1.5 rounded-full" style={{ background: "rgba(230,145,56,0.15)", color: "#E69138", border: "1px solid rgba(230,145,56,0.3)" }}>
                     &#128142; Incluye canal + perfil exclusivo — 2x1
                   </p>
                   <button
-                    onClick={() => { setSelectedVideo(null); setPlayingVideo(null); if (channel.creatorId) setShowSubscribeWizard(true); else window.location.href = '/subscribe'; }}
+                    onClick={() => { setSelectedVideo(null); setPlayingVideo(null); if (channel?.creatorId) setShowSubscribeWizard(true); else window.location.href = '/subscribe'; }}
                     className="mt-1 px-5 py-2.5 rounded-xl text-sm font-semibold text-white"
                     style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
                   >Subscribe to Access</button>
@@ -1230,9 +1230,9 @@ function ChannelDetailView({
                   </svg>
                 </button>
                 {(() => {
-                  const uploaderId = v.uploader_id ?? channel.creatorId;
-                  const uploaderName = v.uploader_username ?? channel.creatorUsername ?? undefined;
-                  const uploaderCrystal = v.uploader_id ? v.uploader_crystal === true : channel.creatorCrystal === true;
+                  const uploaderId = v.uploader_id ?? channel?.creatorId;
+                  const uploaderName = v.uploader_username ?? channel?.creatorUsername ?? undefined;
+                  const uploaderCrystal = v.uploader_id ? v.uploader_crystal === true : channel?.creatorCrystal === true;
                   if (!uploaderId || String(user?.id ?? "") === String(uploaderId)) return null;
                   return <TipButton creatorId={String(uploaderId)} creatorUsername={uploaderName} isCrystalCreator={uploaderCrystal} />;
                 })()}

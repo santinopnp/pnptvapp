@@ -429,6 +429,7 @@ export default function PostCard({
   const [hypeCount, setHypeCount] = useState<number>(Math.max(0, Number(post.hype_score) || 0));
   const [hypeError, setHypeError] = useState<string | null>(null);
   const [hypeQuota, setHypeQuota] = useState<{ remaining: number; limit: number; resetsAt: string | null } | null>(null);
+  const [showPrimePlanPicker, setShowPrimePlanPicker] = useState(false);
   const hypeInFlight = useRef(false);
   const menuRef = useRef<HTMLDivElement>(null);
 

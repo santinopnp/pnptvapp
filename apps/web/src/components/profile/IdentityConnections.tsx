@@ -108,7 +108,7 @@ export default function IdentityConnections({ telegramUsername }: IdentityConnec
   const [walletError, setWalletError] = useState<string | null>(null);
   const { connectWallet } = useConnectWallet({
     onSuccess: () => setWalletError(null),
-    onError: (err) => setWalletError(err instanceof Error ? err.message : "Failed to connect wallet"),
+    onError: (err) => setWalletError((err as unknown) instanceof Error ? (err as unknown as Error).message : "Failed to connect wallet"),
   });
 
   const handleSetPreferred = async (address: string) => {

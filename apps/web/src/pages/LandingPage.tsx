@@ -989,7 +989,7 @@ export function LandingPage() {
       <div className="my-4 flex justify-center px-4"><AdSlot slot="outstream_video" /></div>
       <FeaturedCreators
         lang={t.lang}
-        creatorCount={stats?.creators_plus ?? null}
+        creatorCount={stats?.creators_plus != null ? Number(stats.creators_plus) : null}
         loading={statsLoading}
         ref={creatorsRef}
       />
