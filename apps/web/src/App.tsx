@@ -11,6 +11,8 @@ import { NotificationProvider } from "@/hooks/useNotifications";
 import { MusicPlayerProvider } from "@/hooks/useMusicPlayer";
 import { MainStageProvider } from "@/components/mainstage/MainStageProvider";
 import { PresenceProvider } from "@/hooks/usePresence";
+import { FloatingCallProvider } from "@/context/FloatingCallContext";
+import { FloatingCallOverlay } from "@/components/call/FloatingCallOverlay";
 import { router } from "@/router";
 import { useI18n } from "@/lib/i18n";
 import ErrorBoundary from "@/components/ErrorBoundary";
@@ -469,6 +471,7 @@ function AppOverlays() {
       <InstallPill />
       <PushNotificationPill />
       <UpdateAvailableModal />
+      <FloatingCallOverlay />
       {primeGranted && (
         <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[9997] w-[calc(100%-2rem)] max-w-sm animate-slide-in-top">
           <div
@@ -562,6 +565,7 @@ export default function App() {
                   navigation (Phase 2 of cam-first redesign).
                 */}
                 <MainStageProvider>
+                  <FloatingCallProvider>
                   <PrivyProvider
                     appId={import.meta.env.VITE_PRIVY_APP_ID as string}
                     config={{
@@ -593,6 +597,7 @@ export default function App() {
                     <RouterProvider router={router} />
                     <AppOverlays />
                   </PrivyProvider>
+                  </FloatingCallProvider>
                 </MainStageProvider>
               </MusicPlayerProvider>
             </NotificationProvider>
