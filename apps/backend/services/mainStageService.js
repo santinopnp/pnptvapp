@@ -1657,7 +1657,11 @@ async function advanceVideo() {
   // layout stays pinned to spotlight for the duration of the lock.
   const currentMode = await redis.get(MODE_KEY);
   if (currentMode !== 'cinema' && !(await isPnptvModeLocked())) {
-    await setMode('cinema');
+    try {
+      await setMode('cinema');
+    } catch (err) {
+      if (err.code !== 'PNPTV_MODE_LOCKED') throw err;
+    }
   }
 
   await setMedia({ kind: 'video', src: publicSrc, title: pick.title, playing: true, _fromAutoRotate: true });
