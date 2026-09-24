@@ -1,5 +1,6 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import { NowPaymentsOrder } from "@/hooks/useNowPayments";
+import { prepareUsdcSubscription } from "@/lib/api";
 
 
 interface NowPaymentsWaitingPanelProps {
@@ -130,107 +131,167 @@ function AppGuidePanel({ es }: { es: boolean }) {
   );
 }
 
-// ── Exported pre-checkout app picker sheet ────────────────────────────────────
-// Shows BEFORE the NP popup opens so users pick their familiar app first.
-// Usage: open on "₿ Pay with crypto" click; onLaunch fires the NP popup.
+// ── Exported app picker + inline NowPayments widget sheet ─────────────────────
+// Creates the NP invoice internally and embeds the payment widget in-page so
+// the user can copy the address directly — no popup needed.
 export function NpAppPickerSheet({
   isOpen,
   onClose,
-  onLaunch,
-  launching,
+  planId,
   lang,
   planLabel,
 }: {
   isOpen: boolean;
   onClose: () => void;
-  onLaunch: () => void;
-  launching: boolean;
+  planId: string | null;
   lang: string;
   planLabel?: string;
 }) {
   const es = (lang || 'es').startsWith('es');
   const [selectedApp, setSelectedApp] = useState<string | null>(null);
-  const steps = selectedApp && selectedApp !== 'other'
+  const [invoiceUrl, setInvoiceUrl] = useState<string | null>(null);
+  const [invoiceLoading, setInvoiceLoading] = useState(false);
+  const [invoiceError, setInvoiceError] = useState<string | null>(null);
+  const widgetRef = useRef<HTMLDivElement>(null);
+
+  const selectedSteps = selectedApp && selectedApp !== 'other'
     ? (es ? PANEL_STEPS_ES : PANEL_STEPS_EN)[selectedApp] ?? []
     : [];
-  const appLabel = PANEL_APPS.find(a => a.id === selectedApp)?.label ?? '';
+  const selectedAppLabel = PANEL_APPS.find(a => a.id === selectedApp)?.label ?? '';
+
+  // Create invoice when sheet opens
+  useEffect(() => {
+    if (!isOpen || !planId) { setInvoiceUrl(null); return; }
+    setInvoiceUrl(null);
+    setInvoiceError(null);
+    setInvoiceLoading(true);
+    prepareUsdcSubscription(planId, undefined, undefined, 'btc')
+      .then(res => {
+        if (!res.success || !res.invoiceUrl) throw new Error(res.error || 'Could not create invoice');
+        setInvoiceUrl(res.invoiceUrl);
+      })
+      .catch(e => setInvoiceError(e instanceof Error ? e.message : 'Invoice failed'))
+      .finally(() => setInvoiceLoading(false));
+  }, [isOpen, planId]);
+
+  // Embed NowPayments widget once invoice URL is ready
+  useEffect(() => {
+    const container = widgetRef.current;
+    if (!container || !invoiceUrl) return;
+    container.innerHTML = '';
+    const script = document.createElement('script');
+    script.type = 'text/javascript';
+    script.src = 'https://nowpayments.io/embeds/payment-widget.js';
+    script.setAttribute('data-nowpayments-url', invoiceUrl);
+    container.appendChild(script);
+    return () => { if (container) container.innerHTML = ''; };
+  }, [invoiceUrl]);
+
+  // Reset selected app when sheet reopens
+  useEffect(() => { if (!isOpen) setSelectedApp(null); }, [isOpen]);
 
   if (!isOpen) return null;
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-end"
-      onClick={onClose}
-    >
+    <div className="fixed inset-0 z-50 flex items-end" onClick={onClose}>
       <div className="absolute inset-0 bg-black/65 backdrop-blur-sm" />
       <div
         className="relative w-full rounded-t-2xl p-5 space-y-4"
-        style={{ background: '#111', border: '1px solid rgba(255,255,255,0.08)', maxHeight: '90vh', overflowY: 'auto' }}
+        style={{ background: '#111', border: '1px solid rgba(255,255,255,0.08)', maxHeight: '92vh', overflowY: 'auto' }}
         onClick={e => e.stopPropagation()}
       >
         {/* Handle */}
         <div className="w-10 h-1 rounded-full bg-white/20 mx-auto -mt-1 mb-1" />
 
+        {/* Header */}
         <div className="text-center">
           <p className="text-base font-black text-white">
-            {es ? '₿ Pagar con apps populares' : '₿ Pay with popular apps'}
+            {es ? '₿ Pagar con apps y wallets' : '₿ Pay with apps & wallets'}
           </p>
-          {planLabel && (
-            <p className="text-xs text-white/40 mt-0.5">{planLabel}</p>
+          {planLabel && <p className="text-xs text-white/40 mt-0.5">{planLabel}</p>}
+        </div>
+
+        {/* NowPayments inline widget — shows address + QR + amount */}
+        <div className="rounded-2xl overflow-hidden border border-white/10" style={{ background: 'rgba(255,255,255,0.03)' }}>
+          {invoiceLoading && (
+            <div className="flex items-center justify-center gap-3 py-8">
+              <div className="w-5 h-5 border-2 border-white/20 border-t-white/70 rounded-full animate-spin" />
+              <span className="text-sm text-white/50">{es ? 'Generando dirección de pago…' : 'Generating payment address…'}</span>
+            </div>
+          )}
+          {invoiceError && (
+            <div className="px-4 py-4 text-center">
+              <p className="text-xs text-red-400 mb-2">{invoiceError}</p>
+              <button
+                type="button"
+                onClick={() => { setInvoiceError(null); setInvoiceLoading(true); if (planId) prepareUsdcSubscription(planId, undefined, undefined, 'btc').then(r => { if (r.success && r.invoiceUrl) setInvoiceUrl(r.invoiceUrl); else throw new Error(r.error || ''); }).catch(e => setInvoiceError(e.message)).finally(() => setInvoiceLoading(false)); }}
+                className="text-xs text-white/50 underline decoration-dotted"
+              >{es ? 'Reintentar' : 'Retry'}</button>
+            </div>
+          )}
+          {!invoiceLoading && !invoiceError && (
+            <div ref={widgetRef} className="w-full" />
           )}
         </div>
 
-        <p className="text-[11px] text-white/50 text-center -mt-1">
-          {es
-            ? 'Elige tu app y te mostramos los pasos exactos:'
-            : 'Pick your app and we\'ll show you the exact steps:'}
-        </p>
-
-        {/* App grid */}
-        <div className="grid grid-cols-4 gap-2">
-          {PANEL_APPS.map(app => {
-            const isSel = selectedApp === app.id;
-            return (
-              <button
-                key={app.id}
-                type="button"
-                onClick={() => setSelectedApp(isSel ? null : app.id)}
-                className="flex flex-col items-center gap-1 py-3 px-1 rounded-xl border transition active:scale-[0.95]"
-                style={isSel
-                  ? { background: app.bg, borderColor: app.border }
-                  : { background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(255,255,255,0.10)' }
-                }
-              >
-                <span className="text-[20px] leading-none">{app.emoji}</span>
-                <span className="text-[10px] font-semibold text-white/80 text-center leading-tight">{app.label}</span>
-                <span className="text-[8px] text-white/30 leading-none">{app.geo}</span>
-              </button>
-            );
-          })}
-          {/* Other / no app */}
-          <button
-            type="button"
-            onClick={() => setSelectedApp(selectedApp === 'other' ? null : 'other')}
-            className="flex flex-col items-center gap-1 py-3 px-1 rounded-xl border transition active:scale-[0.95]"
-            style={selectedApp === 'other'
-              ? { background: 'rgba(255,255,255,0.08)', borderColor: 'rgba(255,255,255,0.30)' }
-              : { background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(255,255,255,0.10)' }
-            }
-          >
-            <span className="text-[20px] leading-none">🔗</span>
-            <span className="text-[10px] font-semibold text-white/80 text-center leading-tight">{es ? 'Otra' : 'Other'}</span>
-            <span className="text-[8px] text-white/30 leading-none">–</span>
-          </button>
+        {/* Divider */}
+        <div className="flex items-center gap-2">
+          <div className="flex-1 h-px bg-white/10" />
+          <span className="text-[10px] text-white/35 flex-shrink-0">
+            {es ? 'instrucciones por app' : 'per-app instructions'}
+          </span>
+          <div className="flex-1 h-px bg-white/10" />
         </div>
 
-        {/* Step instructions */}
-        {selectedApp && steps.length > 0 && (
+        {/* App grid */}
+        <div>
+          <p className="text-[11px] text-white/40 text-center mb-3">
+            {es ? 'Elige tu app para ver los pasos exactos:' : 'Pick your app to see the exact steps:'}
+          </p>
+          <div className="grid grid-cols-4 gap-2">
+            {PANEL_APPS.map(app => {
+              const isSel = selectedApp === app.id;
+              return (
+                <button
+                  key={app.id}
+                  type="button"
+                  onClick={() => setSelectedApp(isSel ? null : app.id)}
+                  className="flex flex-col items-center gap-1 py-3 px-1 rounded-xl border transition active:scale-[0.95]"
+                  style={isSel
+                    ? { background: app.bg, borderColor: app.border }
+                    : { background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(255,255,255,0.10)' }
+                  }
+                >
+                  <span className="text-[20px] leading-none">{app.emoji}</span>
+                  <span className="text-[10px] font-semibold text-white/80 text-center leading-tight">{app.label}</span>
+                  <span className="text-[8px] text-white/30 leading-none">{app.geo}</span>
+                </button>
+              );
+            })}
+            <button
+              type="button"
+              onClick={() => setSelectedApp(selectedApp === 'other' ? null : 'other')}
+              className="flex flex-col items-center gap-1 py-3 px-1 rounded-xl border transition active:scale-[0.95]"
+              style={selectedApp === 'other'
+                ? { background: 'rgba(255,255,255,0.08)', borderColor: 'rgba(255,255,255,0.30)' }
+                : { background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(255,255,255,0.10)' }
+              }
+            >
+              <span className="text-[20px] leading-none">🔗</span>
+              <span className="text-[10px] font-semibold text-white/80 text-center leading-tight">{es ? 'Otra' : 'Other'}</span>
+              <span className="text-[8px] text-white/30 leading-none">–</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Step instructions for selected app */}
+        {selectedApp && selectedSteps.length > 0 && (
           <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 animate-in fade-in slide-in-from-top-1 duration-150">
             <p className="text-[10px] font-semibold text-white/45 uppercase tracking-wide mb-2">
-              {es ? `Pasos en ${appLabel}` : `Steps in ${appLabel}`}
+              {es ? `Pasos en ${selectedAppLabel}` : `Steps in ${selectedAppLabel}`}
             </p>
             <ol className="space-y-1.5">
-              {steps.map((step, i) => (
+              {selectedSteps.map((step, i) => (
                 <li key={i} className="flex items-start gap-2">
                   <span className="flex-shrink-0 w-4 h-4 rounded-full bg-white/10 flex items-center justify-center text-[9px] font-bold text-white/55 mt-0.5">{i + 1}</span>
                   <span className="text-[11px] text-white/75 leading-relaxed">{step}</span>
@@ -240,23 +301,10 @@ export function NpAppPickerSheet({
           </div>
         )}
 
-        {/* CTA */}
-        <button
-          type="button"
-          disabled={launching}
-          onClick={onLaunch}
-          className="w-full py-3.5 rounded-2xl text-sm font-black text-white transition-all active:scale-[0.97] disabled:opacity-60"
-          style={{ background: 'linear-gradient(135deg,#ff3377,#ff9933)' }}
-        >
-          {launching
-            ? (es ? 'Abriendo…' : 'Opening…')
-            : (es ? '₿ Abrir pago' : '₿ Open payment')}
-        </button>
-
-        <p className="text-[10px] text-white/30 text-center -mt-1">
+        <p className="text-[10px] text-white/25 text-center">
           {es
-            ? 'Se abrirá una ventana de pago — completa el pago y tu plan se activa solo.'
-            : 'A payment window will open — complete the payment and your plan activates automatically.'}
+            ? '⚡ Tu plan se activa solo cuando la red confirme el pago.'
+            : '⚡ Your plan activates automatically once the network confirms.'}
         </p>
       </div>
     </div>

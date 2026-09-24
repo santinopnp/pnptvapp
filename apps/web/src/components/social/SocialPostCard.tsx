@@ -416,12 +416,9 @@ export default function SocialPostCard({
   const [hypeQuota, setHypeQuota] = useState<{ remaining: number; limit: number; resetsAt: string | null } | null>(null);
   const [showPromoModal, setShowPromoModal] = useState(false);
   const [promoModalPlanId, setPromoModalPlanId] = useState<string | null>(null);
-  const [npLaunching, setNpLaunching] = useState(false);
-  const [npError, setNpError] = useState<string | null>(null);
   const [npPickerPlanId, setNpPickerPlanId] = useState<string | null>(null);
   const hypeInFlight = useRef(false);
   const menuRef = useRef<HTMLDivElement>(null);
-  const npPopupRef = useRef<Window | null>(null);
 
   const isOwn = String(post.author_id) === currentUserId;
   const hasRealPostId = Number(post.id) > 0;
@@ -485,31 +482,6 @@ export default function SocialPostCard({
     confirmGuideAndStart: () => {},
     skipGuideAndStart: () => {},
   };
-
-  const launchNpCheckout = useCallback(async (planId: string) => {
-    setNpLaunching(true);
-    setNpError(null);
-    // Open the popup immediately within the click gesture — browsers block window.open after async awaits
-    const popW = Math.min(540, Math.round(window.innerWidth * 0.95));
-    const popH = Math.min(700, Math.round(window.innerHeight * 0.9));
-    const left = Math.round((window.screen.width - popW) / 2);
-    const top = Math.round((window.screen.height - popH) / 2);
-    const popup = window.open("", "pnp_np_wallet", `width=${popW},height=${popH},left=${left},top=${top},resizable=yes,scrollbars=yes`);
-    try {
-      const res = await prepareUsdcSubscription(planId, undefined, undefined, "btc");
-      if (!res.success || !res.nowpaymentsInvoiceId) throw new Error(res.error || "Could not create invoice.");
-      assertPaymentUrl(res.invoiceUrl);
-      const src = `https://nowpayments.io/embeds/payment-widget?iid=${encodeURIComponent(String(res.nowpaymentsInvoiceId))}`;
-      if (popup) { popup.location.href = src; popup.focus(); } else { window.open(src, "pnp_np_wallet", `width=${popW},height=${popH},left=${left},top=${top}`); }
-      npPopupRef.current = popup;
-      setNpPickerPlanId(null);
-    } catch (e) {
-      if (popup) popup.close();
-      setNpError(e instanceof Error ? e.message : "Could not open checkout.");
-    } finally {
-      setNpLaunching(false);
-    }
-  }, []);
 
   // Creator-subscription CTAs reveal the canonical CreatorSubscribeWizard
   // inline — same widget the creator-profile "Subscribe" button opens. This
@@ -1539,7 +1511,6 @@ export default function SocialPostCard({
                       onClick={(e) => { e.stopPropagation();
                         if (link === "#promo-modal" || link === "/subscribe" || link === "/lifetime100") {
                           setPromoModalPlanId(link === "/lifetime100" ? "lifetime100" : null);
-                          setNpError(null);
                           setShowPromoModal(true);
                         } else if (link.startsWith("/")) {
                           onNavigate(link);
@@ -2395,7 +2366,7 @@ export default function SocialPostCard({
         return (
           <div
             className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center"
-            onClick={() => { setShowPromoModal(false); setNpError(null); }}
+            onClick={() => { setShowPromoModal(false); }}
           >
             <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
             <div
@@ -2408,7 +2379,7 @@ export default function SocialPostCard({
                 <div className="flex items-center gap-2">
                   {selectedPlan && (
                     <button
-                      onClick={() => { setPromoModalPlanId(null); setNpError(null); }}
+                      onClick={() => { setPromoModalPlanId(null); }}
                       className="text-white/50 hover:text-white transition-colors mr-1 text-base"
                       aria-label="Back"
                     >
@@ -2427,7 +2398,7 @@ export default function SocialPostCard({
                   </div>
                 </div>
                 <button
-                  onClick={() => { setShowPromoModal(false); setNpError(null); }}
+                  onClick={() => { setShowPromoModal(false); }}
                   className="text-white/40 hover:text-white text-xl leading-none px-1"
                   aria-label="Close"
                 >
@@ -2453,14 +2424,14 @@ export default function SocialPostCard({
                       amountUsd={selectedPlan.price}
                       entitlementSpec={{ planId: selectedPlan.id }}
                       lang={lang === "es" ? "es" : "en"}
-                      onSuccess={() => { setShowPromoModal(false); setNpError(null); }}
+                      onSuccess={() => { setShowPromoModal(false); }}
                     />
 
                     {/* NowPayments fallback */}
                     <div className="relative flex items-center gap-2 py-1">
                       <div className="flex-1 h-px bg-white/10" />
                       <span className="text-[10px] text-white/40 flex-shrink-0">
-                        {es ? "o paga con cualquier cripto" : "or pay with any crypto"}
+                        {es ? "o paga con apps y wallets" : "or pay with apps & wallets"}
                       </span>
                       <div className="flex-1 h-px bg-white/10" />
                     </div>
@@ -2469,15 +2440,10 @@ export default function SocialPostCard({
                       className="w-full py-3 rounded-xl border border-white/15 bg-white/[0.04] hover:bg-white/[0.08] transition-colors"
                     >
                       <span className="block text-sm font-semibold text-white/80">
-                        {es ? "₿ Pagar con apps populares" : "₿ Pay with popular apps"}
+                        {es ? "₿ Pagar con apps y wallets" : "₿ Pay with apps & wallets"}
                       </span>
-                      <span className="block text-[10px] text-white/35 mt-0.5">
-                        Revolut · Cash App · PayPal · Venmo · Binance · Coinbase
-                      </span>
+                      <span className="block text-[10px] text-white/35 mt-0.5">BTC · ETH · USDC · USDT · etc.</span>
                     </button>
-                    {npError && (
-                      <p className="text-[11px] text-red-400 text-center">{npError}</p>
-                    )}
                   </>
                 ) : (
                   <>
@@ -2536,8 +2502,7 @@ export default function SocialPostCard({
       <NpAppPickerSheet
         isOpen={!!npPickerPlanId}
         onClose={() => setNpPickerPlanId(null)}
-        onLaunch={() => npPickerPlanId && launchNpCheckout(npPickerPlanId)}
-        launching={npLaunching}
+        planId={npPickerPlanId}
         lang={lang}
         planLabel={npPickerPlanId ? (CHECKOUT_MODAL_PLANS.find(p => p.id === npPickerPlanId)?.label ?? 'PRIME') : undefined}
       />

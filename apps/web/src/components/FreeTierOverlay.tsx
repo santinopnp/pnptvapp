@@ -1,8 +1,7 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { WalletPayCard, WalletLoginGate } from '@/components/payments/PayInWalletChips';
 import { NpAppPickerSheet } from '@/components/payments/NowPaymentsWaitingPanel';
-import { prepareUsdcSubscription } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
 
 interface FreeTierOverlayProps {
@@ -24,31 +23,6 @@ export default function FreeTierOverlay({ label, requiredTier = 'member', childr
   const [sheetOpen, setSheetOpen] = useState(false);
   const [walletPlanId, setWalletPlanId] = useState<string | null>(null);
   const [npPickerPlanId, setNpPickerPlanId] = useState<string | null>(null);
-  const [npLaunching, setNpLaunching] = useState(false);
-  const npPopupRef = React.useRef<Window | null>(null);
-
-  const launchNp = useCallback(async (planId: string) => {
-    setNpLaunching(true);
-    // Open the popup immediately within the click gesture — browsers block window.open after async awaits
-    const popW = Math.min(540, Math.round(window.innerWidth * 0.95));
-    const popH = Math.min(700, Math.round(window.innerHeight * 0.9));
-    const left = Math.round((window.screen.width - popW) / 2);
-    const top = Math.round((window.screen.height - popH) / 2);
-    const specs = `width=${popW},height=${popH},left=${left},top=${top},resizable=yes,scrollbars=yes`;
-    const popup = window.open('', 'pnp_np_wallet', specs);
-    try {
-      const res = await prepareUsdcSubscription(planId, undefined, undefined, 'btc');
-      const src = `https://nowpayments.io/embeds/payment-widget?iid=${res.nowpaymentsInvoiceId}`;
-      if (popup) { popup.location.href = src; popup.focus(); } else { window.open(src, 'pnp_np_wallet', specs); }
-      npPopupRef.current = popup;
-      setNpPickerPlanId(null);
-    } catch {
-      if (popup) popup.close();
-      navigate('/subscribe');
-    } finally {
-      setNpLaunching(false);
-    }
-  }, [navigate]);
 
   if (requiredTier === 'member') {
     return (
@@ -191,8 +165,7 @@ export default function FreeTierOverlay({ label, requiredTier = 'member', childr
       <NpAppPickerSheet
         isOpen={!!npPickerPlanId}
         onClose={() => setNpPickerPlanId(null)}
-        onLaunch={() => npPickerPlanId && launchNp(npPickerPlanId)}
-        launching={npLaunching}
+        planId={npPickerPlanId}
         lang={lang}
         planLabel={npPickerPlanId === 'lifetime100' ? 'PNPtv Founders' : 'PRIME Annual'}
       />
