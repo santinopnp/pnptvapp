@@ -32,7 +32,7 @@ import {
   metaMaskDeepLink,
   isMetaMaskCompatible,
 } from "@/components/payments/PayInWalletChips";
-import { PANEL_APPS, PANEL_STEPS_EN, PANEL_STEPS_ES } from "@/components/payments/NowPaymentsWaitingPanel";
+import { PANEL_APPS, PANEL_STEPS_EN, PANEL_STEPS_ES, NpAppPickerSheet } from "@/components/payments/NowPaymentsWaitingPanel";
 import { connectSocket } from "@/lib/socket";
 
 const MEMBER_PLAN_IDS = new Set(["member_monthly"]);
@@ -514,10 +514,12 @@ export default function Subscribe() {
   // pattern as /lifetime100). NP's hosted checkout can't be iframed, but the
   // /embeds/payment-widget?iid=<id> endpoint IS embeddable; we just need the
   // invoice id from /usdc/prepare (already returned) plus a currency picker.
-  const [npModalPlanId, setNpModalPlanId] = useState<string | null>(null);
-  const openNpFallback = useCallback((planId: string) => {
+  const [npPickerPlanId, setNpPickerPlanId] = useState<string | null>(null);
+  const [npPickerLabel, setNpPickerLabel] = useState<string | undefined>(undefined);
+  const openAppSheet = useCallback((planId: string, label: string) => {
     setError(null);
-    setNpModalPlanId(planId);
+    setNpPickerPlanId(planId);
+    setNpPickerLabel(label);
     trackEvent("payment_started", { plan: planId, provider: "nowpayments_widget" });
   }, []);
 
@@ -786,20 +788,21 @@ export default function Subscribe() {
                         boxShadow: isWalletOpen ? "0 0 12px rgba(52,211,153,0.35)" : undefined,
                       }}
                     >
-                      {t.lang === "es" ? "💎 Pagar con wallet" : "💎 Pay with wallet"}
+                      {t.lang === "es" ? "💳 Tarjeta · Apple Pay · Wallet" : "💳 Card · Apple Pay · Wallet"}
                     </button>
                     {parseFloat(String(plan.price)) >= NOWPAYMENTS_MINIMUM_USD && (
                       <button
                         type="button"
-                        onClick={() => openNpFallback(plan.id)}
-                        className="w-full py-2 rounded-xl text-[11px] font-semibold transition-all active:scale-[0.97]"
+                        onClick={() => openAppSheet(plan.id, isLifetime ? "PNPtv Founders" : (t.lang === "es" ? "PRIME anual" : "PRIME Annual"))}
+                        className="w-full py-2.5 rounded-xl text-[11px] font-black transition-all active:scale-[0.97] leading-tight"
                         style={{
                           background: "rgba(255,255,255,0.05)",
-                          border: "1px solid rgba(255,255,255,0.12)",
-                          color: "rgba(255,255,255,0.70)",
+                          border: "1px solid rgba(255,255,255,0.15)",
+                          color: "rgba(255,255,255,0.80)",
                         }}
                       >
-                        {t.lang === "es" ? "₿ Otra cripto" : "₿ Other crypto"}
+                        <span className="block">₿ {t.lang === "es" ? "Apps y wallets" : "Apps & Wallets"}</span>
+                        <span className="block text-[9px] font-normal opacity-50 mt-0.5">BTC · ETH · USDC · USDT · etc.</span>
                       </button>
                     )}
                   </div>
@@ -1086,13 +1089,13 @@ export default function Subscribe() {
                   className={`w-full py-3 rounded-lg font-bold text-sm text-white transition-all ${walletPanelPlanId === plan.id ? "bg-gradient-to-r from-emerald-400 to-emerald-500 ring-2 ring-emerald-300" : "bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500"}`}
                 >
                   {t.lang === "es"
-                    ? `💎 Wallet PNPtv o tarjeta · $${parseFloat(String(plan.price)).toFixed(2)}`
-                    : `💎 PNPtv Wallet or card · $${parseFloat(String(plan.price)).toFixed(2)}`}
+                    ? `💳 Tarjeta · Apple Pay · Wallet · $${parseFloat(String(plan.price)).toFixed(2)}`
+                    : `💳 Card · Apple Pay · Wallet · $${parseFloat(String(plan.price)).toFixed(2)}`}
                 </button>
                 {parseFloat(String(plan.price)) >= NOWPAYMENTS_MINIMUM_USD && (
                   <button
                     type="button"
-                    onClick={(e) => { e.stopPropagation(); openNpFallback(plan.id); }}
+                    onClick={(e) => { e.stopPropagation(); openAppSheet(plan.id, plan.display_name || plan.name || plan.id); }}
                     className="w-full py-3 rounded-lg font-bold text-sm text-white/80 border border-white/15 bg-white/5 hover:bg-white/10 hover:text-white transition-all leading-tight"
                   >
                     <span className="block">₿ {t.lang === "es" ? "Pagar con apps y wallets" : "Pay with apps & wallets"}</span>
@@ -1272,13 +1275,13 @@ export default function Subscribe() {
                   className={`w-full py-3 rounded-lg font-bold text-sm text-white transition-all ${walletPanelPlanId === plan.id ? "bg-gradient-to-r from-emerald-400 to-emerald-500 ring-2 ring-emerald-300" : "bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500"}`}
                 >
                   {t.lang === "es"
-                    ? `💎 Wallet PNPtv o tarjeta · $${parseFloat(String(plan.price)).toFixed(2)}`
-                    : `💎 PNPtv Wallet or card · $${parseFloat(String(plan.price)).toFixed(2)}`}
+                    ? `💳 Tarjeta · Apple Pay · Wallet · $${parseFloat(String(plan.price)).toFixed(2)}`
+                    : `💳 Card · Apple Pay · Wallet · $${parseFloat(String(plan.price)).toFixed(2)}`}
                 </button>
                 {parseFloat(String(plan.price)) >= NOWPAYMENTS_MINIMUM_USD && (
                   <button
                     type="button"
-                    onClick={(e) => { e.stopPropagation(); openNpFallback(plan.id); }}
+                    onClick={(e) => { e.stopPropagation(); openAppSheet(plan.id, plan.display_name || plan.name || plan.id); }}
                     className="w-full py-3 rounded-lg font-bold text-sm text-white/80 border border-white/15 bg-white/5 hover:bg-white/10 hover:text-white transition-all leading-tight"
                   >
                     <span className="block">₿ {t.lang === "es" ? "Pagar con apps y wallets" : "Pay with apps & wallets"}</span>
@@ -1370,17 +1373,13 @@ export default function Subscribe() {
 
       {/* Crypto nudge removed 2026-08-09 — Wallet is now the only crypto path. */}
 
-      {npModalPlanId && (
-        <NowPaymentsWidgetModal
-          planId={npModalPlanId}
-          lang={(t.lang as "es" | "en")}
-          onClose={() => setNpModalPlanId(null)}
-          onOrderCreated={(orderId) => {
-            try { sessionStorage.setItem("pnp_pending_payment", orderId); } catch {}
-            setPollingPaymentId(orderId);
-          }}
-        />
-      )}
+      <NpAppPickerSheet
+        isOpen={!!npPickerPlanId}
+        onClose={() => { setNpPickerPlanId(null); setNpPickerLabel(undefined); }}
+        planId={npPickerPlanId}
+        lang={t.lang}
+        planLabel={npPickerLabel}
+      />
 
       {/* Error banner */}
       {error && (
