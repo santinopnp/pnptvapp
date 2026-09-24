@@ -39,7 +39,7 @@ export default function FreeTierOverlay({ label, requiredTier = 'member', childr
     try {
       const res = await prepareUsdcSubscription(planId, undefined, undefined, 'btc');
       const src = `https://nowpayments.io/embeds/payment-widget?iid=${res.nowpaymentsInvoiceId}`;
-      if (popup) { popup.location.href = src; } else { window.open(src, 'pnp_np_wallet', specs); }
+      if (popup) { popup.location.href = src; popup.focus(); } else { window.open(src, 'pnp_np_wallet', specs); }
       npPopupRef.current = popup;
       setNpPickerPlanId(null);
     } catch {

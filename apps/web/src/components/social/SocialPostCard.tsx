@@ -500,7 +500,7 @@ export default function SocialPostCard({
       if (!res.success || !res.nowpaymentsInvoiceId) throw new Error(res.error || "Could not create invoice.");
       assertPaymentUrl(res.invoiceUrl);
       const src = `https://nowpayments.io/embeds/payment-widget?iid=${encodeURIComponent(String(res.nowpaymentsInvoiceId))}`;
-      if (popup) { popup.location.href = src; } else { window.open(src, "pnp_np_wallet", `width=${popW},height=${popH},left=${left},top=${top}`); }
+      if (popup) { popup.location.href = src; popup.focus(); } else { window.open(src, "pnp_np_wallet", `width=${popW},height=${popH},left=${left},top=${top}`); }
       npPopupRef.current = popup;
       setNpPickerPlanId(null);
     } catch (e) {
