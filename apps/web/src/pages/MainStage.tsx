@@ -484,6 +484,18 @@ interface ChatMessage {
   kind?: 'auto';
   cta?: { label: string; action?: 'open-tip'; href?: string; recipientUserId?: string } | null;
 }
+interface OnlineUser {
+  id: string;
+  username: string;
+  displayName: string;
+  photo: string | null;
+}
+interface DmMessage {
+  id: number;
+  sender_id: string;
+  content: string;
+  created_at: string;
+}
 interface FloatingReaction { id: string; emoji: string; x: number; }
 
 function fmtMmSs(secs: number): string {
@@ -663,6 +675,14 @@ export default function MainStage() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
   const chatInputRef = useRef<HTMLInputElement>(null);
+  // ── Sidebar tabs + People / mini-DM ─────────────────────────────────────────
+  const [sidebarTab, setSidebarTab] = useState<'chat' | 'people'>('chat');
+  const [onlineUsers, setOnlineUsers] = useState<OnlineUser[]>([]);
+  const [dmTarget, setDmTarget] = useState<OnlineUser | null>(null);
+  const [dmMessages, setDmMessages] = useState<DmMessage[]>([]);
+  const [dmInput, setDmInput] = useState('');
+  const [dmLoading, setDmLoading] = useState(false);
+  const dmScrollRef = useRef<HTMLDivElement>(null);
   const sidebarScrollRef = useRef<HTMLDivElement>(null);
 
   // Pinned admin announcement — persists for late-joiners. Backend delivers
@@ -701,6 +721,66 @@ export default function MainStage() {
     socket.on('mainstage:chat-message', onChatMessage);
     return () => { socket.off('mainstage:chat-message', onChatMessage); };
   }, []);
+
+  // ── Online users socket listeners ────────────────────────────────────────────
+  useEffect(() => {
+    const socket = getSocket();
+    const onUsersOnline = (users: OnlineUser[]) => setOnlineUsers(users.filter(u => !user || u.id !== String(user.id)));
+    const onUserJoined = (u: OnlineUser) => {
+      if (user && u.id === String(user.id)) return;
+      setOnlineUsers(prev => prev.some(x => x.id === u.id) ? prev : [...prev, u]);
+    };
+    const onUserLeft = ({ id }: { id: string }) => setOnlineUsers(prev => prev.filter(x => x.id !== id));
+    socket.on('mainstage:users-online', onUsersOnline);
+    socket.on('mainstage:user-joined-room', onUserJoined);
+    socket.on('mainstage:user-left-room', onUserLeft);
+    return () => {
+      socket.off('mainstage:users-online', onUsersOnline);
+      socket.off('mainstage:user-joined-room', onUserJoined);
+      socket.off('mainstage:user-left-room', onUserLeft);
+    };
+  }, [user]);
+
+  const fetchOnlineUsers = useCallback(() => {
+    getSocket().emit('mainstage:request-users-online');
+  }, []);
+
+  const openDm = useCallback(async (target: OnlineUser) => {
+    setDmTarget(target);
+    setDmLoading(true);
+    setDmMessages([]);
+    try {
+      const res = await fetch(`/api/webapp/dm/conversation/${encodeURIComponent(target.id)}`, { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        const msgs: DmMessage[] = data.messages ?? [];
+        setDmMessages(msgs.slice(-40));
+      }
+    } catch { /* ignore */ }
+    setDmLoading(false);
+  }, []);
+
+  const sendDm = useCallback(async () => {
+    const text = dmInput.trim();
+    if (!text || !dmTarget) return;
+    setDmInput('');
+    const optimistic: DmMessage = { id: Date.now(), sender_id: String(user?.id ?? ''), content: text, created_at: new Date().toISOString() };
+    setDmMessages(prev => [...prev, optimistic]);
+    try {
+      await fetch(`/api/webapp/dm/send/${encodeURIComponent(dmTarget.id)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ content: text }),
+      });
+    } catch { /* ignore */ }
+  }, [dmInput, dmTarget, user]);
+
+  useEffect(() => {
+    if (dmScrollRef.current) {
+      dmScrollRef.current.scrollTop = dmScrollRef.current.scrollHeight;
+    }
+  }, [dmMessages]);
 
   const handleChatSend = useCallback(() => {
     const text = chatInput.trim();
@@ -1846,9 +1926,7 @@ export default function MainStage() {
         </div>
       )}
 
-      {/* Topic strip — always rendered (seed guarantees non-empty state).
-          flex-shrink-0 + explicit min-height prevents any parent flex layout
-          from collapsing it on cramped mobile viewports. */}
+      {/* Mobile quick-action strip — Hangouts link + online count */}
       <div
         className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1 overflow-x-auto scrollbar-none"
         style={{ borderTop: "1px solid rgba(255,255,255,0.05)", minHeight: "28px" }}
@@ -1861,18 +1939,11 @@ export default function MainStage() {
         >
           Hangouts
         </button>
-        {mainTopics.map((tp) => (
-          <button
-            key={tp.id}
-            type="button"
-            onClick={() => navigate("/chat/26")}
-            title={tp.description || `#${tp.name}`}
-            className="flex-shrink-0 text-[10px] sm:text-[11px] font-medium px-2 py-0.5 rounded-full transition-all hover:opacity-80 active:scale-95 whitespace-nowrap"
-            style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.10)", color: "rgba(255,255,255,0.65)" }}
-          >
-            #{tp.name}
-          </button>
-        ))}
+        {onlineUsers.length > 0 && (
+          <span className="flex-shrink-0 text-[10px] font-medium px-2 py-0.5 rounded-full" style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.10)", color: "rgba(255,255,255,0.55)" }}>
+            {onlineUsers.length} online
+          </span>
+        )}
       </div>
       </div>
 
@@ -2350,22 +2421,26 @@ export default function MainStage() {
               backdropFilter: "blur(16px)",
             }}
           >
-            {/* Sidebar header — topic pills for jumping into the community hangout (always rendered) */}
+            {/* Sidebar header — Chat / People tabs */}
             <div
-              className="flex-shrink-0 flex items-center gap-1 px-3 py-2 overflow-x-auto scrollbar-none"
+              className="flex-shrink-0 flex items-center gap-0 px-1 py-1"
               style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}
             >
-              <span className="flex-shrink-0 text-[9px] font-bold uppercase tracking-widest text-white/40 mr-1">Topics</span>
-              {mainTopics.map((tp) => (
+              {(['chat', 'people'] as const).map((tab) => (
                 <button
-                  key={tp.id}
+                  key={tab}
                   type="button"
-                  onClick={() => navigate("/chat/26")}
-                  title={tp.description || `#${tp.name}`}
-                  className="flex-shrink-0 text-[10px] font-medium px-2 py-0.5 rounded-full transition-all hover:opacity-80 active:scale-95 whitespace-nowrap"
-                  style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.10)", color: "rgba(255,255,255,0.60)" }}
+                  onClick={() => {
+                    setSidebarTab(tab);
+                    if (tab === 'people') { setDmTarget(null); fetchOnlineUsers(); }
+                  }}
+                  className="flex-1 py-1.5 text-[11px] font-semibold rounded-lg transition-all capitalize"
+                  style={sidebarTab === tab
+                    ? { background: "linear-gradient(135deg,rgba(212,0,122,0.25),rgba(123,97,255,0.25))", color: "white", border: "1px solid rgba(212,0,122,0.30)" }
+                    : { background: "transparent", color: "rgba(255,255,255,0.40)", border: "1px solid transparent" }
+                  }
                 >
-                  #{tp.name}
+                  {tab === 'people' ? `People${onlineUsers.length ? ` (${onlineUsers.length})` : ''}` : 'Chat'}
                 </button>
               ))}
             </div>
@@ -2396,12 +2471,12 @@ export default function MainStage() {
                 </button>
               </div>
             )}
-            {/* Scrollable messages */}
+            {/* Scrollable messages — only in Chat tab */}
             <div
               ref={sidebarScrollRef}
               aria-live="polite"
               aria-label="Chat messages"
-              className="flex-1 min-h-0 overflow-y-auto flex flex-col justify-end gap-1 px-3 py-3"
+              className={`flex-1 min-h-0 overflow-y-auto flex flex-col justify-end gap-1 px-3 py-3${sidebarTab !== 'chat' ? ' hidden' : ''}`}
               style={{ scrollbarWidth: "thin", scrollbarColor: "rgba(255,255,255,0.08) transparent" }}
             >
               {chatMessages.length === 0 ? (
@@ -2536,7 +2611,96 @@ export default function MainStage() {
               )}
             </div>
 
-            {/* Pinned input */}
+            {/* ── People tab: online user list or mini DM panel ──────────────── */}
+            {sidebarTab === 'people' && (
+              dmTarget ? (
+                /* Mini DM panel */
+                <div className="flex-1 min-h-0 flex flex-col">
+                  {/* DM header */}
+                  <div className="flex-shrink-0 flex items-center gap-2 px-3 py-2" style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+                    <button type="button" onClick={() => setDmTarget(null)} className="text-white/50 hover:text-white/90 transition-colors text-lg leading-none px-1">←</button>
+                    {dmTarget.photo
+                      ? <img src={dmTarget.photo.startsWith('/') ? dmTarget.photo : `/${dmTarget.photo}`} alt="" className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
+                      : <div className="w-7 h-7 rounded-full flex-shrink-0 flex items-center justify-center text-xs font-bold text-white" style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}>{dmTarget.displayName[0]?.toUpperCase()}</div>
+                    }
+                    <span className="text-[12px] font-semibold text-white truncate">{dmTarget.displayName}</span>
+                    <span className="text-[10px] text-white/40 truncate">@{dmTarget.username}</span>
+                  </div>
+                  {/* DM messages */}
+                  <div ref={dmScrollRef} className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-1 px-3 py-2" style={{ scrollbarWidth: "thin", scrollbarColor: "rgba(255,255,255,0.08) transparent" }}>
+                    {dmLoading && <p className="text-xs text-white/30 text-center py-4">Loading…</p>}
+                    {!dmLoading && dmMessages.length === 0 && <p className="text-xs text-white/25 text-center py-4">Say hi 👋</p>}
+                    {dmMessages.map((m) => {
+                      const isMe = String(m.sender_id) === String(user?.id);
+                      return (
+                        <div key={m.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
+                          <div className="max-w-[80%] px-2.5 py-1.5 rounded-2xl text-[12px] leading-snug text-white/90 break-words"
+                            style={isMe
+                              ? { background: "linear-gradient(135deg,rgba(212,0,122,0.55),rgba(123,97,255,0.45))", border: "1px solid rgba(212,0,122,0.30)" }
+                              : { background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.06)" }
+                            }
+                          >
+                            {m.content}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {/* DM input */}
+                  <div className="flex-shrink-0 flex items-center gap-2 px-3 py-3" style={{ borderTop: "1px solid rgba(255,255,255,0.06)", paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom, 0px))" }}>
+                    <input
+                      type="text"
+                      value={dmInput}
+                      onChange={(e) => setDmInput(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void sendDm(); } }}
+                      placeholder={user ? `Message ${dmTarget.displayName}…` : "Sign in to DM"}
+                      disabled={!user}
+                      maxLength={1000}
+                      className="flex-1 min-h-[38px] px-3 rounded-xl text-sm text-white placeholder-white/30 bg-white/[0.07] border border-white/10 focus:outline-none focus:border-pnp-accent/50 disabled:opacity-40"
+                    />
+                    <button type="button" onClick={() => void sendDm()} disabled={!user || !dmInput.trim()} aria-label="Send DM"
+                      className="flex-shrink-0 min-h-[38px] min-w-[38px] flex items-center justify-center rounded-xl transition-all active:scale-[0.94] disabled:opacity-30 disabled:cursor-not-allowed"
+                      style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}
+                    >
+                      <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" /></svg>
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                /* Online users list */
+                <div className="flex-1 min-h-0 overflow-y-auto flex flex-col" style={{ scrollbarWidth: "thin", scrollbarColor: "rgba(255,255,255,0.08) transparent" }}>
+                  {onlineUsers.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center flex-1 gap-2 py-8 px-4 text-center">
+                      <span className="text-2xl">👥</span>
+                      <p className="text-xs text-white/30">No other members online right now</p>
+                    </div>
+                  ) : (
+                    onlineUsers.map((u) => (
+                      <button
+                        key={u.id}
+                        type="button"
+                        onClick={() => void openDm(u)}
+                        className="flex items-center gap-3 px-3 py-2.5 hover:bg-white/[0.05] transition-colors text-left w-full"
+                        style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}
+                      >
+                        {u.photo
+                          ? <img src={u.photo.startsWith('/') ? u.photo : `/${u.photo}`} alt="" className="w-8 h-8 rounded-full object-cover flex-shrink-0" />
+                          : <div className="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center text-sm font-bold text-white" style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}>{u.displayName[0]?.toUpperCase()}</div>
+                        }
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[12px] font-semibold text-white truncate">{u.displayName}</p>
+                          <p className="text-[10px] text-white/40 truncate">@{u.username}</p>
+                        </div>
+                        <svg className="w-3.5 h-3.5 text-white/20 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )
+            )}
+
+            {/* Pinned input — Chat tab only */}
+            {sidebarTab === 'chat' && (
             <div
               className="flex-shrink-0 flex items-center gap-2 px-3 py-3"
               style={{
@@ -2567,6 +2731,7 @@ export default function MainStage() {
                 </svg>
               </button>
             </div>
+            )}
           </div>
         )}
 

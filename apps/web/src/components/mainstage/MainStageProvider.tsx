@@ -404,14 +404,9 @@ export function MainStageProvider({ children }: { children: React.ReactNode }) {
       try {
         const lp: LocalParticipant = sharedRoom.localParticipant;
         const camPub = lp.getTrackPublication(Track.Source.Camera);
-        const micPub = lp.getTrackPublication(Track.Source.Microphone);
         const camOn = !!camPub && !camPub.isMuted;
-        const micOn = !!micPub && !micPub.isMuted;
         if (!camOn) {
           try { await lp.setCameraEnabled(true); } catch { /* no permission, etc. */ }
-        }
-        if (micOn) {
-          try { await lp.setMicrophoneEnabled(false); } catch { /* noop */ }
         }
       } finally {
         enforcing = false;

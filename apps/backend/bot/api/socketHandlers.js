@@ -507,6 +507,17 @@ function initSocketIO(io) {
         });
       } else {
         socket.join('mainstage');
+        // Notify others in the room that this user arrived
+        const _msUserInfo = {
+          id: String(user.id),
+          username: user.username || '',
+          displayName: user.firstName || user.first_name || user.username || 'User',
+          photo: user.photoUrl || user.photo_url || null,
+        };
+        socket.to('mainstage').emit('mainstage:user-joined-room', _msUserInfo);
+        socket.once('disconnect', () => {
+          io.to('mainstage').emit('mainstage:user-left-room', { id: String(user.id) });
+        });
       }
     } catch (_kickCheckErr) {
       // Fail-closed: if we can't verify the kick set, do not admit the socket.
@@ -748,6 +759,35 @@ function initSocketIO(io) {
         ...extra,
       });
     });
+    // mainstage:request-users-online — responds to the requester with the list
+    // of distinct users currently in the mainstage Socket.IO room.
+    socket.on('mainstage:request-users-online', () => {
+      try {
+        const roomSockets = io.sockets.adapter.rooms.get('mainstage');
+        if (!roomSockets) return socket.emit('mainstage:users-online', []);
+        const seen = new Set();
+        const users = [];
+        for (const sid of roomSockets) {
+          const s = io.sockets.sockets.get(sid);
+          const u = s?.data?.user;
+          if (!u) continue;
+          const uid = String(u.id);
+          if (seen.has(uid)) continue;
+          seen.add(uid);
+          users.push({
+            id: uid,
+            username: u.username || '',
+            displayName: u.firstName || u.first_name || u.username || 'User',
+            photo: u.photoUrl || u.photo_url || null,
+          });
+        }
+        socket.emit('mainstage:users-online', users);
+      } catch (err) {
+        logger.warn('mainstage:request-users-online error', { error: err.message });
+        socket.emit('mainstage:users-online', []);
+      }
+    });
+
     // ── End Main Stage socket handlers ───────────────────────────────────────
 
     // Register user in the global presence map.

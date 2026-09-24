@@ -16,7 +16,7 @@ interface ForceCamMicEnforcerProps {
  */
 export function ForceCamMicEnforcer({ active }: ForceCamMicEnforcerProps) {
   const room = useRoomContext();
-  const { localParticipant, isMicrophoneEnabled, isCameraEnabled } = useLocalParticipant();
+  const { localParticipant, isCameraEnabled } = useLocalParticipant();
 
   useEffect(() => {
     if (!active || !localParticipant) return;
@@ -29,10 +29,6 @@ export function ForceCamMicEnforcer({ active }: ForceCamMicEnforcerProps) {
       // the await gap (e.g. Reconnecting→Connected race on a flaky network).
       if (room.state !== ConnectionState.Connected) return;
       try {
-        if (isMicrophoneEnabled) {
-          await localParticipant.setMicrophoneEnabled(false);
-          if (disposed) return;
-        }
         if (!isCameraEnabled) {
           await localParticipant.setCameraEnabled(true);
           if (disposed) return;
@@ -45,7 +41,7 @@ export function ForceCamMicEnforcer({ active }: ForceCamMicEnforcerProps) {
     void enforce();
 
     return () => { disposed = true; };
-  }, [active, localParticipant, isMicrophoneEnabled, isCameraEnabled, room]);
+  }, [active, localParticipant, isCameraEnabled, room]);
 
   return null;
 }

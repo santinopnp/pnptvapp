@@ -45,6 +45,8 @@ import {
   updateMemberRole,
   transferHangoutOwnership,
   notifyHangoutOnlineMembers,
+  getNearbyHangoutMembers,
+  type NearbyContextUser,
   getHangoutFeed,
   startHangoutCall,
   joinHangoutCall,
@@ -2235,6 +2237,8 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
 
   // Online members panel
   const [showOnline, setShowOnline] = useState(false);
+  const [allMembers, setAllMembers] = useState<NearbyContextUser[]>([]);
+  const [allMembersLoading, setAllMembersLoading] = useState(false);
 
   // In-app confirmation modal (replaces window.confirm)
   const [confirmAction, setConfirmAction] = useState<{
@@ -2613,6 +2617,14 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
       setTimeout(() => setChatError(null), 5000);
     };
 
+    // Fired by the backend when a join request is accepted — refresh group list so
+    // the new hangout appears without a manual reload.
+    const onHangoutJoined = (data: { groupId: number; groupName: string }) => {
+      loadGroups();
+      setChatError(`Your request to join "${data.groupName}" was accepted!`);
+      setTimeout(() => setChatError(null), 5000);
+    };
+
     const onHangoutFeedPost = (data: { groupId: number }) => {
       // If we're viewing that group's feed tab, refresh it
       if (activeGroup?.id === data.groupId && chatTab === "feed") {
@@ -2660,12 +2672,14 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
     };
 
     socket.on("hangout:invite:received", onInviteReceived);
+    socket.on("hangout:joined", onHangoutJoined);
     socket.on("hangout:feed:new_post", onHangoutFeedPost);
     socket.on("hangout:topic:created", onTopicCreated);
     socket.on("hangout:topic:updated", onTopicUpdated);
     socket.on("hangout:topic:deleted", onTopicDeleted);
     return () => {
       socket.off("hangout:invite:received", onInviteReceived);
+      socket.off("hangout:joined", onHangoutJoined);
       socket.off("hangout:feed:new_post", onHangoutFeedPost);
       socket.off("hangout:topic:created", onTopicCreated);
       socket.off("hangout:topic:updated", onTopicUpdated);
@@ -3256,7 +3270,16 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
 
             {/* Avatar with online indicator */}
             <button
-              onClick={() => setShowOnline((v) => !v)}
+              onClick={() => {
+                setShowOnline((v) => !v);
+                if (!showOnline && activeGroup?.id) {
+                  setAllMembersLoading(true);
+                  getNearbyHangoutMembers(activeGroup.id)
+                    .then(r => setAllMembers(r.users ?? []))
+                    .catch(() => {})
+                    .finally(() => setAllMembersLoading(false));
+                }
+              }}
               className="relative flex-shrink-0 active:scale-95 transition-transform"
               aria-label={t.chat.showOnlineMembers}
             >
@@ -3894,8 +3917,10 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
               {/* Panel header */}
               <div className="flex items-center justify-between px-5 pt-4 pb-3 flex-shrink-0">
                 <div>
-                  <p className="text-sm font-semibold text-white">{t.chat.onlineNow}</p>
-                  <p className="text-xs" style={{ color: "var(--pnp-text-secondary)" }}>{t.chat.onlineOfTotal(onlineMembers.length, activeGroup.memberCount)}</p>
+                  <p className="text-sm font-semibold text-white">Members</p>
+                  <p className="text-xs" style={{ color: "var(--pnp-text-secondary)" }}>
+                    {allMembersLoading ? "Loading…" : `${allMembers.length} member${allMembers.length !== 1 ? 's' : ''} · ${onlineMembers.length} online`}
+                  </p>
                 </div>
                 <button
                   onClick={() => setShowOnline(false)}
@@ -3908,23 +3933,26 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                   </svg>
                 </button>
               </div>
-              {/* Member grid / list */}
+              {/* Member list — all members, online first, then sorted by distance */}
               <div className="overflow-y-auto flex-1 px-4" style={{ paddingBottom: "max(24px, env(safe-area-inset-bottom))" }}>
-                {onlineMembers.length === 0 ? (
-                  <p className="text-center text-sm py-6" style={{ color: "var(--pnp-text-secondary)" }}>{t.chat.noOtherMembersOnline}</p>
+                {allMembersLoading ? (
+                  <p className="text-center text-sm py-6" style={{ color: "var(--pnp-text-secondary)" }}>Loading members…</p>
+                ) : allMembers.length === 0 ? (
+                  <p className="text-center text-sm py-6" style={{ color: "var(--pnp-text-secondary)" }}>No other members yet</p>
                 ) : (
                   <div className="space-y-1">
-                    {onlineMembers.map((member) => {
-                      const isMe = member.userId === user?.dbId;
+                    {allMembers.map((member) => {
+                      const isOnline = onlineMembers.some(m => String(m.userId) === String(member.user_id)) || !!member.is_online;
+                      const isMe = String(member.user_id) === String(user?.dbId);
                       return (
                         <button
-                          key={member.userId}
-                          onClick={() => { setShowOnline(false); navigate(`/profile/${member.userId}`); }}
+                          key={member.user_id}
+                          onClick={() => { setShowOnline(false); navigate(`/profile/${member.user_id}`); }}
                           className="w-full flex items-center gap-3 py-2.5 px-1 rounded-xl hover:bg-white/5 active:scale-[0.98] transition-all text-left"
                         >
                           <div className="relative flex-shrink-0">
-                            {member.photoUrl ? (
-                              <img src={member.photoUrl} alt="" className="w-10 h-10 rounded-full object-cover" />
+                            {member.photo_url ? (
+                              <img src={member.photo_url} alt="" className="w-10 h-10 rounded-full object-cover" />
                             ) : (
                               <div
                                 className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold"
@@ -3933,15 +3961,22 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                                 {(member.name || "?")[0].toUpperCase()}
                               </div>
                             )}
-                            <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-green-400 ring-2 ring-pnp-background" />
+                            <span
+                              className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ring-2 ring-pnp-background"
+                              style={{ background: isOnline ? "#4ade80" : "rgba(255,255,255,0.2)" }}
+                            />
                           </div>
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium text-white truncate">
-                              {member.name}{isMe ? ` ${t.chat.you}` : ""}
+                              {member.name || member.username}{isMe ? ` ${t.chat.you}` : ""}
                             </p>
-                            <div className="flex items-center gap-1 mt-0.5">
-                              <span className="text-xs text-pnp-textSecondary">{t.chat.online}</span>
-                              <NearbyBadge distanceKm={(member as any).distance_km} variant="compact" />
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                              <span className="text-xs" style={{ color: isOnline ? "#4ade80" : "var(--pnp-text-secondary)" }}>
+                                {isOnline ? t.chat.online : "Offline"}
+                              </span>
+                              {member.distance_km != null && (
+                                <NearbyBadge distanceKm={member.distance_km} variant="compact" />
+                              )}
                             </div>
                           </div>
                           <svg className="w-4 h-4 text-pnp-textSecondary flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
