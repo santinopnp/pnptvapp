@@ -251,9 +251,10 @@ REAL USER DATA FOR THIS TICKET:
     await this.sendDirectMessage(userId, replyText, language);
 
     // 10. Post to support group thread (admin visibility)
+    const safeReplyText = String(replyText).replace(/([*_`])/g, '\\$1');
     const adminNote = shouldResolve
-      ? `🤖 *Cristina AI Reply* _(resolving ticket)_:\n\n${replyText}`
-      : `🤖 *Cristina AI Reply*:\n\n${replyText}`;
+      ? `🤖 *Cristina AI Reply* _(resolving ticket)_:\n\n${safeReplyText}`
+      : `🤖 *Cristina AI Reply*:\n\n${safeReplyText}`;
     await this.postToSupportThread(ticket, adminNote);
 
     // 11. Persist reply for web widget
@@ -328,10 +329,14 @@ REAL USER DATA FOR THIS TICKET:
       ? '\n\n_Para más ayuda, responde a este mensaje o usa /support._'
       : '\n\n_For more help, reply to this message or use /support._';
 
+    // Escape Telegram Markdown v1 special characters in the AI-generated body so
+    // unbalanced * _ ` from the LLM don't cause a "can't parse entities" API error.
+    const safeBody = String(replyText).replace(/([*_`])/g, '\\$1');
+
     try {
       await this.telegram.sendMessage(
         userId,
-        header + replyText + footer,
+        header + safeBody + footer,
         { parse_mode: 'Markdown' }
       );
     } catch (err) {

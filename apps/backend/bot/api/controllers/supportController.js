@@ -360,7 +360,14 @@ async function verifyPayment(req, res) {
     });
   }
 
-  const validProviders = ['epayco', 'daimo', 'btcpay', 'visa'];
+  const validProviders = [
+    // Current providers (match frontend dropdown in CristinaWidget)
+    'wallet_usdc', 'nowpayments', 'efipay', 'nequi_wompi', 'rush_tokens',
+    // Card/crypto (may be set programmatically by admin tooling)
+    'stripe', 'moonpay',
+    // Legacy providers (historical verification only)
+    'epayco', 'daimo', 'btcpay',
+  ];
   if (!validProviders.includes(provider)) {
     return res.status(400).json({ success: false, error: `Invalid provider. Must be one of: ${validProviders.join(', ')}` });
   }
