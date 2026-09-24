@@ -1289,7 +1289,7 @@ export default function Live() {
         <BookCallModal
           creator={{
             id: bookModalCreator.userId,
-            username: bookModalCreator.username,
+            username: bookModalCreator.username ?? "",
             photo_url: bookModalCreator.photoUrl,
             creator_type: "full_time",
             creator_price_usd: bookModalCreator.creatorPriceUsd ?? 0,

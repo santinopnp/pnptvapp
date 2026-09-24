@@ -64,6 +64,15 @@ const collageSlots = [
   { top: "62%", left: "54%", rotate: 5,  size: 80,  zIndex: 1, live: false },
 ];
 
+interface PublicCreator {
+  username: string;
+  display_name: string;
+  avatar_url?: string | null;
+  profile_url?: string | null;
+  is_fam?: boolean;
+  is_live?: boolean;
+}
+
 interface HeroCollageProps {
   creators: PublicCreator[];
   lang: string;

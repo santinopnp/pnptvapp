@@ -572,7 +572,7 @@ export default function App() {
                       supportedChains: [base, mainnet],
                       loginMethodsAndOrder: {
                         primary: ["email", "google", "telegram", "twitter"],
-                        overflow: ["wallet"],
+                        overflow: ["metamask", "coinbase_wallet"],
                       },
                       // "off" prevents auto-creating a Privy embedded wallet at login for
                       // every user — free tier has a wallet-slot cap and most users never

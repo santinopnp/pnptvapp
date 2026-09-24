@@ -302,7 +302,7 @@ export function SharedPostCard({ postId, snapshot, isMe = false }: Props) {
                     />
                   ) : (
                     <VideoPlayer
-                      src={snapshot.mediaUrl}
+                      src={snapshot.mediaUrl ?? undefined}
                       className="w-full h-full object-cover"
                       muted
                       playsInline
@@ -320,7 +320,7 @@ export function SharedPostCard({ postId, snapshot, isMe = false }: Props) {
                 </>
               ) : isImage ? (
                 <img
-                  src={snapshot.mediaUrl}
+                  src={snapshot.mediaUrl ?? undefined}
                   alt=""
                   className="w-full h-full object-cover"
                   onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}

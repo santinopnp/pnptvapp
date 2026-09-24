@@ -21,7 +21,7 @@ interface Props {
 
 const MAX = 3;
 
-const TYPE_ICON: Record<ShortcutType, React.ComponentType<{ size?: number }>> = {
+const TYPE_ICON: Record<ShortcutType, React.ElementType> = {
   hangout: Home,
   creator: User,
   wellness: Heart,

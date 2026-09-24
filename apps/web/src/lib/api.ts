@@ -4971,8 +4971,15 @@ export function getCreatorModerationHistory(): Promise<CreatorModerationHistory>
 export type PayoutLane = "privy_wallet";
 
 // Retained shape so legacy code compiles, but only privy_wallet is populated.
+// Legacy lane fields are kept for reading old DB records; the backend rejects writes.
 export type PayoutDestinations = Partial<{
   privy_wallet: { address: string };
+  meru: { handle: string };
+  btc: { address: string };
+  dash: { address: string };
+  usdt_tron: { address: string };
+  usdt_base: { address: string };
+  bre_b: { key: string; key_type: string };
 }>;
 
 export function getCreatorWallet(): Promise<{

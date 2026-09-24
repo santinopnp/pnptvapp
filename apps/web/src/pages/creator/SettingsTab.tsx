@@ -649,7 +649,7 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
         setUsdtBaseAddress(d.usdt_base?.address || "");
         if (d.bre_b?.key) {
           setBreBKey(d.bre_b.key);
-          setBreBKeyType(d.bre_b.key_type || "phone");
+          setBreBKeyType((d.bre_b.key_type as "cedula" | "email" | "phone") || "phone");
         }
       }
     } catch {
