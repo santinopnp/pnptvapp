@@ -131,7 +131,8 @@ function AppGuidePanel({ es }: { es: boolean }) {
   );
 }
 
-// ── App picker sheet — creates a NowPayments invoice and renders the widget INLINE.
+// ── App picker sheet — creates a NowPayments invoice then opens window.open() popup.
+// NowPayments blocks iframe embedding, so we must use popup (feedback_nowpayments_iframe_blocked).
 // onLaunch / launching props kept for backward compat but are ignored.
 export function NpAppPickerSheet({
   isOpen,
@@ -153,36 +154,36 @@ export function NpAppPickerSheet({
   const es = (lang || 'es').startsWith('es');
   const [selectedApp, setSelectedApp] = useState<string | null>(null);
 
-  // Invoice creation state
   type Phase = 'idle' | 'loading' | 'ready' | 'success' | 'error';
   const [phase, setPhase] = useState<Phase>('idle');
   const [invoiceError, setInvoiceError] = useState<string | null>(null);
+  const [invoiceUrl, setInvoiceUrl] = useState<string | null>(null);
   const [orderId, setOrderId] = useState<string | null>(null);
 
-  const widgetRef = useRef<HTMLDivElement>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const popupRef = useRef<Window | null>(null);
 
   const selectedSteps = selectedApp
     ? (es ? PANEL_STEPS_ES : PANEL_STEPS_EN)[selectedApp] ?? []
     : [];
   const selectedAppLabel = PANEL_APPS.find(a => a.id === selectedApp)?.label ?? '';
 
-  // Clear polling on unmount
   useEffect(() => {
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
   }, []);
 
-  // Reset state when sheet closes
   useEffect(() => {
     if (!isOpen) {
       setPhase('idle');
       setInvoiceError(null);
+      setInvoiceUrl(null);
       setOrderId(null);
       setSelectedApp(null);
       if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-      if (widgetRef.current) widgetRef.current.innerHTML = '';
+      popupRef.current?.close();
+      popupRef.current = null;
     }
   }, [isOpen]);
 
@@ -190,34 +191,25 @@ export function NpAppPickerSheet({
     if (!planId) return;
     setPhase('loading');
     setInvoiceError(null);
-    if (widgetRef.current) widgetRef.current.innerHTML = '';
+    setInvoiceUrl(null);
     try {
       const res = await prepareUsdcSubscription(planId, undefined, undefined, 'btc');
       if (!res.success || !res.nowpaymentsInvoiceId || !res.orderId) {
         throw new Error(res.error || (es ? 'No se pudo crear el pago.' : 'Could not create payment.'));
       }
       setOrderId(res.orderId);
+      setInvoiceUrl(res.invoiceUrl as string);
       setPhase('ready');
 
-      // Inject NowPayments script widget inline
-      requestAnimationFrame(() => {
-        const container = widgetRef.current;
-        if (!container) return;
-        container.innerHTML = '';
-        const script = document.createElement('script');
-        script.type = 'text/javascript';
-        script.src = 'https://nowpayments.io/embeds/payment-widget.js';
-        script.setAttribute('data-nowpayments-url', res.invoiceUrl as string);
-        container.appendChild(script);
-      });
-
-      // Start polling every 8s
+      // Poll every 8s for payment confirmation
       if (pollRef.current) clearInterval(pollRef.current);
       pollRef.current = setInterval(async () => {
         try {
           const status = await getUsdcSubscriptionStatus(res.orderId as string);
           if (status.completed) {
             if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+            popupRef.current?.close();
+            popupRef.current = null;
             setPhase('success');
             onSuccess?.(res.orderId as string);
             setTimeout(() => { onClose(); }, 2500);
@@ -240,6 +232,17 @@ export function NpAppPickerSheet({
       createInvoice();
     }
   }, [isOpen, planId, phase, createInvoice]);
+
+  const handleOpenPopup = useCallback(() => {
+    if (!invoiceUrl) return;
+    const w = window.screen.width, h = window.screen.height;
+    const pw = 540, ph = 700;
+    popupRef.current = window.open(
+      invoiceUrl,
+      'pnp_np_wallet',
+      `width=${pw},height=${ph},left=${Math.round((w - pw) / 2)},top=${Math.round((h - ph) / 2)},resizable=yes,scrollbars=yes,noopener,noreferrer`
+    );
+  }, [invoiceUrl]);
 
   if (!isOpen) return null;
 
@@ -314,59 +317,65 @@ export function NpAppPickerSheet({
           </div>
         )}
 
-        {/* Invoice ready — widget + app instructions */}
-        {(phase === 'ready' || phase === 'idle') && (
+        {/* Invoice ready — open popup button + per-app instructions */}
+        {phase === 'ready' && invoiceUrl && (
           <>
-            {/* NowPayments inline widget */}
-            <div
-              ref={widgetRef}
-              className="w-full rounded-xl overflow-hidden [&_iframe]:w-full [&_iframe]:rounded-xl"
-              style={{ minHeight: phase === 'ready' ? 320 : 0 }}
-            />
+            <button
+              type="button"
+              onClick={handleOpenPopup}
+              className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl font-bold text-sm text-white transition-all active:scale-[0.98]"
+              style={{ background: 'linear-gradient(90deg, #e67e22, #f39c12)' }}
+            >
+              ₿ {es ? 'Abrir ventana de pago' : 'Open payment window'}
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+              </svg>
+            </button>
 
-            {/* Divider */}
-            {phase === 'ready' && (
-              <div className="flex items-center gap-2">
-                <div className="flex-1 h-px bg-white/10" />
-                <span className="text-[10px] text-white/35 flex-shrink-0">
-                  {es ? 'instrucciones por app' : 'per-app instructions'}
-                </span>
-                <div className="flex-1 h-px bg-white/10" />
-              </div>
-            )}
+            <p className="text-[10px] text-white/30 text-center -mt-1">
+              {es
+                ? '⚡ Tu plan se activa solo cuando la red confirme el pago.'
+                : '⚡ Your plan activates automatically once the network confirms.'}
+            </p>
 
-            {/* App grid — always visible */}
-            {phase === 'ready' && (
-              <div>
-                <p className="text-[11px] text-white/40 text-center mb-3">
-                  {es ? 'Elige tu app para ver los pasos exactos:' : 'Pick your app to see the exact steps:'}
-                </p>
-                <div className="grid grid-cols-4 gap-2">
-                  {PANEL_APPS.map(app => {
-                    const isSel = selectedApp === app.id;
-                    return (
-                      <button
-                        key={app.id}
-                        type="button"
-                        onClick={() => setSelectedApp(isSel ? null : app.id)}
-                        className="flex flex-col items-center gap-1 py-3 px-1 rounded-xl border transition active:scale-[0.95]"
-                        style={isSel
-                          ? { background: app.bg, borderColor: app.border }
-                          : { background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(255,255,255,0.10)' }
-                        }
-                      >
-                        <span className="text-[20px] leading-none">{app.emoji}</span>
-                        <span className="text-[10px] font-semibold text-white/80 text-center leading-tight">{app.label}</span>
-                        <span className="text-[8px] text-white/30 leading-none">{app.geo}</span>
-                      </button>
-                    );
-                  })}
-                </div>
+            <div className="flex items-center gap-2">
+              <div className="flex-1 h-px bg-white/10" />
+              <span className="text-[10px] text-white/35 flex-shrink-0">
+                {es ? 'instrucciones por app' : 'per-app instructions'}
+              </span>
+              <div className="flex-1 h-px bg-white/10" />
+            </div>
+
+            {/* App grid */}
+            <div>
+              <p className="text-[11px] text-white/40 text-center mb-3">
+                {es ? 'Elige tu app para ver los pasos exactos:' : 'Pick your app to see the exact steps:'}
+              </p>
+              <div className="grid grid-cols-4 gap-2">
+                {PANEL_APPS.map(app => {
+                  const isSel = selectedApp === app.id;
+                  return (
+                    <button
+                      key={app.id}
+                      type="button"
+                      onClick={() => setSelectedApp(isSel ? null : app.id)}
+                      className="flex flex-col items-center gap-1 py-3 px-1 rounded-xl border transition active:scale-[0.95]"
+                      style={isSel
+                        ? { background: app.bg, borderColor: app.border }
+                        : { background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(255,255,255,0.10)' }
+                      }
+                    >
+                      <span className="text-[20px] leading-none">{app.emoji}</span>
+                      <span className="text-[10px] font-semibold text-white/80 text-center leading-tight">{app.label}</span>
+                      <span className="text-[8px] text-white/30 leading-none">{app.geo}</span>
+                    </button>
+                  );
+                })}
               </div>
-            )}
+            </div>
 
             {/* Steps for selected app */}
-            {phase === 'ready' && selectedApp && selectedSteps.length > 0 && (
+            {selectedApp && selectedSteps.length > 0 && (
               <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 animate-in fade-in slide-in-from-top-1 duration-150">
                 <p className="text-[10px] font-semibold text-white/45 uppercase tracking-wide mb-2">
                   {es ? `Pasos en ${selectedAppLabel}` : `Steps in ${selectedAppLabel}`}
@@ -382,14 +391,6 @@ export function NpAppPickerSheet({
                   ))}
                 </ol>
               </div>
-            )}
-
-            {phase === 'ready' && (
-              <p className="text-[10px] text-white/25 text-center">
-                {es
-                  ? '⚡ Tu plan se activa solo cuando la red confirme el pago.'
-                  : '⚡ Your plan activates automatically once the network confirms.'}
-              </p>
             )}
           </>
         )}

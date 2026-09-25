@@ -2191,6 +2191,8 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
   // Chat view state
   const [view, setView] = useState<View>("list");
   const [activeGroup, setActiveGroup] = useState<HangoutGroup | null>(null);
+  // Topics — must be declared before the socket hook that uses activeTopic?.id
+  const [activeTopic, setActiveTopic] = useState<TopicLite | null>(null);
 
   // Group members (loaded on chat open for member management panels)
   const [groupMembers, setGroupMembers] = useState<any[]>([]);
@@ -2342,8 +2344,7 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
 
   const [showAboutPanel, setShowAboutPanel] = useState(false);
 
-  // Topics — sub-channels within a hangout group
-  const [activeTopic, setActiveTopic] = useState<TopicLite | null>(null);
+  // Topics — sub-channels within a hangout group (declared earlier, near activeGroup)
   const [showCreateTopic, setShowCreateTopic] = useState(false);
   const [newTopicName, setNewTopicName] = useState('');
   const [creatingTopic, setCreatingTopic] = useState(false);
