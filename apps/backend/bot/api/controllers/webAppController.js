@@ -105,7 +105,7 @@ async function createWebUser({ id, firstName, lastName, username, email, passwor
   const { rows } = await query(
     `INSERT INTO users
        (id, pnptv_id, first_name, last_name, username, email, password_hash,
-        telegram, twitter, x_id, photo_file_id, subscription_status, tier, role,
+        telegram, twitter, x_user_id, photo_file_id, subscription_status, tier, role,
         terms_accepted, is_active, created_at, updated_at)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'free','free','user',false,true,NOW(),NOW())
      RETURNING id, pnptv_id, first_name, last_name, username, email,
@@ -168,9 +168,26 @@ async function findOrLinkUser({ telegramId, twitterHandle, xId, email, firstName
     }
   }
 
+  // X-identity lookups include soft-deleted accounts so returning users can
+  // log back in. If found as soft-deleted, restore them immediately.
   if (!user && xId) {
-    const { rows } = await query(`SELECT ${RETURN_COLS} FROM users WHERE x_id = $1 AND is_deleted = false`, [String(xId)]);
-    if (rows.length > 0) user = rows[0];
+    const { rows } = await query(`SELECT ${RETURN_COLS}, is_deleted FROM users WHERE x_id = $1 LIMIT 1`, [String(xId)]);
+    if (rows.length > 0) {
+      if (rows[0].is_deleted) {
+        await query(`UPDATE users SET is_deleted = false, updated_at = NOW() WHERE id = $1`, [rows[0].id]).catch(() => {});
+      }
+      user = rows[0];
+    }
+  }
+
+  if (!user && xId) {
+    const { rows } = await query(`SELECT ${RETURN_COLS}, is_deleted FROM users WHERE x_user_id = $1 LIMIT 1`, [String(xId)]);
+    if (rows.length > 0) {
+      if (rows[0].is_deleted) {
+        await query(`UPDATE users SET is_deleted = false, updated_at = NOW() WHERE id = $1`, [rows[0].id]).catch(() => {});
+      }
+      user = rows[0];
+    }
   }
 
   if (!user && twitterHandle) {
@@ -197,8 +214,8 @@ async function findOrLinkUser({ telegramId, twitterHandle, xId, email, firstName
       updates.push(`twitter = $${idx++}`);
       vals.push(twitterHandle);
     }
-    if (xId && !user.x_id) {
-      updates.push(`x_id = $${idx++}`);
+    if (xId && !user.x_user_id) {
+      updates.push(`x_user_id = $${idx++}`);
       vals.push(String(xId));
     }
     if (photoFileId && !user.photo_file_id) {
@@ -218,8 +235,6 @@ async function findOrLinkUser({ telegramId, twitterHandle, xId, email, firstName
       }
     }
 
-    // Enforce default follows (fire-and-forget)
-    enforceDefaultFollows(user.id).catch(() => {});
     return { user, isNew: false };
   }
 
@@ -231,20 +246,32 @@ async function findOrLinkUser({ telegramId, twitterHandle, xId, email, firstName
   try {
     newUser = await createWebUser({ telegramId, twitterHandle, xId, email, firstName, lastName, username, photoFileId });
   } catch (err) {
-    if (err.code === '23505' && telegramId) {
-      const { rows: racedUser } = await query(
-        `SELECT ${RETURN_COLS} FROM users WHERE telegram = $1 AND is_deleted = false LIMIT 1`,
-        [String(telegramId)]
-      );
-      if (racedUser.length > 0) {
-        enforceDefaultFollows(racedUser[0].id).catch(() => {});
-        return { user: racedUser[0], isNew: false };
+    if (err.code === '23505') {
+      if (telegramId) {
+        const { rows: racedUser } = await query(
+          `SELECT ${RETURN_COLS} FROM users WHERE telegram = $1 AND is_deleted = false LIMIT 1`,
+          [String(telegramId)]
+        );
+        if (racedUser.length > 0) return { user: racedUser[0], isNew: false };
+      }
+      if (xId) {
+        // x_id or x_user_id already exists — could be soft-deleted or a race condition.
+        // Restore is_deleted if needed so the user can log back in.
+        const { rows: racedUser } = await query(
+          `SELECT ${RETURN_COLS} FROM users WHERE (x_id = $1 OR x_user_id = $1) LIMIT 1`,
+          [String(xId)]
+        );
+        if (racedUser.length > 0) {
+          if (racedUser[0].is_deleted) {
+            await query(`UPDATE users SET is_deleted = false, updated_at = NOW() WHERE id = $1`, [racedUser[0].id]).catch(() => {});
+            racedUser[0].is_deleted = false;
+          }
+          return { user: racedUser[0], isNew: false };
+        }
       }
     }
     throw err;
   }
-  // Enforce default follows for new user (fire-and-forget)
-  enforceDefaultFollows(newUser.id).catch(() => {});
   // Grant 3-day PRIME trial (fire-and-forget, never blocks login)
   require('../../../services/entitlementAccessService').grantTrialPrime(newUser.id).catch(() => {});
   return { user: newUser, isNew: true };
@@ -301,10 +328,7 @@ function provisionAllServices(user) {
       logger.warn(`[Provision] Matrix failed for user ${userId}: ${err.message}`);
     }
 
-    // 2. Default follows (idempotent)
-    enforceDefaultFollows(userId).catch(() => {});
-
-    // 3. PNPtv fam pending-handle claim (idempotent — no-op if not on list)
+    // 2. PNPtv fam pending-handle claim (idempotent — no-op if not on list)
     try {
       const pnpFamService = require('../../../services/pnpFamService');
       await pnpFamService.resolvePendingHandleOnSignup(userId, user.username);
@@ -727,7 +751,6 @@ const magicLinkConfirm = async (req, res) => {
       req.session.save((err) => (err ? reject(err) : resolve()))
     );
 
-    enforceDefaultFollows(user.id).catch(() => {});
     logger.info(`[magic-link] sign-in: user ${user.id}`);
     return res.redirect(`${APP_URL}/login?magic_verified=1&returnTo=%2F`);
   } catch (error) {
@@ -1532,7 +1555,6 @@ const emailLogin = async (req, res) => {
 
     query(`UPDATE users SET last_login_at = NOW(), last_login_method = 'email', updated_at = NOW() WHERE id = $1`, [user.id]).catch(() => {});
     const emailLoginSessionData = buildSession(user, { last_login_method: 'email' });
-    enforceDefaultFollows(user.id).catch(() => {});
     const rememberMeFlag = rememberMe === true || rememberMe === 'true';
     await new Promise((resolve, reject) =>
       req.session.regenerate(err => (err ? reject(err) : resolve()))
@@ -1769,7 +1791,6 @@ const verifyEmail = async (req, res) => {
       if (userResult.rows.length > 0) {
         const u = userResult.rows[0];
         const alreadyVerifiedSessionData = buildSession(u);
-        enforceDefaultFollows(u.id).catch(() => {});
         await new Promise((resolve, reject) =>
           req.session.regenerate(err => (err ? reject(err) : resolve()))
         );
@@ -1828,7 +1849,6 @@ const verifyEmail = async (req, res) => {
 
     // Create session
     const verifyEmailSessionData = buildSession(row);
-    enforceDefaultFollows(row.id).catch(() => {});
     await new Promise((resolve, reject) =>
       req.session.regenerate(err => (err ? reject(err) : resolve()))
     );
@@ -2226,6 +2246,18 @@ const xLoginCallback = async (req, res) => {
       const linkedAddEmailFlag = user.email ? '' : '&add_email=1';
       const returnTo = fromSettings ? '%2Fsettings%2Faccount' : '%2Ffeed';
       return res.redirect(`https://pnptv.app/login?post_login=x${linkedAddEmailFlag}&returnTo=${returnTo}`);
+    }
+
+    // Clear x_id/x_user_id from any other row that already holds this X identity
+    // so the UNIQUE constraints never fire on INSERT or UPDATE below.
+    if (xId) {
+      await query(
+        `UPDATE users SET x_id = NULL, x_user_id = NULL,
+                          twitter = CASE WHEN twitter = $1 THEN NULL ELSE twitter END,
+                          updated_at = NOW()
+         WHERE (x_id = $2 OR x_user_id = $2)`,
+        [xHandle, xId]
+      ).catch(err => logger.warn('[XLogin] pre-create conflict clear failed', { error: err.message }));
     }
 
     const [firstName, ...nameParts] = (xName || xHandle).split(' ');

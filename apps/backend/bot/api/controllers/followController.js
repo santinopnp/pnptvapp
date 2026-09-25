@@ -145,11 +145,6 @@ const unfollowUser = async (req, res) => {
     });
   }
 
-  // Block unfollowing enforced accounts
-  if (isEnforcedFollow(targetId)) {
-    return res.status(403).json({ error: 'This account cannot be unfollowed' });
-  }
-
   try {
     const { rowCount } = await query(
       'DELETE FROM user_follows WHERE follower_id = $1 AND following_id = $2',

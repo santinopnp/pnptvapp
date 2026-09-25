@@ -668,8 +668,16 @@ async function addJob(queueName, jobName, data, opts = {}) {
 }
 
 // ─── Notifications worker processor ─────────────────────────────────────────
-// Handles: slack_ops, slack_creator, slack_live, slack_support, email
+// Handles: slack_ops, slack_creator, slack_live, slack_support, email,
+//          year50_funnel_promo (founders funnel 24-hour follow-up DM)
 async function _processNotification(job) {
+  // ── Named-job dispatch (job.name takes priority over job.data.type) ────────
+  if (job.name === 'year50_funnel_promo') {
+    await _handleYear50FunnelPromo(job.data);
+    return;
+  }
+
+  // ── Legacy type-based dispatch ──────────────────────────────────────────────
   const { type, fn, args } = job.data;
   switch (type) {
     case 'slack_ops': {
@@ -710,6 +718,82 @@ async function _processNotification(job) {
     default:
       logger.warn(`[BullMQ] notifications processor: unknown type "${type}"`);
   }
+}
+
+// ─── year50_funnel_promo handler ─────────────────────────────────────────────
+/**
+ * Deliver the 24-hour follow-up year50 promo DM to trial users.
+ *
+ * Guards:
+ *  - Skip if year50_promo_sent_at is already set (idempotent).
+ *  - Skip if the user has converted to a paid plan (subscription_type != 'trial'
+ *    while tier = 'PRIME' means they paid).
+ *  - Skip if user no longer exists.
+ *
+ * Uses sendSystemDM with the platform system sender (SYSTEM_SENDER_ID env var,
+ * defaulting to '8552451957' — the Cristina/system account used throughout).
+ */
+async function _handleYear50FunnelPromo({ userId }) {
+  if (!userId) return;
+
+  const { rows } = await query(
+    `SELECT id, tier, subscription_type, year50_promo_sent_at, first_name, language
+       FROM users WHERE id = $1::text LIMIT 1`,
+    [String(userId)]
+  );
+  const user = rows[0];
+  if (!user) {
+    logger.info('[FoundersFunnel] year50_funnel_promo: user not found, skipping', { userId });
+    return;
+  }
+
+  // Already sent — idempotency guard
+  if (user.year50_promo_sent_at) {
+    logger.info('[FoundersFunnel] year50_funnel_promo: already sent, skipping', { userId });
+    return;
+  }
+
+  // User converted to paid PRIME (subscription_type changed away from 'trial') — skip
+  if (user.subscription_type !== 'trial' && user.tier === 'PRIME') {
+    logger.info('[FoundersFunnel] year50_funnel_promo: user already converted to paid, skipping', { userId });
+    await query(
+      `UPDATE users SET year50_promo_sent_at = NOW(), updated_at = NOW() WHERE id = $1::text`,
+      [String(userId)]
+    );
+    return;
+  }
+
+  const SYSTEM_SENDER = process.env.SYSTEM_SENDER_ID || '8552451957';
+  const sendSystemDM = require('./sendSystemDM');
+  const isSpanish = (user.language || 'en').toLowerCase().startsWith('es');
+  const firstName = user.first_name || '';
+
+  const message = isSpanish
+    ? `${firstName ? `${firstName}, ` : ''}tu prueba PRIME está en marcha! 🎉\n\n` +
+      `Como nuevo miembro, tienes acceso especial a nuestra oferta del Año Completo: ` +
+      `12 meses de PRIME por solo $50 — menos de $5 al mes.\n\n` +
+      `Accede a todo el contenido exclusivo, streams en vivo y mucho más durante todo un año.\n\n` +
+      `👉 Suscríbete en pnptv.app antes de que tu prueba expire.`
+    : `${firstName ? `${firstName}, ` : ''}your PRIME trial is live! 🎉\n\n` +
+      `As a new member, you have special access to our Full Year offer: ` +
+      `12 months of PRIME for just $50 — less than $5/month.\n\n` +
+      `Unlock all exclusive content, live streams, and more for a full year.\n\n` +
+      `👉 Subscribe at pnptv.app before your trial expires.`;
+
+  try {
+    await sendSystemDM(SYSTEM_SENDER, String(userId), message, query);
+    logger.info('[FoundersFunnel] year50_funnel_promo DM sent', { userId });
+  } catch (dmErr) {
+    logger.error('[FoundersFunnel] year50_funnel_promo DM send failed', { userId, error: dmErr.message });
+    // Re-throw so BullMQ retries (up to queue attempt limit)
+    throw dmErr;
+  }
+
+  // Mark as sent only after successful delivery
+  await query(
+    `UPDATE users SET year50_promo_sent_at = NOW(), updated_at = NOW() WHERE id = $1::text`,
+    [String(userId)]
+  );
 }
 
 const { Worker } = require('bullmq');

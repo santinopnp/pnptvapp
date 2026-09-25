@@ -211,7 +211,12 @@ async function completeOnboarding(userId) {
   }
 
   await query(
-    `UPDATE users SET onboarding_complete = true, updated_at = NOW() WHERE id = $1`,
+    `UPDATE users
+        SET onboarding_complete        = true,
+            updated_at                 = NOW(),
+            founders_offer_expires_at  = NOW() + INTERVAL '1 hour',
+            founders_popup_dismissed_at = NULL
+      WHERE id = $1`,
     [userId]
   );
 

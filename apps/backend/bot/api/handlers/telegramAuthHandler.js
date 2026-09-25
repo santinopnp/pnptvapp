@@ -138,6 +138,8 @@ const handleTelegramAuth = async (req, res) => {
       [String(telegramUser.id), pnptvId]
     );
 
+    let isNewUser = false;
+
     if (userQuery.rows.length === 0) {
       // User not in database — check IP ban before creating a new account
       const clientIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress;
@@ -228,6 +230,9 @@ const handleTelegramAuth = async (req, res) => {
           return res.status(500).json({ error: 'User creation failed', redirect: '/auth/telegram-login' });
         }
       }
+      // Mark this request as a new account creation so the founders funnel fires later
+      isNewUser = true;
+
       // Fire-and-forget: notify #marketing-telegram of the new signup
       try {
         const createdUser = userQuery.rows[0];
@@ -437,6 +442,12 @@ const handleTelegramAuth = async (req, res) => {
 
       // 3. Default follows (idempotent)
       enforceDefaultFollows(user.id).catch(() => {});
+
+      // 4. Founders funnel — only for brand-new accounts
+      if (isNewUser) {
+        const { grantFoundersFunnel } = require('../../../services/foundersFunnelService');
+        grantFoundersFunnel(user.id).catch(() => {});
+      }
     });
 
     // Return success with full user data matching auth-status format
@@ -535,7 +546,7 @@ const checkAuthStatus = async (req, res) => {
     // Refresh tier, role, and subscription from DB (prevents stale session data)
     try {
       const { rows } = await query(
-        'SELECT pnptv_id, tier, role, subscription_status, photo_file_id, creator_status, creator_type, creator_role, creator_locked, age_verified, terms_accepted, date_of_birth, content_disclaimer, onboarding_complete, live_channel, twitter, x_username FROM users WHERE id = $1',
+        'SELECT pnptv_id, tier, role, subscription_status, photo_file_id, creator_status, creator_type, creator_role, creator_locked, age_verified, terms_accepted, date_of_birth, content_disclaimer, onboarding_complete, live_channel, twitter, x_username, founders_offer_expires_at, founders_popup_dismissed_at, year50_popup_dismissed_at FROM users WHERE id = $1',
         [user.id]
       );
       if (rows.length > 0) {
@@ -556,6 +567,9 @@ const checkAuthStatus = async (req, res) => {
         user.contentDisclaimer = fresh.content_disclaimer || false;
         user.onboardingComplete = fresh.onboarding_complete === true;
         user.liveChannel = fresh.live_channel || null;
+        user.foundersOfferExpiresAt = fresh.founders_offer_expires_at || null;
+        user.foundersPopupDismissedAt = fresh.founders_popup_dismissed_at || null;
+        user.year50PopupDismissedAt = fresh.year50_popup_dismissed_at || null;
         const isValidPhoto = (p) => p && typeof p === 'string' && (p.startsWith('/') || p.startsWith('http'));
         if (isValidPhoto(fresh.photo_file_id)) {
           user.photoUrl = fresh.photo_file_id;
@@ -633,6 +647,10 @@ const checkAuthStatus = async (req, res) => {
         email: user.email || null,
         // Stream ownership
         live_channel: user.liveChannel || null,
+        // Founders funnel — ISO timestamp or null; null once offer has expired or user converted
+        founders_offer_expires_at: user.foundersOfferExpiresAt || null,
+        founders_popup_dismissed_at: user.foundersPopupDismissedAt || null,
+        year50_popup_dismissed_at: user.year50PopupDismissedAt || null,
         // Super-god ops flag: bypasses gates + suppresses metric writes.
         // `eligible` = user is on the allowlist (badge always renders for them).
         // `is_super_god` = currently ACTIVE (eligible AND not toggled off).

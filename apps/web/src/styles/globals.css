@@ -1126,3 +1126,8 @@
   }
   .pnptv-fam-welcome-ember { display: none !important; }
 }
+
+@keyframes fabFoundersPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(212,0,122,0.55); }
+  50%       { box-shadow: 0 0 0 10px rgba(212,0,122,0); }
+}

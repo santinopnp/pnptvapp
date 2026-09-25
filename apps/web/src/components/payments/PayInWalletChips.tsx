@@ -381,8 +381,18 @@ export function WalletPayCard({
   const amountUsd = Number.isFinite(amountUsdRaw) && amountUsdRaw > 0 ? amountUsdRaw : 0;
   const priceReady = amountUsd > 0;
   const { authenticated, login, getAccessToken } = usePrivy();
+  const { createWallet } = useCreateWallet();
   const { wallets } = useWallets();
   const recovery = usePrivyRecovery();
+  // Track how long we've been authenticated without a wallet so we can show an
+  // actionable "Create wallet" button instead of a permanent spinner.
+  const [walletWaitSecs, setWalletWaitSecs] = _useState(0);
+  _useEffect(() => {
+    if (!authenticated || wallets.length > 0) { setWalletWaitSecs(0); return; }
+    setWalletWaitSecs(0);
+    const iv = setInterval(() => setWalletWaitSecs((s) => s + 1), 1000);
+    return () => clearInterval(iv);
+  }, [authenticated, wallets.length]);
   const { addFunds } = useAddFunds();
   const [connectError, setConnectError] = _useState<string | null>(null);
   const { connectWallet } = useConnectWallet({
@@ -539,18 +549,47 @@ export function WalletPayCard({
       </div>
     );
   }
-  // Signed in, wallet still provisioning (Privy embedded wallet takes a
-  // second on first sign-in). Show a spinner instead of silent null.
+  // Signed in but no wallet yet. Spinner for first 3s (Privy SDK hydrates),
+  // then show "Create wallet" so the user isn't stuck forever.
   if (!activeWallet) {
+    const showCreateBtn = walletWaitSecs >= 3;
     return (
-      <div className="rounded-xl border border-white/10 bg-white/[0.04] p-3 flex items-center gap-3">
-        <svg className="w-4 h-4 animate-spin text-emerald-400" fill="none" viewBox="0 0 24 24">
-          <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" className="opacity-25" />
-          <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-        </svg>
-        <p className="text-xs text-pnp-textSecondary">
-          {es ? "Preparando tu billetera…" : "Setting up your wallet…"}
-        </p>
+      <div className="rounded-xl border border-white/10 bg-white/[0.04] p-3">
+        {showCreateBtn ? (
+          <>
+            <p className="text-xs text-pnp-textSecondary mb-2">
+              {es ? "Necesitas una billetera PNPtv para pagar con tarjeta." : "You need a PNPtv Wallet to pay with your card."}
+            </p>
+            <button
+              type="button"
+              onClick={async () => {
+                try { await createWallet(); }
+                catch (err: unknown) {
+                  const msg = err instanceof Error ? err.message : String(err);
+                  if (!/cancel|exit|closed/i.test(msg))
+                    setConnectError(es ? "No pudimos crear tu billetera. Intenta de nuevo." : "Could not create wallet. Please try again.");
+                }
+              }}
+              className="w-full py-2.5 rounded-xl text-sm font-bold text-white transition-opacity active:opacity-80"
+              style={{ background: "linear-gradient(135deg,#10b981,#059669)" }}
+            >
+              {es ? "💎 Crear mi Billetera PNPtv" : "💎 Create my PNPtv Wallet"}
+            </button>
+            {connectError && (
+              <p className="text-[10px] text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2 py-1.5 mt-2">{connectError}</p>
+            )}
+          </>
+        ) : (
+          <div className="flex items-center gap-3">
+            <svg className="w-4 h-4 animate-spin text-emerald-400 flex-shrink-0" fill="none" viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" className="opacity-25" />
+              <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+            <p className="text-xs text-pnp-textSecondary">
+              {es ? "Preparando tu billetera…" : "Setting up your wallet…"}
+            </p>
+          </div>
+        )}
       </div>
     );
   }

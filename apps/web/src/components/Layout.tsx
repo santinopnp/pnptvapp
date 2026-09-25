@@ -2741,11 +2741,32 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
   const [homeRushBalance, setHomeRushBalance] = useState<number | null>(null);
   const [homePlansError, setHomePlansError] = useState<string | null>(null);
   const [selectedHomePlan, setSelectedHomePlan] = useState<SubscriptionPlan | null>(null);
+  const [homeNpOpen, setHomeNpOpen] = useState(false);
+
+  // Founders aggressive promo — active for 60 min after onboarding completion.
+  const [foundersSecsLeft, setFoundersSecsLeft] = useState(0);
+  useEffect(() => {
+    const expiry = user?.foundersOfferExpiresAt;
+    if (!expiry) { setFoundersSecsLeft(0); return; }
+    const expiryMs = typeof expiry === "number" ? expiry * 1000 : new Date(expiry).getTime();
+    const tick = () => {
+      const secs = Math.max(0, Math.floor((expiryMs - Date.now()) / 1000));
+      setFoundersSecsLeft(secs);
+    };
+    tick();
+    const iv = setInterval(tick, 1000);
+    return () => clearInterval(iv);
+  }, [user?.foundersOfferExpiresAt]);
+  const inFoundersWindow = foundersSecsLeft > 0;
+  const foundersCountdown = inFoundersWindow
+    ? `${Math.floor(foundersSecsLeft / 60)}:${String(foundersSecsLeft % 60).padStart(2, "0")}`
+    : null;
+
   // Morph animation — FAB expands into a pill showing contextual CTA text, then
   // contracts back. Cycles every ~12s, stops on first user interaction.
   const [fabExpanded, setFabExpanded] = useState(false);
   const fabCycleTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
-  const fabCta = isLivePage ? "Buy Ru$h" : isHomePanelRoute ? "Get PRIME" : "Tap to Pay";
+  const fabCta = isLivePage ? "Buy Ru$h" : inFoundersWindow ? `Founders $99` : isHomePanelRoute ? "Get PRIME" : "Tap to Pay";
   useEffect(() => {
     if (!isAuthenticated) return;
     const clearAll = () => { fabCycleTimers.current.forEach(clearTimeout); fabCycleTimers.current = []; };
@@ -3140,9 +3161,58 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
                     </>
                   ) : (
                     <>
-                      <p className="text-[10px] font-semibold uppercase tracking-widest text-white/40 mb-2">
-                        {lang === "es" ? "Planes" : "Plans"}
-                      </p>
+                      {inFoundersWindow && (
+                        <div
+                          className="mb-3 rounded-2xl overflow-hidden"
+                          style={{ border: "1px solid rgba(212,0,122,0.55)", background: "linear-gradient(160deg,rgba(60,0,40,0.95),rgba(30,0,50,0.95))" }}
+                        >
+                          {/* Header row */}
+                          <div className="flex items-center justify-between px-3 pt-2.5 pb-1">
+                            <span
+                              className="text-[9px] font-black uppercase tracking-[0.14em]"
+                              style={{ color: "#FF4DB2", letterSpacing: "0.14em" }}
+                            >
+                              ✦ FOUNDERS OFFER
+                            </span>
+                            {foundersCountdown && (
+                              <span className="text-[9px] font-mono font-bold" style={{ color: "rgba(255,255,255,0.45)" }}>
+                                {foundersCountdown}
+                              </span>
+                            )}
+                          </div>
+                          {/* Plan info */}
+                          <div className="px-3 pb-2">
+                            <p className="text-sm font-black text-white leading-tight">PNPtv! Founders</p>
+                            <p className="text-[10px] text-white/50 mb-2">Lifetime · all features + PRIME</p>
+                            {/* Pay with card */}
+                            <Suspense fallback={<div className="h-10 rounded-xl bg-white/[0.05] animate-pulse mb-1.5" />}>
+                              <LazyWalletPayCard
+                                surface="prime"
+                                amountUsd={99.99}
+                                entitlementSpec={{ planId: "lifetime-pass" }}
+                                label="💳 Pay $99.99 · Founders"
+                                lang={lang === "es" ? "es" : "en"}
+                                compact
+                                onSuccess={() => setHomePanelOpen(false)}
+                              />
+                            </Suspense>
+                            {/* Pay with apps */}
+                            <button
+                              type="button"
+                              onClick={() => setHomeNpOpen(true)}
+                              className="mt-1.5 w-full flex items-center justify-center gap-1.5 rounded-xl py-2 text-[11px] font-bold active:scale-[0.97] transition"
+                              style={{ background: "rgba(212,0,122,0.18)", border: "1px solid rgba(212,0,122,0.4)", color: "#FF4DB2" }}
+                            >
+                              ₿ Apps &amp; wallets
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                      {!inFoundersWindow && (
+                        <p className="text-[10px] font-semibold uppercase tracking-widest text-white/40 mb-2">
+                          {lang === "es" ? "Planes" : "Plans"}
+                        </p>
+                      )}
                       {homePlanLoading ? (
                         <div className="space-y-1.5">
                           {[0, 1, 2].map((i) => (
@@ -3162,7 +3232,9 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
                         </div>
                       ) : (
                         <div className="space-y-1.5">
-                          {homePlans.map((plan) => {
+                          {homePlans
+                            .filter((p) => !inFoundersWindow || p.id !== "lifetime-pass")
+                            .map((plan) => {
                             const days = plan.duration_days ?? plan.duration ?? 0;
                             const duration = formatPlanDuration(days);
                             const price = plan.priceUSD ?? plan.price ?? 0;
@@ -3209,30 +3281,34 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
           onClick={() => { setHomePanelOpen((v) => !v); setSelectedHomePlan(null); }}
           aria-label={fabLabel}
           aria-expanded={homePanelOpen}
-          className="fixed z-[50] flex items-center shadow-lg backdrop-blur-md border border-white/15 active:scale-95"
+          className="fixed z-[50] flex items-center shadow-lg backdrop-blur-md border active:scale-95"
           style={{
             bottom: fabBottom,
             ...(avoidRightEdge
               ? { left: "calc(0.75rem + env(safe-area-inset-left, 0px))" }
               : { right: "calc(0.75rem + env(safe-area-inset-right, 0px))" }),
-            width: fabExpanded && !homePanelOpen ? 148 : 52,
+            width: fabExpanded && !homePanelOpen ? (inFoundersWindow ? 168 : 148) : 52,
             height: 52,
             borderRadius: 26,
             overflow: "hidden",
-            background: "linear-gradient(135deg,#10b981,#059669)",
+            background: inFoundersWindow
+              ? "linear-gradient(135deg,#D4007A,#7B00A8)"
+              : "linear-gradient(135deg,#10b981,#059669)",
+            borderColor: inFoundersWindow ? "rgba(212,0,122,0.5)" : "rgba(255,255,255,0.15)",
             color: "white",
-            transition: "width 0.45s cubic-bezier(0.34, 1.56, 0.64, 1)",
+            transition: "width 0.45s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.6s ease",
             justifyContent: "center",
+            animation: inFoundersWindow && !homePanelOpen ? "fabFoundersPulse 2.5s ease-in-out infinite" : undefined,
           }}
         >
           <span style={{
             fontSize: 11, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase",
-            maxWidth: fabExpanded && !homePanelOpen ? 90 : 0,
+            maxWidth: fabExpanded && !homePanelOpen ? (inFoundersWindow ? 108 : 90) : 0,
             opacity: fabExpanded && !homePanelOpen ? 1 : 0,
             overflow: "hidden", whiteSpace: "nowrap",
             transition: "max-width 0.4s cubic-bezier(0.34,1.56,0.64,1), opacity 0.22s linear 0.18s",
             marginRight: fabExpanded && !homePanelOpen ? 5 : 0,
-          }}>Get PRIME</span>
+          }}>{inFoundersWindow ? `Founders $99` : "Get PRIME"}</span>
           <span style={{ fontSize: homePanelOpen ? 18 : 22, flexShrink: 0, lineHeight: 1 }}>{homePanelOpen ? "×" : "💎"}</span>
           {showFabBadge && !homePanelOpen && (
             <span
@@ -3253,6 +3329,19 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
               <LazyWalletHomeSheet onClose={() => setOpen(false)} />
             </Suspense>
           </WalletBoundary>
+        )}
+
+        {/* Founders NowPayments sheet — triggered from the Founders card in the panel */}
+        {homeNpOpen && (
+          <Suspense fallback={null}>
+            <LazyNpAppPickerSheet
+              isOpen={homeNpOpen}
+              onClose={() => setHomeNpOpen(false)}
+              planId="lifetime-pass"
+              lang={lang}
+              planLabel="PNPtv! Founders"
+            />
+          </Suspense>
         )}
       </>
     );
@@ -3612,6 +3701,12 @@ const LazyTipRushRail = lazy(async () => {
 const LazyWalletPayCard = lazy(async () => {
   const mod = await import("@/components/payments/PayInWalletChips");
   return { default: mod.WalletPayCard };
+});
+
+// Lazy-load NpAppPickerSheet for Founders crypto path in home panel.
+const LazyNpAppPickerSheet = lazy(async () => {
+  const mod = await import("@/components/payments/NowPaymentsWaitingPanel");
+  return { default: mod.NpAppPickerSheet };
 });
 
 // REMOVED 2026-05-01 — FloatingMainStagePlayer (220×130 fixed PiP video).

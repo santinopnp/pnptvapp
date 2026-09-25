@@ -1,4 +1,5 @@
 'use strict';
+const VALID_DURATIONS = [15, 30, 60, 90, 120, 180, 240, 300, 360];
 const callPackageService = require('../../../services/callPackageService');
 const CallBookingService = require('../../../services/CallBookingService');
 const callNotificationService = require('../../../services/callNotificationService');
@@ -31,8 +32,8 @@ async function createPackage(req, res) {
     const { creatorId } = req.params;
     const { durationMinutes, quantity, priceUsd, title } = req.body;
 
-    if (![30, 60].includes(Number(durationMinutes))) {
-      return res.status(400).json({ error: 'durationMinutes must be 30 or 60' });
+    if (!VALID_DURATIONS.includes(Number(durationMinutes))) {
+      return res.status(400).json({ error: `durationMinutes must be one of: ${VALID_DURATIONS.join(', ')}` });
     }
     if (!quantity || quantity < 1) {
       return res.status(400).json({ error: 'quantity must be a positive integer' });
@@ -92,8 +93,8 @@ async function getBookingOptions(req, res) {
     const durationMinutes = Number(req.query.duration) || 30;
     const offset = Math.max(0, Number(req.query.offset) || 0);
 
-    if (![30, 60].includes(durationMinutes)) {
-      return res.status(400).json({ error: 'duration must be 30 or 60' });
+    if (!VALID_DURATIONS.includes(durationMinutes)) {
+      return res.status(400).json({ error: `duration must be one of: ${VALID_DURATIONS.join(', ')}` });
     }
 
     // Check online presence and accepting-calls flag
@@ -315,8 +316,8 @@ async function bookCall(req, res) {
     }
 
     const parsedDuration = Number(durationMinutes);
-    if (![30, 60].includes(parsedDuration)) {
-      return res.status(400).json({ error: 'durationMinutes must be 30 or 60' });
+    if (!VALID_DURATIONS.includes(parsedDuration)) {
+      return res.status(400).json({ error: `durationMinutes must be one of: ${VALID_DURATIONS.join(', ')}` });
     }
 
     // Validate startAt is a valid future ISO string
@@ -481,8 +482,8 @@ async function createMyPackage(req, res) {
     const creatorId = String(sessionUser.id);
     const { durationMinutes, quantity, priceUsd, title } = req.body;
 
-    if (![30, 60].includes(Number(durationMinutes))) {
-      return res.status(400).json({ success: false, error: 'Duration must be 30 or 60 minutes' });
+    if (!VALID_DURATIONS.includes(Number(durationMinutes))) {
+      return res.status(400).json({ success: false, error: `Duration must be one of: ${VALID_DURATIONS.join(', ')} minutes` });
     }
     if (!quantity || Number(quantity) < 1 || Number(quantity) > 20) {
       return res.status(400).json({ success: false, error: 'Quantity must be 1-20' });

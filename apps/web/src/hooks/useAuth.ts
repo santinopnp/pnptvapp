@@ -40,6 +40,12 @@ interface PnptvUser {
   isSuperGod?: boolean;
   /** User is on the super-god allowlist (badge renders even when currently OFF). */
   isSuperGodEligible?: boolean;
+  /** ISO timestamp: Founders Membership offer expires at this time. Null = offer not active or already used. */
+  foundersOfferExpiresAt?: string | null;
+  /** ISO timestamp: when the user last dismissed the Founders popup. Null = never dismissed. */
+  foundersPopupDismissedAt?: string | null;
+  /** ISO timestamp: when the user last dismissed the Year50 popup. Null = never dismissed. */
+  year50PopupDismissedAt?: string | null;
 }
 
 interface AuthState {
@@ -89,6 +95,9 @@ function mapTelegramUser(u: NonNullable<TelegramAuthResponse["user"]>): PnptvUse
     liveChannel: u.live_channel ?? null,
     isSuperGod: (u as { is_super_god?: boolean }).is_super_god === true,
     isSuperGodEligible: (u as { super_god_eligible?: boolean }).super_god_eligible === true,
+    foundersOfferExpiresAt: (u as { founders_offer_expires_at?: string | null }).founders_offer_expires_at ?? null,
+    foundersPopupDismissedAt: (u as { founders_popup_dismissed_at?: string | null }).founders_popup_dismissed_at ?? null,
+    year50PopupDismissedAt: (u as { year50_popup_dismissed_at?: string | null }).year50_popup_dismissed_at ?? null,
   };
 }
 

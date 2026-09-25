@@ -16,7 +16,7 @@ export function CallPackageManager() {
   const [error, setError] = useState<string | null>(null);
 
   // Create form state
-  const [duration, setDuration] = useState<30 | 60>(30);
+  const [duration, setDuration] = useState<number>(30);
   const [quantity, setQuantity] = useState(1);
   const [price, setPrice] = useState("");
   const [title, setTitle] = useState("");
@@ -155,11 +155,18 @@ export function CallPackageManager() {
               <label className="block text-xs text-white/50 mb-1">{t.pkgDuration}</label>
               <select id="pnp-callpackagemanager-1"
                 value={duration}
-                onChange={(e) => setDuration(Number(e.target.value) as 30 | 60)}
+                onChange={(e) => setDuration(Number(e.target.value))}
                 className="w-full px-3 py-2 rounded-lg text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-pnp-accent"
               >
-                <option value={30}>{t.pkgMinutes30}</option>
-                <option value={60}>{t.pkgMinutes60}</option>
+                {[15, 30, 60, 90, 120, 180, 240, 300, 360].map((mins) => (
+                  <option key={mins} value={mins}>
+                    {mins < 60
+                      ? `${mins} min`
+                      : mins % 60 === 0
+                        ? `${mins / 60}h`
+                        : `${Math.floor(mins / 60)}h ${mins % 60}min`}
+                  </option>
+                ))}
               </select>
             </div>
             <div>

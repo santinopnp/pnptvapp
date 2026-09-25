@@ -2,12 +2,18 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useI18n } from "@/lib/i18n";
-import { usePrivy, useWallets, useConnectWallet } from "@privy-io/react-auth";
+import { usePrivy, useWallets, useConnectWallet, useCreateWallet } from "@privy-io/react-auth";
 import {
   submitOnboardingStep,
   completeOnboarding,
+  followUser,
+  getSuggestedFollows,
+  dismissFoundersPopup,
   type OnboardingStepKey,
+  type SuggestedFollow,
 } from "@/lib/api";
+import { WalletPayCard } from "@/components/payments/PayInWalletChips";
+import { NpAppPickerSheet } from "@/components/payments/NowPaymentsWaitingPanel";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -500,6 +506,7 @@ function StepCrypto({
   const t = useI18n();
   const es = t.lang === "es";
   const { ready, authenticated, login } = usePrivy();
+  const { createWallet } = useCreateWallet();
   const { wallets } = useWallets();
   const [connectError, setConnectError] = useState<string | null>(null);
   // Callbacks so we can dismiss the spinner on cancel + show a real error if
@@ -527,12 +534,47 @@ function StepCrypto({
     if (walletReady) setConnecting(false);
   }, [walletReady]);
 
-  // "Create my wallet" path — social login (Telegram / X) → embedded wallet auto-created
-  const handleCreateWallet = useCallback(() => {
+  // When the user wasn't authenticated and clicked "Create my wallet", we call
+  // login() first (createOnLogin is "off" so login alone doesn't create a wallet).
+  // Watch for authenticated transitioning false→true while connecting is still
+  // true — that means login() just completed and we should immediately chain
+  // createWallet() so the user never has to click twice.
+  const prevAuthRef = useRef(false);
+  useEffect(() => {
+    const wasAuth = prevAuthRef.current;
+    prevAuthRef.current = authenticated;
+    if (connecting && !wasAuth && authenticated) {
+      createWallet().catch((err: unknown) => {
+        setConnecting(false);
+        const msg = err instanceof Error ? err.message : String(err);
+        if (!/cancel|exit|closed/i.test(msg)) {
+          setConnectError(es ? "No pudimos crear tu billetera. Intenta de nuevo." : "Could not create wallet. Please try again.");
+        }
+      });
+    }
+  }, [authenticated, connecting, createWallet, es]);
+
+  // "Create my wallet" path:
+  // If already authenticated with Privy → createWallet() directly.
+  // If not → login() first; the effect above auto-chains createWallet() once
+  //   authenticated transitions to true.
+  const handleCreateWallet = useCallback(async () => {
     setConnectError(null);
     setConnecting(true);
-    login();
-  }, [login]);
+    try {
+      if (authenticated) {
+        await createWallet();
+      } else {
+        login();
+      }
+    } catch (err: unknown) {
+      setConnecting(false);
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!/cancel|exit|closed/i.test(msg)) {
+        setConnectError(es ? "No pudimos crear tu billetera. Intenta de nuevo." : "Could not create wallet. Please try again.");
+      }
+    }
+  }, [authenticated, createWallet, login, es]);
 
   // "I already use crypto" path — connect existing external wallet (MetaMask, Coinbase, …)
   const handleConnectExternal = useCallback(() => {
@@ -688,6 +730,392 @@ function StepCrypto({
   );
 }
 
+// ── Step 8: Follow Suggestions ────────────────────────────────────────────────
+
+function StepFollowSuggestions({ onContinue }: { onContinue: () => void }) {
+  const t = useI18n();
+  const es = t.lang === "es";
+
+  const [suggestions, setSuggestions] = useState<SuggestedFollow[]>([]);
+  const [followedIds, setFollowedIds] = useState<Set<string>>(new Set());
+  const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    getSuggestedFollows()
+      .then((data) => {
+        if (cancelled) return;
+        const initial = new Set<string>(
+          data.suggestions.filter((s) => s.alreadyFollows).map((s) => s.userId)
+        );
+        setSuggestions(data.suggestions);
+        setFollowedIds(initial);
+        setLoading(false);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setFetchError(true);
+          setLoading(false);
+        }
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleFollow = useCallback(
+    (userId: string) => {
+      setFollowedIds((prev) => {
+        const next = new Set(prev);
+        next.add(userId);
+        return next;
+      });
+      followUser(userId).catch(() => {});
+    },
+    []
+  );
+
+  const title = es ? "Personas que tal vez quieras seguir" : "People you might want to follow";
+  const subtitle = es
+    ? "Empieza con estos — siempre puedes seguir a más después"
+    : "Start with these — you can always follow more later";
+
+  if (loading) {
+    return (
+      <div className="flex flex-col gap-4">
+        <div>
+          <h2 className="text-xl font-bold text-pnp-textPrimary">{title}</h2>
+          <p className="mt-1 text-sm text-pnp-textSecondary leading-relaxed">{subtitle}</p>
+        </div>
+        <div className="space-y-3">
+          {[1, 2, 3, 4].map((i) => (
+            <div
+              key={i}
+              className="bg-pnp-surface border border-pnp-border rounded-2xl p-3 flex items-center gap-3 animate-pulse"
+            >
+              <div className="w-11 h-11 rounded-full bg-pnp-surfaceHover flex-shrink-0" />
+              <div className="flex-1 min-w-0 space-y-2">
+                <div className="h-3 w-24 bg-pnp-surfaceHover rounded" />
+                <div className="h-2.5 w-16 bg-pnp-surfaceHover rounded" />
+              </div>
+              <div className="h-7 w-16 bg-pnp-surfaceHover rounded-full flex-shrink-0" />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (fetchError || suggestions.length === 0) {
+    return (
+      <div className="flex flex-col gap-6 items-center justify-center py-12">
+        <p className="text-sm text-pnp-textSecondary text-center">
+          {es ? "No pudimos cargar las sugerencias." : "Couldn't load suggestions."}
+        </p>
+        <button
+          type="button"
+          onClick={onContinue}
+          className="text-sm font-semibold text-pnp-accent hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-pnp-accent rounded"
+        >
+          {es ? "Saltar por ahora →" : "Skip for now →"}
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-4 flex-1">
+      <div>
+        <h2 className="text-xl font-bold text-pnp-textPrimary">{title}</h2>
+        <p className="mt-1 text-sm text-pnp-textSecondary leading-relaxed">{subtitle}</p>
+      </div>
+
+      <div className="overflow-y-auto flex-1 space-y-3 pr-0.5">
+        {suggestions.map((s) => {
+          const followed = followedIds.has(s.userId);
+          const initial = (s.displayName || s.username || "?")[0].toUpperCase();
+          return (
+            <div
+              key={s.userId}
+              className="bg-pnp-surface border border-pnp-border rounded-2xl p-3 flex items-center gap-3"
+            >
+              {/* Avatar */}
+              {s.avatarUrl ? (
+                <img
+                  src={s.avatarUrl}
+                  alt={s.displayName}
+                  className="w-11 h-11 rounded-full object-cover flex-shrink-0"
+                  onError={(e) => {
+                    const img = e.currentTarget;
+                    img.style.display = "none";
+                    const sib = img.nextElementSibling as HTMLElement | null;
+                    if (sib) sib.style.display = "flex";
+                  }}
+                />
+              ) : null}
+              <div
+                className="w-11 h-11 rounded-full flex items-center justify-center text-white text-base font-bold flex-shrink-0"
+                style={{
+                  display: s.avatarUrl ? "none" : "flex",
+                  background: "linear-gradient(135deg,#D4007A,#E69138)",
+                }}
+                aria-hidden="true"
+              >
+                {initial}
+              </div>
+
+              {/* Info */}
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-bold text-pnp-textPrimary truncate">{s.displayName}</p>
+                <p className="text-xs text-pnp-textSecondary truncate">
+                  @{s.username}
+                  {s.followersCount > 0 && (
+                    <span className="ml-1.5">
+                      · {s.followersCount.toLocaleString()} {es ? "seguidores" : "followers"}
+                    </span>
+                  )}
+                </p>
+              </div>
+
+              {/* Follow button */}
+              <button
+                type="button"
+                onClick={() => !followed && handleFollow(s.userId)}
+                aria-label={followed
+                  ? (es ? `Siguiendo a ${s.displayName}` : `Following ${s.displayName}`)
+                  : (es ? `Seguir a ${s.displayName}` : `Follow ${s.displayName}`)
+                }
+                className={[
+                  "text-xs font-black px-3 py-1.5 rounded-full flex-shrink-0 transition-all",
+                  followed
+                    ? "bg-pnp-surfaceHover text-pnp-textSecondary border border-pnp-border cursor-default"
+                    : "text-white active:scale-95",
+                ].join(" ")}
+                style={followed ? {} : { background: "linear-gradient(90deg,#D4007A,#E69138)" }}
+              >
+                {followed ? (es ? "Siguiendo ✓" : "Following ✓") : (es ? "Seguir" : "Follow")}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      <button
+        type="button"
+        onClick={onContinue}
+        className="w-full min-h-[44px] rounded-xl font-semibold text-white transition-all duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pnp-accent focus-visible:ring-offset-2 focus-visible:ring-offset-pnp-background mt-2"
+        style={{ background: "linear-gradient(135deg,#D4007A,#E69138)" }}
+      >
+        {es ? "Continuar →" : "Continue →"}
+      </button>
+    </div>
+  );
+}
+
+// ── Founders Upsell Screen ────────────────────────────────────────────────────
+
+function FoundersUpsellScreen({
+  foundersOfferExpiresAt,
+  onSkip,
+  onSuccess,
+}: {
+  foundersOfferExpiresAt: string | null;
+  onSkip: () => void;
+  onSuccess: () => void;
+}) {
+  const t = useI18n();
+  const es = t.lang === "es";
+  const [secsLeft, setSecsLeft] = useState(0);
+  const [npOpen, setNpOpen] = useState(false);
+
+  useEffect(() => {
+    const exp = foundersOfferExpiresAt;
+    if (!exp) return;
+    const update = () =>
+      setSecsLeft(Math.max(0, Math.floor((new Date(exp).getTime() - Date.now()) / 1000)));
+    update();
+    const id = setInterval(update, 1000);
+    return () => clearInterval(id);
+  }, [foundersOfferExpiresAt]);
+
+  const h = Math.floor(secsLeft / 3600);
+  const m = Math.floor((secsLeft % 3600) / 60);
+  const s = secsLeft % 60;
+  const countdown = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+
+  const perks = es
+    ? [
+        "Acceso de por vida a PNPtv! — sin pagos futuros",
+        "18 meses de contenido exclusivo del Canal PRIME",
+        "Tu nombre en los créditos de fundadores",
+        "Apoyas a la primera plataforma queer PNP-aware del mundo",
+      ]
+    : [
+        "Lifetime access to PNPtv! — no future payments ever",
+        "18 months of PRIME channel exclusive content",
+        "Your name in the founders credits",
+        "Support the world's first queer PNP-aware platform",
+      ];
+
+  return (
+    <div
+      className="min-h-dvh flex flex-col"
+      style={{ background: "linear-gradient(160deg, #080008 0%, #14001e 50%, #080008 100%)" }}
+    >
+      {/* Header */}
+      <div className="px-4 pt-6 pb-2 flex items-center justify-between max-w-lg mx-auto w-full">
+        <span
+          className="text-base font-bold tracking-tight"
+          style={{
+            background: "linear-gradient(90deg,#D4007A,#E69138)",
+            WebkitBackgroundClip: "text",
+            WebkitTextFillColor: "transparent",
+          }}
+        >
+          PNPtv!
+        </span>
+        {secsLeft > 0 && (
+          <div
+            className="flex items-center gap-1.5 text-xs font-mono rounded-full px-3 py-1"
+            style={{
+              background: "rgba(255,183,0,0.10)",
+              border: "1px solid rgba(255,183,0,0.35)",
+              color: "rgba(255,183,0,0.90)",
+            }}
+          >
+            <span>⏱</span>
+            <span>{countdown}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Body */}
+      <div className="flex-1 flex flex-col px-4 pt-3 pb-8 max-w-lg mx-auto w-full overflow-y-auto">
+        {/* Badge */}
+        <div
+          className="self-start px-3 py-1 rounded-full text-[11px] font-black tracking-widest mb-5"
+          style={{
+            background: "linear-gradient(90deg,rgba(212,0,122,0.18),rgba(230,145,56,0.18))",
+            border: "1px solid rgba(212,0,122,0.40)",
+            color: "#D4007A",
+          }}
+        >
+          {es ? "✦ OFERTA DE FUNDADORES" : "✦ FOUNDERS OFFER"}
+        </div>
+
+        {/* Hero headline */}
+        <h1 className="text-[2rem] font-black text-white leading-tight mb-3">
+          {es ? (
+            <>
+              Tu acceso{" "}
+              <span style={{ color: "#D4007A" }}>de por vida</span>.
+              <br />
+              Una sola vez.
+            </>
+          ) : (
+            <>
+              Your{" "}
+              <span style={{ color: "#D4007A" }}>lifetime</span>{" "}
+              access.
+              <br />
+              One shot.
+            </>
+          )}
+        </h1>
+
+        <p className="text-pnp-textSecondary text-sm leading-relaxed mb-6">
+          {es
+            ? "Eres uno de los primeros. Esta oferta existe porque creemos en construir juntos — para siempre."
+            : "You're among the first. This offer exists because we believe in building together — forever."}
+        </p>
+
+        {/* Price card */}
+        <div
+          className="rounded-2xl p-4 mb-4"
+          style={{
+            background: "rgba(212,0,122,0.08)",
+            border: "1px solid rgba(212,0,122,0.28)",
+          }}
+        >
+          <div className="flex items-end justify-between mb-1">
+            <div>
+              <span className="text-3xl font-black text-white">$99.99</span>
+              <span className="ml-2 text-xs text-pnp-textSecondary">
+                {es ? "pago único" : "one-time"}
+              </span>
+            </div>
+            <span
+              className="text-[10px] font-black px-2 py-1 rounded-full"
+              style={{
+                background: "linear-gradient(90deg,#D4007A,#E69138)",
+                color: "#fff",
+              }}
+            >
+              {es ? "FUNDADORES" : "FOUNDERS"}
+            </span>
+          </div>
+          <p className="text-xs text-pnp-textSecondary/60">
+            {es ? "vs $9.99/mes para siempre" : "vs $9.99/mo forever"}
+          </p>
+        </div>
+
+        {/* Perks */}
+        <div className="space-y-2.5 mb-7">
+          {perks.map((p, i) => (
+            <div key={i} className="flex items-start gap-3">
+              <span className="text-sm flex-shrink-0 mt-0.5" style={{ color: "#D4007A" }}>
+                ✦
+              </span>
+              <span className="text-sm text-pnp-textSecondary leading-relaxed">{p}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* Payment CTAs */}
+        <div className="space-y-3 mb-4">
+          <WalletPayCard
+            surface="prime"
+            amountUsd={99.99}
+            entitlementSpec={{ planId: "lifetime-pass" }}
+            label={es ? "💳 Pagar $99.99 · Fundadores" : "💳 Pay $99.99 · Founders"}
+            onSuccess={onSuccess}
+            lang={es ? "es" : "en"}
+          />
+          <button
+            type="button"
+            onClick={() => setNpOpen(true)}
+            className="w-full min-h-[44px] rounded-xl font-semibold text-sm transition-all active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-400/50"
+            style={{
+              background: "rgba(255,183,0,0.08)",
+              border: "1.5px solid rgba(255,183,0,0.50)",
+              color: "rgba(255,183,0,0.95)",
+            }}
+          >
+            {es ? "₿ Pagar con apps y wallets" : "₿ Pay with apps & wallets"}
+          </button>
+        </div>
+
+        {/* Skip */}
+        <button
+          type="button"
+          onClick={onSkip}
+          className="w-full py-3 text-sm text-pnp-textSecondary/60 hover:text-pnp-textSecondary transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/20 rounded"
+        >
+          {es ? "No, gracias — saltar esta oferta →" : "No thanks — skip this offer →"}
+        </button>
+      </div>
+
+      {/* NP address sheet */}
+      <NpAppPickerSheet
+        isOpen={npOpen}
+        onClose={() => setNpOpen(false)}
+        planId="lifetime-pass"
+        lang={t.lang}
+        planLabel={es ? "PNPtv! Fundadores" : "PNPtv! Founders"}
+      />
+    </div>
+  );
+}
+
 // ── Ordered step list ─────────────────────────────────────────────────────────
 
 const STEPS: StepId[] = ["tiers", "age", "terms", "privacy", "rules", "values", "crypto"];
@@ -696,11 +1124,12 @@ const STEPS: StepId[] = ["tiers", "age", "terms", "privacy", "rules", "values", 
 
 export default function Onboarding() {
   const navigate = useNavigate();
-  const { isAuthenticated, isLoading, refreshUser } = useAuth();
+  const { isAuthenticated, isLoading, refreshUser, user } = useAuth();
   const o = useI18n().onboarding;
 
   // Persist stepIndex to sessionStorage so a re-mount (Privy popup close, HMR,
   // OAuth callback bounce, etc.) doesn't reset the wizard to step 0.
+  const [showFoundersUpsell, setShowFoundersUpsell] = useState(false);
   const [stepIndex, setStepIndex] = useState(() => {
     try {
       const raw = sessionStorage.getItem("pnptv:onboarding:stepIndex");
@@ -709,6 +1138,7 @@ export default function Onboarding() {
     } catch { return 0; }
   });
   const [stepState, setStepState] = useState<StepState>({ isSubmitting: false, error: null });
+  const [showFollowStep, setShowFollowStep] = useState(false);
 
   useEffect(() => {
     try { sessionStorage.setItem("pnptv:onboarding:stepIndex", String(stepIndex)); } catch {}
@@ -806,17 +1236,13 @@ export default function Onboarding() {
       await completeOnboarding();
       await refreshUser().catch(() => {});
       try { sessionStorage.removeItem("pnptv:onboarding:stepIndex"); } catch {}
-      // Post-onboarding tutorial: land users on santinofurioso's profile with
-      // action=subscribe so the profile page auto-selects the monthly plan
-      // and shows the "use your 180 gifted Ru$h" banner. onboarding=1 gates
-      // the banner so returning users don't see it.
-      navigate("/c/santinofurioso?action=subscribe&onboarding=1", { replace: true });
+      setShowFollowStep(true);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Could not complete setup. Please try again.");
     } finally {
       setSubmitting(false);
     }
-  }, [submit, navigate, refreshUser]);
+  }, [submit, refreshUser]);
 
   if (isLoading) {
     return (
@@ -827,6 +1253,58 @@ export default function Onboarding() {
   }
 
   if (!isAuthenticated) return null;
+
+  // Founders upsell shown after follow step
+  if (showFoundersUpsell) {
+    const dest = "/c/santinofurioso?action=subscribe&onboarding=1";
+    return (
+      <FoundersUpsellScreen
+        foundersOfferExpiresAt={user?.foundersOfferExpiresAt ?? null}
+        onSkip={() => {
+          dismissFoundersPopup().catch(() => {});
+          navigate(dest, { replace: true });
+        }}
+        onSuccess={() => {
+          refreshUser().catch(() => {});
+          navigate(dest, { replace: true });
+        }}
+      />
+    );
+  }
+
+  // Follow suggestions step shown after wizard completes
+  if (showFollowStep) {
+    return (
+      <div className="min-h-dvh bg-pnp-background flex flex-col">
+        <header className="sticky top-0 z-10 bg-pnp-background/90 backdrop-blur-sm border-b border-pnp-border px-4 py-3">
+          <div className="max-w-lg mx-auto flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <span
+                className="text-base font-bold text-pnp-textPrimary tracking-tight"
+                style={{ background: "linear-gradient(90deg,#D4007A,#E69138)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}
+              >
+                PNPtv!
+              </span>
+            </div>
+            <ProgressBar current={totalSteps} total={totalSteps} />
+          </div>
+        </header>
+        <main className="flex-1 flex flex-col overflow-hidden">
+          <div className="max-w-lg mx-auto w-full px-4 py-6 flex-1 flex flex-col overflow-hidden">
+            <div className="animate-fade-in-up flex-1 flex flex-col overflow-hidden">
+              <StepFollowSuggestions
+                onContinue={() => {
+                  refreshUser()
+                    .catch(() => {})
+                    .finally(() => setShowFoundersUpsell(true));
+                }}
+              />
+            </div>
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   const stepLabel = o.stepOf
     .replace("{current}", String(currentStepNumber))

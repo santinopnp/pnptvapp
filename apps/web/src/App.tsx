@@ -23,7 +23,10 @@ import { PushNotificationPill } from "@/components/PushNotificationPill";
 import { UpdateAvailableModal } from "@/components/UpdateAvailableModal";
 import { useAuth } from "@/hooks/useAuth";
 import { getSocket, connectSocket, disconnectSocket } from "@/lib/socket";
-import { redeemReferralCode, checkAuthStatus, attributePartnerGroup, ApiError } from "@/lib/api";
+import { redeemReferralCode, checkAuthStatus, attributePartnerGroup, ApiError, dismissFoundersPopup, dismissYear50Popup } from "@/lib/api";
+import { WalletPayCard } from "@/components/payments/PayInWalletChips";
+import { NpAppPickerSheet } from "@/components/payments/NowPaymentsWaitingPanel";
+
 
 const REFERRAL_STORAGE_KEY = "pnptv:pendingRef";
 
@@ -337,11 +340,12 @@ function PrivyAutoLogin() {
     // where clearing sessionStorage during redirect resets the flag and fires again.
     try { if (sessionStorage.getItem(staleFlag) === "1") return; } catch { /* ignore */ }
     try { if (localStorage.getItem(flag) === "1") return; } catch { /* ignore */ }
-    try { localStorage.setItem(flag, "1"); } catch { /* ignore */ }
-    // Guide Privy to present only the same login method the user chose for PNPtv,
-    // so the accounts are guaranteed to match (same email / same Telegram / same X).
+    // Set the flag INSIDE the timeout so that a reload during the 1.8 s delay
+    // doesn't permanently mark the session as "already triggered" before login()
+    // ever fires. The OIDC-redirect concern is handled by the staleFlag above.
     const method = user?.lastLoginMethod;
     const t = setTimeout(() => {
+      try { localStorage.setItem(flag, "1"); } catch { /* ignore */ }
       if (method === "telegram" || method === "mini_app") login({ loginMethods: ["telegram"] });
       else if (method === "x") login({ loginMethods: ["twitter"] });
       else if (method === "oidc") login({ loginMethods: ["email", "google"] });
@@ -457,10 +461,81 @@ function PrivyIdentitySync() {
   return null;
 }
 
+function useFoundersPopup() {
+  const { user, isAuthenticated } = useAuth();
+  const [secsLeft, setSecsLeft] = useState(0);
+  const [localDismissed, setLocalDismissed] = useState(false);
+
+  useEffect(() => {
+    const exp = user?.foundersOfferExpiresAt;
+    if (!exp) return;
+    const update = () => setSecsLeft(Math.max(0, Math.floor((new Date(exp).getTime() - Date.now()) / 1000)));
+    update();
+    const id = setInterval(update, 1000);
+    return () => clearInterval(id);
+  }, [user?.foundersOfferExpiresAt]);
+
+  const exp = user?.foundersOfferExpiresAt;
+  // Window start = offer expiry - 1 hour. Dismissal is only valid within the current window.
+  const windowStart = exp ? new Date(new Date(exp).getTime() - 3600 * 1000) : null;
+  const dbDismissed = !!(
+    user?.foundersPopupDismissedAt &&
+    windowStart &&
+    new Date(user.foundersPopupDismissedAt) >= windowStart
+  );
+  const dismissed = localDismissed || dbDismissed;
+  const visible = isAuthenticated && !dismissed && secsLeft > 0;
+  // Widget shows after the full-screen upsell is dismissed but while timer is still live
+  const widgetVisible = isAuthenticated && dismissed && secsLeft > 0;
+
+  const dismiss = () => {
+    setLocalDismissed(true);
+    dismissFoundersPopup().catch(() => {});
+  };
+
+  const h = Math.floor(secsLeft / 3600);
+  const m = Math.floor((secsLeft % 3600) / 60);
+  const s = secsLeft % 60;
+  const countdown = `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`;
+  return { visible, widgetVisible, dismiss, countdown, secsLeft };
+}
+
+function useYear50Popup() {
+  const { user, isAuthenticated } = useAuth();
+  const [localDismissed, setLocalDismissed] = useState(false);
+
+  const exp = user?.foundersOfferExpiresAt;
+  // Show 48h after the founders window was set (founders expires at reset+1h, so +47h = reset+48h)
+  const year50Unlocked = !!(exp && (new Date(exp).getTime() + 47 * 3600 * 1000) < Date.now());
+  const stillOnTrial = user?.subscriptionType === "trial" || user?.subscriptionType === "prime-trial-3d";
+
+  // Window start = same as founders: offer expiry - 1 hour. Stale dismissals (pre-window) don't count.
+  const windowStart = exp ? new Date(new Date(exp).getTime() - 3600 * 1000) : null;
+  const dbDismissed = !!(
+    user?.year50PopupDismissedAt &&
+    windowStart &&
+    new Date(user.year50PopupDismissedAt) >= windowStart
+  );
+  const dismissed = localDismissed || dbDismissed;
+  const visible = isAuthenticated && !dismissed && year50Unlocked && stillOnTrial;
+
+  const dismiss = () => {
+    setLocalDismissed(true);
+    dismissYear50Popup().catch(() => {});
+  };
+
+  return { visible, dismiss };
+}
+
 function AppOverlays() {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, refreshUser } = useAuth();
   const { suspendedMsg, incomingCall, dismissIncomingCall } = useGlobalSocketEvents();
   const { primeGranted, dismissPrime } = useReferralCapture();
+  const founders = useFoundersPopup();
+  const year50 = useYear50Popup();
+  const [widgetExpanded, setWidgetExpanded] = useState(false);
+  const [widgetNpOpen, setWidgetNpOpen] = useState(false);
+  const [widgetSessionDismissed, setWidgetSessionDismissed] = useState(false);
   useDocumentDir();
   useScreenCaptureGuard();
   usePartnerGroupAttribution();
@@ -543,6 +618,101 @@ function AppOverlays() {
           </div>
         </div>
       )}
+      {/* Founders floating widget — shown after onboarding upsell is skipped, while 1h window is still live */}
+      {founders.widgetVisible && !widgetSessionDismissed && (
+        <div className="fixed bottom-4 right-4 z-[9996] flex flex-col items-end gap-2">
+          {widgetExpanded && (
+            <div
+              className="rounded-2xl shadow-2xl w-[19rem] overflow-hidden"
+              style={{
+                background: "linear-gradient(160deg, #080008, #14001e)",
+                border: "1px solid rgba(212,0,122,0.35)",
+              }}
+            >
+              <div className="p-4">
+                <div className="flex items-start justify-between mb-3">
+                  <div>
+                    <p className="text-sm font-black text-white">PNPtv! Founders</p>
+                    <p className="text-xs text-pnp-textSecondary mt-0.5">
+                      $99.99 · Lifetime access
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setWidgetExpanded(false)}
+                    className="flex-shrink-0 ml-2 text-white/40 hover:text-white/80 transition-colors"
+                    aria-label="Collapse"
+                  >
+                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
+                      <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+                    </svg>
+                  </button>
+                </div>
+                <WalletPayCard
+                  surface="prime"
+                  amountUsd={99.99}
+                  entitlementSpec={{ planId: "lifetime-pass" }}
+                  label="💳 Pay $99.99 · Founders"
+                  onSuccess={() => {
+                    setWidgetExpanded(false);
+                    refreshUser().catch(() => {});
+                  }}
+                  compact
+                />
+                <button
+                  type="button"
+                  onClick={() => setWidgetNpOpen(true)}
+                  className="w-full mt-2 min-h-[44px] rounded-xl font-semibold text-sm transition-all active:scale-[0.98]"
+                  style={{
+                    background: "rgba(255,183,0,0.08)",
+                    border: "1.5px solid rgba(255,183,0,0.50)",
+                    color: "rgba(255,183,0,0.95)",
+                  }}
+                >
+                  ₿ Apps & wallets
+                </button>
+              </div>
+            </div>
+          )}
+          {/* Pill trigger */}
+          <div
+            className="flex items-center gap-2 rounded-2xl px-3 py-2 shadow-2xl cursor-pointer select-none"
+            style={{
+              background: "linear-gradient(135deg, #0d0015, #1a0022)",
+              border: "1px solid rgba(212,0,122,0.45)",
+            }}
+            onClick={() => setWidgetExpanded((e) => !e)}
+            role="button"
+            aria-label="Founders offer"
+          >
+            <span className="w-2 h-2 rounded-full flex-shrink-0 animate-pulse" style={{ background: "#D4007A" }} aria-hidden="true" />
+            <span className="text-xs font-black text-white">Founders</span>
+            <span
+              className="text-xs font-mono"
+              style={{ color: "rgba(255,183,0,0.85)" }}
+            >
+              {founders.countdown}
+            </span>
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); setWidgetSessionDismissed(true); }}
+              className="ml-0.5 text-white/30 hover:text-white/70 transition-colors focus-visible:outline-none"
+              aria-label="Dismiss founders offer"
+            >
+              <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
+                <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      )}
+      <NpAppPickerSheet
+        isOpen={widgetNpOpen}
+        onClose={() => setWidgetNpOpen(false)}
+        planId="lifetime-pass"
+        lang="en"
+        planLabel="PNPtv! Founders"
+      />
     </>
   );
 }

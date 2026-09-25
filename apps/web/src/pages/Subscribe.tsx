@@ -39,7 +39,7 @@ const MEMBER_PLAN_IDS = new Set(["member_monthly"]);
 // lifetime100          = /lifetime100 fundraiser (dedicated landing, not for /subscribe).
 // lifetime80           = legacy plan; superseded by `lifetime-pass` ($249.99).
 // monthly-pass-promo-15 = promo/discount SKU granted out-of-band; never on /subscribe.
-const HIDDEN_PLAN_IDS = new Set(["prime-trial-3d", "lifetime100", "lifetime80", "monthly-pass-promo-15"]);
+const HIDDEN_PLAN_IDS = new Set(["prime-trial-3d", "lifetime100", "lifetime80", "monthly-pass-promo-15", "yearly50", "lifetime-pass"]);
 
 const RECURRING_PLANS = new Set(["prime-week-pass-7d", "monthly-pass", "prime-diamond-pass-365d"]);
 
@@ -161,22 +161,6 @@ export default function Subscribe() {
   // Social proof
   const [onlineStats, setOnlineStats] = useState<{ online: number; prime: number } | null>(null);
 
-  // Countdown to promo deadline (end of month)
-  const PROMO_DEADLINE = new Date("2026-09-30T23:59:59");
-  const [countdown, setCountdown] = useState(() => {
-    const diff = PROMO_DEADLINE.getTime() - Date.now();
-    return Math.max(0, diff);
-  });
-  useEffect(() => {
-    const t = setInterval(() => setCountdown(Math.max(0, PROMO_DEADLINE.getTime() - Date.now())), 1000);
-    return () => clearInterval(t);
-  }, []);
-  const cdHours = Math.floor(countdown / 3600000);
-  const cdMins  = Math.floor((countdown % 3600000) / 60000);
-  const cdSecs  = Math.floor((countdown % 60000) / 1000);
-  const countdownLabel = countdown > 0
-    ? `${String(cdHours).padStart(2, "0")}:${String(cdMins).padStart(2, "0")}:${String(cdSecs).padStart(2, "0")}`
-    : null;
 
   // Free trial
 
@@ -527,6 +511,27 @@ export default function Subscribe() {
   function renderTierBanner() {
     if (!user) return null;
     const tier = (user.tier || "free").toLowerCase();
+    const subType = (user.subscriptionType || "").toLowerCase();
+    const isTrial = subType === "trial" || subType === "prime-trial-3d";
+    if (isTrial) {
+      // Compute expiry display — subscription_expires_at is not in the user object
+      // so we just show the "trial active" banner without a date for now.
+      return (
+        <div className="mb-5 rounded-xl px-4 py-3 border border-emerald-500/40 flex items-start gap-3" style={{ background: "rgba(16,185,129,0.10)" }}>
+          <span className="text-emerald-400 text-lg mt-0.5 flex-shrink-0">◈</span>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-emerald-400">{s.currentTierTrial}</p>
+            <p className="text-xs text-pnp-textSecondary mt-0.5">{s.trialExpiresCta}</p>
+          </div>
+          <span
+            className="flex-shrink-0 self-start text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full"
+            style={{ background: "rgba(16,185,129,0.18)", color: "#34d399", border: "1px solid rgba(16,185,129,0.40)" }}
+          >
+            {t.lang === "es" ? "3 días gratis" : "3-day trial"}
+          </span>
+        </div>
+      );
+    }
     if (tier === "prime") {
       return (
         <div className="mb-5 rounded-xl px-4 py-3 border border-[#FFB454]/30 bg-[#FFB454]/8 flex items-center gap-3">
@@ -645,8 +650,7 @@ export default function Subscribe() {
 
   const memberPlans = plans.filter((p) => MEMBER_PLAN_IDS.has(p.id) && !HIDDEN_PLAN_IDS.has(p.id));
   const primePlans = plans.filter((p) => !MEMBER_PLAN_IDS.has(p.id) && !HIDDEN_PLAN_IDS.has(p.id));
-  const PROMO_IDS = ["yearly50", "lifetime100"] as const;
-  const promoPlans = plans.filter((p) => (PROMO_IDS as readonly string[]).includes(p.id));
+  const promoPlans: typeof plans = [];
 
   return (
     <div className="page-container py-6 px-4 max-w-2xl mx-auto">
@@ -698,18 +702,8 @@ export default function Subscribe() {
             </span>
           </div>
 
-          {/* Countdown + social proof row */}
+          {/* Social proof row */}
           <div className="flex items-center justify-between mb-3 gap-2">
-            {countdownLabel && (
-              <div className="flex items-center gap-1.5">
-                <svg className="w-3 h-3 text-red-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <span className="text-[11px] font-black tabular-nums" style={{ color: "#FF6B6B" }}>
-                  {t.lang === "es" ? `Vence en ${countdownLabel}` : `Ends in ${countdownLabel}`}
-                </span>
-              </div>
-            )}
             {onlineStats && onlineStats.prime > 0 && (
               <div className="flex items-center gap-1 ml-auto">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse flex-shrink-0" />
@@ -722,9 +716,11 @@ export default function Subscribe() {
             )}
           </div>
 
-          {/* Two-card grid */}
+          {/* Two-card grid — yearly50 only (lifetime100 is popup-only) */}
           <div className="grid grid-cols-2 gap-2.5">
-            {promoPlans.map((plan) => {
+            {promoPlans
+              .filter((plan) => !isLifetimePlan(plan))
+              .map((plan) => {
               const isLifetime = isLifetimePlan(plan);
               const isWalletOpen = walletPanelPlanId === plan.id;
 
@@ -737,7 +733,7 @@ export default function Subscribe() {
               const tagBorder = isLifetime ? "rgba(230,145,56,0.40)" : "rgba(212,0,122,0.40)";
 
               const tagLabel = isLifetime
-                ? (t.lang === "es" ? "🖤 Fundadores" : "🖤 Founders")
+                ? (t.lang === "es" ? "🖤 Membresía Founders" : "🖤 Founders Membership")
                 : (t.lang === "es" ? "🔥 Mejor precio" : "🔥 Best deal");
 
               const subline = isLifetime
@@ -769,10 +765,11 @@ export default function Subscribe() {
                     {/* Name + subline */}
                     <p className="text-[11px] font-bold text-white leading-tight">
                       {isLifetime
-                        ? "PNPtv Founders"
+                        ? (t.lang === "es" ? "Membresía Founders" : "Founders Membership")
                         : (t.lang === "es" ? "PRIME anual" : "PRIME Annual")}
                     </p>
                     <p className="text-[10px] text-white/50 leading-snug">{subline}</p>
+
                   </div>
 
                   {/* CTA buttons */}
@@ -780,12 +777,11 @@ export default function Subscribe() {
                     <button
                       type="button"
                       onClick={() => setWalletPanelPlanId(isWalletOpen ? null : plan.id)}
-                      className="w-full py-2.5 rounded-xl text-[11px] font-black text-white transition-all active:scale-[0.97]"
+                      className="w-full py-2.5 rounded-xl text-[11px] font-black transition-all active:scale-[0.97]"
                       style={{
-                        background: isWalletOpen
-                          ? "linear-gradient(135deg,#34d399,#10b981)"
-                          : "linear-gradient(135deg,#10b981,#059669)",
-                        boxShadow: isWalletOpen ? "0 0 12px rgba(52,211,153,0.35)" : undefined,
+                        border: isWalletOpen ? "1.5px solid rgba(16,185,129,0.80)" : "1.5px solid rgba(16,185,129,0.60)",
+                        background: isWalletOpen ? "rgba(16,185,129,0.22)" : "rgba(16,185,129,0.10)",
+                        color: "#34d399",
                       }}
                     >
                       {t.lang === "es" ? "💳 Tarjeta · Apple Pay · Wallet" : "💳 Card · Apple Pay · Wallet"}
@@ -793,12 +789,14 @@ export default function Subscribe() {
                     {parseFloat(String(plan.price)) >= NOWPAYMENTS_MINIMUM_USD && (
                       <button
                         type="button"
-                        onClick={() => openAppSheet(plan.id, isLifetime ? "PNPtv Founders" : (t.lang === "es" ? "PRIME anual" : "PRIME Annual"))}
+                        onClick={() => openAppSheet(plan.id, isLifetime
+                          ? (t.lang === "es" ? "Membresía Founders" : "Founders Membership")
+                          : (t.lang === "es" ? "PRIME anual" : "PRIME Annual"))}
                         className="w-full py-2.5 rounded-xl text-[11px] font-black transition-all active:scale-[0.97] leading-tight"
                         style={{
-                          background: "rgba(255,255,255,0.05)",
-                          border: "1px solid rgba(255,255,255,0.15)",
-                          color: "rgba(255,255,255,0.80)",
+                          border: "1.5px solid rgba(255,183,0,0.45)",
+                          background: "rgba(255,183,0,0.07)",
+                          color: "rgba(255,183,0,0.80)",
                         }}
                       >
                         <span className="block">₿ {t.lang === "es" ? "Apps y wallets" : "Apps & Wallets"}</span>
@@ -816,8 +814,8 @@ export default function Subscribe() {
                         entitlementSpec={{ planId: plan.id }}
                         metadata={{ source: "subscribe_promo", planId: plan.id }}
                         label={t.lang === "es"
-                          ? `Pagar $${parseFloat(String(plan.price)).toFixed(0)} · ${isLifetime ? "PNPtv Founders" : "PRIME anual"}`
-                          : `Pay $${parseFloat(String(plan.price)).toFixed(0)} · ${isLifetime ? "PNPtv Founders" : "PRIME Annual"}`}
+                          ? `Pagar $${parseFloat(String(plan.price)).toFixed(0)} · ${isLifetime ? "Membresía Founders" : "PRIME anual"}`
+                          : `Pay $${parseFloat(String(plan.price)).toFixed(0)} · ${isLifetime ? "Founders Membership" : "PRIME Annual"}`}
                         lang={(t.lang as "es" | "en")}
                         onSuccess={() => {
                           setWalletPanelPlanId(null);
@@ -1084,22 +1082,48 @@ export default function Subscribe() {
                   balance. WalletPayCard handles card + Privy-wallet cases
                   inline. */}
               <div className="mt-3 pt-3 border-t border-white/5 space-y-2" onClick={(e) => e.stopPropagation()}>
-                <button
-                  onClick={(e) => { e.stopPropagation(); setWalletPanelPlanId(walletPanelPlanId === plan.id ? null : plan.id); }}
-                  className={`w-full py-3 rounded-lg font-bold text-sm text-white transition-all ${walletPanelPlanId === plan.id ? "bg-gradient-to-r from-emerald-400 to-emerald-500 ring-2 ring-emerald-300" : "bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500"}`}
-                >
-                  {t.lang === "es"
-                    ? `💳 Tarjeta · Apple Pay · Wallet · $${parseFloat(String(plan.price)).toFixed(2)}`
-                    : `💳 Card · Apple Pay · Wallet · $${parseFloat(String(plan.price)).toFixed(2)}`}
-                </button>
-                {parseFloat(String(plan.price)) >= NOWPAYMENTS_MINIMUM_USD && (
+                {parseFloat(String(plan.price)) >= NOWPAYMENTS_MINIMUM_USD ? (
+                  <div className="flex gap-2">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setWalletPanelPlanId(walletPanelPlanId === plan.id ? null : plan.id); }}
+                      className="flex-1 py-3 rounded-lg font-bold text-xs transition-all leading-tight"
+                      style={{
+                        border: walletPanelPlanId === plan.id ? "1.5px solid rgba(16,185,129,0.80)" : "1.5px solid rgba(16,185,129,0.50)",
+                        background: walletPanelPlanId === plan.id ? "rgba(16,185,129,0.22)" : "rgba(16,185,129,0.12)",
+                        color: "#34d399",
+                      }}
+                    >
+                      {t.lang === "es"
+                        ? `💳 Tarjeta $${parseFloat(String(plan.price)).toFixed(2)}`
+                        : `💳 Card $${parseFloat(String(plan.price)).toFixed(2)}`}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); openAppSheet(plan.id, plan.display_name || plan.name || plan.id); }}
+                      className="flex-1 py-3 rounded-lg font-bold text-xs transition-all leading-tight"
+                      style={{
+                        border: "1.5px solid rgba(255,183,0,0.50)",
+                        background: "rgba(255,183,0,0.08)",
+                        color: "rgba(255,183,0,0.85)",
+                      }}
+                    >
+                      <span className="block">₿ {t.lang === "es" ? "Apps y Wallets" : "Apps & Wallets"}</span>
+                      <span className="block text-[9px] font-normal opacity-60 mt-0.5">BTC · ETH · USDC…</span>
+                    </button>
+                  </div>
+                ) : (
                   <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); openAppSheet(plan.id, plan.display_name || plan.name || plan.id); }}
-                    className="w-full py-3 rounded-lg font-bold text-sm text-white/80 border border-white/15 bg-white/5 hover:bg-white/10 hover:text-white transition-all leading-tight"
+                    onClick={(e) => { e.stopPropagation(); setWalletPanelPlanId(walletPanelPlanId === plan.id ? null : plan.id); }}
+                    className="w-full py-3 rounded-lg font-bold text-xs transition-all"
+                    style={{
+                      border: walletPanelPlanId === plan.id ? "1.5px solid rgba(16,185,129,0.80)" : "1.5px solid rgba(16,185,129,0.50)",
+                      background: walletPanelPlanId === plan.id ? "rgba(16,185,129,0.22)" : "rgba(16,185,129,0.12)",
+                      color: "#34d399",
+                    }}
                   >
-                    <span className="block">₿ {t.lang === "es" ? "Pagar con apps y wallets" : "Pay with apps & wallets"}</span>
-                    <span className="block text-[10px] font-normal opacity-50 mt-0.5">BTC · ETH · USDC · USDT · etc.</span>
+                    {t.lang === "es"
+                      ? `💳 Tarjeta · Apple Pay · Wallet · $${parseFloat(String(plan.price)).toFixed(2)}`
+                      : `💳 Card · Apple Pay · Wallet · $${parseFloat(String(plan.price)).toFixed(2)}`}
                   </button>
                 )}
                 {(() => {
@@ -1270,22 +1294,48 @@ export default function Subscribe() {
                   balance. WalletPayCard handles card + Privy-wallet cases
                   inline. */}
               <div className="mt-3 pt-3 border-t border-white/5 space-y-2" onClick={(e) => e.stopPropagation()}>
-                <button
-                  onClick={(e) => { e.stopPropagation(); setWalletPanelPlanId(walletPanelPlanId === plan.id ? null : plan.id); }}
-                  className={`w-full py-3 rounded-lg font-bold text-sm text-white transition-all ${walletPanelPlanId === plan.id ? "bg-gradient-to-r from-emerald-400 to-emerald-500 ring-2 ring-emerald-300" : "bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500"}`}
-                >
-                  {t.lang === "es"
-                    ? `💳 Tarjeta · Apple Pay · Wallet · $${parseFloat(String(plan.price)).toFixed(2)}`
-                    : `💳 Card · Apple Pay · Wallet · $${parseFloat(String(plan.price)).toFixed(2)}`}
-                </button>
-                {parseFloat(String(plan.price)) >= NOWPAYMENTS_MINIMUM_USD && (
+                {parseFloat(String(plan.price)) >= NOWPAYMENTS_MINIMUM_USD ? (
+                  <div className="flex gap-2">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setWalletPanelPlanId(walletPanelPlanId === plan.id ? null : plan.id); }}
+                      className="flex-1 py-3 rounded-lg font-bold text-xs transition-all leading-tight"
+                      style={{
+                        border: walletPanelPlanId === plan.id ? "1.5px solid rgba(16,185,129,0.80)" : "1.5px solid rgba(16,185,129,0.50)",
+                        background: walletPanelPlanId === plan.id ? "rgba(16,185,129,0.22)" : "rgba(16,185,129,0.12)",
+                        color: "#34d399",
+                      }}
+                    >
+                      {t.lang === "es"
+                        ? `💳 Tarjeta $${parseFloat(String(plan.price)).toFixed(2)}`
+                        : `💳 Card $${parseFloat(String(plan.price)).toFixed(2)}`}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); openAppSheet(plan.id, plan.display_name || plan.name || plan.id); }}
+                      className="flex-1 py-3 rounded-lg font-bold text-xs transition-all leading-tight"
+                      style={{
+                        border: "1.5px solid rgba(255,183,0,0.50)",
+                        background: "rgba(255,183,0,0.08)",
+                        color: "rgba(255,183,0,0.85)",
+                      }}
+                    >
+                      <span className="block">₿ {t.lang === "es" ? "Apps y Wallets" : "Apps & Wallets"}</span>
+                      <span className="block text-[9px] font-normal opacity-60 mt-0.5">BTC · ETH · USDC…</span>
+                    </button>
+                  </div>
+                ) : (
                   <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); openAppSheet(plan.id, plan.display_name || plan.name || plan.id); }}
-                    className="w-full py-3 rounded-lg font-bold text-sm text-white/80 border border-white/15 bg-white/5 hover:bg-white/10 hover:text-white transition-all leading-tight"
+                    onClick={(e) => { e.stopPropagation(); setWalletPanelPlanId(walletPanelPlanId === plan.id ? null : plan.id); }}
+                    className="w-full py-3 rounded-lg font-bold text-xs transition-all"
+                    style={{
+                      border: walletPanelPlanId === plan.id ? "1.5px solid rgba(16,185,129,0.80)" : "1.5px solid rgba(16,185,129,0.50)",
+                      background: walletPanelPlanId === plan.id ? "rgba(16,185,129,0.22)" : "rgba(16,185,129,0.12)",
+                      color: "#34d399",
+                    }}
                   >
-                    <span className="block">₿ {t.lang === "es" ? "Pagar con apps y wallets" : "Pay with apps & wallets"}</span>
-                    <span className="block text-[10px] font-normal opacity-50 mt-0.5">BTC · ETH · USDC · USDT · etc.</span>
+                    {t.lang === "es"
+                      ? `💳 Tarjeta · Apple Pay · Wallet · $${parseFloat(String(plan.price)).toFixed(2)}`
+                      : `💳 Card · Apple Pay · Wallet · $${parseFloat(String(plan.price)).toFixed(2)}`}
                   </button>
                 )}
                 {(() => {

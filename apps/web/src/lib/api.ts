@@ -400,6 +400,7 @@ export interface TelegramAuthResponse {
     live_channel?: string | null;
     is_super_god?: boolean;
     super_god_eligible?: boolean;
+    founders_offer_expires_at?: string | null;
   };
   requiresTerms?: boolean;
   error?: string;
@@ -3258,6 +3259,21 @@ export function unfollowUser(userId: string): Promise<{
   return request("/api/webapp/users/unfollow", { method: "POST", body: { userId } });
 }
 
+export interface SuggestedFollow {
+  userId: string;
+  username: string;
+  displayName: string;
+  avatarUrl: string | null;
+  bio: string | null;
+  followersCount: number;
+  isCreator: boolean;
+  alreadyFollows: boolean;
+}
+
+export async function getSuggestedFollows(): Promise<{ suggestions: SuggestedFollow[] }> {
+  return request('/api/webapp/me/suggested-follows');
+}
+
 export function getFollowStatus(userId: string): Promise<{
   success: boolean;
   isFollowing: boolean;
@@ -4116,6 +4132,55 @@ export function prepareUsdcSubscription(
   return request("/api/webapp/payments/usdc/prepare", { method: "POST", body });
 }
 
+
+export function prepareOnchainSubscription(
+  planId: string,
+  payCurrency: string = 'btc',
+  creatorId?: string,
+): Promise<{
+  success: boolean;
+  orderId: string;
+  usdAmount: number;
+  planName: string;
+  payAddress: string;
+  payAmount: string;
+  payCurrency: string;
+  resumed?: boolean;
+  error?: string;
+}> {
+  const body: Record<string, string> = { planId, payCurrency };
+  if (creatorId) body.creatorId = creatorId;
+  return request("/api/webapp/payments/onchain/prepare", { method: "POST", body });
+}
+
+export async function prepareCallNowPayments(opts: {
+  packageId: number;
+  startTimeUtc?: string | null;
+  endTimeUtc?: string | null;
+  payCurrency?: string;
+  email?: string | null;
+  clientNotes?: string | null;
+}): Promise<{
+  success: boolean;
+  invoiceUrl?: string;
+  nowpaymentsInvoiceId?: string;
+  paymentId?: string;
+  bookingId?: string;
+  amountUsd?: number;
+  error?: string;
+}> {
+  return request("/api/webapp/book-call/checkout/nowpayments", {
+    method: "POST",
+    body: {
+      packageId: opts.packageId,
+      startTimeUtc: opts.startTimeUtc ?? null,
+      endTimeUtc: opts.endTimeUtc ?? null,
+      payCurrency: opts.payCurrency ?? "btc",
+      email: opts.email ?? null,
+      clientNotes: opts.clientNotes ?? null,
+    },
+  });
+}
 
 export function getUsdcSubscriptionStatus(orderId: string): Promise<{
   success: boolean;
@@ -7933,7 +7998,7 @@ export function revokeAdminUserCreator(
 export interface CallPackage {
   id: number;
   creator_id: string;
-  duration_minutes: 30 | 60;
+  duration_minutes: number;
   quantity: number;
   price_usd: string;
   sku: string;
@@ -7953,7 +8018,7 @@ export interface CallCredit {
   status: "unused" | "partial" | "completed" | "expired" | "refunded";
   expires_at: string | null;
   created_at: string;
-  duration_minutes: 30 | 60;
+  duration_minutes: number;
   package_title: string | null;
   creator_username?: string;
   creator_photo?: string | null;
@@ -8008,7 +8073,7 @@ export function getMyCallPackages(): Promise<{
 }
 
 export function createMyCallPackage(data: {
-  durationMinutes: 30 | 60;
+  durationMinutes: number;
   quantity: number;
   priceUsd: number;
   title?: string;
@@ -8274,7 +8339,7 @@ export interface CallBooking {
   package_id: number;
   start_at: string;
   end_at: string;
-  duration_minutes: 30 | 60;
+  duration_minutes: number;
   status: "pending" | "confirmed" | "active" | "completed" | "cancelled" | "no_show";
   payment_status: "pending" | "paid" | "refunded" | "failed";
   creator_username: string;
@@ -10368,7 +10433,7 @@ export async function getCalcomSlots(
   creatorId: string,
   dateFrom: string,
   dateTo: string,
-  durationMinutes: 30 | 60
+  durationMinutes: number
 ): Promise<{ slots: Array<{ time: string; available: boolean }> }> {
   const params = new URLSearchParams({
     dateFrom,
@@ -11343,4 +11408,12 @@ export function claimTrial(): Promise<{ success: boolean; alreadyUsed?: boolean 
 
 export function logSubscribeVisit(): Promise<{ ok: boolean }> {
   return request<{ ok: boolean }>("/api/webapp/subscribe-visit", { method: "POST" });
+}
+
+export function dismissFoundersPopup(): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>('/api/webapp/me/dismiss-founders-popup', { method: 'POST' });
+}
+
+export function dismissYear50Popup(): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>('/api/webapp/me/dismiss-year50-popup', { method: 'POST' });
 }

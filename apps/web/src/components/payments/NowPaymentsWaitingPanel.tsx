@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { NowPaymentsOrder } from "@/hooks/useNowPayments";
-import { prepareUsdcSubscription } from "@/lib/api";
+import { prepareOnchainSubscription } from "@/lib/api";
 
 
 interface NowPaymentsWaitingPanelProps {
@@ -131,9 +131,9 @@ function AppGuidePanel({ es }: { es: boolean }) {
   );
 }
 
-// ── Exported app picker + inline NowPayments widget sheet ─────────────────────
-// Creates the NP invoice internally and embeds the payment widget in-page so
-// the user can copy the address directly — no popup needed.
+// ── Exported app picker + inline address sheet ────────────────────────────────
+// Calls /api/webapp/payments/onchain/prepare → gets a real BTC pay_address
+// and pay_amount, then displays them inline for copy-paste. No iframes.
 export function NpAppPickerSheet({
   isOpen,
   onClose,
@@ -149,48 +149,51 @@ export function NpAppPickerSheet({
 }) {
   const es = (lang || 'es').startsWith('es');
   const [selectedApp, setSelectedApp] = useState<string | null>(null);
-  const [invoiceUrl, setInvoiceUrl] = useState<string | null>(null);
-  const [invoiceLoading, setInvoiceLoading] = useState(false);
-  const [invoiceError, setInvoiceError] = useState<string | null>(null);
-  const widgetRef = useRef<HTMLDivElement>(null);
+  const [payAddress, setPayAddress] = useState<string | null>(null);
+  const [payAmount, setPayAmount] = useState<string | null>(null);
+  const [payCurrency, setPayCurrency] = useState<string>('btc');
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const selectedSteps = selectedApp && selectedApp !== 'other'
     ? (es ? PANEL_STEPS_ES : PANEL_STEPS_EN)[selectedApp] ?? []
     : [];
   const selectedAppLabel = PANEL_APPS.find(a => a.id === selectedApp)?.label ?? '';
 
-  // Create invoice when sheet opens
-  useEffect(() => {
-    if (!isOpen || !planId) { setInvoiceUrl(null); return; }
-    setInvoiceUrl(null);
-    setInvoiceError(null);
-    setInvoiceLoading(true);
-    prepareUsdcSubscription(planId, undefined, undefined, 'btc')
+  const fetchAddress = useCallback(() => {
+    if (!planId) return;
+    setPayAddress(null);
+    setPayAmount(null);
+    setLoadError(null);
+    setLoading(true);
+    prepareOnchainSubscription(planId, 'btc')
       .then(res => {
-        if (!res.success || !res.invoiceUrl) throw new Error(res.error || 'Could not create invoice');
-        setInvoiceUrl(res.invoiceUrl);
+        if (!res.success || !res.payAddress) throw new Error(res.error || 'No address returned');
+        setPayAddress(res.payAddress);
+        setPayAmount(res.payAmount);
+        setPayCurrency(res.payCurrency || 'btc');
       })
-      .catch(e => setInvoiceError(e instanceof Error ? e.message : 'Invoice failed'))
-      .finally(() => setInvoiceLoading(false));
-  }, [isOpen, planId]);
+      .catch(e => setLoadError(e instanceof Error ? e.message : 'Failed to get address'))
+      .finally(() => setLoading(false));
+  }, [planId]);
 
-  // Embed NowPayments widget once invoice URL is ready
   useEffect(() => {
-    const container = widgetRef.current;
-    if (!container || !invoiceUrl) return;
-    container.innerHTML = '';
-    const script = document.createElement('script');
-    script.type = 'text/javascript';
-    script.src = 'https://nowpayments.io/embeds/payment-widget.js';
-    script.setAttribute('data-nowpayments-url', invoiceUrl);
-    container.appendChild(script);
-    return () => { if (container) container.innerHTML = ''; };
-  }, [invoiceUrl]);
+    if (isOpen && planId) fetchAddress();
+    if (!isOpen) { setSelectedApp(null); setPayAddress(null); setPayAmount(null); setLoadError(null); setCopied(false); }
+  }, [isOpen, planId, fetchAddress]);
 
-  // Reset selected app when sheet reopens
-  useEffect(() => { if (!isOpen) setSelectedApp(null); }, [isOpen]);
+  const handleCopy = useCallback(() => {
+    if (!payAddress) return;
+    navigator.clipboard.writeText(payAddress).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    }).catch(() => {});
+  }, [payAddress]);
 
   if (!isOpen) return null;
+
+  const coinLabel = payCurrency.toUpperCase();
 
   return (
     <div className="fixed inset-0 z-50 flex items-end" onClick={onClose}>
@@ -211,26 +214,63 @@ export function NpAppPickerSheet({
           {planLabel && <p className="text-xs text-white/40 mt-0.5">{planLabel}</p>}
         </div>
 
-        {/* NowPayments inline widget — shows address + QR + amount */}
-        <div className="rounded-2xl overflow-hidden border border-white/10" style={{ background: 'rgba(255,255,255,0.03)' }}>
-          {invoiceLoading && (
-            <div className="flex items-center justify-center gap-3 py-8">
+        {/* Payment address card */}
+        <div className="rounded-2xl border border-white/10 p-4" style={{ background: 'rgba(255,255,255,0.03)' }}>
+          {loading && (
+            <div className="flex items-center justify-center gap-3 py-6">
               <div className="w-5 h-5 border-2 border-white/20 border-t-white/70 rounded-full animate-spin" />
-              <span className="text-sm text-white/50">{es ? 'Generando dirección de pago…' : 'Generating payment address…'}</span>
+              <span className="text-sm text-white/50">{es ? 'Generando dirección…' : 'Generating address…'}</span>
             </div>
           )}
-          {invoiceError && (
-            <div className="px-4 py-4 text-center">
-              <p className="text-xs text-red-400 mb-2">{invoiceError}</p>
-              <button
-                type="button"
-                onClick={() => { setInvoiceError(null); setInvoiceLoading(true); if (planId) prepareUsdcSubscription(planId, undefined, undefined, 'btc').then(r => { if (r.success && r.invoiceUrl) setInvoiceUrl(r.invoiceUrl); else throw new Error(r.error || ''); }).catch(e => setInvoiceError(e.message)).finally(() => setInvoiceLoading(false)); }}
-                className="text-xs text-white/50 underline decoration-dotted"
-              >{es ? 'Reintentar' : 'Retry'}</button>
+          {loadError && (
+            <div className="text-center py-4">
+              <p className="text-xs text-red-400 mb-3">{loadError}</p>
+              <button type="button" onClick={fetchAddress}
+                className="text-xs text-white/50 underline decoration-dotted">
+                {es ? 'Reintentar' : 'Retry'}
+              </button>
             </div>
           )}
-          {!invoiceLoading && !invoiceError && (
-            <div ref={widgetRef} className="w-full" />
+          {!loading && !loadError && payAddress && (
+            <div className="space-y-3">
+              {/* Amount row */}
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] text-white/45 uppercase tracking-wide">{es ? 'Monto a enviar' : 'Amount to send'}</span>
+                <span className="text-sm font-black text-yellow-400">
+                  {payAmount} <span className="text-white/50 font-semibold">{coinLabel}</span>
+                </span>
+              </div>
+              {/* Address row */}
+              <div>
+                <span className="text-[10px] text-white/40 uppercase tracking-wide block mb-1.5">
+                  {es ? `Dirección ${coinLabel}` : `${coinLabel} Address`}
+                </span>
+                <div
+                  className="flex items-center gap-2 rounded-xl px-3 py-2.5 cursor-pointer active:scale-[0.99] transition-transform"
+                  style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)' }}
+                  onClick={handleCopy}
+                >
+                  <span className="text-[11px] font-mono text-white/80 flex-1 break-all leading-relaxed">{payAddress}</span>
+                  <button
+                    type="button"
+                    onClick={e => { e.stopPropagation(); handleCopy(); }}
+                    className="flex-shrink-0 rounded-lg px-2.5 py-1.5 text-[10px] font-black transition-all active:scale-[0.95]"
+                    style={copied
+                      ? { background: 'rgba(52,211,153,0.20)', color: '#34d399', border: '1px solid rgba(52,211,153,0.40)' }
+                      : { background: 'rgba(255,255,255,0.10)', color: 'rgba(255,255,255,0.70)', border: '1px solid rgba(255,255,255,0.18)' }
+                    }
+                  >
+                    {copied ? (es ? '✓ Copiado' : '✓ Copied') : (es ? 'Copiar' : 'Copy')}
+                  </button>
+                </div>
+              </div>
+              {/* Warning */}
+              <p className="text-[10px] text-amber-400/70 leading-relaxed">
+                ⚠️ {es
+                  ? `Envía exactamente ${payAmount} ${coinLabel}. Montos diferentes pueden retrasar o cancelar el pago.`
+                  : `Send exactly ${payAmount} ${coinLabel}. Different amounts may delay or cancel the payment.`}
+              </p>
+            </div>
           )}
         </div>
 

@@ -1,59 +1,26 @@
 'use strict';
 
-const { getPool, query } = require('../config/postgres');
+const { query } = require('../config/postgres');
 const logger = require('../utils/logger');
 
-// Accounts every user must follow — cannot be unfollowed
-const ENFORCED_FOLLOW_IDS = ['8552451957', '8599671840', '8f5f4dd1-7bdb-4571-b026-e09d91113c91', 'e0da5844-ce6a-4976-a14a-b5c9d0b643ed', 'fe20b76b-6451-49ec-84c8-1e4bffab96eb', '0bc5c9a6-90fc-4790-b0f1-5d4041e77e3b', '8b9e2dfb-063e-4c4d-8aaa-87163f198128']; // @pnptv, @SantinoFurioso, @PNPLATINOBOY (reactivated 2026-08-09), @Alejotwink, @FRANKBOXREAL_X, @BRIAN_COVALEDA, @Dejesusof22
+// Kept for backwards-compat — route now queries active Crystal Creators dynamically.
+const SUGGESTED_FOLLOW_IDS = [];
+const ENFORCED_FOLLOW_IDS = SUGGESTED_FOLLOW_IDS;
 
 /**
- * Check if a target user ID is an enforced-follow account.
+ * @deprecated Following is now opt-in via the onboarding suggestion step.
+ * Always returns false — no accounts are locked follows anymore.
  */
-function isEnforcedFollow(targetId) {
-  return ENFORCED_FOLLOW_IDS.includes(String(targetId));
+function isEnforcedFollow(_targetId) {
+  return false;
 }
 
 /**
- * Ensure a user follows all enforced accounts.
- *
- * Single-transaction CTE: all 4 inserts + counter updates happen in one
- * round-trip. Prior implementation issued ~24 round-trips per login (1
- * existence check + BEGIN/INSERT/UPDATE/UPDATE/COMMIT × 4 targets).
- * Idempotent via ON CONFLICT DO NOTHING; counters only bump for rows
- * that actually inserted.
+ * @deprecated No-op. Auto-following was replaced by the onboarding
+ * "People you might want to follow" step (2026-09-24).
  */
-async function enforceDefaultFollows(userId) {
-  const targets = ENFORCED_FOLLOW_IDS.filter(id => String(id) !== String(userId));
-  if (targets.length === 0) return;
-
-  // Build VALUES list as ($2),($3),($4)... so we can pass userId as $1 and
-  // targets as the rest in a parameterized array — no string interpolation.
-  const targetPlaceholders = targets.map((_, i) => `($${i + 2})`).join(',');
-
-  try {
-    await query(`
-      WITH targets(target_id) AS (VALUES ${targetPlaceholders}),
-      live_targets AS (
-        SELECT t.target_id FROM targets t
-        JOIN users u ON u.id = t.target_id
-      ),
-      inserted AS (
-        INSERT INTO user_follows (follower_id, following_id)
-        SELECT $1, target_id FROM live_targets
-        ON CONFLICT (follower_id, following_id) DO NOTHING
-        RETURNING following_id
-      ),
-      bump_followers AS (
-        UPDATE users SET followers_count = followers_count + 1
-        WHERE id IN (SELECT following_id FROM inserted)
-        RETURNING id
-      )
-      UPDATE users SET following_count = following_count + (SELECT COUNT(*)::int FROM inserted)
-      WHERE id = $1
-    `, [userId, ...targets]);
-  } catch (err) {
-    logger.error('enforceDefaultFollows error', err);
-  }
+async function enforceDefaultFollows(_userId) {
+  logger.debug('enforceDefaultFollows: deprecated no-op called — skipping');
 }
 
-module.exports = { ENFORCED_FOLLOW_IDS, isEnforcedFollow, enforceDefaultFollows };
+module.exports = { SUGGESTED_FOLLOW_IDS, ENFORCED_FOLLOW_IDS, isEnforcedFollow, enforceDefaultFollows };

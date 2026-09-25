@@ -3989,8 +3989,6 @@ app.get('/api/webapp/auth/oidc/callback', oidcCallbackLimiter, asyncHandler(asyn
       username: userRow.username,
       sub,
     });
-    // Auto-follow the PNPtv! system account so its posts reach new users
-    void enforceDefaultFollows(userRow.id);
   }
 
   // ── 5. Regenerate session to prevent session fixation ────────────────────────
@@ -4245,8 +4243,13 @@ app.post('/api/webapp/auth/register', registerLimiter, asyncHandler(async (req, 
     username: userRow.username,
     sub,
   });
-  // Auto-follow the PNPtv! system account so its posts reach new users
-  void enforceDefaultFollows(userRow.id);
+  // Founders funnel: grant 3-day PRIME trial + schedule year50 follow-up DM
+  void (async () => {
+    try {
+      const { grantFoundersFunnel } = require('../../services/foundersFunnelService');
+      await grantFoundersFunnel(userRow.id);
+    } catch (_) { /* non-fatal — account creation must not fail */ }
+  })();
 
   // ── 7. Establish session ─────────────────────────────────────────────────────
   await new Promise((resolve, reject) => {
@@ -9247,6 +9250,63 @@ app.post('/api/webapp/me/crypto-guide-complete', requireSessionAuth, asyncHandle
     }
   }
   return res.json({ success: true, completedAt: r.crypto_guide_completed_at, rewarded, tokenBalance: null });
+}));
+
+// GET /api/webapp/me/suggested-follows
+// Returns active Crystal Creators for the onboarding "People to follow" step.
+// Dynamic: always reflects currently-active crystals so no manual curation needed.
+app.get('/api/webapp/me/suggested-follows', requireSessionAuth, asyncHandler(async (req, res) => {
+  const userId = req.session.userId || req.session.user?.id;
+
+  const result = await query(`
+    SELECT
+      u.id,
+      u.username,
+      u.first_name,
+      u.avatar_url,
+      u.bio,
+      u.followers_count,
+      u.creator_status,
+      EXISTS(
+        SELECT 1 FROM user_follows f
+        WHERE f.follower_id = $1 AND f.following_id = u.id
+      ) AS already_follows
+    FROM users u
+    WHERE u.id <> $1
+      AND u.banned_at IS NULL
+      AND u.creator_status = 'active'
+      AND (
+        u.crystal_creator_active_until = 'infinity'
+        OR (u.crystal_creator_active_until IS NOT NULL AND u.crystal_creator_active_until > NOW())
+      )
+    ORDER BY u.followers_count DESC
+    LIMIT 12
+  `, [userId]);
+
+  return res.json({
+    suggestions: result.rows.map(r => ({
+      userId: r.id,
+      username: r.username,
+      displayName: r.first_name || r.username,
+      avatarUrl: r.avatar_url,
+      bio: r.bio,
+      followersCount: r.followers_count,
+      isCreator: r.creator_status === 'active',
+      alreadyFollows: r.already_follows,
+    }))
+  });
+}));
+
+// POST /api/webapp/me/dismiss-founders-popup
+app.post('/api/webapp/me/dismiss-founders-popup', requireSessionAuth, asyncHandler(async (req, res) => {
+  await query('UPDATE users SET founders_popup_dismissed_at = NOW() WHERE id = $1', [req.session.userId]);
+  res.json({ ok: true });
+}));
+
+// POST /api/webapp/me/dismiss-year50-popup
+app.post('/api/webapp/me/dismiss-year50-popup', requireSessionAuth, asyncHandler(async (req, res) => {
+  await query('UPDATE users SET year50_popup_dismissed_at = NOW() WHERE id = $1', [req.session.userId]);
+  res.json({ ok: true });
 }));
 
 /**
@@ -14687,13 +14747,14 @@ app.post('/api/webapp/payments/onchain/prepare', requireSessionAuth, usdcPrepare
     return res.status(503).json({ success: false, error: 'Crypto payments are not configured.', code: 'NOWPAYMENTS_NOT_CONFIGURED' });
   }
   const user = req.session.user;
-  const { planId, creatorId } = req.body || {};
+  const { planId, creatorId, payCurrency: reqPayCurrency } = req.body || {};
   if (!planId) return res.status(400).json({ success: false, error: 'planId is required' });
 
   const userId = String(user.telegram_id || user.id);
   const { query: dbQuery } = require('../../config/postgres');
   const webappUrl = process.env.WEBAPP_URL || 'https://pnptv.app';
-  const PAY_CURRENCY = 'etharb'; // ETH on Arbitrum One
+  const ALLOWED_CURRENCIES = ['btc', 'eth', 'etharb', 'usdcmatic', 'usdterc20', 'ltc'];
+  const PAY_CURRENCY = ALLOWED_CURRENCIES.includes(reqPayCurrency) ? reqPayCurrency : 'btc';
 
   // Resume: if there's a pending onchain order for this plan < 23h old, reuse it
   // so we don't spam NP with a fresh pay_address on every page refresh.
@@ -21106,10 +21167,46 @@ const checkoutLimiter = rateLimit({
 });
 
 
-// Call-booking payment rails: only Ru$h tokens (below) and Wallet USDC (handled
-// by /api/webapp/wallet-checkout/*) as of 2026-08-09. NowPayments/BTC/Dash
-// checkout routes for call packages retired — UI no longer reaches them.
+// Call-booking payment rails: Ru$h tokens (below), Wallet USDC (handled
+// by /api/webapp/wallet-checkout/*), and NowPayments onchain (below).
 //
+// NowPayments onchain (address-based) checkout for call packages.
+// Uses createCallCheckoutNowPayments which is already in callCheckoutService.js
+// and whose webhook handler lives at line ~16072 (plan_id = 'call_package').
+app.post('/api/webapp/book-call/checkout/nowpayments',
+  requireSessionAuth, checkoutLimiter,
+  asyncHandler(async (req, res) => {
+    if (!process.env.NOWPAYMENTS_API_KEY) {
+      return res.status(503).json({ success: false, error: 'Crypto payments are not configured.', code: 'NOWPAYMENTS_NOT_CONFIGURED' });
+    }
+    const user = req.session.user;
+    const { packageId, startTimeUtc, endTimeUtc, payCurrency, email, clientNotes } = req.body || {};
+    if (!packageId || !Number.isInteger(Number(packageId)) || Number(packageId) < 1) {
+      return res.status(400).json({ success: false, error: 'packageId must be a positive integer' });
+    }
+    const CallCheckoutSvc = require('../../services/callCheckoutService');
+    try {
+      const result = await CallCheckoutSvc.createCallCheckoutNowPayments({
+        userId: String(user.telegram_id || user.id),
+        packageId: Number(packageId),
+        startTimeUtc: startTimeUtc || null,
+        endTimeUtc: endTimeUtc || null,
+        payCurrency: payCurrency || 'btc',
+        clientNotes: clientNotes || null,
+        email: email || null,
+      });
+      return res.status(201).json({ success: true, ...result });
+    } catch (err) {
+      if (err.code === 'PACKAGE_NOT_FOUND') return res.status(404).json({ success: false, error: 'Call package not found or inactive' });
+      if (err.code === 'NOWPAYMENTS_NOT_CONFIGURED') return res.status(503).json({ success: false, error: err.message, code: err.code });
+      if (err.code === 'SLOT_TAKEN') return res.status(409).json({ success: false, error: 'That time slot is no longer available.', code: 'SLOT_TAKEN' });
+      if (err.code === 'PERFORMER_NOT_FOUND') return res.status(404).json({ success: false, error: 'Creator has no performer profile configured.' });
+      if (err.code === 'CHECKOUT_MUTEX_BUSY') return res.status(429).json({ success: false, error: 'Another checkout is already in progress. Please wait a moment.', code: err.code });
+      require('../../utils/logger').error('[book-call/checkout/nowpayments] error', { error: err.message, packageId });
+      return res.status(500).json({ success: false, error: 'Failed to create checkout' });
+    }
+  }));
+
 // Token checkout for call packages (instant, no payment gateway)
 app.post('/api/webapp/book-call/checkout/tokens',
   requireSessionAuth, checkoutLimiter,
