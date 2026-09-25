@@ -799,7 +799,7 @@ export default function Subscribe() {
                           color: "rgba(255,183,0,0.80)",
                         }}
                       >
-                        <span className="block">₿ {t.lang === "es" ? "Apps y wallets" : "Apps & Wallets"}</span>
+                        <span className="block">₿ {t.lang === "es" ? "Apps y wallets" : "Apps & wallets"}</span>
                         <span className="block text-[9px] font-normal opacity-50 mt-0.5">BTC · ETH · USDC · USDT · etc.</span>
                       </button>
                     )}

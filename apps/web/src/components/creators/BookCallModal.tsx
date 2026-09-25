@@ -1300,7 +1300,7 @@ export function BookCallModal({
               ? { background: "rgba(16,185,129,0.16)", border: "1.5px solid #10b981", color: "#34d399" }
               : { background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "var(--pnp-text-secondary, #8E8E93)" }}
           >
-            💳 Wallet
+            💳 Card / Wallet
           </button>
           {/* Ru$h pill: always render so users with 0 balance can still choose it
               and get routed to Buy Ru$h. Hiding this option was the #1 reason
@@ -1324,7 +1324,7 @@ export function BookCallModal({
                 ? { background: "rgba(255,183,0,0.16)", border: "1.5px solid rgba(255,183,0,0.80)", color: "rgba(255,183,0,0.95)" }
                 : { background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "var(--pnp-text-secondary, #8E8E93)" }}
             >
-              ₿ Apps
+              ₿ Apps & wallets
             </button>
           )}
         </div>
@@ -1422,7 +1422,7 @@ export function BookCallModal({
                   ? <span className="inline-block w-4 h-4 rounded-full border-2 border-amber-400/40 border-t-amber-400 animate-spin" />
                   : <>
                       <span>₿</span>
-                      <span>{t.lang === "es" ? `Pagar $${effectivePriceUsd.toFixed(2)} con crypto` : `Pay $${effectivePriceUsd.toFixed(2)} with crypto`}</span>
+                      <span>{t.lang === "es" ? `₿ Pagar $${effectivePriceUsd.toFixed(2)} · Apps y wallets` : `₿ Pay $${effectivePriceUsd.toFixed(2)} · Apps & wallets`}</span>
                     </>
                 }
               </button>
