@@ -576,7 +576,7 @@ export function OverviewTab({ dashboard, user, withdrawable, t, onTabChange }: O
                   disabled={crystalNpLoading}
                   className="py-2.5 rounded-lg font-bold text-sm text-white bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 transition-all disabled:opacity-60"
                 >
-                  {crystalNpLoading ? "…" : "₿ Any crypto"}
+                  {crystalNpLoading ? "…" : (tGlobal.lang === "es" ? "₿ Apps y wallets" : "₿ Apps & wallets")}
                 </button>
               </div>
               {crystalNpError && (

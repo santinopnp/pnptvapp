@@ -1839,7 +1839,7 @@ export default function CreatorProfilePage() {
                   disabled={crystalNpLoading === "gift"}
                   className="py-2.5 rounded-lg font-bold text-sm text-white bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 transition-all disabled:opacity-60"
                 >
-                  {crystalNpLoading === "gift" ? "…" : (t.lang === "es" ? "₿ Cualquier cripto" : "₿ Any crypto")}
+                  {crystalNpLoading === "gift" ? "…" : (t.lang === "es" ? "₿ Apps y wallets" : "₿ Apps & wallets")}
                 </button>
               </div>
               {crystalNpError && crystalWalletMode !== "gift" && (
@@ -1891,7 +1891,7 @@ export default function CreatorProfilePage() {
                   disabled={crystalNpLoading === "self"}
                   className="py-2.5 rounded-lg font-bold text-sm text-white bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 transition-all disabled:opacity-60"
                 >
-                  {crystalNpLoading === "self" ? "…" : (t.lang === "es" ? "₿ Cualquier cripto" : "₿ Any crypto")}
+                  {crystalNpLoading === "self" ? "…" : (t.lang === "es" ? "₿ Apps y wallets" : "₿ Apps & wallets")}
                 </button>
               </div>
               {crystalNpError && crystalWalletMode !== "self" && (

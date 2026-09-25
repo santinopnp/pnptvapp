@@ -325,7 +325,7 @@ export function CrystalServicesPanel({ creatorId, creatorUsername }: Props) {
                         className="py-2 rounded-lg font-bold text-xs text-white disabled:opacity-60"
                         style={{ background: "linear-gradient(135deg,#f97316,#ea580c)" }}
                       >
-                        {npLoading === s.id ? "…" : (es ? "₿ Cualquier cripto" : "₿ Any crypto")}
+                        {npLoading === s.id ? "…" : (es ? "₿ Apps y wallets" : "₿ Apps & wallets")}
                       </button>
                     </div>
                     {npError && (

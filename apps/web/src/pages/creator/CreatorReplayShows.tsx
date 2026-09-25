@@ -11,6 +11,7 @@ import {
   stopReplayShow,
   getActiveReplaySession,
   uploadCreatorVideoChunked,
+  checkoutCrystalSelf,
   type ReplayShow,
   type ActiveReplaySession,
   type ChunkUploadProgress,
@@ -487,6 +488,26 @@ const CRYSTAL_PRICE_USD = 100;
 function CrystalUpgradeModal({ open, onClose, onPaid, lang }: {
   open: boolean; onClose: () => void; onPaid: () => void; lang: "es" | "en";
 }) {
+  const [npLoading, setNpLoading] = useState(false);
+  const [npError, setNpError] = useState<string | null>(null);
+
+  async function handleNowPayments() {
+    setNpError(null);
+    setNpLoading(true);
+    try {
+      const res = await checkoutCrystalSelf("nowpayments");
+      if (!res.invoiceUrl) throw new Error("No invoice URL");
+      const w = 520, h = 700;
+      const left = Math.max(0, Math.round(window.screenX + (window.outerWidth - w) / 2));
+      const top = Math.max(0, Math.round(window.screenY + (window.outerHeight - h) / 2));
+      window.open(res.invoiceUrl, "crystal_np_self", `width=${w},height=${h},left=${left},top=${top},scrollbars=yes,resizable=yes`);
+    } catch (err) {
+      setNpError(err instanceof Error ? err.message : "Could not open checkout");
+    } finally {
+      setNpLoading(false);
+    }
+  }
+
   if (!open) return null;
   const isEs = lang === "es";
   return (
@@ -530,6 +551,24 @@ function CrystalUpgradeModal({ open, onClose, onPaid, lang }: {
           lang={lang}
           onSuccess={onPaid}
         />
+
+        <div className="flex items-center gap-2 my-3">
+          <div className="flex-1 h-px" style={{ background: "var(--pnp-border, #2A2A2A)" }} />
+          <span className="text-[11px]" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>{isEs ? "o" : "or"}</span>
+          <div className="flex-1 h-px" style={{ background: "var(--pnp-border, #2A2A2A)" }} />
+        </div>
+
+        <button
+          type="button"
+          onClick={handleNowPayments}
+          disabled={npLoading}
+          className="w-full py-2.5 rounded-xl font-bold text-sm text-white bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 transition-all disabled:opacity-60"
+        >
+          {npLoading ? "…" : (isEs ? "₿ Apps y wallets" : "₿ Apps & wallets")}
+        </button>
+        {npError && (
+          <p className="text-[11px] mt-2" style={{ color: "#ff6b6b" }}>{npError}</p>
+        )}
 
         <p className="text-[11px] mt-3 leading-relaxed" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
           {isEs
