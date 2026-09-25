@@ -2187,13 +2187,17 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
   // Group members (loaded on chat open for member management panels)
   const [groupMembers, setGroupMembers] = useState<any[]>([]);
 
-  // Socket hook — presence + socket connection state + read receipts
+  // Socket hook — presence + socket connection state + read receipts.
+  // Use the topic room ID when a topic is active so real-time messages from
+  // that room are received; topic membership is checked via parent group on
+  // the backend (hangout:join handler).
+  const effectiveSocketGroupId = activeTopic?.id ?? activeGroup?.id ?? null;
   const {
     isConnected,
     onlineMembers,
     readReceipts,
     emitReadMessage,
-  } = useHangoutSocket(activeGroup?.id ?? null, user?.dbId);
+  } = useHangoutSocket(effectiveSocketGroupId, user?.dbId);
 
   // Video call / general chat error
   const [chatError, setChatError] = useState<string | null>(null);

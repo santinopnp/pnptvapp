@@ -252,15 +252,10 @@ export function SharePostModal({
     });
   }, [loadHangoutGroups]);
 
-  const handleToggleHangout = useCallback((id: number, topics?: TopicLite[]) => {
+  const handleToggleHangout = useCallback((id: number, _topics?: TopicLite[]) => {
     setSelectedHangoutIds((prev) => {
       if (prev.includes(id)) return prev.filter((x) => x !== id);
       if (prev.length >= 10) return prev;
-      // Auto-select first non-read-only topic
-      if (topics && topics.length > 0) {
-        const defaultTopic = topics.find((t) => !t.isReadOnly) ?? topics[0];
-        setSelectedTopicByGroup((m) => ({ ...m, [id]: defaultTopic.id }));
-      }
       return [...prev, id];
     });
   }, []);

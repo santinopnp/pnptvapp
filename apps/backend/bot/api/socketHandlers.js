@@ -946,9 +946,9 @@ function initSocketIO(io) {
 
       try {
         // HG-HIGH-04: Verify the hangout group still exists before joining.
-        // Groups are hard-deleted; a missing row means the hangout was removed.
+        // Also fetch parent_group_id so topics can be joined via parent membership.
         const { rows: groupExistRows } = await query(
-          'SELECT id FROM hangout_groups WHERE id = $1',
+          'SELECT id, parent_group_id FROM hangout_groups WHERE id = $1',
           [gid]
         );
         if (groupExistRows.length === 0) {
@@ -956,10 +956,13 @@ function initSocketIO(io) {
           return;
         }
 
+        // Topics (parent_group_id set) use parent membership; root groups use own id.
+        const memberCheckId = groupExistRows[0].parent_group_id ?? gid;
+
         // Verify non-banned membership before joining the Socket.IO room
         const { rows } = await query(
           'SELECT 1 FROM hangout_group_members WHERE group_id=$1 AND user_id=$2 AND (is_banned = false OR is_banned IS NULL)',
-          [gid, user.id]
+          [memberCheckId, user.id]
         );
         if (rows.length === 0) {
           socket.emit('hangout:error', { message: 'Not a member of this group' });
