@@ -32,7 +32,7 @@ import {
   metaMaskDeepLink,
   isMetaMaskCompatible,
 } from "@/components/payments/PayInWalletChips";
-import { PANEL_APPS, PANEL_STEPS_EN, PANEL_STEPS_ES, NpAppPickerSheet } from "@/components/payments/NowPaymentsWaitingPanel";
+import { PANEL_APPS, PANEL_STEPS_EN, PANEL_STEPS_ES } from "@/components/payments/NowPaymentsWaitingPanel";
 import { connectSocket } from "@/lib/socket";
 
 const MEMBER_PLAN_IDS = new Set(["member_monthly"]);
@@ -494,17 +494,16 @@ export default function Subscribe() {
   // BTC polling effect removed 2026-07-31 — BTCPay retired.
   // Dash polling effect removed 2026-07-31 — Dash/BTCPay retired.
 
-  // "Pay with any crypto" — opens the inline NowPayments widget modal (same
-  // pattern as /lifetime100). NP's hosted checkout can't be iframed, but the
-  // /embeds/payment-widget?iid=<id> endpoint IS embeddable; we just need the
-  // invoice id from /usdc/prepare (already returned) plus a currency picker.
+  // "Pay with any crypto" — opens NowPaymentsWidgetModal (popup flow,
+  // same pattern as BookCallModal). Invoice created via prepareUsdcSubscription;
+  // user opens window.open popup; polling + socket handle confirmation.
   const [npPickerPlanId, setNpPickerPlanId] = useState<string | null>(null);
   const [npPickerLabel, setNpPickerLabel] = useState<string | undefined>(undefined);
   const openAppSheet = useCallback((planId: string, label: string) => {
     setError(null);
     setNpPickerPlanId(planId);
     setNpPickerLabel(label);
-    trackEvent("payment_started", { plan: planId, provider: "nowpayments_widget" });
+    trackEvent("payment_started", { plan: planId, provider: "nowpayments_popup" });
   }, []);
 
   // Derive current tier display from user object
@@ -1423,13 +1422,17 @@ export default function Subscribe() {
 
       {/* Crypto nudge removed 2026-08-09 — Wallet is now the only crypto path. */}
 
-      <NpAppPickerSheet
-        isOpen={!!npPickerPlanId}
-        onClose={() => { setNpPickerPlanId(null); setNpPickerLabel(undefined); }}
-        planId={npPickerPlanId}
-        lang={t.lang}
-        planLabel={npPickerLabel}
-      />
+      {npPickerPlanId && (
+        <NowPaymentsWidgetModal
+          planId={npPickerPlanId}
+          lang={t.lang as "es" | "en"}
+          onClose={() => { setNpPickerPlanId(null); setNpPickerLabel(undefined); }}
+          onOrderCreated={(orderId) => {
+            setPollingPaymentId(orderId);
+            try { sessionStorage.setItem("pnp_pending_payment", orderId); } catch {}
+          }}
+        />
+      )}
 
       {/* Error banner */}
       {error && (
