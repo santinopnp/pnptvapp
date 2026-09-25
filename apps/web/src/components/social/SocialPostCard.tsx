@@ -2,16 +2,13 @@ import React, { useState, useCallback, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 
 const PRIME_PLANS = [
-  { id: "prime-week-pass-7d",      label: "PRIME Week Pass",   duration: "7 days",   price: "15",    isRecurring: false, recommended: false },
-  { id: "monthly-pass",            label: "PRIME Monthly",     duration: "30 days",  price: "24.99", isRecurring: true,  recommended: true  },
-  { id: "prime-diamond-pass-365d", label: "PRIME Diamond",     duration: "1 year",   price: "99.99", isRecurring: false, recommended: false },
-  { id: "lifetime80",              label: "PNPtv Founders",    duration: "18 mo PRIME",  price: "100",   isRecurring: false, recommended: false },
+  { id: "prime-week-pass-7d",      label: "PRIME Week Pass",        duration: "7 days",       price: "15",    isRecurring: false, recommended: false },
+  { id: "monthly-pass",            label: "PRIME Monthly",          duration: "30 days",      price: "24.99", isRecurring: true,  recommended: true  },
+  { id: "prime-diamond-pass-365d", label: "PRIME Diamond",          duration: "1 year",       price: "99.99", isRecurring: false, recommended: false },
+  { id: "lifetime80",              label: "Founders Membership",    duration: "18 mo PRIME",  price: "100",   isRecurring: false, recommended: false },
 ] as const;
 
-const CHECKOUT_MODAL_PLANS = [
-  { id: "yearly50",   label: "PRIME Annual",   tag: "1 year",  price: 50.00, weekend: true  },
-  { id: "lifetime100", label: "PNPtv Founders", tag: "18 mo PRIME + ✨ Channel", price: 99.99, weekend: false },
-] as const;
+const CHECKOUT_MODAL_PLANS: never[] = [];
 import { MentionText } from "@/components/MentionText";
 import { MentionInput } from "@/components/MentionInput";
 import { SharePostModal } from "@/components/SharePostModal";
@@ -25,6 +22,7 @@ import { CryptoOnboardingWizard } from "@/components/payments/CryptoOnboardingWi
 import { NpAppPickerSheet } from "@/components/payments/NowPaymentsWaitingPanel";
 import CreatorSubscribeWizard from "@/components/creators/CreatorSubscribeWizard";
 import { WalletPayCard } from "@/components/payments/PayInWalletChips";
+import { BookCallModal } from "@/components/creators/BookCallModal";
 import {
   getReplies,
   createReply,
@@ -425,6 +423,12 @@ export default function SocialPostCard({
   const canDelete = hasRealPostId && (isOwn || isAdmin);
   const { user } = useAuth();
   const { isPrime, tier: viewerTier } = useTier();
+
+  const foundersCardOfferActive = !!(
+    user?.foundersOfferExpiresAt &&
+    new Date(user.foundersOfferExpiresAt).getTime() > Date.now()
+  );
+
   const channelPromoCta = resolveChannelPromoCta(
     post.metadata as Record<string, unknown> | undefined,
     !!isPrime,
@@ -440,6 +444,10 @@ export default function SocialPostCard({
   const isPrimeCreator =
     ["8599671840", "8552451957", "8f5f4dd1-7bdb-4571-b026-e09d91113c91"].includes(String(post.author_id)) ||
     ["santinofurioso", "pnptv", "pnplatinoboy"].includes(String(post.author_username || "").toLowerCase());
+  const isSantinoPost =
+    ["8599671840", "8552451957"].includes(String(post.author_id)) ||
+    String(post.author_username || "").toLowerCase() === "santinoFurioso".toLowerCase();
+  const [showBookCallModal, setShowBookCallModal] = useState(false);
   const showPrimeUpsell = isPrimeCreator && viewerTier !== "prime" && !post.is_exclusive && !isOwn;
   // Two-pill upgrade strip — shown on every post for non-PRIME viewers, always visible.
   const showUpgradePills = isPrimeCreator && viewerTier !== "prime" && !isOwn && !post.is_exclusive;
@@ -1509,9 +1517,8 @@ export default function SocialPostCard({
                     <button
                       key={idx}
                       onClick={(e) => { e.stopPropagation();
-                        if (link === "#promo-modal" || link === "/subscribe" || link === "/lifetime100") {
-                          setPromoModalPlanId(link === "/lifetime100" ? "lifetime100" : null);
-                          setShowPromoModal(true);
+                        if (link === "#promo-modal" || link === "/lifetime100") {
+                          onNavigate("/subscribe");
                         } else if (link.startsWith("/")) {
                           onNavigate(link);
                         } else if (link.startsWith("https://")) {
@@ -1728,35 +1735,29 @@ export default function SocialPostCard({
                 </div>
               )}
 
-              {/* 3-pill upgrade strip: Become PRIME + $50/yr + $100 lifetime */}
-              {showUpgradePills && (
-                <div className="mt-2.5 flex gap-1.5" onClick={(e) => e.stopPropagation()}>
+
+              {/* Santino action pills — Subscribe to PRIME (non-PRIME only) + Book a Call (everyone) */}
+              {isSantinoPost && !isOwn && (
+                <div className="mt-2.5 flex gap-2" onClick={(e) => e.stopPropagation()}>
+                  {showPrimeUpsell && (
+                    <button
+                      type="button"
+                      onClick={() => { setPromoModalPlanId("yearly50"); setShowPromoModal(true); }}
+                      className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-[11px] font-bold transition-all active:scale-95"
+                      style={{ background: "rgba(212,0,122,0.15)", border: "1px solid rgba(212,0,122,0.5)", color: "#FF6BB0" }}
+                    >
+                      <span>💎</span>
+                      <span>{lang === "es" ? "Suscríbete a PRIME" : "Subscribe to PRIME"}</span>
+                    </button>
+                  )}
                   <button
                     type="button"
-                    onClick={() => navigate("/subscribe")}
-                    className="flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[10px] font-bold transition-all active:scale-95"
-                    style={{ background: "rgba(212,0,122,0.15)", border: "1px solid rgba(212,0,122,0.45)", color: "#FF6BB0" }}
+                    onClick={() => setShowBookCallModal(true)}
+                    className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-[11px] font-bold transition-all active:scale-95"
+                    style={{ background: "rgba(94,209,196,0.12)", border: "1px solid rgba(94,209,196,0.4)", color: "#5ED1C4" }}
                   >
-                    <span>🔥</span>
-                    <span>{lang === "es" ? "Hazte PRIME" : "Become PRIME"}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setPromoModalPlanId("yearly50"); setShowPromoModal(true); }}
-                    className="flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[10px] font-bold transition-all active:scale-95"
-                    style={{ background: "rgba(212,0,122,0.10)", border: "1px solid rgba(212,0,122,0.35)", color: "#FF6BB0" }}
-                  >
-                    <span>💎</span>
-                    <span>{lang === "es" ? "$50/año" : "$50/yr"}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setPromoModalPlanId("lifetime100"); setShowPromoModal(true); }}
-                    className="flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[10px] font-bold transition-all active:scale-95"
-                    style={{ background: "rgba(230,145,56,0.10)", border: "1px solid rgba(230,145,56,0.35)", color: "#E69138" }}
-                  >
-                    <span>🖤</span>
-                    <span>{lang === "es" ? "$100 siempre" : "$100 lifetime"}</span>
+                    <span>📅</span>
+                    <span>{lang === "es" ? "Reservar llamada" : "Book a Call"}</span>
                   </button>
                 </div>
               )}
@@ -2453,7 +2454,7 @@ export default function SocialPostCard({
                       </span>
                     </div>
                     <div className="space-y-2">
-                      {CHECKOUT_MODAL_PLANS.map((plan) => (
+                      {CHECKOUT_MODAL_PLANS.filter((plan) => !(plan.id === "lifetime100" && !foundersCardOfferActive)).map((plan) => (
                         <button
                           key={plan.id}
                           onClick={() => setPromoModalPlanId(plan.id)}
@@ -2506,6 +2507,21 @@ export default function SocialPostCard({
         lang={lang}
         planLabel={npPickerPlanId ? (CHECKOUT_MODAL_PLANS.find(p => p.id === npPickerPlanId)?.label ?? 'PRIME') : undefined}
       />
+
+      {showBookCallModal && (
+        <BookCallModal
+          open={showBookCallModal}
+          onClose={() => setShowBookCallModal(false)}
+          creator={{
+            id: String(post.author_id),
+            username: post.author_username || "SantinoFurioso",
+            photo_url: null,
+            creator_type: "full_time",
+            creator_price_usd: 0,
+          }}
+          isOnline={true}
+        />
+      )}
     </div>
   );
 }

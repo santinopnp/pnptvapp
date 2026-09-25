@@ -34,6 +34,7 @@ import { WalletPayCard, WalletLoginGate } from "@/components/payments/PayInWalle
 import { CryptoOnboardingWizard } from "@/components/payments/CryptoOnboardingWizard";
 import { NpAppPickerSheet } from "@/components/payments/NowPaymentsWaitingPanel";
 import CreatorSubscribeWizard from "@/components/creators/CreatorSubscribeWizard";
+import { BookCallModal } from "@/components/creators/BookCallModal";
 // NearbyBadge removed — PostCard shows city name inline instead
 import { MentionText } from "@/components/MentionText";
 import { MentionInput } from "@/components/MentionInput";
@@ -310,6 +311,9 @@ export default function PostCard({
     try { sessionStorage.setItem(upsellKey, "1"); } catch { /* ignore */ }
     setPrimeUpsellDismissed(true);
   };
+  const isSantinoPost = ["8599671840", "8552451957"].includes(String(post.author_id)) ||
+    String(post.author_username || "").toLowerCase() === "santinoFurioso".toLowerCase();
+  const [showBookCallModal, setShowBookCallModal] = useState(false);
   const [promoModalPlanId, setPromoModalPlanId] = useState<"yearly50" | "lifetime100" | null>(null);
   const [npLaunching, setNpLaunching] = useState(false);
   const [npError, setNpError] = useState<string | null>(null);
@@ -1350,36 +1354,28 @@ export default function PostCard({
                       )}
                     </div>
                   )}
-                  {/* PRIME plan picker — Santino & Lex posts. Pill → plan grid → coin grid. */}
-                  {/* 3-pill upgrade strip: Become PRIME + $50/yr + $100 lifetime */}
-                  {showPrimeUpsell && (
-                    <div className="mt-2.5 flex gap-1.5" onClick={(e) => e.stopPropagation()}>
+                  {/* Santino action pills — Subscribe to PRIME (non-PRIME only) + Book a Call (everyone) */}
+                  {isSantinoPost && String(user?.id ?? "") !== String(post.author_id) && (
+                    <div className="mt-2.5 flex gap-2" onClick={(e) => e.stopPropagation()}>
+                      {showPrimeUpsell && (
+                        <button
+                          type="button"
+                          onClick={() => setPromoModalPlanId("yearly50")}
+                          className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-[11px] font-bold transition-all active:scale-95"
+                          style={{ background: "rgba(212,0,122,0.15)", border: "1px solid rgba(212,0,122,0.5)", color: "#FF6BB0" }}
+                        >
+                          <span>💎</span>
+                          <span>{userLang === "es" ? "Suscríbete a PRIME" : "Subscribe to PRIME"}</span>
+                        </button>
+                      )}
                       <button
                         type="button"
-                        onClick={() => navigate("/subscribe")}
-                        className="flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[10px] font-bold transition-all active:scale-95"
-                        style={{ background: "rgba(212,0,122,0.15)", border: "1px solid rgba(212,0,122,0.45)", color: "#FF6BB0" }}
+                        onClick={() => setShowBookCallModal(true)}
+                        className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-[11px] font-bold transition-all active:scale-95"
+                        style={{ background: "rgba(94,209,196,0.12)", border: "1px solid rgba(94,209,196,0.4)", color: "#5ED1C4" }}
                       >
-                        <span>🔥</span>
-                        <span>{userLang === "es" ? "Hazte PRIME" : "Become PRIME"}</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setPromoModalPlanId("yearly50")}
-                        className="flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[10px] font-bold transition-all active:scale-95"
-                        style={{ background: "rgba(212,0,122,0.10)", border: "1px solid rgba(212,0,122,0.35)", color: "#FF6BB0" }}
-                      >
-                        <span>💎</span>
-                        <span>{userLang === "es" ? "$50/año" : "$50/yr"}</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setPromoModalPlanId("lifetime100")}
-                        className="flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[10px] font-bold transition-all active:scale-95"
-                        style={{ background: "rgba(230,145,56,0.10)", border: "1px solid rgba(230,145,56,0.35)", color: "#E69138" }}
-                      >
-                        <span>🖤</span>
-                        <span>{userLang === "es" ? "$100 siempre" : "$100 lifetime"}</span>
+                        <span>📅</span>
+                        <span>{userLang === "es" ? "Reservar llamada" : "Book a Call"}</span>
                       </button>
                     </div>
                   )}
@@ -2069,6 +2065,20 @@ export default function PostCard({
         lang={userLang}
         planLabel={npPickerPlanId ? (CHECKOUT_MODAL_PLANS.find(p => p.id === npPickerPlanId)?.label ?? 'PRIME') : undefined}
       />
+      {showBookCallModal && (
+        <BookCallModal
+          open={showBookCallModal}
+          onClose={() => setShowBookCallModal(false)}
+          creator={{
+            id: String(post.author_id),
+            username: post.author_username || "SantinoFurioso",
+            photo_url: null,
+            creator_type: "full_time",
+            creator_price_usd: 0,
+          }}
+          isOnline={true}
+        />
+      )}
     </div>
   );
 }
