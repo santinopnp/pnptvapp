@@ -155,7 +155,7 @@ const startCronJobs = async (bot = null) => {
     cron.schedule(process.env.WALLET_RENEWAL_REMINDER_CRON || '0 15 * * *', async () => {
       try {
         const results = await TelegramSubscriptionReminderService.fireWalletRenewalReminders();
-        if (results.picked > 0 || results.error) {
+        if (results && (results.picked > 0 || results.error)) {
           logger.info('Wallet renewal reminders cycle done', results);
         }
       } catch (error) {

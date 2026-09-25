@@ -2537,7 +2537,7 @@ const dropToFeed = async (req, res) => {
     const postContent = safeNote || msg.content || '';
     const post = await SocialPostService.createPost(
       msg.user_id, postContent, msg.media_url, msg.media_type,
-      null, null, false, false, true, null, null, null,
+      null, null, false, false, true, msg.media_thumb_url || null, null, null,
       groupId, msgId
     );
 
@@ -2670,7 +2670,7 @@ const sharePostToHangouts = async (req, res) => {
             u.photo_file_id AS author_photo, u.creator_status AS author_creator_status,
             u.tier AS author_tier,
             (SELECT COUNT(*)::int FROM social_post_likes l WHERE l.post_id = sp.id) AS likes_count,
-            (SELECT COUNT(*)::int FROM social_posts r WHERE r.parent_id = sp.id AND r.is_deleted = false) AS replies_count
+            (SELECT COUNT(*)::int FROM social_posts r WHERE r.reply_to_id = sp.id AND r.is_deleted = false) AS replies_count
        FROM social_posts sp
        JOIN users u ON u.id = sp.user_id
       WHERE sp.id = $1`,
