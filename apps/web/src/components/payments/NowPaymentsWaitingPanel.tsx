@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { NowPaymentsOrder } from "@/hooks/useNowPayments";
-import { prepareOnchainSubscription } from "@/lib/api";
+import { prepareUsdcSubscription } from "@/lib/api";
 
 
 interface NowPaymentsWaitingPanelProps {
@@ -131,69 +131,75 @@ function AppGuidePanel({ es }: { es: boolean }) {
   );
 }
 
-// ── Exported app picker + inline address sheet ────────────────────────────────
-// Calls /api/webapp/payments/onchain/prepare → gets a real BTC pay_address
-// and pay_amount, then displays them inline for copy-paste. No iframes.
+// ── App picker sheet — creates a NowPayments invoice and opens a popup.
+// onLaunch: optional override (PostCard creates the invoice externally).
+// planId: used when onLaunch is not provided to create the invoice internally.
 export function NpAppPickerSheet({
   isOpen,
   onClose,
   planId,
   lang,
   planLabel,
+  onLaunch,
 }: {
   isOpen: boolean;
   onClose: () => void;
   planId: string | null;
   lang: string;
   planLabel?: string;
+  onLaunch?: () => void;
 }) {
   const es = (lang || 'es').startsWith('es');
   const [selectedApp, setSelectedApp] = useState<string | null>(null);
-  const [payAddress, setPayAddress] = useState<string | null>(null);
-  const [payAmount, setPayAmount] = useState<string | null>(null);
-  const [payCurrency, setPayCurrency] = useState<string>('btc');
-  const [loading, setLoading] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [launching, setLaunching] = useState(false);
+  const [launchError, setLaunchError] = useState<string | null>(null);
+  const [popupOpen, setPopupOpen] = useState(false);
+  const popupRef = useRef<Window | null>(null);
 
   const selectedSteps = selectedApp && selectedApp !== 'other'
     ? (es ? PANEL_STEPS_ES : PANEL_STEPS_EN)[selectedApp] ?? []
     : [];
   const selectedAppLabel = PANEL_APPS.find(a => a.id === selectedApp)?.label ?? '';
 
-  const fetchAddress = useCallback(() => {
-    if (!planId) return;
-    setPayAddress(null);
-    setPayAmount(null);
-    setLoadError(null);
-    setLoading(true);
-    prepareOnchainSubscription(planId, 'btc')
-      .then(res => {
-        if (!res.success || !res.payAddress) throw new Error(res.error || 'No address returned');
-        setPayAddress(res.payAddress);
-        setPayAmount(res.payAmount);
-        setPayCurrency(res.payCurrency || 'btc');
-      })
-      .catch(e => setLoadError(e instanceof Error ? e.message : 'Failed to get address'))
-      .finally(() => setLoading(false));
-  }, [planId]);
+  useEffect(() => {
+    if (!isOpen) {
+      setSelectedApp(null);
+      setLaunching(false);
+      setLaunchError(null);
+      setPopupOpen(false);
+      popupRef.current = null;
+    }
+  }, [isOpen]);
 
   useEffect(() => {
-    if (isOpen && planId) fetchAddress();
-    if (!isOpen) { setSelectedApp(null); setPayAddress(null); setPayAmount(null); setLoadError(null); setCopied(false); }
-  }, [isOpen, planId, fetchAddress]);
+    if (!popupOpen) return;
+    const id = window.setInterval(() => {
+      if (popupRef.current?.closed) { setPopupOpen(false); popupRef.current = null; }
+    }, 2000);
+    return () => window.clearInterval(id);
+  }, [popupOpen]);
 
-  const handleCopy = useCallback(() => {
-    if (!payAddress) return;
-    navigator.clipboard.writeText(payAddress).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2500);
-    }).catch(() => {});
-  }, [payAddress]);
+  const handleLaunch = useCallback(async () => {
+    if (onLaunch) { onLaunch(); return; }
+    if (!planId) return;
+    setLaunching(true);
+    setLaunchError(null);
+    try {
+      const res = await prepareUsdcSubscription(planId, undefined, undefined, 'btc');
+      if (!res.success || !res.nowpaymentsInvoiceId) {
+        throw new Error(res.error || (es ? 'No se pudo crear el pago.' : 'Could not create payment.'));
+      }
+      const src = `https://nowpayments.io/embeds/payment-widget?iid=${encodeURIComponent(String(res.nowpaymentsInvoiceId))}`;
+      const popup = window.open(src, 'pnp_np_wallet', 'width=540,height=700,left=200,top=100');
+      if (popup) { popupRef.current = popup; setPopupOpen(true); }
+    } catch (err) {
+      setLaunchError(err instanceof Error ? err.message : (es ? 'Error al abrir el pago.' : 'Could not open payment.'));
+    } finally {
+      setLaunching(false);
+    }
+  }, [planId, onLaunch, es]);
 
   if (!isOpen) return null;
-
-  const coinLabel = payCurrency.toUpperCase();
 
   return (
     <div className="fixed inset-0 z-50 flex items-end" onClick={onClose}>
@@ -203,10 +209,8 @@ export function NpAppPickerSheet({
         style={{ background: '#111', border: '1px solid rgba(255,255,255,0.08)', maxHeight: '92vh', overflowY: 'auto' }}
         onClick={e => e.stopPropagation()}
       >
-        {/* Handle */}
         <div className="w-10 h-1 rounded-full bg-white/20 mx-auto -mt-1 mb-1" />
 
-        {/* Header */}
         <div className="text-center">
           <p className="text-base font-black text-white">
             {es ? '₿ Pagar con apps y wallets' : '₿ Pay with apps & wallets'}
@@ -214,67 +218,31 @@ export function NpAppPickerSheet({
           {planLabel && <p className="text-xs text-white/40 mt-0.5">{planLabel}</p>}
         </div>
 
-        {/* Payment address card */}
-        <div className="rounded-2xl border border-white/10 p-4" style={{ background: 'rgba(255,255,255,0.03)' }}>
-          {loading && (
-            <div className="flex items-center justify-center gap-3 py-6">
-              <div className="w-5 h-5 border-2 border-white/20 border-t-white/70 rounded-full animate-spin" />
-              <span className="text-sm text-white/50">{es ? 'Generando dirección…' : 'Generating address…'}</span>
-            </div>
-          )}
-          {loadError && (
-            <div className="text-center py-4">
-              <p className="text-xs text-red-400 mb-3">{loadError}</p>
-              <button type="button" onClick={fetchAddress}
-                className="text-xs text-white/50 underline decoration-dotted">
-                {es ? 'Reintentar' : 'Retry'}
-              </button>
-            </div>
-          )}
-          {!loading && !loadError && payAddress && (
-            <div className="space-y-3">
-              {/* Amount row */}
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] text-white/45 uppercase tracking-wide">{es ? 'Monto a enviar' : 'Amount to send'}</span>
-                <span className="text-sm font-black text-yellow-400">
-                  {payAmount} <span className="text-white/50 font-semibold">{coinLabel}</span>
-                </span>
-              </div>
-              {/* Address row */}
-              <div>
-                <span className="text-[10px] text-white/40 uppercase tracking-wide block mb-1.5">
-                  {es ? `Dirección ${coinLabel}` : `${coinLabel} Address`}
-                </span>
-                <div
-                  className="flex items-center gap-2 rounded-xl px-3 py-2.5 cursor-pointer active:scale-[0.99] transition-transform"
-                  style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)' }}
-                  onClick={handleCopy}
-                >
-                  <span className="text-[11px] font-mono text-white/80 flex-1 break-all leading-relaxed">{payAddress}</span>
-                  <button
-                    type="button"
-                    onClick={e => { e.stopPropagation(); handleCopy(); }}
-                    className="flex-shrink-0 rounded-lg px-2.5 py-1.5 text-[10px] font-black transition-all active:scale-[0.95]"
-                    style={copied
-                      ? { background: 'rgba(52,211,153,0.20)', color: '#34d399', border: '1px solid rgba(52,211,153,0.40)' }
-                      : { background: 'rgba(255,255,255,0.10)', color: 'rgba(255,255,255,0.70)', border: '1px solid rgba(255,255,255,0.18)' }
-                    }
-                  >
-                    {copied ? (es ? '✓ Copiado' : '✓ Copied') : (es ? 'Copiar' : 'Copy')}
-                  </button>
-                </div>
-              </div>
-              {/* Warning */}
-              <p className="text-[10px] text-amber-400/70 leading-relaxed">
-                ⚠️ {es
-                  ? `Envía exactamente ${payAmount} ${coinLabel}. Montos diferentes pueden retrasar o cancelar el pago.`
-                  : `Send exactly ${payAmount} ${coinLabel}. Different amounts may delay or cancel the payment.`}
-              </p>
-            </div>
-          )}
-        </div>
+        {/* Primary CTA */}
+        {popupOpen ? (
+          <div className="rounded-2xl border border-amber-400/25 p-4 text-center space-y-2" style={{ background: 'rgba(255,183,0,0.06)' }}>
+            <div className="w-6 h-6 border-2 border-amber-400/30 border-t-amber-400 rounded-full animate-spin mx-auto" />
+            <p className="text-sm text-white/70">
+              {es ? 'Completa el pago en la ventana que se abrió.' : 'Complete the payment in the window that opened.'}
+            </p>
+            <button type="button" onClick={handleLaunch} className="text-xs text-amber-400/70 underline decoration-dotted">
+              {es ? 'Reabrir ventana' : 'Reopen window'}
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={handleLaunch}
+            disabled={launching}
+            className="w-full py-4 rounded-2xl font-black text-sm text-white transition-all active:scale-[0.98] disabled:opacity-60"
+            style={{ background: 'linear-gradient(90deg, #ff3377, #ff9933)' }}
+          >
+            {launching ? (es ? 'Abriendo…' : 'Opening…') : (es ? '₿ Abrir ventana de pago' : '₿ Open payment window')}
+          </button>
+        )}
 
-        {/* Divider */}
+        {launchError && <p className="text-xs text-red-400 text-center">{launchError}</p>}
+
         <div className="flex items-center gap-2">
           <div className="flex-1 h-px bg-white/10" />
           <span className="text-[10px] text-white/35 flex-shrink-0">
@@ -283,7 +251,6 @@ export function NpAppPickerSheet({
           <div className="flex-1 h-px bg-white/10" />
         </div>
 
-        {/* App grid */}
         <div>
           <p className="text-[11px] text-white/40 text-center mb-3">
             {es ? 'Elige tu app para ver los pasos exactos:' : 'Pick your app to see the exact steps:'}
@@ -292,15 +259,9 @@ export function NpAppPickerSheet({
             {PANEL_APPS.map(app => {
               const isSel = selectedApp === app.id;
               return (
-                <button
-                  key={app.id}
-                  type="button"
-                  onClick={() => setSelectedApp(isSel ? null : app.id)}
+                <button key={app.id} type="button" onClick={() => setSelectedApp(isSel ? null : app.id)}
                   className="flex flex-col items-center gap-1 py-3 px-1 rounded-xl border transition active:scale-[0.95]"
-                  style={isSel
-                    ? { background: app.bg, borderColor: app.border }
-                    : { background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(255,255,255,0.10)' }
-                  }
+                  style={isSel ? { background: app.bg, borderColor: app.border } : { background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(255,255,255,0.10)' }}
                 >
                   <span className="text-[20px] leading-none">{app.emoji}</span>
                   <span className="text-[10px] font-semibold text-white/80 text-center leading-tight">{app.label}</span>
@@ -308,14 +269,9 @@ export function NpAppPickerSheet({
                 </button>
               );
             })}
-            <button
-              type="button"
-              onClick={() => setSelectedApp(selectedApp === 'other' ? null : 'other')}
+            <button type="button" onClick={() => setSelectedApp(selectedApp === 'other' ? null : 'other')}
               className="flex flex-col items-center gap-1 py-3 px-1 rounded-xl border transition active:scale-[0.95]"
-              style={selectedApp === 'other'
-                ? { background: 'rgba(255,255,255,0.08)', borderColor: 'rgba(255,255,255,0.30)' }
-                : { background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(255,255,255,0.10)' }
-              }
+              style={selectedApp === 'other' ? { background: 'rgba(255,255,255,0.08)', borderColor: 'rgba(255,255,255,0.30)' } : { background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(255,255,255,0.10)' }}
             >
               <span className="text-[20px] leading-none">🔗</span>
               <span className="text-[10px] font-semibold text-white/80 text-center leading-tight">{es ? 'Otra' : 'Other'}</span>
@@ -324,7 +280,6 @@ export function NpAppPickerSheet({
           </div>
         </div>
 
-        {/* Step instructions for selected app */}
         {selectedApp && selectedSteps.length > 0 && (
           <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 animate-in fade-in slide-in-from-top-1 duration-150">
             <p className="text-[10px] font-semibold text-white/45 uppercase tracking-wide mb-2">
@@ -342,9 +297,7 @@ export function NpAppPickerSheet({
         )}
 
         <p className="text-[10px] text-white/25 text-center">
-          {es
-            ? '⚡ Tu plan se activa solo cuando la red confirme el pago.'
-            : '⚡ Your plan activates automatically once the network confirms.'}
+          {es ? '⚡ Tu plan se activa solo cuando la red confirme el pago.' : '⚡ Your plan activates automatically once the network confirms.'}
         </p>
       </div>
     </div>

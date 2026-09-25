@@ -1082,12 +1082,7 @@ export default function Subscribe() {
                 <div className="flex gap-2">
                   <button
                     onClick={(e) => { e.stopPropagation(); setWalletPanelPlanId(walletPanelPlanId === plan.id ? null : plan.id); }}
-                    className="flex-1 py-3 rounded-lg font-bold text-xs transition-all leading-tight"
-                    style={{
-                      border: walletPanelPlanId === plan.id ? "1.5px solid rgba(16,185,129,0.80)" : "1.5px solid rgba(16,185,129,0.50)",
-                      background: walletPanelPlanId === plan.id ? "rgba(16,185,129,0.22)" : "rgba(16,185,129,0.12)",
-                      color: "#34d399",
-                    }}
+                    className={`flex-1 py-3 rounded-lg font-bold text-xs text-white transition-all leading-tight ${walletPanelPlanId === plan.id ? "bg-gradient-to-r from-emerald-400 to-emerald-500 ring-2 ring-emerald-300" : "bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500"}`}
                   >
                     {t.lang === "es" ? "💳 Tarjeta · Apple Pay · Wallet" : "💳 Card · Apple Pay · Wallet"}
                   </button>
@@ -1276,12 +1271,7 @@ export default function Subscribe() {
                 <div className="flex gap-2">
                   <button
                     onClick={(e) => { e.stopPropagation(); setWalletPanelPlanId(walletPanelPlanId === plan.id ? null : plan.id); }}
-                    className="flex-1 py-3 rounded-lg font-bold text-xs transition-all leading-tight"
-                    style={{
-                      border: walletPanelPlanId === plan.id ? "1.5px solid rgba(16,185,129,0.80)" : "1.5px solid rgba(16,185,129,0.50)",
-                      background: walletPanelPlanId === plan.id ? "rgba(16,185,129,0.22)" : "rgba(16,185,129,0.12)",
-                      color: "#34d399",
-                    }}
+                    className={`flex-1 py-3 rounded-lg font-bold text-xs text-white transition-all leading-tight ${walletPanelPlanId === plan.id ? "bg-gradient-to-r from-emerald-400 to-emerald-500 ring-2 ring-emerald-300" : "bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500"}`}
                   >
                     {t.lang === "es" ? "💳 Tarjeta · Apple Pay · Wallet" : "💳 Card · Apple Pay · Wallet"}
                   </button>
