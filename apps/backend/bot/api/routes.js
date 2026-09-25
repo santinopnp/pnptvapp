@@ -18632,7 +18632,7 @@ app.post('/api/ads/rewarded/client-verify', requireSessionAuth, adCallbackLimite
   }
   // Single-use dedup (Redis) so replay of the same nonce fails on second attempt
   try {
-    const { getRedis } = require('../../services/redisService');
+    const { getRedis } = require('../../config/redis');
     const r = getRedis();
     if (r) {
       const key = `ads:nonce_used:${nonceId}`;
