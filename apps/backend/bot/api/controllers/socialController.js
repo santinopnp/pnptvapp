@@ -2662,7 +2662,7 @@ const sharePostToHangouts = async (req, res) => {
 
   // Fetch source post with all fields needed for a rich card snapshot
   const { rows: postRows } = await dbQuery(
-    `SELECT sp.id, sp.user_id, sp.content, sp.media_url, sp.media_type, sp.media_thumb_url,
+    `SELECT sp.id, sp.user_id, sp.content, sp.media_url, sp.media_type,
             sp.is_deleted, sp.is_shareable, sp.is_exclusive,
             sp.video_title, sp.video_description, sp.video_thumbnail_url,
             sp.created_at AS post_created_at,
@@ -2712,7 +2712,7 @@ const sharePostToHangouts = async (req, res) => {
       content: preview || null,
       mediaUrl: post.is_exclusive ? null : (post.media_url || null),
       mediaType: post.media_type || null,
-      mediaThumbUrl: post.is_exclusive ? null : (post.media_thumb_url || null),
+      mediaThumbUrl: post.is_exclusive ? null : (post.video_thumbnail_url || null),
       videoTitle: post.video_title || null,
       videoDescription: post.video_description || null,
       videoThumbnailUrl: post.video_thumbnail_url || null,
