@@ -1018,9 +1018,17 @@ function HangoutChatPanel({
       await dropToFeed(groupId, shareFeedMsg.id, shareFeedNote.trim() || undefined);
       setShareFeedMsg(null);
       setChatToast("Shared to feed!");
-    } catch {
-      setChatToast("Could not share to feed. Try again.");
-      setShareFeedMsg(null);
+    } catch (err: unknown) {
+      const status = (err as { status?: number })?.status;
+      if (status === 409) {
+        setChatToast("This message was already shared to the feed.");
+        setShareFeedMsg(null);
+      } else if (status === 403) {
+        setChatToast("Only the message author or a moderator can share to feed.");
+        setShareFeedMsg(null);
+      } else {
+        setChatToast("Could not share to feed. Try again.");
+      }
     } finally {
       setShareFeedSending(false);
     }
@@ -1454,7 +1462,7 @@ function HangoutChatPanel({
         const canMod = isOwnerOrMod && !isMine;
         const menuItems = (py: string) => (
           <>
-            {(cmsg.media_url || (cmsg.content && cmsg.content.trim())) && (
+            {(cmsg.media_url || (cmsg.content && cmsg.content.trim())) && cmsg.message_type !== 'post_card' && (isMine || isOwnerOrMod) && (
               <button onClick={() => handleShareToFeed(cmsg)} className={`w-full px-5 ${py} text-[15px] text-left text-white active:bg-white/10 hover:bg-white/10 transition-colors flex items-center gap-3`}>
                 <svg className="w-5 h-5 text-pnp-textSecondary flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z" />

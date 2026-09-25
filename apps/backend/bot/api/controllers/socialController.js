@@ -2739,14 +2739,14 @@ const sharePostToHangouts = async (req, res) => {
 
   for (const groupId of normalizedIds) {
     try {
-      // Topics are child groups (parent_group_id set). Channel-linked hangouts
-      // use channel_id instead. Prefer parent_group_id so standard topics fall
-      // back to the parent hangout's member list where users actually live.
+      // Topics are child groups (parent_group_id set); membership lives on the
+      // parent. channel_id is a foreign key into creator_channels — NOT a
+      // hangout_groups.id — so it must never be used as memberCheckId.
       const { rows: groupMeta } = await dbQuery(
-        `SELECT channel_id, parent_group_id FROM hangout_groups WHERE id = $1`,
+        `SELECT parent_group_id FROM hangout_groups WHERE id = $1`,
         [groupId]
       );
-      const parentGroupId = groupMeta[0]?.parent_group_id ?? groupMeta[0]?.channel_id ?? null;
+      const parentGroupId = groupMeta[0]?.parent_group_id ?? null;
       const memberCheckId = parentGroupId ?? groupId;
 
       const isSuperAdmin = user.role === 'admin' || user.role === 'superadmin';
