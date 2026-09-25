@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { NowPaymentsOrder } from "@/hooks/useNowPayments";
-import { prepareUsdcSubscription } from "@/lib/api";
+import { prepareUsdcSubscription, getUsdcSubscriptionStatus } from "@/lib/api";
 
 
 interface NowPaymentsWaitingPanelProps {
@@ -131,73 +131,115 @@ function AppGuidePanel({ es }: { es: boolean }) {
   );
 }
 
-// ── App picker sheet — creates a NowPayments invoice and opens a popup.
-// onLaunch: optional override (PostCard creates the invoice externally).
-// planId: used when onLaunch is not provided to create the invoice internally.
+// ── App picker sheet — creates a NowPayments invoice and renders the widget INLINE.
+// onLaunch / launching props kept for backward compat but are ignored.
 export function NpAppPickerSheet({
   isOpen,
   onClose,
   planId,
   lang,
   planLabel,
-  onLaunch,
+  onSuccess,
 }: {
   isOpen: boolean;
   onClose: () => void;
   planId: string | null;
   lang: string;
   planLabel?: string;
-  onLaunch?: () => void;
+  onSuccess?: (orderId: string) => void;
+  onLaunch?: () => void;   // kept for backward compat — ignored
+  launching?: boolean;     // kept for backward compat — ignored
 }) {
   const es = (lang || 'es').startsWith('es');
   const [selectedApp, setSelectedApp] = useState<string | null>(null);
-  const [launching, setLaunching] = useState(false);
-  const [launchError, setLaunchError] = useState<string | null>(null);
-  const [popupOpen, setPopupOpen] = useState(false);
-  const popupRef = useRef<Window | null>(null);
 
-  const selectedSteps = selectedApp && selectedApp !== 'other'
+  // Invoice creation state
+  type Phase = 'idle' | 'loading' | 'ready' | 'success' | 'error';
+  const [phase, setPhase] = useState<Phase>('idle');
+  const [invoiceError, setInvoiceError] = useState<string | null>(null);
+  const [orderId, setOrderId] = useState<string | null>(null);
+
+  const widgetRef = useRef<HTMLDivElement>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const selectedSteps = selectedApp
     ? (es ? PANEL_STEPS_ES : PANEL_STEPS_EN)[selectedApp] ?? []
     : [];
   const selectedAppLabel = PANEL_APPS.find(a => a.id === selectedApp)?.label ?? '';
 
+  // Clear polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, []);
+
+  // Reset state when sheet closes
   useEffect(() => {
     if (!isOpen) {
+      setPhase('idle');
+      setInvoiceError(null);
+      setOrderId(null);
       setSelectedApp(null);
-      setLaunching(false);
-      setLaunchError(null);
-      setPopupOpen(false);
-      popupRef.current = null;
+      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+      if (widgetRef.current) widgetRef.current.innerHTML = '';
     }
   }, [isOpen]);
 
-  useEffect(() => {
-    if (!popupOpen) return;
-    const id = window.setInterval(() => {
-      if (popupRef.current?.closed) { setPopupOpen(false); popupRef.current = null; }
-    }, 2000);
-    return () => window.clearInterval(id);
-  }, [popupOpen]);
-
-  const handleLaunch = useCallback(async () => {
-    if (onLaunch) { onLaunch(); return; }
+  const createInvoice = useCallback(async () => {
     if (!planId) return;
-    setLaunching(true);
-    setLaunchError(null);
+    setPhase('loading');
+    setInvoiceError(null);
+    if (widgetRef.current) widgetRef.current.innerHTML = '';
     try {
       const res = await prepareUsdcSubscription(planId, undefined, undefined, 'btc');
-      if (!res.success || !res.nowpaymentsInvoiceId) {
+      if (!res.success || !res.nowpaymentsInvoiceId || !res.orderId) {
         throw new Error(res.error || (es ? 'No se pudo crear el pago.' : 'Could not create payment.'));
       }
-      const src = `https://nowpayments.io/embeds/payment-widget?iid=${encodeURIComponent(String(res.nowpaymentsInvoiceId))}`;
-      const popup = window.open(src, 'pnp_np_wallet', 'width=540,height=700,left=200,top=100');
-      if (popup) { popupRef.current = popup; setPopupOpen(true); }
+      setOrderId(res.orderId);
+      setPhase('ready');
+
+      // Inject NowPayments script widget inline
+      requestAnimationFrame(() => {
+        const container = widgetRef.current;
+        if (!container) return;
+        container.innerHTML = '';
+        const script = document.createElement('script');
+        script.type = 'text/javascript';
+        script.src = 'https://nowpayments.io/embeds/payment-widget.js';
+        script.setAttribute('data-nowpayments-url', res.invoiceUrl as string);
+        container.appendChild(script);
+      });
+
+      // Start polling every 8s
+      if (pollRef.current) clearInterval(pollRef.current);
+      pollRef.current = setInterval(async () => {
+        try {
+          const status = await getUsdcSubscriptionStatus(res.orderId as string);
+          if (status.completed) {
+            if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+            setPhase('success');
+            onSuccess?.(res.orderId as string);
+            setTimeout(() => { onClose(); }, 2500);
+          } else if (status.failed) {
+            if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+            setInvoiceError(es ? 'El pago falló. Intenta de nuevo.' : 'Payment failed. Please try again.');
+            setPhase('error');
+          }
+        } catch { /* swallow poll errors */ }
+      }, 8000);
     } catch (err) {
-      setLaunchError(err instanceof Error ? err.message : (es ? 'Error al abrir el pago.' : 'Could not open payment.'));
-    } finally {
-      setLaunching(false);
+      setInvoiceError(err instanceof Error ? err.message : (es ? 'Error al crear el pago.' : 'Could not create payment.'));
+      setPhase('error');
     }
-  }, [planId, onLaunch, es]);
+  }, [planId, es, onSuccess, onClose]);
+
+  // Auto-create invoice when sheet opens with a planId
+  useEffect(() => {
+    if (isOpen && planId && phase === 'idle') {
+      createInvoice();
+    }
+  }, [isOpen, planId, phase, createInvoice]);
 
   if (!isOpen) return null;
 
@@ -209,96 +251,159 @@ export function NpAppPickerSheet({
         style={{ background: '#111', border: '1px solid rgba(255,255,255,0.08)', maxHeight: '92vh', overflowY: 'auto' }}
         onClick={e => e.stopPropagation()}
       >
+        {/* Drag handle */}
         <div className="w-10 h-1 rounded-full bg-white/20 mx-auto -mt-1 mb-1" />
 
-        <div className="text-center">
+        {/* Header */}
+        <div className="flex items-center justify-between">
           <p className="text-base font-black text-white">
             {es ? '₿ Pagar con apps y wallets' : '₿ Pay with apps & wallets'}
           </p>
-          {planLabel && <p className="text-xs text-white/40 mt-0.5">{planLabel}</p>}
-        </div>
-
-        {/* Primary CTA */}
-        {popupOpen ? (
-          <div className="rounded-2xl border border-amber-400/25 p-4 text-center space-y-2" style={{ background: 'rgba(255,183,0,0.06)' }}>
-            <div className="w-6 h-6 border-2 border-amber-400/30 border-t-amber-400 rounded-full animate-spin mx-auto" />
-            <p className="text-sm text-white/70">
-              {es ? 'Completa el pago en la ventana que se abrió.' : 'Complete the payment in the window that opened.'}
-            </p>
-            <button type="button" onClick={handleLaunch} className="text-xs text-amber-400/70 underline decoration-dotted">
-              {es ? 'Reabrir ventana' : 'Reopen window'}
-            </button>
-          </div>
-        ) : (
           <button
             type="button"
-            onClick={handleLaunch}
-            disabled={launching}
-            className="w-full py-4 rounded-2xl font-black text-sm text-white transition-all active:scale-[0.98] disabled:opacity-60"
-            style={{ background: 'linear-gradient(90deg, #ff3377, #ff9933)' }}
+            onClick={onClose}
+            className="w-7 h-7 rounded-full bg-white/10 flex items-center justify-center text-white/60 hover:bg-white/20 transition-colors flex-shrink-0"
+            aria-label="Close"
           >
-            {launching ? (es ? 'Abriendo…' : 'Opening…') : (es ? '₿ Abrir ventana de pago' : '₿ Open payment window')}
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
           </button>
+        </div>
+        {planLabel && <p className="text-xs text-white/40 -mt-2">{planLabel}</p>}
+
+        {/* Loading state */}
+        {phase === 'loading' && (
+          <div className="flex flex-col items-center gap-3 py-8">
+            <div className="w-8 h-8 border-2 border-white/20 border-t-white/70 rounded-full animate-spin" />
+            <p className="text-sm text-white/50">
+              {es ? 'Preparando tu pago…' : 'Preparing your payment…'}
+            </p>
+          </div>
         )}
 
-        {launchError && <p className="text-xs text-red-400 text-center">{launchError}</p>}
-
-        <div className="flex items-center gap-2">
-          <div className="flex-1 h-px bg-white/10" />
-          <span className="text-[10px] text-white/35 flex-shrink-0">
-            {es ? 'instrucciones por app' : 'per-app instructions'}
-          </span>
-          <div className="flex-1 h-px bg-white/10" />
-        </div>
-
-        <div>
-          <p className="text-[11px] text-white/40 text-center mb-3">
-            {es ? 'Elige tu app para ver los pasos exactos:' : 'Pick your app to see the exact steps:'}
-          </p>
-          <div className="grid grid-cols-4 gap-2">
-            {PANEL_APPS.map(app => {
-              const isSel = selectedApp === app.id;
-              return (
-                <button key={app.id} type="button" onClick={() => setSelectedApp(isSel ? null : app.id)}
-                  className="flex flex-col items-center gap-1 py-3 px-1 rounded-xl border transition active:scale-[0.95]"
-                  style={isSel ? { background: app.bg, borderColor: app.border } : { background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(255,255,255,0.10)' }}
-                >
-                  <span className="text-[20px] leading-none">{app.emoji}</span>
-                  <span className="text-[10px] font-semibold text-white/80 text-center leading-tight">{app.label}</span>
-                  <span className="text-[8px] text-white/30 leading-none">{app.geo}</span>
-                </button>
-              );
-            })}
-            <button type="button" onClick={() => setSelectedApp(selectedApp === 'other' ? null : 'other')}
-              className="flex flex-col items-center gap-1 py-3 px-1 rounded-xl border transition active:scale-[0.95]"
-              style={selectedApp === 'other' ? { background: 'rgba(255,255,255,0.08)', borderColor: 'rgba(255,255,255,0.30)' } : { background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(255,255,255,0.10)' }}
+        {/* Error state */}
+        {phase === 'error' && (
+          <div className="rounded-2xl border border-red-500/30 bg-red-500/8 p-4 text-center space-y-3">
+            <p className="text-sm text-red-400">{invoiceError}</p>
+            <button
+              type="button"
+              onClick={() => { setPhase('idle'); createInvoice(); }}
+              className="px-4 py-2 rounded-xl font-semibold text-sm text-white transition-all active:scale-[0.97]"
+              style={{ background: 'linear-gradient(90deg, #ff3377, #ff9933)' }}
             >
-              <span className="text-[20px] leading-none">🔗</span>
-              <span className="text-[10px] font-semibold text-white/80 text-center leading-tight">{es ? 'Otra' : 'Other'}</span>
-              <span className="text-[8px] text-white/30 leading-none">–</span>
+              {es ? 'Reintentar' : 'Try again'}
             </button>
           </div>
-        </div>
+        )}
 
-        {selectedApp && selectedSteps.length > 0 && (
-          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 animate-in fade-in slide-in-from-top-1 duration-150">
-            <p className="text-[10px] font-semibold text-white/45 uppercase tracking-wide mb-2">
-              {es ? `Pasos en ${selectedAppLabel}` : `Steps in ${selectedAppLabel}`}
+        {/* Success state */}
+        {phase === 'success' && (
+          <div className="flex flex-col items-center gap-3 py-8 animate-in fade-in zoom-in duration-300">
+            <div className="w-14 h-14 rounded-full bg-green-500/20 flex items-center justify-center">
+              <svg className="w-7 h-7 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <p className="text-base font-semibold text-green-400">
+              {es ? '¡Pago confirmado!' : 'Payment confirmed!'}
             </p>
-            <ol className="space-y-1.5">
-              {selectedSteps.map((step, i) => (
-                <li key={i} className="flex items-start gap-2">
-                  <span className="flex-shrink-0 w-4 h-4 rounded-full bg-white/10 flex items-center justify-center text-[9px] font-bold text-white/55 mt-0.5">{i + 1}</span>
-                  <span className="text-[11px] text-white/75 leading-relaxed">{step}</span>
-                </li>
-              ))}
-            </ol>
+            <p className="text-xs text-white/50">
+              {es ? 'Tu suscripción ya está activa.' : 'Your subscription is now active.'}
+            </p>
           </div>
         )}
 
-        <p className="text-[10px] text-white/25 text-center">
-          {es ? '⚡ Tu plan se activa solo cuando la red confirme el pago.' : '⚡ Your plan activates automatically once the network confirms.'}
-        </p>
+        {/* Invoice ready — widget + app instructions */}
+        {(phase === 'ready' || phase === 'idle') && (
+          <>
+            {/* NowPayments inline widget */}
+            <div
+              ref={widgetRef}
+              className="w-full rounded-xl overflow-hidden [&_iframe]:w-full [&_iframe]:rounded-xl"
+              style={{ minHeight: phase === 'ready' ? 320 : 0 }}
+            />
+
+            {/* Divider */}
+            {phase === 'ready' && (
+              <div className="flex items-center gap-2">
+                <div className="flex-1 h-px bg-white/10" />
+                <span className="text-[10px] text-white/35 flex-shrink-0">
+                  {es ? 'instrucciones por app' : 'per-app instructions'}
+                </span>
+                <div className="flex-1 h-px bg-white/10" />
+              </div>
+            )}
+
+            {/* App grid — always visible */}
+            {phase === 'ready' && (
+              <div>
+                <p className="text-[11px] text-white/40 text-center mb-3">
+                  {es ? 'Elige tu app para ver los pasos exactos:' : 'Pick your app to see the exact steps:'}
+                </p>
+                <div className="grid grid-cols-4 gap-2">
+                  {PANEL_APPS.map(app => {
+                    const isSel = selectedApp === app.id;
+                    return (
+                      <button
+                        key={app.id}
+                        type="button"
+                        onClick={() => setSelectedApp(isSel ? null : app.id)}
+                        className="flex flex-col items-center gap-1 py-3 px-1 rounded-xl border transition active:scale-[0.95]"
+                        style={isSel
+                          ? { background: app.bg, borderColor: app.border }
+                          : { background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(255,255,255,0.10)' }
+                        }
+                      >
+                        <span className="text-[20px] leading-none">{app.emoji}</span>
+                        <span className="text-[10px] font-semibold text-white/80 text-center leading-tight">{app.label}</span>
+                        <span className="text-[8px] text-white/30 leading-none">{app.geo}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Steps for selected app */}
+            {phase === 'ready' && selectedApp && selectedSteps.length > 0 && (
+              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 animate-in fade-in slide-in-from-top-1 duration-150">
+                <p className="text-[10px] font-semibold text-white/45 uppercase tracking-wide mb-2">
+                  {es ? `Pasos en ${selectedAppLabel}` : `Steps in ${selectedAppLabel}`}
+                </p>
+                <ol className="space-y-1.5">
+                  {selectedSteps.map((step, i) => (
+                    <li key={i} className="flex items-start gap-2">
+                      <span className="flex-shrink-0 w-4 h-4 rounded-full bg-white/10 flex items-center justify-center text-[9px] font-bold text-white/55 mt-0.5">
+                        {i + 1}
+                      </span>
+                      <span className="text-[11px] text-white/75 leading-relaxed">{step}</span>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            )}
+
+            {phase === 'ready' && (
+              <p className="text-[10px] text-white/25 text-center">
+                {es
+                  ? '⚡ Tu plan se activa solo cuando la red confirme el pago.'
+                  : '⚡ Your plan activates automatically once the network confirms.'}
+              </p>
+            )}
+          </>
+        )}
+
+        {/* Cancel button — shown in all non-success states */}
+        {phase !== 'success' && (
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-full text-[10px] text-white/30 hover:text-white/60 transition-colors py-1"
+          >
+            {es ? 'Cancelar' : 'Cancel'}
+          </button>
+        )}
       </div>
     </div>
   );

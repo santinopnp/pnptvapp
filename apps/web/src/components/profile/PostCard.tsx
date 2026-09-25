@@ -19,8 +19,6 @@ import {
   createReply,
   editSocialPost,
   searchCreators,
-  prepareUsdcSubscription,
-  NP_COINS_SUBSCRIBE,
   ApiError,
   type SocialPostItem,
   type MentionUser,
@@ -315,24 +313,7 @@ export default function PostCard({
     String(post.author_username || "").toLowerCase() === "santinoFurioso".toLowerCase();
   const [showBookCallModal, setShowBookCallModal] = useState(false);
   const [promoModalPlanId, setPromoModalPlanId] = useState<"yearly50" | "lifetime100" | null>(null);
-  const [npLaunching, setNpLaunching] = useState(false);
-  const [npError, setNpError] = useState<string | null>(null);
   const [npPickerPlanId, setNpPickerPlanId] = useState<string | null>(null);
-  const npPopupRef = useRef<Window | null>(null);
-  const launchNpCheckout = useCallback(async (planId: string) => {
-    setNpLaunching(true);
-    setNpError(null);
-    try {
-      const res = await prepareUsdcSubscription(planId, undefined, undefined, "btc");
-      const src = `https://nowpayments.io/embeds/payment-widget?iid=${res.nowpaymentsInvoiceId}`;
-      npPopupRef.current = window.open(src, "pnp_np_wallet", "width=540,height=700,left=200,top=100");
-      setNpPickerPlanId(null);
-    } catch {
-      setNpError(userLang === "es" ? "No se pudo abrir el pago. Intenta de nuevo." : "Could not open payment. Try again.");
-    } finally {
-      setNpLaunching(false);
-    }
-  }, [userLang]);
   // Creator subscribe upsell — on FREE posts of active creators.
   const showCreatorSubscribeUpsell =
     !hideCreatorCta &&
@@ -1999,7 +1980,7 @@ export default function PostCard({
         return (
           <div
             className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center"
-            onClick={() => { setPromoModalPlanId(null); setNpError(null); }}
+            onClick={() => { setPromoModalPlanId(null); }}
           >
             <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
             <div
@@ -2015,7 +1996,7 @@ export default function PostCard({
                   <h2 className="text-white text-base font-bold leading-none">{selectedPlan.label}</h2>
                 </div>
                 <button
-                  onClick={() => { setPromoModalPlanId(null); setNpError(null); }}
+                  onClick={() => { setPromoModalPlanId(null); }}
                   className="text-white/40 hover:text-white text-xl leading-none px-1"
                   aria-label="Close"
                 >×</button>
@@ -2034,7 +2015,7 @@ export default function PostCard({
                     amountUsd={selectedPlan.price}
                     entitlementSpec={{ planId: selectedPlan.id }}
                     lang={es ? "es" : "en"}
-                    onSuccess={() => { setPromoModalPlanId(null); setNpError(null); }}
+                    onSuccess={() => { setPromoModalPlanId(null); }}
                   />
                   <div className="relative flex items-center gap-2 py-1">
                     <div className="flex-1 h-px bg-white/10" />
@@ -2049,7 +2030,7 @@ export default function PostCard({
                   >
                     {es ? "₿ Apps y wallets" : "₿ Apps & wallets"}
                   </button>
-                  {npError && <p className="text-[11px] text-red-400 text-center">{npError}</p>}
+
                 </div>
               </WalletLoginGate>
             </div>
@@ -2060,8 +2041,7 @@ export default function PostCard({
       <NpAppPickerSheet
         isOpen={!!npPickerPlanId}
         onClose={() => setNpPickerPlanId(null)}
-        onLaunch={() => npPickerPlanId && launchNpCheckout(npPickerPlanId)}
-        launching={npLaunching}
+        planId={npPickerPlanId}
         lang={userLang}
         planLabel={npPickerPlanId ? (CHECKOUT_MODAL_PLANS.find(p => p.id === npPickerPlanId)?.label ?? 'PRIME') : undefined}
       />

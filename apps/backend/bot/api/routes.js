@@ -14663,17 +14663,6 @@ app.post('/api/webapp/payments/usdc/prepare', requireSessionAuth, usdcPrepareLim
     planDisplayName = plan.display_name || plan.name;
   }
 
-  // NowPayments minimum floor — raised to ~$18.94 USD on 2026-09-20.
-  // Reject before hitting the NP API so the frontend can fall back gracefully.
-  const NOWPAYMENTS_MINIMUM_FLOOR = 18.95;
-  if (usdAmount < NOWPAYMENTS_MINIMUM_FLOOR) {
-    return res.status(400).json({
-      success: false,
-      error: 'Amount below NowPayments minimum',
-      code: 'PLAN_BELOW_MINIMUM',
-    });
-  }
-
   const orderId = `pnptv-nowp-${userId}-${Date.now()}`;
   const ipnCallbackUrl = `${webappUrl}/api/webhooks/nowpayments`;
 
