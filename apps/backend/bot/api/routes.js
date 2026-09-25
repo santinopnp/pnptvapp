@@ -17060,7 +17060,10 @@ app.post('/api/webhooks/alchemy-base', webhookLimiter, asyncHandler(async (req, 
   }
   let payload;
   try { payload = JSON.parse(rawBody); } catch { return res.status(400).json({ error: 'invalid_json' }); }
-  await CryptoPaymentService.handleAlchemyWebhook(payload);
+  const result = await CryptoPaymentService.handleAlchemyWebhook(payload);
+  if (result.hadError) {
+    return res.status(502).json({ ok: false, reason: 'activity_processing_error' });
+  }
   return res.json({ ok: true });
 }));
 

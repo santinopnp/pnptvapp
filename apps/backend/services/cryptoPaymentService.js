@@ -109,13 +109,16 @@ class CryptoPaymentService {
    */
   static async handleAlchemyWebhook(payload) {
     const activities = payload?.event?.activity ?? [];
+    let hadError = false;
     for (const activity of activities) {
       try {
         await CryptoPaymentService._processActivity(activity);
       } catch (err) {
         logger.error('CryptoPayment: error processing activity', { error: err.message, activity });
+        hadError = true;
       }
     }
+    return { hadError };
   }
 
   static async _processActivity(activity) {

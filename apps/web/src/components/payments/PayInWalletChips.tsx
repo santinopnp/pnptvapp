@@ -343,9 +343,13 @@ function usePrivyRecovery() {
   if (!ready && elapsedMs < 5000) return { status: "initializing" as const, elapsedMs, wallets, serverWalletAddr };
   if (ready && !authenticated) return { status: "needs_login" as const, elapsedMs, wallets, serverWalletAddr };
   // SDK never became ready after 5s — total hang (iOS Safari storage partitioning,
-  // network failure during Privy init). Route to recovery UI instead of showing a
-  // broken "ready" state with null wallets.
-  if (!ready && elapsedMs >= 5000) return { status: "needs_login" as const, elapsedMs, wallets, serverWalletAddr };
+  // network failure during Privy init). If server confirms user had a wallet,
+  // return no_wallet so the 30s auto-reload fires; otherwise fall through to
+  // needs_login to show the re-auth prompt.
+  if (!ready && elapsedMs >= 5000) return {
+    status: serverHasPrivy === true ? "no_wallet" as const : "needs_login" as const,
+    elapsedMs, wallets, serverWalletAddr,
+  };
   // Authenticated but no wallets — only alarming when server says user should have one
   if (authenticated && wallets.length === 0 && serverHasPrivy === true && elapsedMs > 5000) {
     return { status: "no_wallet" as const, elapsedMs, wallets, serverWalletAddr };
@@ -2081,6 +2085,7 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
   // compact panel INSIDE the sheet (not a full-screen replacement) so users
   // still see the wallet header + close button.
   const renderRecoveryPanel = () => {
+    const _esNav = typeof navigator !== "undefined" && navigator.language?.toLowerCase().startsWith("es");
     if (recovery.status === "initializing") {
       return (
         <div className="p-6 flex items-center justify-center gap-2">
@@ -2088,7 +2093,7 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
             <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" className="opacity-25" />
             <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
           </svg>
-          <span className="text-sm text-white/70">Cargando billetera…</span>
+          <span className="text-sm text-white/70">{_esNav ? "Cargando billetera…" : "Loading wallet…"}</span>
         </div>
       );
     }
