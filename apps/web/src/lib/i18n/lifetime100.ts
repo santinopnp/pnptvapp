@@ -63,9 +63,9 @@ export const strings = {
 
     // ── Sticky CTA ─────────────────────────────────────────────────────────────
     ctaGetAccess: "CLAIM YOUR SPOT — $100",
-    ctaPayWithCrypto: "💎 PAY WITH APPS & WALLETS — $100",
+    ctaPayWithCrypto: "₿ Apps & wallets — $100",
     ctaPayWithCard: "💳 PAY WITH CARD — $100",
-    ctaPayWithWallet: "💎 PAY WITH WALLET OR CARD — $100",
+    ctaPayWithWallet: "💳 Card · Apple Pay · Wallet — $100",
     ctaPayWithDash: "🐎 PAY WITH DASH — $100",
     ctaLoading: "Checking availability...",
     ctaSoldOut: "Sold Out",
@@ -243,9 +243,9 @@ export const strings = {
 
     // ── Sticky CTA ─────────────────────────────────────────────────────────────
     ctaGetAccess: "RECLAMA TU LUGAR — $100",
-    ctaPayWithCrypto: "💎 PAGAR CON APPS Y WALLETS — $100",
+    ctaPayWithCrypto: "₿ Apps y wallets — $100",
     ctaPayWithCard: "💳 PAGAR CON TARJETA — $100",
-    ctaPayWithWallet: "💎 PAGAR CON WALLET O TARJETA — $100",
+    ctaPayWithWallet: "💳 Tarjeta · Apple Pay · Wallet — $100",
     ctaPayWithDash: "🐎 PAGAR CON DASH — $100",
     ctaLoading: "Verificando disponibilidad...",
     ctaSoldOut: "Agotado",

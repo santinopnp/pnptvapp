@@ -2047,7 +2047,7 @@ export default function PostCard({
                     onClick={() => setNpPickerPlanId(selectedPlan.id)}
                     className="w-full py-3 rounded-xl border border-white/15 bg-white/[0.04] hover:bg-white/[0.08] text-sm font-semibold text-white/80 transition-colors"
                   >
-                    {es ? "₿ Pagar con Bitcoin →" : "₿ Pay with Bitcoin →"}
+                    {es ? "₿ Apps y wallets" : "₿ Apps & wallets"}
                   </button>
                   {npError && <p className="text-[11px] text-red-400 text-center">{npError}</p>}
                 </div>

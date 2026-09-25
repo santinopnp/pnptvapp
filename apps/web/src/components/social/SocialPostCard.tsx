@@ -2441,7 +2441,7 @@ export default function SocialPostCard({
                       className="w-full py-3 rounded-xl border border-white/15 bg-white/[0.04] hover:bg-white/[0.08] transition-colors"
                     >
                       <span className="block text-sm font-semibold text-white/80">
-                        {es ? "₿ Pagar con apps y wallets" : "₿ Pay with apps & wallets"}
+                        {es ? "₿ Apps y wallets" : "₿ Apps & wallets"}
                       </span>
                       <span className="block text-[10px] text-white/35 mt-0.5">BTC · ETH · USDC · USDT · etc.</span>
                     </button>
