@@ -10,8 +10,9 @@ const PRIME_PLANS = [
 
 type CheckoutModalPlan = { id: string; label: string; tag?: string; price: number; weekend?: boolean };
 const CHECKOUT_MODAL_PLANS: CheckoutModalPlan[] = [
-  { id: "yearly50",    label: "PRIME Annual",   tag: "1 year",                      price: 50.00  },
-  { id: "lifetime100", label: "PNPtv Founders", tag: "18 mo PRIME + ✨ Channel",    price: 100.00 },
+  { id: "prime-week-pass-7d",      label: "PRIME Week Pass", tag: "7 days",  price: 14.99 },
+  { id: "monthly-pass",            label: "PRIME Monthly",   tag: "30 days", price: 24.99 },
+  { id: "prime-diamond-pass-365d", label: "PRIME Diamond",   tag: "1 year",  price: 99.99 },
 ];
 import { MentionText } from "@/components/MentionText";
 import { MentionInput } from "@/components/MentionInput";
@@ -1744,7 +1745,7 @@ export default function SocialPostCard({
                   {showPrimeUpsell && (
                     <button
                       type="button"
-                      onClick={() => { setPromoModalPlanId("yearly50"); setShowPromoModal(true); }}
+                      onClick={() => { setPromoModalPlanId(null); setShowPromoModal(true); }}
                       className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-[11px] font-bold transition-all active:scale-95"
                       style={{ background: "rgba(212,0,122,0.15)", border: "1px solid rgba(212,0,122,0.5)", color: "#FF6BB0" }}
                     >
@@ -2452,13 +2453,8 @@ export default function SocialPostCard({
                   </>
                 ) : (
                   <>
-                    <div className="text-center mb-1">
-                      <span className="inline-block text-[10px] font-bold px-2 py-1 rounded-full bg-[#E69138]/20 text-[#E69138] border border-[#E69138]/30">
-                        {es ? "🔥 Oferta de fin de semana" : "🔥 Weekend deal"}
-                      </span>
-                    </div>
                     <div className="space-y-2">
-                      {CHECKOUT_MODAL_PLANS.filter((plan) => !(plan.id === "lifetime100" && !foundersCardOfferActive)).map((plan) => (
+                      {CHECKOUT_MODAL_PLANS.map((plan) => (
                         <button
                           key={plan.id}
                           onClick={() => setPromoModalPlanId(plan.id)}
@@ -2485,8 +2481,8 @@ export default function SocialPostCard({
                           <div className="text-right flex-shrink-0 ml-3">
                             <p className="text-xl font-black text-white">${plan.price}</p>
                             <p className="text-[10px] text-white/40">
-                              {plan.id === "yearly50"
-                                ? (es ? "/año" : "/yr")
+                              {plan.id === "monthly-pass"
+                                ? (es ? "/mes" : "/mo")
                                 : (es ? "única vez" : "one-time")}
                             </p>
                           </div>
