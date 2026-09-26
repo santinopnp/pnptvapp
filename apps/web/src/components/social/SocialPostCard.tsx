@@ -13,6 +13,7 @@ const CHECKOUT_MODAL_PLANS: CheckoutModalPlan[] = [
   { id: "prime-week-pass-7d",      label: "PRIME Week Pass", tag: "7 days",  price: 14.99 },
   { id: "monthly-pass",            label: "PRIME Monthly",   tag: "30 days", price: 24.99 },
   { id: "prime-diamond-pass-365d", label: "PRIME Diamond",   tag: "1 year",  price: 99.99 },
+  { id: "prime-lifetime-249",      label: "PRIME Lifetime",  tag: "Forever", price: 249.99 },
 ];
 import { MentionText } from "@/components/MentionText";
 import { MentionInput } from "@/components/MentionInput";
@@ -2483,7 +2484,9 @@ export default function SocialPostCard({
                             <p className="text-[10px] text-white/40">
                               {plan.id === "monthly-pass"
                                 ? (es ? "/mes" : "/mo")
-                                : (es ? "única vez" : "one-time")}
+                                : plan.id === "prime-lifetime-249"
+                                  ? (es ? "para siempre" : "forever")
+                                  : (es ? "única vez" : "one-time")}
                             </p>
                           </div>
                         </button>
