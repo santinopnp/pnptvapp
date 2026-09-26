@@ -109,6 +109,9 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
     const [showDisclaimer, setShowDisclaimer] = useState(false);
     const [isPortrait, setIsPortrait] = useState(false);
     const [videoDims, setVideoDims] = useState<{ w: number; h: number } | null>(null);
+    const [playbackError, setPlaybackError] = useState<string | null>(null);
+
+    const normalizedPoster = normalizeMuxPoster(poster);
 
     // Pre-detect portrait orientation from poster image so the container is
     // sized correctly on first render, before loadedmetadata fires.
@@ -122,9 +125,6 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
       };
       img.src = normalizedPoster;
     }, [normalizedPoster]);
-    const [playbackError, setPlaybackError] = useState<string | null>(null);
-
-    const normalizedPoster = normalizeMuxPoster(poster);
     const [orientationLocked, setOrientationLocked] = useState(false);
     const orientationSupported = typeof window !== "undefined" &&
       typeof (screen.orientation as ScreenOrientation & { lock?(o: string): Promise<void> }).lock === "function";
