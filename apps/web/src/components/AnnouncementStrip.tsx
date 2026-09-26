@@ -70,6 +70,8 @@ const UPDATE_MESSAGES: RawMessage[] = [
     es: "⭐ Suscríbete una vez — cada foto, video y post bloqueado en tu feed →",
     href: "/creators",
   },
+  {
+    category: "UPDATE",
     en: "👥 See who's live with you on Main Stage — open the People tab and say hi →",
     es: "👥 Mira quién está en vivo contigo en el Main Stage — abre la pestaña Personas y saluda →",
     href: "/main-stage",
