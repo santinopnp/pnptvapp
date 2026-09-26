@@ -424,11 +424,10 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
         <video
           ref={setRefs}
           src={passThroughSrc}
-          poster={poster}
+          poster={normalizedPoster}
           className={`relative z-10 w-full h-full object-contain mx-auto transition-all duration-300 ${
             isPortrait ? "max-h-[72vh] md:max-h-[680px]" : "max-h-[520px] lg:max-h-[640px]"
           }`}
-          poster={normalizedPoster}
           onLoadedMetadata={handleLoadedMetadata}
           onEnded={handleEnded}
           onPlay={handlePlay}

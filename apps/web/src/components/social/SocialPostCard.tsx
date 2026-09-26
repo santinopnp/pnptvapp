@@ -8,7 +8,8 @@ const PRIME_PLANS = [
   { id: "lifetime80",              label: "Founders Membership",    duration: "18 mo PRIME",  price: "100",   isRecurring: false, recommended: false },
 ] as const;
 
-const CHECKOUT_MODAL_PLANS: never[] = [];
+type CheckoutModalPlan = { id: string; label: string; tag?: string; price: number; weekend?: boolean };
+const CHECKOUT_MODAL_PLANS: CheckoutModalPlan[] = [];
 import { MentionText } from "@/components/MentionText";
 import { MentionInput } from "@/components/MentionInput";
 import { SharePostModal } from "@/components/SharePostModal";

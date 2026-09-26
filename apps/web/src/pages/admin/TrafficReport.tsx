@@ -330,14 +330,14 @@ export default function TrafficReportPage() {
             <Sparkline vals={data.dailyRegistrations.map(d => d.cnt)} color="#D4007A" />
             <div className="flex justify-between mt-1 text-[10px]" style={{ color: "#636366" }}>
               {data.dailyRegistrations[0] && <span>{data.dailyRegistrations[0].day.slice(5)}</span>}
-              {data.dailyRegistrations.at(-1) && <span>{data.dailyRegistrations.at(-1)!.day.slice(5)}</span>}
+              {data.dailyRegistrations.length > 0 && <span>{data.dailyRegistrations[data.dailyRegistrations.length - 1].day.slice(5)}</span>}
             </div>
           </Section>
           <Section title="Ingresos completados por día (30 d)">
             <Sparkline vals={data.dailyRevenue.map(d => d.total)} color="#30D158" />
             <div className="flex justify-between mt-1 text-[10px]" style={{ color: "#636366" }}>
               {data.dailyRevenue[0] && <span>{data.dailyRevenue[0].day.slice(5)}</span>}
-              {data.dailyRevenue.at(-1) && <span>{data.dailyRevenue.at(-1)!.day.slice(5)}</span>}
+              {data.dailyRevenue.length > 0 && <span>{data.dailyRevenue[data.dailyRevenue.length - 1].day.slice(5)}</span>}
             </div>
           </Section>
         </div>
