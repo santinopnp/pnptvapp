@@ -11,8 +11,8 @@ interface FreeTierOverlayProps {
 }
 
 const PROMO_PLANS = [
-  { id: 'yearly50',    price: 50,  labelEn: 'PRIME Annual',    labelEs: 'PRIME anual',        tagEn: '🔥 Best deal',  tagEs: '🔥 Mejor precio', subEn: '1 year · $50',                  subEs: '1 año · $50'                      },
-  { id: 'lifetime100', price: 100, labelEn: 'PNPtv Founders',  labelEs: 'PNPtv Founders',     tagEn: '🖤 Founders',   tagEs: '🖤 Fundadores',   subEn: '$100 once · 18 mo PRIME + ✨ Prime Channel', subEs: '$100 una vez · 18 meses PRIME + ✨ Prime Channel' },
+  { id: 'monthly-pass',            price: 24.99, labelEn: 'PRIME Monthly',       labelEs: 'PRIME mensual',    tagEn: '🔥 Most popular', tagEs: '🔥 Más popular',   subEn: '30 days full access', subEs: '30 días acceso completo' },
+  { id: 'prime-diamond-pass-365d', price: 99.99, labelEn: 'PRIME Diamond Pass',  labelEs: 'PRIME Diamond',    tagEn: '⭐ Best value',    tagEs: '⭐ Mejor precio',  subEn: '1 year full access',  subEs: '1 año acceso completo'   },
 ] as const;
 
 export default function FreeTierOverlay({ label, requiredTier = 'member', children }: FreeTierOverlayProps) {
@@ -57,7 +57,7 @@ export default function FreeTierOverlay({ label, requiredTier = 'member', childr
           <div className="text-white text-center p-4">
             <div className="text-2xl mb-1">🔥</div>
             <p className="text-sm font-bold mb-1">{label || (es ? 'Contenido PRIME' : 'PRIME Content')}</p>
-            <p className="text-xs text-white/70 mb-3">{es ? 'Desde $50/año · Toca para desbloquear' : 'From $50/yr · Tap to unlock'}</p>
+            <p className="text-xs text-white/70 mb-3">{es ? 'Desde $24.99/mes · Toca para desbloquear' : 'From $24.99/mo · Tap to unlock'}</p>
             <div
               className="inline-block px-4 py-2 rounded-full text-sm font-black text-white"
               style={{ background: 'linear-gradient(135deg,#D4007A,#E69138)' }}
@@ -88,7 +88,7 @@ export default function FreeTierOverlay({ label, requiredTier = 'member', childr
             <WalletLoginGate lang={lang as 'es' | 'en'}>
             <div className="grid grid-cols-2 gap-2.5">
               {PROMO_PLANS.map(plan => {
-                const isLifetime = plan.id === 'lifetime100';
+                const isLifetime = plan.id === 'prime-diamond-pass-365d';
                 const isWalletOpen = walletPlanId === plan.id;
                 const cardStyle = isLifetime
                   ? { background: 'linear-gradient(145deg,rgba(20,20,20,0.95),rgba(30,25,20,0.95))', border: '1px solid rgba(230,145,56,0.40)' }
@@ -167,7 +167,7 @@ export default function FreeTierOverlay({ label, requiredTier = 'member', childr
         onClose={() => setNpPickerPlanId(null)}
         planId={npPickerPlanId}
         lang={lang}
-        planLabel={npPickerPlanId === 'lifetime100' ? 'PNPtv Founders' : 'PRIME Annual'}
+        planLabel={npPickerPlanId === 'prime-diamond-pass-365d' ? 'PRIME Diamond Pass' : 'PRIME Monthly'}
       />
     </>
   );

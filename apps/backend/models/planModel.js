@@ -96,9 +96,8 @@ class Plan {
     const HIDDEN_LEGACY_IDS = new Set([
       'prime-trial-3d',
       'monthly-pass-promo-15',
-      // yearly50 + lifetime100 excluded here so they reach the /subscribe
-      // promo section; HIDDEN_PLAN_IDS in Subscribe.tsx keeps them out of
-      // the main plan grid.
+      'yearly50',       // legacy annual; promo section retired — no longer surfaced
+      'lifetime-pass',  // retired Founders SKU; superseded, not publicly listed
     ]);
     // custom-prime-* are one-time operator-issued plans — never surface publicly
     const isCustomPlan = (plan) => plan.id.startsWith('custom-prime-');

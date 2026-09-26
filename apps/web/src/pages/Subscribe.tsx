@@ -33,10 +33,9 @@ import { PANEL_APPS, PANEL_STEPS_EN, PANEL_STEPS_ES, NpAppPickerSheet } from "@/
 import { connectSocket } from "@/lib/socket";
 
 const MEMBER_PLAN_IDS = new Set(["member_monthly"]);
-// lifetime100          = /lifetime100 fundraiser (dedicated landing, not for /subscribe).
-// lifetime80           = legacy plan; superseded by `lifetime-pass` ($249.99).
-// monthly-pass-promo-15 = promo/discount SKU granted out-of-band; never on /subscribe.
-const HIDDEN_PLAN_IDS = new Set(["prime-trial-3d", "lifetime100", "lifetime80", "monthly-pass-promo-15", "yearly50", "lifetime-pass"]);
+// These are filtered at the backend too (planModel.getPublicPlans HIDDEN_LEGACY_IDS).
+// Frontend set is kept as a second safety net for any plan that slips through.
+const HIDDEN_PLAN_IDS = new Set(["prime-trial-3d", "lifetime80", "monthly-pass-promo-15", "yearly50", "lifetime-pass", "lifetime100"]);
 
 const RECURRING_PLANS = new Set(["prime-week-pass-7d", "monthly-pass", "prime-diamond-pass-365d"]);
 
