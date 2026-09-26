@@ -450,8 +450,6 @@ export default function SocialPostCard({
     String(post.author_username || "").toLowerCase() === "santinoFurioso".toLowerCase();
   const [showBookCallModal, setShowBookCallModal] = useState(false);
   const showPrimeUpsell = isPrimeCreator && viewerTier !== "prime" && !post.is_exclusive && !isOwn;
-  // Two-pill upgrade strip — shown on every post for non-PRIME viewers, always visible.
-  const showUpgradePills = isPrimeCreator && viewerTier !== "prime" && !isOwn && !post.is_exclusive;
   const primeUpsellKey = `pnp_prime_upsell_dismissed_${post.author_id}`;
   const [primeUpsellDismissed, setPrimeUpsellDismissed] = useState(() => {
     try { return sessionStorage.getItem(primeUpsellKey) === "1"; } catch { return false; }
@@ -1737,8 +1735,8 @@ export default function SocialPostCard({
               )}
 
 
-              {/* Santino action pills — Subscribe to PRIME (non-PRIME only) + Book a Call (everyone) */}
-              {isSantinoPost && !isOwn && (
+              {/* Santino + Lex action pills — Subscribe to PRIME (non-PRIME only) + Book a Call (Santino only) */}
+              {isPrimeCreator && !isOwn && (
                 <div className="mt-2.5 flex gap-2" onClick={(e) => e.stopPropagation()}>
                   {showPrimeUpsell && (
                     <button
@@ -1751,15 +1749,17 @@ export default function SocialPostCard({
                       <span>{lang === "es" ? "Suscríbete a PRIME" : "Subscribe to PRIME"}</span>
                     </button>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => setShowBookCallModal(true)}
-                    className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-[11px] font-bold transition-all active:scale-95"
-                    style={{ background: "rgba(94,209,196,0.12)", border: "1px solid rgba(94,209,196,0.4)", color: "#5ED1C4" }}
-                  >
-                    <span>📅</span>
-                    <span>{lang === "es" ? "Reservar llamada" : "Book a Call"}</span>
-                  </button>
+                  {isSantinoPost && (
+                    <button
+                      type="button"
+                      onClick={() => setShowBookCallModal(true)}
+                      className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-[11px] font-bold transition-all active:scale-95"
+                      style={{ background: "rgba(94,209,196,0.12)", border: "1px solid rgba(94,209,196,0.4)", color: "#5ED1C4" }}
+                    >
+                      <span>📅</span>
+                      <span>{lang === "es" ? "Reservar llamada" : "Book a Call"}</span>
+                    </button>
+                  )}
                 </div>
               )}
 

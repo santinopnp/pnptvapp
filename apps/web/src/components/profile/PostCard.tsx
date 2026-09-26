@@ -1335,8 +1335,8 @@ export default function PostCard({
                       )}
                     </div>
                   )}
-                  {/* Santino action pills — Subscribe to PRIME (non-PRIME only) + Book a Call (everyone) */}
-                  {isSantinoPost && String(user?.id ?? "") !== String(post.author_id) && (
+                  {/* Santino + Lex action pills — Subscribe to PRIME (non-PRIME only) + Book a Call (Santino only) */}
+                  {isPrimeCreator && String(user?.id ?? "") !== String(post.author_id) && (
                     <div className="mt-2.5 flex gap-2" onClick={(e) => e.stopPropagation()}>
                       {showPrimeUpsell && (
                         <button
@@ -1349,15 +1349,17 @@ export default function PostCard({
                           <span>{userLang === "es" ? "Suscríbete a PRIME" : "Subscribe to PRIME"}</span>
                         </button>
                       )}
-                      <button
-                        type="button"
-                        onClick={() => setShowBookCallModal(true)}
-                        className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-[11px] font-bold transition-all active:scale-95"
-                        style={{ background: "rgba(94,209,196,0.12)", border: "1px solid rgba(94,209,196,0.4)", color: "#5ED1C4" }}
-                      >
-                        <span>📅</span>
-                        <span>{userLang === "es" ? "Reservar llamada" : "Book a Call"}</span>
-                      </button>
+                      {isSantinoPost && (
+                        <button
+                          type="button"
+                          onClick={() => setShowBookCallModal(true)}
+                          className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-[11px] font-bold transition-all active:scale-95"
+                          style={{ background: "rgba(94,209,196,0.12)", border: "1px solid rgba(94,209,196,0.4)", color: "#5ED1C4" }}
+                        >
+                          <span>📅</span>
+                          <span>{userLang === "es" ? "Reservar llamada" : "Book a Call"}</span>
+                        </button>
+                      )}
                     </div>
                   )}
 
