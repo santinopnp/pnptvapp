@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { NowPaymentsOrder } from "@/hooks/useNowPayments";
-import { prepareUsdcSubscription, getUsdcSubscriptionStatus } from "@/lib/api";
+import { prepareOnchainSubscription, getUsdcSubscriptionStatus } from "@/lib/api";
 
 
 interface NowPaymentsWaitingPanelProps {
@@ -166,12 +166,13 @@ export function NpAppPickerSheet({
   type Phase = 'idle' | 'loading' | 'ready' | 'success' | 'error';
   const [phase, setPhase] = useState<Phase>('idle');
   const [invoiceError, setInvoiceError] = useState<string | null>(null);
-  const [invoiceUrl, setInvoiceUrl] = useState<string | null>(null);
-  const [widgetUrl, setWidgetUrl] = useState<string | null>(null);
+  const [payAddress, setPayAddress] = useState<string | null>(null);
+  const [payAmount, setPayAmount] = useState<string | null>(null);
   const [orderId, setOrderId] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [selectedApp, setSelectedApp] = useState<string | null>(null);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const popupRef = useRef<Window | null>(null);
 
   useEffect(() => {
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
@@ -181,12 +182,12 @@ export function NpAppPickerSheet({
     if (!isOpen) {
       setPhase('idle');
       setInvoiceError(null);
-      setInvoiceUrl(null);
-      setWidgetUrl(null);
+      setPayAddress(null);
+      setPayAmount(null);
       setOrderId(null);
+      setCopied(false);
+      setSelectedApp(null);
       if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-      popupRef.current?.close();
-      popupRef.current = null;
     }
   }, [isOpen]);
 
@@ -194,16 +195,16 @@ export function NpAppPickerSheet({
     if (!planId) return;
     setPhase('loading');
     setInvoiceError(null);
-    setInvoiceUrl(null);
-    setWidgetUrl(null);
+    setPayAddress(null);
+    setPayAmount(null);
     try {
-      const res = await prepareUsdcSubscription(planId, undefined, undefined, 'btc');
-      if (!res.success || !res.nowpaymentsInvoiceId || !res.orderId) {
+      const res = await prepareOnchainSubscription(planId, 'btc');
+      if (!res.success || !res.payAddress || !res.orderId) {
         throw new Error(res.error || (es ? 'No se pudo crear el pago.' : 'Could not create payment.'));
       }
       setOrderId(res.orderId);
-      setInvoiceUrl(res.invoiceUrl as string);
-      setWidgetUrl(`https://nowpayments.io/embeds/payment-widget?iid=${encodeURIComponent(String(res.nowpaymentsInvoiceId))}`);
+      setPayAddress(res.payAddress);
+      setPayAmount(res.payAmount ?? null);
       setPhase('ready');
 
       if (pollRef.current) clearInterval(pollRef.current);
@@ -212,8 +213,6 @@ export function NpAppPickerSheet({
           const status = await getUsdcSubscriptionStatus(res.orderId as string);
           if (status.completed) {
             if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-            popupRef.current?.close();
-            popupRef.current = null;
             setPhase('success');
             onSuccess?.(res.orderId as string);
             setTimeout(() => { onClose(); }, 2500);
@@ -234,18 +233,17 @@ export function NpAppPickerSheet({
     if (isOpen && planId && phase === 'idle') createInvoice();
   }, [isOpen, planId, phase, createInvoice]);
 
-  const handleOpenPopup = useCallback(() => {
-    if (!invoiceUrl) return;
-    const w = window.screen.width, h = window.screen.height;
-    const pw = 540, ph = 700;
-    popupRef.current = window.open(
-      invoiceUrl,
-      'pnp_np_wallet',
-      `width=${pw},height=${ph},left=${Math.round((w - pw) / 2)},top=${Math.round((h - ph) / 2)},resizable=yes,scrollbars=yes,noopener,noreferrer`
-    );
-  }, [invoiceUrl]);
+  const handleCopy = useCallback(() => {
+    if (!payAddress) return;
+    navigator.clipboard.writeText(payAddress).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {});
+  }, [payAddress]);
 
   if (!isOpen) return null;
+
+  const steps = selectedApp ? (es ? PANEL_STEPS_ES : PANEL_STEPS_EN)[selectedApp] ?? [] : [];
 
   return (
     <div className="fixed inset-0 z-50 flex items-end" onClick={onClose}>
@@ -259,7 +257,7 @@ export function NpAppPickerSheet({
 
         <div className="flex items-center justify-between">
           <p className="text-base font-black text-white">
-            {es ? '₿ Apps y wallets' : '₿ Apps & wallets'}
+            {es ? '₿ Pagar con Bitcoin' : '₿ Pay with Bitcoin'}
           </p>
           <button
             type="button"
@@ -313,60 +311,91 @@ export function NpAppPickerSheet({
           </div>
         )}
 
-        {phase === 'ready' && widgetUrl && (
+        {phase === 'ready' && payAddress && (
           <>
-            {/* NowPayments embedded widget — shows address, QR, copy button */}
-            <div className="w-full rounded-xl overflow-hidden" style={{ height: 430, background: '#0a0a0a', border: '1px solid rgba(255,255,255,0.08)' }}>
-              <iframe
-                src={widgetUrl}
-                style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
-                title={es ? 'Dirección de pago' : 'Payment address'}
-                allow="clipboard-write"
-                loading="eager"
-              />
+            {/* Address + amount block */}
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-2.5">
+              {payAmount && (
+                <div className="text-center">
+                  <p className="text-[10px] text-white/35 mb-0.5">
+                    {es ? 'Monto exacto a enviar' : 'Exact amount to send'}
+                  </p>
+                  <p className="text-2xl font-black text-white">
+                    {payAmount} <span style={{ color: '#f7931a' }}>BTC</span>
+                  </p>
+                </div>
+              )}
+              <p className="text-[10px] text-white/35 text-center">
+                {es ? 'Dirección de envío:' : 'Send to this address:'}
+              </p>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 text-[10px] font-mono text-white/70 break-all leading-relaxed bg-black/40 rounded-lg px-2.5 py-2">
+                  {payAddress}
+                </code>
+                <button
+                  type="button"
+                  onClick={handleCopy}
+                  className="flex-shrink-0 px-3 py-2 rounded-lg text-[10px] font-bold transition-all active:scale-[0.95]"
+                  style={copied
+                    ? { background: 'rgba(34,197,94,0.15)', color: '#4ade80', border: '1px solid rgba(34,197,94,0.3)' }
+                    : { background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.7)', border: '1px solid rgba(255,255,255,0.12)' }
+                  }
+                >
+                  {copied ? (es ? '✓ Copiado' : '✓ Copied') : (es ? 'Copiar' : 'Copy')}
+                </button>
+              </div>
             </div>
 
-            <p className="text-[10px] text-white/30 text-center -mt-1">
+            <p className="text-[10px] text-white/30 text-center">
               {es
                 ? '⚡ Tu plan se activa solo cuando la red confirme el pago.'
                 : '⚡ Plan activates automatically once the network confirms.'}
             </p>
 
-            {/* App launch buttons */}
+            {/* App picker — names only as links */}
             <div>
-              <p className="text-[11px] text-white/45 text-center mb-2.5">
-                {es ? 'Abrir tu app o wallet:' : 'Open your app or wallet:'}
+              <p className="text-[11px] text-white/45 mb-2.5">
+                {es ? 'Toca tu app para ver los pasos:' : 'Tap your app to see the steps:'}
               </p>
-              <div className="grid grid-cols-4 gap-2">
+              <div className="flex flex-wrap gap-2">
                 {PANEL_APPS.map(app => (
-                  <a
+                  <button
                     key={app.id}
-                    href={APP_OPEN_LINKS[app.id]}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex flex-col items-center gap-1 py-2.5 px-1 rounded-xl border transition active:scale-[0.95] no-underline"
-                    style={{ background: app.bg, borderColor: app.border }}
+                    type="button"
+                    onClick={() => setSelectedApp(selectedApp === app.id ? null : app.id)}
+                    className="px-3 py-1.5 rounded-lg border text-[12px] font-semibold transition-all active:scale-[0.95]"
+                    style={selectedApp === app.id
+                      ? { background: app.bg, borderColor: app.border, color: 'rgba(255,255,255,0.95)' }
+                      : { background: 'rgba(255,255,255,0.03)', borderColor: 'rgba(255,255,255,0.10)', color: 'rgba(255,255,255,0.55)' }
+                    }
                   >
-                    <span className="text-[20px] leading-none">{app.emoji}</span>
-                    <span className="text-[10px] font-semibold text-white/90 text-center leading-tight">{app.label}</span>
-                    <span className="text-[8px] text-white/35 leading-none">{app.geo}</span>
-                  </a>
+                    {app.label}
+                  </button>
                 ))}
               </div>
-            </div>
 
-            {/* Fallback for environments that block the iframe */}
-            <button
-              type="button"
-              onClick={handleOpenPopup}
-              className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-[11px] font-semibold text-white/50 hover:text-white/80 transition-colors"
-              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}
-            >
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-              </svg>
-              {es ? 'Abrir en ventana nueva' : 'Open in new window'}
-            </button>
+              {selectedApp && steps.length > 0 && (
+                <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] p-3 animate-in fade-in slide-in-from-top-1 duration-150">
+                  <ol className="space-y-1.5 mb-3">
+                    {steps.map((step, i) => (
+                      <li key={i} className="flex items-start gap-2">
+                        <span className="flex-shrink-0 w-4 h-4 rounded-full bg-white/10 flex items-center justify-center text-[9px] font-bold text-white/55 mt-0.5">{i + 1}</span>
+                        <span className="text-[11px] text-white/75 leading-relaxed">{step}</span>
+                      </li>
+                    ))}
+                  </ol>
+                  <a
+                    href={APP_OPEN_LINKS[selectedApp]}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-center gap-1.5 w-full py-2 rounded-lg text-[11px] font-bold text-white no-underline transition-all active:scale-[0.97]"
+                    style={{ background: PANEL_APPS.find(a => a.id === selectedApp)?.bg, border: `1px solid ${PANEL_APPS.find(a => a.id === selectedApp)?.border}` }}
+                  >
+                    {es ? `Abrir ${PANEL_APPS.find(a => a.id === selectedApp)?.label} →` : `Open ${PANEL_APPS.find(a => a.id === selectedApp)?.label} →`}
+                  </a>
+                </div>
+              )}
+            </div>
           </>
         )}
 
