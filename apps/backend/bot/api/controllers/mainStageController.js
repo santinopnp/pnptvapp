@@ -251,7 +251,7 @@ const token = asyncHandler(async (req, res) => {
   // Members: cam + mic, 4-hour sessions.
   // Prime / Admin: cam + mic, 12-hour tokens (no session cap).
   const canScreenShare    = participantTier !== 'newcomer';
-  const canPublishAudio   = participantTier !== 'newcomer';
+  const canPublishAudio   = true; // all participants can mute/unmute themselves
 
   const NEWCOMER_SESSION_S  = 3 * 3600;           // 3 hour cam window
   const NEWCOMER_COOLDOWN_S = 24 * 3600;          // 24 hour cooldown

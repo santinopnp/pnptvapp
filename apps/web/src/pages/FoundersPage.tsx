@@ -5,8 +5,8 @@ import { NpAppPickerSheet } from "@/components/payments/NowPaymentsWaitingPanel"
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
-const PLAN_ID = "prime-lifetime-249";
-const PRICE_USD = 249.99;
+const PLAN_ID = "lifetime-pass";
+const PRICE_USD = 99.99;
 const LANG_KEY = "pnptv:founders:lang";
 
 function getInitialLang(): string {
@@ -24,40 +24,40 @@ function getInitialLang(): string {
 const T = {
   en: {
     badge:        "Founders Edition · Limited Access",
-    headline:     "One payment.\nPRIME forever.",
-    sub:          "No renewals. No expiry. Full access to everything PNPtv! has to offer — for life.",
-    price:        "$249.99",
+    headline:     "One payment.\nForever a member.",
+    sub:          "No renewals. No expiry. Lifetime membership on PNPtv! — plus 18 months of full PRIME access included.",
+    price:        "$99.99",
     priceNote:    "one-time · no subscription",
     benefits: [
-      { icon: "🖤", title: "Lifetime PRIME",       desc: "Full access to all exclusive content, streams, and creator channels — forever." },
-      { icon: "🔥", title: "Founders Pricing",      desc: "This is the lowest price lifetime PRIME will ever be offered to existing members." },
+      { icon: "🖤", title: "Lifetime Membership",   desc: "Your account stays active forever — no renewals, no expiry, no yearly fees." },
+      { icon: "⭐", title: "18 Months PRIME",        desc: "Full PRIME access included for 18 months: exclusive content, streams, and creator channels." },
       { icon: "⚡", title: "Instant Activation",    desc: "Your account upgrades the moment payment confirms on-chain or in your wallet." },
-      { icon: "🛡",  title: "No Recurring Charges", desc: "Pay once and you're done. No yearly renewals, no surprises." },
+      { icon: "🛡",  title: "No Recurring Charges", desc: "Pay once and you're done. No surprises, ever." },
     ],
     payWallet:    "Pay with card or USDC",
     payCrypto:    "₿ Pay with BTC · ETH · USDT",
     successTitle: "You're a Founder 🖤",
-    successBody:  "PRIME access is now active on your account. Thank you for being part of PNPtv! from the beginning.",
+    successBody:  "Your membership is now active. 18 months of PRIME access starts today. Thank you for being part of PNPtv! from the beginning.",
     successCta:   "Go to PNPtv!",
     legalNote:    "By completing payment you agree to PNPtv!'s Terms of Service. No refunds on lifetime memberships.",
     toggleLang:   "ES",
   },
   es: {
     badge:        "Edición Founders · Acceso Limitado",
-    headline:     "Un solo pago.\nPRIME para siempre.",
-    sub:          "Sin renovaciones. Sin vencimiento. Acceso completo a todo PNPtv! — de por vida.",
-    price:        "$249.99",
+    headline:     "Un solo pago.\nMiembro para siempre.",
+    sub:          "Sin renovaciones. Sin vencimiento. Membresía de por vida en PNPtv! — más 18 meses de acceso PRIME completo incluidos.",
+    price:        "$99.99",
     priceNote:    "pago único · sin suscripción",
     benefits: [
-      { icon: "🖤", title: "PRIME de por vida",      desc: "Acceso completo a todo el contenido exclusivo, streams y canales de creadores — para siempre." },
-      { icon: "🔥", title: "Precio Founders",         desc: "Este es el precio más bajo al que PRIME lifetime se ofrecerá a miembros existentes." },
+      { icon: "🖤", title: "Membresía de por vida",  desc: "Tu cuenta permanece activa para siempre — sin renovaciones, sin vencimiento, sin cargos anuales." },
+      { icon: "⭐", title: "18 meses PRIME",          desc: "Acceso PRIME completo por 18 meses: contenido exclusivo, streams y canales de creadores." },
       { icon: "⚡", title: "Activación instantánea",  desc: "Tu cuenta se actualiza en el momento en que se confirma el pago." },
-      { icon: "🛡",  title: "Sin cargos recurrentes", desc: "Pagas una vez y listo. Sin renovaciones anuales, sin sorpresas." },
+      { icon: "🛡",  title: "Sin cargos recurrentes", desc: "Pagas una vez y listo. Sin sorpresas, jamás." },
     ],
     payWallet:    "Pagar con tarjeta o USDC",
     payCrypto:    "₿ Pagar con BTC · ETH · USDT",
     successTitle: "Eres Founder 🖤",
-    successBody:  "El acceso PRIME ya está activo en tu cuenta. Gracias por ser parte de PNPtv! desde el principio.",
+    successBody:  "Tu membresía ya está activa. Los 18 meses de PRIME comienzan hoy. Gracias por ser parte de PNPtv! desde el principio.",
     successCta:   "Ir a PNPtv!",
     legalNote:    "Al completar el pago aceptas los Términos de Servicio de PNPtv!. No hay reembolsos en membresías lifetime.",
     toggleLang:   "EN",
@@ -171,7 +171,7 @@ export default function FoundersPage() {
         <div style={styles.payCard}>
           {/* Price recap */}
           <div style={styles.payRecap}>
-            <span style={styles.payRecapLabel}>PRIME Founders · Lifetime</span>
+            <span style={styles.payRecapLabel}>Founders · 18 mo PRIME + Lifetime Basic</span>
             <span style={styles.payRecapPrice}>{t.price}</span>
           </div>
 
@@ -185,23 +185,23 @@ export default function FoundersPage() {
               label={t.payWallet}
               onSuccess={handleSuccess}
             />
-
-            {/* Divider */}
-            <div style={styles.divider}>
-              <div style={styles.dividerLine} />
-              <span style={styles.dividerText}>{es ? "o pagar con crypto" : "or pay with crypto"}</span>
-              <div style={styles.dividerLine} />
-            </div>
-
-            {/* Crypto */}
-            <button
-              type="button"
-              onClick={() => setShowCrypto(true)}
-              style={styles.cryptoBtn}
-            >
-              {t.payCrypto}
-            </button>
           </WalletLoginGate>
+
+          {/* Divider */}
+          <div style={styles.divider}>
+            <div style={styles.dividerLine} />
+            <span style={styles.dividerText}>{es ? "o pagar con crypto" : "or pay with crypto"}</span>
+            <div style={styles.dividerLine} />
+          </div>
+
+          {/* Crypto — no wallet login required */}
+          <button
+            type="button"
+            onClick={() => setShowCrypto(true)}
+            style={styles.cryptoBtn}
+          >
+            {t.payCrypto}
+          </button>
 
           <p style={styles.legalNote}>{t.legalNote}</p>
         </div>
@@ -222,7 +222,7 @@ export default function FoundersPage() {
         onClose={() => setShowCrypto(false)}
         planId={showCrypto ? PLAN_ID : null}
         lang={lang}
-        planLabel={`PRIME Founders — Lifetime · $${PRICE_USD}`}
+        planLabel={`Founders — 18 mo PRIME + Lifetime Basic · $${PRICE_USD}`}
         onSuccess={handleSuccess}
       />
     </div>

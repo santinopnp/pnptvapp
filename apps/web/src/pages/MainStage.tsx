@@ -1127,7 +1127,7 @@ export default function MainStage() {
     return () => { socket.off('mainstage:skip-vote-update', onSkipVoteUpdate); };
   }, []);
 
-  const hasMic = isAdmin || participantTier === 'member' || participantTier === 'prime';
+  const hasMic = isParticipant;
   const canPlayNext = isAdmin || participantTier === 'prime';
 
   const handleVoteSkip = useCallback(async () => {

@@ -1,4 +1,5 @@
 const PaymentModel = require('../models/paymentModel');
+const ga4Service = require('./ga4Service');
 const InvoiceService = require('./invoiceservice');
 const EmailService = require('./emailservice');
 const PlanModel = require('../models/planModel');
@@ -1162,6 +1163,17 @@ class PaymentService {
           } catch (partnerErr) {
             logger.warn('[PartnerGroup] creditPartnerRevenue hook failed (non-critical)', { userId, planId, error: partnerErr.message });
           }
+
+          // GA4 purchase event — server-side Measurement Protocol
+          try {
+            await ga4Service.trackPurchase({
+              userId,
+              planId,
+              transactionId: resolvedPaymentId,
+              amountUsd: paymentMetadata?.amount_usd || paymentMetadata?.grossUsd || paymentMetadata?.price_amount || null,
+              source,
+            });
+          } catch (_ga4Err) { /* non-fatal */ }
         }
       }
     } catch (err) {
