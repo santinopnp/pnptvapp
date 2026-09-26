@@ -18693,7 +18693,12 @@ app.get('/api/ads/rewarded/active', requireSessionAuth, adCallbackLimiter, async
 app.get('/api/ads/config', softAuth, asyncHandler(async (req, res) => {
   const adUnlockService = require('../../services/adUnlockService');
   const adAnalytics = require('../../services/adAnalyticsService');
-  const enabled = await adUnlockService.isFeatureEnabled();
+  // NOTE: this is the passive display/popunder/VAST ad system (ExoClick),
+  // not the rewarded-ad-unlock feature — use its own independent, fail-open
+  // flag so it can't be silently killed by a Redis flush/restart or by
+  // someone using isFeatureEnabled()'s "ads:enabled" key as an incident
+  // kill switch for rewarded ads (see adUnlockService.js).
+  const enabled = await adUnlockService.isDisplayAdsEnabled();
   const user = req.session?.user;
   // Fetch user meta (created_at + engagement) for dynamic intensity — cached
   // in Redis 15 min so we don't hit Postgres on every ad config request.
