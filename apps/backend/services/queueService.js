@@ -614,15 +614,9 @@ async function initializeQueues() {
     jobId: 'cron-channel-pass-expiry-sweep',
   });
 
-  // Privy unused wallet purge — Sundays at 03:45 UTC.
-  // Deletes Privy users with zero payment activity to free wallet slots on
-  // the free tier. Safe: skips anyone with any token_purchase, completed
-  // checkout_intent, or successful gas_topup.
-  await cronQueue.add('privy-wallet-purge', {}, {
-    repeat: { pattern: '45 3 * * 0', tz: 'UTC' },
-    attempts: 2, removeOnFail: false,
-    jobId: 'cron-privy-wallet-purge',
-  });
+  // Privy wallet purge is intentionally not scheduled automatically.
+  // Run manually: node scripts/purge-privy-unused-wallets.js [--execute]
+  // Re-enable only after verifying funded-wallet guards on both Base + Ethereum.
 
   logger.info('[BullMQ] Queues initialized and repeatable jobs registered');
 }

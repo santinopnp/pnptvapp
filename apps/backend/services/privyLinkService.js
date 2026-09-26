@@ -170,14 +170,42 @@ async function listWalletAddressesRaw(privyId) {
     .map((a) => String(a.address).toLowerCase());
 }
 
+const BASE_RPC    = process.env.BASE_RPC_URL || 'https://mainnet.base.org';
+const ETH_RPC     = process.env.ETH_RPC_URL  || 'https://ethereum-rpc.publicnode.com';
+const USDC_BASE   = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+const USDC_ETH    = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
+const ETH_DUST    = BigInt('10000000000000'); // 0.00001 ETH
+const USDC_DUST   = BigInt('1000');           // $0.001
+
+async function _isWalletFunded(address) {
+  if (!address) return false;
+  const addr = address.toLowerCase();
+  const data = '0x70a08231000000000000000000000000' + addr.slice(2);
+  const post = (rpc, body) =>
+    fetch(rpc, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      .then(r => r.json()).then(j => BigInt(j.result || '0x0'));
+  try {
+    const [eb, ub, ee, ue] = await Promise.all([
+      post(BASE_RPC, { jsonrpc: '2.0', id: 1, method: 'eth_getBalance', params: [addr, 'latest'] }),
+      post(BASE_RPC, { jsonrpc: '2.0', id: 2, method: 'eth_call', params: [{ to: USDC_BASE, data }, 'latest'] }),
+      post(ETH_RPC,  { jsonrpc: '2.0', id: 3, method: 'eth_getBalance', params: [addr, 'latest'] }),
+      post(ETH_RPC,  { jsonrpc: '2.0', id: 4, method: 'eth_call', params: [{ to: USDC_ETH,  data }, 'latest'] }),
+    ]);
+    return eb > ETH_DUST || ub > USDC_DUST || ee > ETH_DUST || ue > USDC_DUST;
+  } catch {
+    return true; // RPC error → skip to be safe
+  }
+}
+
 /**
  * Delete Privy users (and their embedded wallets) for PNPtv accounts that have
  * never made any crypto payment. Frees wallet slots on the free Privy tier.
  *
- * Safe: skips users with any token_purchase, completed checkout_intent, or
- * successful gas topup. 200ms delay between API calls to respect rate limits.
+ * Safe: skips funded wallets (Base + Ethereum mainnet), users with any
+ * token_purchase, completed checkout_intent, or successful gas topup.
+ * Archives privy_id to deleted_privy_accounts before nulling the users row.
  *
- * @returns {Promise<{candidates: number, deleted: number, errors: number}>}
+ * @returns {Promise<{candidates: number, deleted: number, funded: number, errors: number}>}
  */
 async function purgeUnusedWallets() {
   const appId     = process.env.PRIVY_APP_ID;
@@ -185,7 +213,7 @@ async function purgeUnusedWallets() {
   if (!appId || !appSecret) throw new Error('Missing PRIVY_APP_ID / PRIVY_APP_SECRET');
 
   const { rows } = await query(`
-    SELECT u.id, u.privy_id
+    SELECT u.id, u.privy_id, u.wallet_address
     FROM users u
     WHERE u.privy_id IS NOT NULL
       AND NOT EXISTS (SELECT 1 FROM token_purchases tp WHERE tp.user_id = u.id)
@@ -201,10 +229,17 @@ async function purgeUnusedWallets() {
 
   const authHeader = 'Basic ' + Buffer.from(`${appId}:${appSecret}`).toString('base64');
   let deleted = 0;
+  let funded  = 0;
   let errors  = 0;
 
   for (const user of rows) {
     try {
+      if (user.wallet_address && await _isWalletFunded(user.wallet_address)) {
+        logger.warn('[privy-purge] skipping funded wallet', { privyId: user.privy_id, wallet: user.wallet_address });
+        funded++;
+        await new Promise((res) => setTimeout(res, 200));
+        continue;
+      }
       const r = await fetch(
         `https://auth.privy.io/api/v1/users/${encodeURIComponent(user.privy_id)}`,
         { method: 'DELETE', headers: { Authorization: authHeader, 'privy-app-id': appId } },
@@ -214,11 +249,12 @@ async function purgeUnusedWallets() {
         throw new Error(`Privy DELETE ${r.status}: ${body.slice(0, 200)}`);
       }
       await query(
-        `UPDATE users
-            SET privy_id         = NULL,
-                wallet_address   = NULL,
-                wallet_linked_at = NULL
-          WHERE id = $1`,
+        `INSERT INTO deleted_privy_accounts (pnptv_user_id, privy_id, wallet_address, reason)
+         VALUES ($1, $2, $3, 'purge') ON CONFLICT (privy_id) DO NOTHING`,
+        [String(user.id), user.privy_id, user.wallet_address || null],
+      );
+      await query(
+        `UPDATE users SET privy_id = NULL, wallet_address = NULL, wallet_linked_at = NULL WHERE id = $1`,
         [user.id],
       );
       deleted++;
@@ -229,8 +265,8 @@ async function purgeUnusedWallets() {
     await new Promise((res) => setTimeout(res, 200));
   }
 
-  logger.info('[privy-purge] completed', { candidates: rows.length, deleted, errors });
-  return { candidates: rows.length, deleted, errors };
+  logger.info('[privy-purge] completed', { candidates: rows.length, deleted, funded, errors });
+  return { candidates: rows.length, deleted, funded, errors };
 }
 
 module.exports = {

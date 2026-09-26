@@ -48,9 +48,12 @@ const AUTH_HEADER = 'Basic ' + Buffer.from(`${PRIVY_ID}:${PRIVY_SECRET}`).toStri
 const EXECUTE  = process.argv.includes('--execute');
 const DELAY_MS = 200;
 
-// On-chain balance check (Base mainnet)
+// On-chain balance check — Base mainnet AND Ethereum mainnet.
+// Privy embedded wallets are EVM-compatible and users may hold funds on either chain.
 const BASE_RPC        = process.env.BASE_RPC_URL || 'https://mainnet.base.org';
+const ETH_RPC         = process.env.ETH_RPC_URL  || 'https://ethereum-rpc.publicnode.com';
 const USDC_BASE       = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+const USDC_ETH        = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
 const ETH_DUST_WEI    = BigInt('10000000000000');  // 0.00001 ETH
 const USDC_DUST_UNITS = BigInt('1000');             // $0.001 USDC (6 decimals)
 
@@ -59,25 +62,19 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 async function isAddressFunded(address) {
   if (!address) return false;
   const addr = address.toLowerCase();
+  const data = '0x70a08231000000000000000000000000' + addr.slice(2);
+  const post = (rpc, body) =>
+    fetch(rpc, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      .then(r => r.json()).then(j => BigInt(j.result || '0x0'));
   try {
-    const [ethRes, usdcRes] = await Promise.all([
-      fetch(BASE_RPC, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_getBalance', params: [addr, 'latest'] }),
-      }),
-      fetch(BASE_RPC, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0', id: 2, method: 'eth_call',
-          params: [{ to: USDC_BASE, data: '0x70a08231000000000000000000000000' + addr.slice(2) }, 'latest'],
-        }),
-      }),
+    const [ethBase, usdcBase, ethEth, usdcEth] = await Promise.all([
+      post(BASE_RPC, { jsonrpc: '2.0', id: 1, method: 'eth_getBalance', params: [addr, 'latest'] }),
+      post(BASE_RPC, { jsonrpc: '2.0', id: 2, method: 'eth_call', params: [{ to: USDC_BASE, data }, 'latest'] }),
+      post(ETH_RPC,  { jsonrpc: '2.0', id: 3, method: 'eth_getBalance', params: [addr, 'latest'] }),
+      post(ETH_RPC,  { jsonrpc: '2.0', id: 4, method: 'eth_call', params: [{ to: USDC_ETH,  data }, 'latest'] }),
     ]);
-    const ethBal  = BigInt((await ethRes.json()).result  || '0x0');
-    const usdcBal = BigInt((await usdcRes.json()).result || '0x0');
-    return ethBal > ETH_DUST_WEI || usdcBal > USDC_DUST_UNITS;
+    return ethBase > ETH_DUST_WEI || usdcBase > USDC_DUST_UNITS ||
+           ethEth  > ETH_DUST_WEI || usdcEth  > USDC_DUST_UNITS;
   } catch {
     return true; // RPC error → skip delete to be safe
   }
@@ -161,6 +158,11 @@ async function runPass1() {
     try {
       const status = await deletePrivyUser(user.privy_id);
       await query(
+        `INSERT INTO deleted_privy_accounts (pnptv_user_id, privy_id, wallet_address, reason)
+         VALUES ($1, $2, $3, 'purge') ON CONFLICT (privy_id) DO NOTHING`,
+        [String(user.id), user.privy_id, user.wallet_address || null],
+      );
+      await query(
         `UPDATE users SET privy_id = NULL, wallet_address = NULL, wallet_linked_at = NULL WHERE id = $1`,
         [user.id],
       );
@@ -218,7 +220,14 @@ async function runPass2() {
       continue;
     }
     try {
+      const wallets = (Array.isArray(pu.linked_accounts) ? pu.linked_accounts : [])
+        .filter(a => a?.type === 'wallet' && a.address);
       const status = await deletePrivyUser(pu.id);
+      await query(
+        `INSERT INTO deleted_privy_accounts (pnptv_user_id, privy_id, wallet_address, reason)
+         VALUES (NULL, $1, $2, 'purge-orphan') ON CONFLICT (privy_id) DO NOTHING`,
+        [pu.id, wallets[0]?.address || null],
+      );
       console.log(`deleted (privy ${status})`);
       deleted++;
     } catch (err) {
