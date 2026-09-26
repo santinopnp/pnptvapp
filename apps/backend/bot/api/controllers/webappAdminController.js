@@ -2810,6 +2810,16 @@ const getTierFeatureSplit = async (req, res) => {
   }
 };
 
+const getGrowthSalesReport = async (req, res) => {
+  try {
+    const data = await AdminDashboardService.getGrowthSalesReport();
+    return res.json({ success: true, ...data });
+  } catch (err) {
+    logger.error('getGrowthSalesReport error', err);
+    return res.status(500).json({ error: err.message });
+  }
+};
+
 const MONITORING_SERVICES = [
   { key: 'web',        label: 'Web App',           category: 'core',    url: 'https://pnptv.app' },
   { key: 'bot',        label: 'API / Backend',      category: 'core',    url: 'https://pnptv.app/api/health' },
@@ -3402,6 +3412,7 @@ module.exports = {
   getMetabaseCard,
   getUsageAnalytics,
   getTierFeatureSplit,
+  getGrowthSalesReport,
   // Infrastructure monitoring
   getMonitoringStatus,
   // EfiPay reseller endpoints (easybots.store → pnptv.app)

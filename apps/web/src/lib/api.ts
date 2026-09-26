@@ -6307,6 +6307,60 @@ export function fetchAdminTierFeatures(days: number): Promise<TierFeaturesData> 
   return request(`/api/webapp/admin/analytics/tier-features?days=${days}`);
 }
 
+export interface TrialCliffStats {
+  cohortTotal: number;
+  withCard: number;
+  activeRecent: number;
+  telegramReachable: number;
+  alreadyExpired: number;
+  expiring7d: number;
+  nudgesSent: number;
+  peakExpiryAt: string | null;
+  peakExpiryCount: number;
+}
+
+export interface PrimeCompositionRow {
+  bucket: string;
+  count: number;
+}
+
+export interface HourlyBucket {
+  hour: number;
+  n: number;
+}
+
+export interface HourlyTierBucket extends HourlyBucket {
+  tier: string;
+}
+
+export interface HourlyCountryBucket extends HourlyBucket {
+  country: string;
+}
+
+export interface HourlyFeatureBucket extends HourlyBucket {
+  feature: string;
+}
+
+export interface HourlyTrafficData {
+  days: number;
+  overall: HourlyBucket[];
+  byTier: HourlyTierBucket[];
+  byCountry: HourlyCountryBucket[];
+  byFeature: HourlyFeatureBucket[];
+}
+
+export interface GrowthSalesReportData {
+  success: boolean;
+  generatedAt: string;
+  trialCliff: TrialCliffStats;
+  primeComposition: PrimeCompositionRow[];
+  hourlyTraffic: HourlyTrafficData;
+}
+
+export function fetchAdminGrowthSalesReport(): Promise<GrowthSalesReportData> {
+  return request(`/api/webapp/admin/analytics/growth-sales`);
+}
+
 export interface AdminUser {
   id: string;
   username: string;
