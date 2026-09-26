@@ -100,6 +100,19 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
     const [showDisclaimer, setShowDisclaimer] = useState(false);
     const [isPortrait, setIsPortrait] = useState(false);
     const [videoDims, setVideoDims] = useState<{ w: number; h: number } | null>(null);
+
+    // Pre-detect portrait orientation from poster image so the container is
+    // sized correctly on first render, before loadedmetadata fires.
+    useEffect(() => {
+      if (!poster) return;
+      const img = new Image();
+      img.onload = () => {
+        if (img.naturalWidth && img.naturalHeight) {
+          setIsPortrait(img.naturalHeight > img.naturalWidth * 1.05);
+        }
+      };
+      img.src = poster;
+    }, [poster]);
     const [playbackError, setPlaybackError] = useState<string | null>(null);
 
     const [orientationLocked, setOrientationLocked] = useState(false);
