@@ -88,7 +88,8 @@ function isTierEligibleForAds(userTier, userRole) {
 function getTierAdLevel(userTier, userRole, userMeta) {
   if (userRole === 'admin' || userRole === 'superadmin') return 'none';
   const tier = String(userTier || '').toLowerCase();
-  if (tier === 'prime' || tier === 'member' || tier === 'banned') return 'none';
+  if (tier === 'prime' || tier === 'banned') return 'none';
+  if (tier === 'member') return 'minimal';
 
   // Free tier — always full ads (no trial ramp, no engagement gate)
   return 'full';
