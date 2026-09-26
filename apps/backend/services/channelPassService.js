@@ -41,7 +41,7 @@ function nowpaymentsWidgetUrl(invoiceId) {
 // 14-coin allowlist (mirrors tokenCheckoutService line 560 post-fix).
 const ALLOWED_NP_CURRENCIES = new Set([
   'btc', 'eth', 'ltc', 'doge', 'xmr', 'sol', 'trx', 'bnbbsc', 'matic',
-  'usdcerc20', 'usdcsol', 'usdttrc20', 'usdtbsc', 'usdterc20',
+  'usdcsol', 'usdttrc20', 'usdtbsc', 'usdterc20',
 ]);
 
 // 1 USD = 6 Ru$h (platform rate)
@@ -571,7 +571,7 @@ async function purchaseWithFiat({ userId, creatorId, provider, payCurrency }) {
     const requestedCurrency = payCurrency ? String(payCurrency).toLowerCase() : null;
     const validPayCurrency = (requestedCurrency && ALLOWED_NP_CURRENCIES.has(requestedCurrency))
       ? requestedCurrency
-      : 'usdcerc20';
+      : 'usdcsol';
 
     if (requestedCurrency && requestedCurrency !== validPayCurrency) {
       logger.warn('[channelPassService] purchaseWithFiat nowpayments: unsupported pay_currency — using fallback', {

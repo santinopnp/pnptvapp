@@ -127,7 +127,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
   // chain), BTC, or ETH outside our Base wallet flow. Must live before the
   // `if (!isOpen) return null` early return — hook order must be identical on
   // every render or React #310 fires when the modal opens/closes.
-  const [npCoin, setNpCoin] = useState<'usdcerc20' | 'btc' | 'eth'>('btc');
+  const [npCoin, setNpCoin] = useState<'usdcsol' | 'btc' | 'eth'>('btc');
   const [npFallbackPackageId, setNpFallbackPackageId] = useState<string | null>(null);
   const [selectedApp, setSelectedApp] = useState<string | null>(null);
   // Tracks when the auto-trigger path has explicitly exited to show the full UI
@@ -1137,7 +1137,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
                   <div className="mt-2 space-y-2 animate-in fade-in slide-in-from-top-1 duration-150">
                     <div className="flex gap-1.5 justify-center flex-wrap">
                       {([
-                        { id: 'usdcerc20' as const, label: 'USDC', tint: '#2775ca' },
+                        { id: 'usdcsol' as const, label: 'USDC', tint: '#2775ca' },
                         { id: 'btc'       as const, label: 'BTC',  tint: '#F7931A' },
                         { id: 'eth'       as const, label: 'ETH',  tint: '#627EEA' },
                       ]).map((c) => (
@@ -1160,7 +1160,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
                         const price = Number(pkg.usd);
                         const isPaying = npFallbackPackageId === pkg.id;
                         const disabled = isPaying || success !== null || npFallbackPackageId !== null;
-                        const coinLabel = npCoin === 'usdcerc20' ? 'USDC' : npCoin === 'btc' ? 'BTC' : 'ETH';
+                        const coinLabel = npCoin === 'usdcsol' ? 'USDC' : npCoin === 'btc' ? 'BTC' : 'ETH';
                         return (
                           <button
                             key={`np-${pkg.id}`}

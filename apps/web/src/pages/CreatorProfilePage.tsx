@@ -1633,10 +1633,9 @@ export default function CreatorProfilePage() {
                               {/* Coin picker — only shown for "any_crypto" */}
                               {cryptoMethod === "any_crypto" && (() => {
                                 const COINS: { value: string; label: string }[] = [
-                                  { value: "usdcerc20", label: "USDC on Ethereum" },
+                                  { value: "usdcsol",   label: "USDC on Solana" },
                                   { value: "btc",       label: "BTC" },
                                   { value: "eth",       label: "ETH" },
-                                  { value: "usdcsol",   label: "USDC on Solana" },
                                   { value: "usdttrc20", label: "USDT on Tron" },
                                   { value: "usdtbsc",   label: "USDT on BSC" },
                                   { value: "usdterc20", label: "USDT on Ethereum" },
