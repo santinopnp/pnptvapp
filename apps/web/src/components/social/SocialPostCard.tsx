@@ -9,7 +9,10 @@ const PRIME_PLANS = [
 ] as const;
 
 type CheckoutModalPlan = { id: string; label: string; tag?: string; price: number; weekend?: boolean };
-const CHECKOUT_MODAL_PLANS: CheckoutModalPlan[] = [];
+const CHECKOUT_MODAL_PLANS: CheckoutModalPlan[] = [
+  { id: "yearly50",    label: "PRIME Annual",   tag: "1 year",                      price: 50.00  },
+  { id: "lifetime100", label: "PNPtv Founders", tag: "18 mo PRIME + ✨ Channel",    price: 100.00 },
+];
 import { MentionText } from "@/components/MentionText";
 import { MentionInput } from "@/components/MentionInput";
 import { SharePostModal } from "@/components/SharePostModal";
