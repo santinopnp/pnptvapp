@@ -332,6 +332,7 @@ const NearbyPlaces = lazy(() => import("@/pages/admin/NearbyPlaces"));
 const CanvaIntegration = lazy(() => import("@/pages/admin/CanvaIntegration"));
 const AdminDemographics = lazy(() => import("@/pages/admin/AdminDemographics"));
 const CustomerResearch = lazy(() => import("@/pages/admin/CustomerResearch"));
+const TrafficReport = lazy(() => import("@/pages/admin/TrafficReport"));
 const AdminMonetization = lazy(() => import("@/pages/admin/Monetization"));
 const Mono = lazy(() => import("@/pages/admin/Mono"));
 const Gamification = lazy(() => import("@/pages/admin/Gamification"));
@@ -988,6 +989,14 @@ export const router = createBrowserRouter([
         element: (
           <ModuleLoader>
             <CustomerResearch />
+          </ModuleLoader>
+        ),
+      },
+      {
+        path: "traffic-report",
+        element: (
+          <ModuleLoader>
+            <TrafficReport />
           </ModuleLoader>
         ),
       },

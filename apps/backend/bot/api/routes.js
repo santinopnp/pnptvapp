@@ -7085,6 +7085,8 @@ const primeController = require('./controllers/primeController');
 app.get('/api/webapp/admin/stats', adminGuard, asyncHandler(webappAdminController.getStats));
 app.get('/api/webapp/admin/demographics', adminGuard, asyncHandler(webappAdminController.getDemographics));
 app.get('/api/webapp/admin/customer-research', adminGuard, asyncHandler(adminCustomerResearchController.getCustomerResearch));
+const adminTrafficReportController = require('./controllers/adminTrafficReportController');
+app.get('/api/webapp/admin/traffic-report', adminGuard, asyncHandler(adminTrafficReportController.getTrafficReport));
 app.get('/api/webapp/admin/churn-trend', adminGuard, asyncHandler(webappAdminController.getChurnTrend));
 app.get('/api/webapp/admin/creator-leaderboard', adminGuard, asyncHandler(webappAdminController.getCreatorLeaderboard));
 app.get('/api/webapp/admin/analytics/umami', adminGuard, asyncHandler(webappAdminController.getUmamiStats));

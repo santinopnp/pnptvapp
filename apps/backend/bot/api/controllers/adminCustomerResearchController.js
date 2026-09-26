@@ -3,7 +3,7 @@ const logger = require('../../../utils/logger');
 
 /**
  * GET /api/webapp/admin/customer-research
- * Population KPIs, customer profiles, revenue by plan, feature usage, top payers.
+ * 5 named customer profiles, revenue by plan, feature usage, top payers.
  */
 const getCustomerResearch = async (req, res) => {
   try {
@@ -12,28 +12,35 @@ const getCustomerResearch = async (req, res) => {
 
     const [
       populationRows,
+      superSpendersRow,
       revenueByPlanRows,
       topPayersRows,
       featureRows,
     ] = await Promise.all([
-      // Population KPIs
       query(`
         SELECT
-          COUNT(*)                                                                      AS total_users,
-          COUNT(CASE WHEN last_active >= NOW() - INTERVAL '7 days'  THEN 1 END)       AS active_users,
-          COUNT(CASE WHEN last_active >= NOW() - INTERVAL '30 days' THEN 1 END)       AS active_30d,
-          COUNT(CASE WHEN creator_status = 'active'                 THEN 1 END)       AS creators_active,
-          (SELECT COUNT(DISTINCT user_id) FROM payments WHERE status = 'completed')   AS ever_paid_users
+          COUNT(*)                                                                    AS total_users,
+          COUNT(CASE WHEN last_active >= NOW() - INTERVAL '7 days'  THEN 1 END)     AS active_users,
+          COUNT(CASE WHEN last_active >= NOW() - INTERVAL '30 days' THEN 1 END)     AS active_30d,
+          COUNT(CASE WHEN last_active <  NOW() - INTERVAL '30 days' THEN 1 END)     AS inactive_30d,
+          COUNT(CASE WHEN creator_status = 'active'                 THEN 1 END)     AS creators_active,
+          (SELECT COUNT(DISTINCT user_id) FROM payments WHERE status = 'completed') AS ever_paid_users
         FROM users
       `),
 
-      // Revenue by plan (completed payments only, group by plan_name, NULL → "Sin plan")
+      query(`
+        SELECT COUNT(*) AS cnt FROM (
+          SELECT user_id FROM payments WHERE status = 'completed'
+          GROUP BY user_id HAVING COUNT(*) >= 2 AND SUM(amount) >= 200
+        ) t
+      `),
+
       query(`
         SELECT
           COALESCE(NULLIF(TRIM(plan_name), ''), 'Sin plan') AS plan,
           COUNT(*)::int                                      AS pagos,
           SUM(amount)                                        AS ingresos,
-          ROUND(AVG(amount), 2)                              AS ticket_promedio
+          ROUND(AVG(amount), 2)                             AS ticket_promedio
         FROM payments
         WHERE status = 'completed'
         GROUP BY plan
@@ -41,13 +48,12 @@ const getCustomerResearch = async (req, res) => {
         LIMIT 20
       `),
 
-      // Top payers
       query(`
         SELECT
           p.user_id,
           u.username,
-          COUNT(*)::int   AS pagos,
-          SUM(p.amount)   AS total_gastado
+          COUNT(*)::int  AS pagos,
+          SUM(p.amount)  AS total_gastado
         FROM payments p
         LEFT JOIN users u ON u.id::text = p.user_id
         WHERE p.status = 'completed'
@@ -56,45 +62,73 @@ const getCustomerResearch = async (req, res) => {
         LIMIT 10
       `),
 
-      // Feature usage (absolute counts)
       query(`
         SELECT
-          (SELECT COUNT(*) FROM payments       WHERE status = 'completed') AS completed_payments,
-          (SELECT COUNT(*) FROM token_purchases)                            AS token_purchases,
-          (SELECT COUNT(*) FROM social_posts)                               AS posts,
-          (SELECT COUNT(*) FROM direct_messages)                            AS dms,
-          (SELECT COUNT(*) FROM user_follows)                               AS follows,
-          (SELECT COUNT(*) FROM hangout_groups)                             AS hangouts,
-          (SELECT COUNT(*) FROM live_streams)                               AS streams,
-          (SELECT COUNT(*) FROM push_subscriptions)                         AS push_subs,
-          (SELECT COUNT(*) FROM social_post_likes)                          AS post_likes
+          (SELECT COUNT(*) FROM hangout_group_members)              AS hangout_members,
+          (SELECT COUNT(*) FROM main_stage_consents)                AS mainstage_consents,
+          (SELECT COUNT(*) FROM hangout_call_participants)          AS call_participants,
+          (SELECT COUNT(*) FROM pnp_tips)                          AS tips,
+          (SELECT COUNT(*) FROM creator_subscriptions
+            WHERE status = 'active')                               AS creator_subs_active,
+          (SELECT COUNT(*) FROM channel_subscribers)               AS channel_subs,
+          (SELECT COUNT(*) FROM live_streams)                      AS live_streams,
+          (SELECT COUNT(*) FROM token_purchases)                   AS token_purchases
       `),
     ]);
 
     const pop = populationRows.rows[0] || {};
     const feat = featureRows.rows[0] || {};
-
     const totalUsers = toInt(pop.total_users) || 1;
+    const neverPaid = toInt(pop.total_users) - toInt(pop.ever_paid_users);
 
-    // Customer profiles — segmented snapshots
     const profiles = [
-      { label: 'Total registrados',   count: toInt(pop.total_users),      signal: 'base' },
-      { label: 'Activos (7 d)',        count: toInt(pop.active_users),      signal: `${Math.round(toInt(pop.active_users) / totalUsers * 100)}%` },
-      { label: 'Activos (30 d)',       count: toInt(pop.active_30d),        signal: `${Math.round(toInt(pop.active_30d) / totalUsers * 100)}%` },
-      { label: 'Creadores activos',    count: toInt(pop.creators_active),   signal: `${Math.round(toInt(pop.creators_active) / totalUsers * 100)}%` },
-      { label: 'Han pagado (alguna vez)', count: toInt(pop.ever_paid_users), signal: `${Math.round(toInt(pop.ever_paid_users) / totalUsers * 100)}%` },
+      {
+        key: 'explorador',
+        label: 'Explorador free',
+        desc: 'Se registró pero nunca pagó. Consumió Main Stage / Hangouts, no convirtió a pago.',
+        count: neverPaid,
+        signal: `${Math.round(neverPaid / totalUsers * 100)}%`,
+      },
+      {
+        key: 'prime',
+        label: 'Suscriptor PRIME',
+        desc: 'Paga una membresía recurrente. Principal fuente de ingresos hoy.',
+        count: toInt(pop.ever_paid_users),
+        signal: null,
+      },
+      {
+        key: 'whale',
+        label: 'Super-spender',
+        desc: 'Gasto acumulado alto, pagos repetidos ($200–$500+ acumulado, varios pagos).',
+        count: toInt(superSpendersRow.rows[0]?.cnt || 0),
+        signal: null,
+      },
+      {
+        key: 'creator',
+        label: 'Creador / Performer',
+        desc: 'Ofrece contenido o sesiones. Depende de Live y Channels para monetizar.',
+        count: toInt(pop.creators_active),
+        signal: null,
+      },
+      {
+        key: 'inactive',
+        label: 'Usuario inactivo',
+        desc: 'No activo en 30+ días. Candidato a encuesta de "¿por qué no volviste?".',
+        count: toInt(pop.inactive_30d),
+        signal: `${Math.round(toInt(pop.inactive_30d) / totalUsers * 100)}%`,
+      },
     ];
 
     const featureUsage = [
-      { label: 'Pagos completados',   count: toInt(feat.completed_payments) },
-      { label: 'Compras de Ru$h',     count: toInt(feat.token_purchases) },
-      { label: 'Posts publicados',    count: toInt(feat.posts) },
-      { label: 'Likes en posts',      count: toInt(feat.post_likes) },
-      { label: 'DMs enviados',        count: toInt(feat.dms) },
-      { label: 'Follows',             count: toInt(feat.follows) },
-      { label: 'Hangouts creados',    count: toInt(feat.hangouts) },
-      { label: 'Streams en vivo',     count: toInt(feat.streams) },
-      { label: 'Push opt-ins',        count: toInt(feat.push_subs) },
+      { label: 'Hangouts — miembros de grupos',           count: toInt(feat.hangout_members) },
+      { label: 'Main Stage — consentimientos',            count: toInt(feat.mainstage_consents) },
+      { label: 'Hangouts — participantes en llamadas',    count: toInt(feat.call_participants) },
+      { label: 'Compras de Ru$h 💎',                      count: toInt(feat.token_purchases) },
+      { label: 'Streams en vivo',                         count: toInt(feat.live_streams) },
+      { label: 'PNP Live — tips enviados',                count: toInt(feat.tips) },
+      { label: 'Creador — suscripciones activas',         count: toInt(feat.creator_subs_active) },
+      { label: 'PNP Live — tickets de show',              count: 0 },
+      { label: 'PNP Channels — suscriptores',             count: toInt(feat.channel_subs) },
     ];
 
     return res.json({
@@ -110,16 +144,16 @@ const getCustomerResearch = async (req, res) => {
         },
         profiles,
         revenueByPlan: revenueByPlanRows.rows.map(r => ({
-          plan:          r.plan,
-          pagos:         toInt(r.pagos),
-          ingresos:      toFloat(r.ingresos),
+          plan:           r.plan,
+          pagos:          toInt(r.pagos),
+          ingresos:       toFloat(r.ingresos),
           ticketPromedio: toFloat(r.ticket_promedio),
         })),
         featureUsage,
         topPayers: topPayersRows.rows.map(r => ({
-          userId:       r.user_id,
-          username:     r.username || null,
-          pagos:        toInt(r.pagos),
+          userId:      r.user_id,
+          username:    r.username || null,
+          pagos:       toInt(r.pagos),
           totalGastado: toFloat(r.total_gastado),
         })),
       },

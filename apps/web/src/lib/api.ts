@@ -6637,13 +6637,34 @@ export interface CustomerResearch {
     creatorsActive: number;
     everPaidUsers: number;
   };
-  profiles: { label: string; count: number; signal: string }[];
+  profiles: { key: string; label: string; desc: string; count: number; signal: string | null }[];
   revenueByPlan: { plan: string; pagos: number; ingresos: number; ticketPromedio: number }[];
   featureUsage: { label: string; count: number }[];
   topPayers: { userId: string; username: string | null; pagos: number; totalGastado: number }[];
 }
 export function getCustomerResearch(): Promise<{ success: boolean; research: CustomerResearch }> {
   return request("/api/webapp/admin/customer-research");
+}
+
+// Admin Traffic Report
+export interface TrafficReport {
+  asOf: string;
+  windowDays: number;
+  totalAccesses: number;
+  peakHour: number;
+  hourly: { hour: number; cnt: number }[];
+  byTier: { tier: string; hourly: { hour: number; cnt: number }[] }[];
+  byCountry: { country: string; total: number; hourly: { hour: number; cnt: number }[] }[];
+  functionality: { func: string; cnt: number }[];
+  trialAlert: { count: number; earliest: string | null };
+  primeComposition: { type: string; cnt: number }[];
+  dailyRegistrations: { day: string; cnt: number }[];
+  dailyRevenue: { day: string; total: number }[];
+  checkoutFunnel: { initiated: number; completed: number };
+  weeklyHeatmap: { dow: number; franja: string; cnt: number }[];
+}
+export function getTrafficReport(): Promise<{ success: boolean; report: TrafficReport }> {
+  return request("/api/webapp/admin/traffic-report");
 }
 
 // Admin Users
