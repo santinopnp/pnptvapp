@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { StatCard } from "@/components/admin/StatCard";
+import { useI18n } from "@/lib/i18n";
 import {
   fetchAdminGrowthSalesReport,
   type GrowthSalesReportData,
@@ -27,11 +28,11 @@ function fmtHour(hour: number): string {
   return `${h12}${period}`;
 }
 
-function fmtDateTime(iso: string | null): string {
+function fmtDateTime(iso: string | null, locale: string): string {
   if (!iso) return "—";
   const d = new Date(iso);
   if (isNaN(d.getTime())) return String(iso);
-  return d.toLocaleString("en-US", {
+  return d.toLocaleString(locale, {
     weekday: "short",
     month: "short",
     day: "numeric",
@@ -79,6 +80,10 @@ function HourlyBarChart({
 }
 
 export default function GrowthSalesReport() {
+  const i18n = useI18n();
+  const t = i18n.admin.growthSalesReport;
+  const locale = i18n.lang === "es" ? "es-ES" : "en-US";
+
   const [data, setData] = useState<GrowthSalesReportData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -91,11 +96,11 @@ export default function GrowthSalesReport() {
       setError(null);
       setLastFetched(new Date());
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load growth & sales report");
+      setError(err instanceof Error ? err.message : t.failedToLoad);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t.failedToLoad]);
 
   useEffect(() => {
     load();
@@ -130,19 +135,31 @@ export default function GrowthSalesReport() {
     ).map(([key, rows]) => ({ key, label: key, rows })),
   };
 
+  const dimLabels: Record<"tier" | "country" | "feature", string> = {
+    tier: t.dimTier,
+    country: t.dimCountry,
+    feature: t.dimFeature,
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold text-pnp-textPrimary">Growth &amp; Sales Report</h1>
+          <h1 className="text-xl font-bold text-pnp-textPrimary">{t.title}</h1>
           <p className="text-xs text-pnp-textSecondary mt-0.5">
-            Trial cliff risk, PRIME composition, and hour-of-day traffic.
+            {t.subtitle}
             {lastFetched && (
-              <> Updated {lastFetched.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })} · auto-refreshes every 5 min.</>
+              <>
+                {" "}
+                {t.updatedAt.replace(
+                  "{0}",
+                  lastFetched.toLocaleTimeString(locale, { hour: "numeric", minute: "2-digit" })
+                )}
+              </>
             )}
           </p>
         </div>
-        {loading && !data && <span className="text-xs text-pnp-textSecondary">Loading…</span>}
+        {loading && !data && <span className="text-xs text-pnp-textSecondary">{t.loading}</span>}
       </div>
 
       {error && (
@@ -157,40 +174,40 @@ export default function GrowthSalesReport() {
           <div className="flex items-center gap-2 mb-3 text-red-400">
             <AlertIcon />
             <span className="text-sm font-semibold uppercase tracking-wide">
-              Trial expiration cliff
+              {t.trialCliffAlert}
             </span>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-            <StatCard label="Trial cohort" value={cliff.cohortTotal.toLocaleString()} variant="danger" />
-            <StatCard label="Expiring in 7d" value={cliff.expiring7d.toLocaleString()} variant="danger" />
+            <StatCard label={t.trialCohort} value={cliff.cohortTotal.toLocaleString()} variant="danger" />
+            <StatCard label={t.expiring7d} value={cliff.expiring7d.toLocaleString()} variant="danger" />
             <StatCard
-              label="With card on file"
+              label={t.withCard}
               value={cliff.cohortTotal ? `${Math.round((cliff.withCard / cliff.cohortTotal) * 100)}%` : "0%"}
-              subtitle={`${cliff.withCard.toLocaleString()} of ${cliff.cohortTotal.toLocaleString()}`}
+              subtitle={`${cliff.withCard.toLocaleString()} / ${cliff.cohortTotal.toLocaleString()}`}
               variant="warning"
             />
-            <StatCard label="Reachable via Telegram" value={cliff.telegramReachable.toLocaleString()} variant="default" />
+            <StatCard label={t.telegramReachable} value={cliff.telegramReachable.toLocaleString()} variant="default" />
           </div>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs text-pnp-textSecondary">
             <div className="flex items-center gap-1.5">
               <ClockIcon />
               <span>
-                Peak expiry hour: <strong className="text-pnp-textPrimary">{fmtDateTime(cliff.peakExpiryAt)}</strong>
-                {" "}({cliff.peakExpiryCount.toLocaleString()} accounts)
+                {t.peakExpiryHour}: <strong className="text-pnp-textPrimary">{fmtDateTime(cliff.peakExpiryAt, locale)}</strong>
+                {" "}({cliff.peakExpiryCount.toLocaleString()} {t.accounts})
               </span>
             </div>
-            <div>Already expired: <strong className="text-pnp-textPrimary">{cliff.alreadyExpired.toLocaleString()}</strong></div>
-            <div>Trial-day-2 nudges sent: <strong className="text-pnp-textPrimary">{cliff.nudgesSent.toLocaleString()}</strong></div>
+            <div>{t.alreadyExpired}: <strong className="text-pnp-textPrimary">{cliff.alreadyExpired.toLocaleString()}</strong></div>
+            <div>{t.nudgesSent}: <strong className="text-pnp-textPrimary">{cliff.nudgesSent.toLocaleString()}</strong></div>
           </div>
         </div>
       )}
 
       {/* PRIME composition */}
       <div className="rounded-xl bg-pnp-surface border border-pnp-border p-4">
-        <div className="text-sm font-medium text-pnp-textPrimary mb-0.5">PRIME tier composition</div>
-        <div className="text-xs text-pnp-textSecondary mb-3">What's actually behind the PRIME label</div>
+        <div className="text-sm font-medium text-pnp-textPrimary mb-0.5">{t.primeComposition}</div>
+        <div className="text-xs text-pnp-textSecondary mb-3">{t.primeCompositionDesc}</div>
         {primeComposition.length === 0 ? (
-          <div className="text-xs text-pnp-textSecondary">No data</div>
+          <div className="text-xs text-pnp-textSecondary">{t.noData}</div>
         ) : (
           <div className="space-y-2">
             {primeComposition.map((row) => {
@@ -219,10 +236,12 @@ export default function GrowthSalesReport() {
         <div className="flex items-center justify-between mb-3">
           <div>
             <div className="text-sm font-medium text-pnp-textPrimary">
-              Hour-of-day traffic (America/Bogota)
+              {t.hourlyTraffic}
             </div>
             <div className="text-xs text-pnp-textSecondary">
-              Last {data?.hourlyTraffic.days ?? 14} days, split by {selectedDim}
+              {t.hourlyTrafficDesc
+                .replace("{0}", String(data?.hourlyTraffic.days ?? 14))
+                .replace("{1}", dimLabels[selectedDim])}
             </div>
           </div>
           <div className="flex gap-1">
@@ -236,7 +255,7 @@ export default function GrowthSalesReport() {
                     : "bg-pnp-bg text-pnp-textSecondary hover:text-pnp-textPrimary"
                 }`}
               >
-                {dim === "tier" ? "Tier" : dim === "country" ? "Country" : "Feature"}
+                {dimLabels[dim]}
               </button>
             ))}
           </div>
@@ -244,13 +263,13 @@ export default function GrowthSalesReport() {
 
         {data && (
           <div className="mb-4">
-            <div className="text-xs text-pnp-textSecondary mb-2">Overall</div>
+            <div className="text-xs text-pnp-textSecondary mb-2">{t.overall}</div>
             <HourlyBarChart data={data.hourlyTraffic.overall} />
           </div>
         )}
 
         {(dims[selectedDim] ?? []).length === 0 ? (
-          <div className="text-xs text-pnp-textSecondary">No data for this dimension</div>
+          <div className="text-xs text-pnp-textSecondary">{t.noDataDimension}</div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {dims[selectedDim].map(({ key, label, rows }) => (
