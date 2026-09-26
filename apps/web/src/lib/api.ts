@@ -6627,6 +6627,25 @@ export function getAdminDemographics(): Promise<{ success: boolean; demographics
   return request("/api/webapp/admin/demographics");
 }
 
+// Admin Customer Research
+export interface CustomerResearch {
+  asOf: string;
+  population: {
+    totalUsers: number;
+    activeUsers: number;
+    active30d: number;
+    creatorsActive: number;
+    everPaidUsers: number;
+  };
+  profiles: { label: string; count: number; signal: string }[];
+  revenueByPlan: { plan: string; pagos: number; ingresos: number; ticketPromedio: number }[];
+  featureUsage: { label: string; count: number }[];
+  topPayers: { userId: string; username: string | null; pagos: number; totalGastado: number }[];
+}
+export function getCustomerResearch(): Promise<{ success: boolean; research: CustomerResearch }> {
+  return request("/api/webapp/admin/customer-research");
+}
+
 // Admin Users
 export interface AdminUserFilters {
   tier?: string;

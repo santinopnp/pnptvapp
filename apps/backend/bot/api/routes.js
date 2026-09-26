@@ -7078,11 +7078,13 @@ app.post('/api/webapp/payments/create', requireSessionAuth, paymentCreateLimiter
 
 // Web App Admin Routes (session auth + role check)
 const webappAdminController = require('./controllers/webappAdminController');
+const adminCustomerResearchController = require('./controllers/adminCustomerResearchController');
 const primeController = require('./controllers/primeController');
 
 // Admin endpoints with session-based authentication
 app.get('/api/webapp/admin/stats', adminGuard, asyncHandler(webappAdminController.getStats));
 app.get('/api/webapp/admin/demographics', adminGuard, asyncHandler(webappAdminController.getDemographics));
+app.get('/api/webapp/admin/customer-research', adminGuard, asyncHandler(adminCustomerResearchController.getCustomerResearch));
 app.get('/api/webapp/admin/churn-trend', adminGuard, asyncHandler(webappAdminController.getChurnTrend));
 app.get('/api/webapp/admin/creator-leaderboard', adminGuard, asyncHandler(webappAdminController.getCreatorLeaderboard));
 app.get('/api/webapp/admin/analytics/umami', adminGuard, asyncHandler(webappAdminController.getUmamiStats));
