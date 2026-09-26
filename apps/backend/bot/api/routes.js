@@ -24822,15 +24822,24 @@ app.get('/internal/zoho/crm/search', requireInternalSecret, asyncHandler(async (
     if (!q) return res.status(400).json({ error: 'q param required' });
     const field = String(req.query.field || 'email').toLowerCase();
 
-    const fieldMap = { email: 'Email', username: 'Telegram_Handle', name: 'Full_Name' };
-    const zohoField = fieldMap[field] || 'Email';
-
     const axios = require('axios');
     const token = await zoho.getAccessToken();
     const apiDomain = process.env.ZOHO_API_DOMAIN || 'https://www.zohoapis.com';
 
-    const resp = await axios.get(`${apiDomain}/crm/v2/Contacts/search`, {
-      params: { criteria: `(${zohoField}:contains:${q})` },
+    // v3 API: use dedicated params for email/word; criteria for custom fields.
+    // criteria:contains on v2 returned 400 for every query — v2 is deprecated.
+    let searchParams;
+    if (field === 'email') {
+      searchParams = { email: q };
+    } else if (field === 'username') {
+      searchParams = { criteria: `(Telegram_Handle:equals:${q})` };
+    } else {
+      // name or default — word search scans Full_Name and other text fields
+      searchParams = { word: q };
+    }
+
+    const resp = await axios.get(`${apiDomain}/crm/v3/Contacts/search`, {
+      params: searchParams,
       headers: { Authorization: `Zoho-oauthtoken ${token}` },
       timeout: 15000,
     });
@@ -24857,7 +24866,7 @@ app.patch('/internal/zoho/crm/contacts/:contactId', requireInternalSecret, async
     const token = await zoho.getAccessToken();
     const apiDomain = process.env.ZOHO_API_DOMAIN || 'https://www.zohoapis.com';
 
-    const resp = await axios.put(`${apiDomain}/crm/v2/Contacts/${contactId}`, {
+    const resp = await axios.put(`${apiDomain}/crm/v3/Contacts/${contactId}`, {
       data: [fields],
     }, {
       headers: { Authorization: `Zoho-oauthtoken ${token}`, 'Content-Type': 'application/json' },

@@ -62,7 +62,7 @@ async function getAccessToken() {
 async function searchOne(module, criteria) {
   const token = await getAccessToken();
   try {
-    const resp = await axios.get(`${API}/crm/v2/${module}/search`, {
+    const resp = await axios.get(`${API}/crm/v3/${module}/search`, {
       params: { criteria },
       headers: { Authorization: `Zoho-oauthtoken ${token}` },
       timeout: 15000,
@@ -95,7 +95,7 @@ async function upsertContactByPnptvId(pnptvId, fields) {
 
   if (existing?.id) {
     const resp = await axios.put(
-      `${API}/crm/v2/Contacts/${existing.id}`,
+      `${API}/crm/v3/Contacts/${existing.id}`,
       body,
       { headers: { Authorization: `Zoho-oauthtoken ${token}`, 'Content-Type': 'application/json' }, timeout: 15000 }
     );
@@ -133,7 +133,7 @@ async function bulkUpsert(module, records, duplicateCheckFields = ['PNPtv_ID']) 
   const body = { data: records, duplicate_check_fields: duplicateCheckFields };
 
   const resp = await axios.post(
-    `${API}/crm/v2/${module}/upsert`,
+    `${API}/crm/v3/${module}/upsert`,
     body,
     { headers: { Authorization: `Zoho-oauthtoken ${token}`, 'Content-Type': 'application/json' }, timeout: 30000 }
   );
