@@ -55,7 +55,7 @@ const SKIP_PUSH = process.argv.includes('--skip-push');
 const BATCH_ID   = 'founders-99-last-call-20260926';
 const BOT_TOKEN  = process.env.BOT_TOKEN;
 const SANTINO_ID = '8599671840';
-const CTA_URL    = 'https://pnptv.app/subscribe?plan=lifetime-pass';
+const CTA_URL    = 'https://pnptv.app/founders';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 

@@ -359,6 +359,7 @@ const AdminInviteLinks = lazy(() => import("@/pages/admin/InviteLinks"));
 const AdminManualActivations = lazy(() => import("@/pages/admin/ManualActivations"));
 const ReferralAdmin = lazy(() => import("@/pages/admin/ReferralAdmin"));
 const Lifetime100 = lazy(() => import("@/pages/Lifetime100"));
+const FoundersPage = lazy(() => import("@/pages/FoundersPage"));
 const NequiNegociosPage = lazy(() =>
   import("@/pages/Lifetime100").then((m) => ({ default: m.NequiNegociosPage }))
 );
@@ -1403,6 +1404,14 @@ export const router = createBrowserRouter([
     element: (
       <ModuleLoader>
         <CallConfirmPage />
+      </ModuleLoader>
+    ),
+  },
+  {
+    path: "/founders",
+    element: (
+      <ModuleLoader>
+        <FoundersPage />
       </ModuleLoader>
     ),
   },
