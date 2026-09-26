@@ -9282,7 +9282,7 @@ app.get('/api/webapp/me/suggested-follows', requireSessionAuth, asyncHandler(asy
       ) AS already_follows
     FROM users u
     WHERE u.id <> $1
-      AND u.banned_at IS NULL
+      AND u.tier <> 'banned'
       AND u.creator_status = 'active'
       AND (
         u.crystal_creator_active_until = 'infinity'
@@ -13176,7 +13176,7 @@ app.post('/api/wallet/buy-nowpayments', walletBuyLimiter, requireSessionAuth, as
   // Accept any NP-supported coin. When null, NP shows the full picker on the invoice page.
   const ALLOWED_PAY_CURRENCIES = new Set([
     'btc', 'eth', 'ltc', 'doge', 'xmr', 'sol', 'trx', 'bnbbsc', 'matic',
-    'usdcerc20', 'usdcsol', 'usdttrc20', 'usdtbsc', 'usdterc20',
+    'usdcsol', 'usdttrc20', 'usdtbsc', 'usdterc20',
   ]);
   const payCurrency = (rawPayCurrency && ALLOWED_PAY_CURRENCIES.has(String(rawPayCurrency).toLowerCase()))
     ? String(rawPayCurrency).toLowerCase() : null;
@@ -14562,7 +14562,7 @@ app.post('/api/webapp/payments/usdc/prepare', requireSessionAuth, usdcPrepareLim
 
   const ALLOWED_PAY_CURRENCIES_PREPARE = new Set([
     'btc', 'eth', 'ltc', 'doge', 'xmr', 'sol', 'trx', 'bnbbsc', 'matic',
-    'usdcerc20', 'usdcsol', 'usdcbase', 'usdttrc20', 'usdtbsc', 'usdterc20',
+    'usdcsol', 'usdcbase', 'usdttrc20', 'usdtbsc', 'usdterc20',
   ]);
   const validPayCurrency = (rawPayCurrency && ALLOWED_PAY_CURRENCIES_PREPARE.has(String(rawPayCurrency).toLowerCase()))
     ? String(rawPayCurrency).toLowerCase() : null;
