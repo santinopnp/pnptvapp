@@ -70,6 +70,15 @@ function isHlsSource(src: string | undefined | null): boolean {
   return /\.m3u8(?:\?|#|$)/i.test(src);
 }
 
+// Mux thumbnails stored with fit_mode=smartcrop are cropped to 16:9 regardless
+// of the video's actual orientation, which makes portrait videos show a squished
+// landscape poster. Swap to fit_mode=preserve so the thumbnail respects the
+// video's natural aspect ratio. Safe to call on any URL.
+function normalizeMuxPoster(url: string | undefined): string | undefined {
+  if (!url) return url;
+  return url.replace(/([?&])fit_mode=smartcrop(&|$)/g, (_, sep, tail) => `${sep}fit_mode=preserve${tail}`);
+}
+
 export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
   (
     {
@@ -104,17 +113,18 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
     // Pre-detect portrait orientation from poster image so the container is
     // sized correctly on first render, before loadedmetadata fires.
     useEffect(() => {
-      if (!poster) return;
+      if (!normalizedPoster) return;
       const img = new Image();
       img.onload = () => {
         if (img.naturalWidth && img.naturalHeight) {
           setIsPortrait(img.naturalHeight > img.naturalWidth * 1.05);
         }
       };
-      img.src = poster;
-    }, [poster]);
+      img.src = normalizedPoster;
+    }, [normalizedPoster]);
     const [playbackError, setPlaybackError] = useState<string | null>(null);
 
+    const normalizedPoster = normalizeMuxPoster(poster);
     const [orientationLocked, setOrientationLocked] = useState(false);
     const orientationSupported = typeof window !== "undefined" &&
       typeof (screen.orientation as ScreenOrientation & { lock?(o: string): Promise<void> }).lock === "function";
@@ -392,13 +402,13 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
     return (
       <div ref={containerRef} className={containerClasses} style={style} data-video-container="1">
         {/* Ambient Blur Background — eliminates harsh black bars on portrait/letterboxed videos */}
-        {ambientBlur && poster && (
+        {ambientBlur && normalizedPoster && (
           <div
             className="absolute inset-0 pointer-events-none overflow-hidden z-0"
             aria-hidden="true"
           >
             <img
-              src={poster}
+              src={normalizedPoster}
               alt=""
               className="w-full h-full object-cover filter blur-3xl opacity-40 scale-125 saturate-150 transition-opacity duration-500"
             />
@@ -418,6 +428,7 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
           className={`relative z-10 w-full h-full object-contain mx-auto transition-all duration-300 ${
             isPortrait ? "max-h-[72vh] md:max-h-[680px]" : "max-h-[520px] lg:max-h-[640px]"
           }`}
+          poster={normalizedPoster}
           onLoadedMetadata={handleLoadedMetadata}
           onEnded={handleEnded}
           onPlay={handlePlay}

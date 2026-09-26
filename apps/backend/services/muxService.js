@@ -40,7 +40,9 @@ function getPlaybackUrl(playbackId) {
 
 function getThumbnailUrl(playbackId, opts = {}) {
   const { time, percentage = 25, width = 320 } = opts;
-  const base = `https://image.mux.com/${playbackId}/thumbnail.jpg?width=${width}&fit_mode=smartcrop`;
+  // fit_mode=preserve keeps the video's natural aspect ratio so portrait videos
+  // don't get cropped to a 16:9 landscape thumbnail (smartcrop default).
+  const base = `https://image.mux.com/${playbackId}/thumbnail.jpg?width=${width}&fit_mode=preserve`;
   if (time != null) return `${base}&time=${time}`;
   return `${base}&percentage=${percentage}`;
 }
