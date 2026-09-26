@@ -50,7 +50,7 @@
     "@types/react-dom": "^18.3.7",
     "@types/tus-js-client": "^1.8.0",
     "@vitejs/plugin-react": "^6.0.0",
-    "autoprefixer": "^10.4.0",
+    "autoprefixer": "^10.6.1",
     "postcss": "^8.5.28",
     "tailwindcss": "^3.4.0",
     "typescript": "^7.0.2",
