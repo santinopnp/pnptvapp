@@ -971,9 +971,9 @@ async function createCallCheckoutNowPayments({ userId, packageId, startTimeUtc, 
   let invoiceUrl;
   let npPayInfo = {};
   try {
-    const ALLOWED_CALL_PAY_CURRENCIES = new Set(['eth', 'usdcerc20']);
+    const ALLOWED_CALL_PAY_CURRENCIES = new Set(['btc', 'eth', 'usdcerc20', 'usdttrc20', 'ltc', 'bnbbsc']);
     const validCallPayCurrency = (payCurrency && ALLOWED_CALL_PAY_CURRENCIES.has(String(payCurrency).toLowerCase()))
-      ? String(payCurrency).toLowerCase() : 'usdcerc20';
+      ? String(payCurrency).toLowerCase() : 'btc';
 
     const paymentResp = await axios.post(
       `${NOWPAYMENTS_URL}/invoice`,

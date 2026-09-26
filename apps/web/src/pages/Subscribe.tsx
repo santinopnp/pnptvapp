@@ -35,7 +35,7 @@ import { connectSocket } from "@/lib/socket";
 const MEMBER_PLAN_IDS = new Set(["member_monthly"]);
 // These are filtered at the backend too (planModel.getPublicPlans HIDDEN_LEGACY_IDS).
 // Frontend set is kept as a second safety net for any plan that slips through.
-const HIDDEN_PLAN_IDS = new Set(["prime-trial-3d", "lifetime80", "monthly-pass-promo-15", "yearly50", "lifetime-pass", "lifetime100"]);
+const HIDDEN_PLAN_IDS = new Set(["prime-trial-3d", "lifetime80", "monthly-pass-promo-15", "yearly50", "lifetime100"]);
 
 const RECURRING_PLANS = new Set(["prime-week-pass-7d", "monthly-pass", "prime-diamond-pass-365d"]);
 
@@ -825,21 +825,6 @@ export default function Subscribe() {
 
         </div>
       )}
-      {/* Marketing hero — Rush wallet reveal loop (autoplay muted, no controls) */}
-      <div className="w-full mb-4 rounded-2xl overflow-hidden" style={{ background: "#0a0a0a", border: "1px solid rgba(255,255,255,0.06)" }}>
-        <video
-          autoPlay
-          muted
-          loop
-          playsInline
-          preload="metadata"
-          poster={`/videos/rush-marketing-vertical-${t.lang === "es" ? "es" : "en"}.jpg`}
-          className="w-full h-auto block"
-          aria-label={t.lang === "es" ? "Cómo funciona el pago con Ru$h" : "How Ru$h payment works"}
-        >
-          <source src={`/videos/rush-marketing-vertical-${t.lang === "es" ? "es" : "en"}.mp4`} type="video/mp4" />
-        </video>
-      </div>
 
       {/* New-to-crypto onboarding card — links to /crypto-guide */}
       <a

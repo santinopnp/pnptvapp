@@ -97,7 +97,7 @@ class Plan {
       'prime-trial-3d',
       'monthly-pass-promo-15',
       'yearly50',       // legacy annual; promo section retired — no longer surfaced
-      'lifetime-pass',  // retired Founders SKU; superseded, not publicly listed
+      // 'lifetime-pass' — re-listed for Founders last-call campaign 2026-09-26
     ]);
     // custom-prime-* are one-time operator-issued plans — never surface publicly
     const isCustomPlan = (plan) => plan.id.startsWith('custom-prime-');

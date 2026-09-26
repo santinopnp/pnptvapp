@@ -134,6 +134,16 @@ function AppGuidePanel({ es }: { es: boolean }) {
 // ── App picker sheet — creates a NowPayments invoice then opens window.open() popup.
 // NowPayments blocks iframe embedding, so we must use popup (feedback_nowpayments_iframe_blocked).
 // onLaunch / launching props kept for backward compat but are ignored.
+const APP_OPEN_LINKS: Record<string, string> = {
+  revolut:  'https://revolut.com/app',
+  cashapp:  'https://cash.app',
+  paypal:   'https://paypal.com/myaccount/crypto',
+  venmo:    'https://venmo.com',
+  n26:      'https://app.n26.com',
+  binance:  'https://app.binance.com',
+  coinbase: 'https://coinbase.com',
+};
+
 export function NpAppPickerSheet({
   isOpen,
   onClose,
@@ -148,30 +158,23 @@ export function NpAppPickerSheet({
   lang: string;
   planLabel?: string;
   onSuccess?: (orderId: string) => void;
-  onLaunch?: () => void;   // kept for backward compat — ignored
-  launching?: boolean;     // kept for backward compat — ignored
+  onLaunch?: () => void;
+  launching?: boolean;
 }) {
   const es = (lang || 'es').startsWith('es');
-  const [selectedApp, setSelectedApp] = useState<string | null>(null);
 
   type Phase = 'idle' | 'loading' | 'ready' | 'success' | 'error';
   const [phase, setPhase] = useState<Phase>('idle');
   const [invoiceError, setInvoiceError] = useState<string | null>(null);
   const [invoiceUrl, setInvoiceUrl] = useState<string | null>(null);
+  const [widgetUrl, setWidgetUrl] = useState<string | null>(null);
   const [orderId, setOrderId] = useState<string | null>(null);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const popupRef = useRef<Window | null>(null);
 
-  const selectedSteps = selectedApp
-    ? (es ? PANEL_STEPS_ES : PANEL_STEPS_EN)[selectedApp] ?? []
-    : [];
-  const selectedAppLabel = PANEL_APPS.find(a => a.id === selectedApp)?.label ?? '';
-
   useEffect(() => {
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, []);
 
   useEffect(() => {
@@ -179,8 +182,8 @@ export function NpAppPickerSheet({
       setPhase('idle');
       setInvoiceError(null);
       setInvoiceUrl(null);
+      setWidgetUrl(null);
       setOrderId(null);
-      setSelectedApp(null);
       if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
       popupRef.current?.close();
       popupRef.current = null;
@@ -192,6 +195,7 @@ export function NpAppPickerSheet({
     setPhase('loading');
     setInvoiceError(null);
     setInvoiceUrl(null);
+    setWidgetUrl(null);
     try {
       const res = await prepareUsdcSubscription(planId, undefined, undefined, 'btc');
       if (!res.success || !res.nowpaymentsInvoiceId || !res.orderId) {
@@ -199,9 +203,9 @@ export function NpAppPickerSheet({
       }
       setOrderId(res.orderId);
       setInvoiceUrl(res.invoiceUrl as string);
+      setWidgetUrl(`https://nowpayments.io/embeds/payment-widget?iid=${encodeURIComponent(String(res.nowpaymentsInvoiceId))}`);
       setPhase('ready');
 
-      // Poll every 8s for payment confirmation
       if (pollRef.current) clearInterval(pollRef.current);
       pollRef.current = setInterval(async () => {
         try {
@@ -226,11 +230,8 @@ export function NpAppPickerSheet({
     }
   }, [planId, es, onSuccess, onClose]);
 
-  // Auto-create invoice when sheet opens with a planId
   useEffect(() => {
-    if (isOpen && planId && phase === 'idle') {
-      createInvoice();
-    }
+    if (isOpen && planId && phase === 'idle') createInvoice();
   }, [isOpen, planId, phase, createInvoice]);
 
   const handleOpenPopup = useCallback(() => {
@@ -254,13 +255,11 @@ export function NpAppPickerSheet({
         style={{ background: '#111', border: '1px solid rgba(255,255,255,0.08)', maxHeight: '92vh', overflowY: 'auto' }}
         onClick={e => e.stopPropagation()}
       >
-        {/* Drag handle */}
         <div className="w-10 h-1 rounded-full bg-white/20 mx-auto -mt-1 mb-1" />
 
-        {/* Header */}
         <div className="flex items-center justify-between">
           <p className="text-base font-black text-white">
-            {es ? '₿ Pagar con apps y wallets' : '₿ Pay with apps & wallets'}
+            {es ? '₿ Apps y wallets' : '₿ Apps & wallets'}
           </p>
           <button
             type="button"
@@ -275,7 +274,6 @@ export function NpAppPickerSheet({
         </div>
         {planLabel && <p className="text-xs text-white/40 -mt-2">{planLabel}</p>}
 
-        {/* Loading state */}
         {phase === 'loading' && (
           <div className="flex flex-col items-center gap-3 py-8">
             <div className="w-8 h-8 border-2 border-white/20 border-t-white/70 rounded-full animate-spin" />
@@ -285,7 +283,6 @@ export function NpAppPickerSheet({
           </div>
         )}
 
-        {/* Error state */}
         {phase === 'error' && (
           <div className="rounded-2xl border border-red-500/30 bg-red-500/8 p-4 text-center space-y-3">
             <p className="text-sm text-red-400">{invoiceError}</p>
@@ -300,7 +297,6 @@ export function NpAppPickerSheet({
           </div>
         )}
 
-        {/* Success state */}
         {phase === 'success' && (
           <div className="flex flex-col items-center gap-3 py-8 animate-in fade-in zoom-in duration-300">
             <div className="w-14 h-14 rounded-full bg-green-500/20 flex items-center justify-center">
@@ -317,85 +313,63 @@ export function NpAppPickerSheet({
           </div>
         )}
 
-        {/* Invoice ready — open popup button + per-app instructions */}
-        {phase === 'ready' && invoiceUrl && (
+        {phase === 'ready' && widgetUrl && (
           <>
-            <button
-              type="button"
-              onClick={handleOpenPopup}
-              className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl font-bold text-sm text-white transition-all active:scale-[0.98]"
-              style={{ background: 'linear-gradient(90deg, #e67e22, #f39c12)' }}
-            >
-              ₿ {es ? 'Abrir ventana de pago' : 'Open payment window'}
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-              </svg>
-            </button>
+            {/* NowPayments embedded widget — shows address, QR, copy button */}
+            <div className="w-full rounded-xl overflow-hidden" style={{ height: 430, background: '#0a0a0a', border: '1px solid rgba(255,255,255,0.08)' }}>
+              <iframe
+                src={widgetUrl}
+                style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
+                title={es ? 'Dirección de pago' : 'Payment address'}
+                allow="clipboard-write"
+                loading="eager"
+              />
+            </div>
 
             <p className="text-[10px] text-white/30 text-center -mt-1">
               {es
                 ? '⚡ Tu plan se activa solo cuando la red confirme el pago.'
-                : '⚡ Your plan activates automatically once the network confirms.'}
+                : '⚡ Plan activates automatically once the network confirms.'}
             </p>
 
-            <div className="flex items-center gap-2">
-              <div className="flex-1 h-px bg-white/10" />
-              <span className="text-[10px] text-white/35 flex-shrink-0">
-                {es ? 'instrucciones por app' : 'per-app instructions'}
-              </span>
-              <div className="flex-1 h-px bg-white/10" />
-            </div>
-
-            {/* App grid */}
+            {/* App launch buttons */}
             <div>
-              <p className="text-[11px] text-white/40 text-center mb-3">
-                {es ? 'Elige tu app para ver los pasos exactos:' : 'Pick your app to see the exact steps:'}
+              <p className="text-[11px] text-white/45 text-center mb-2.5">
+                {es ? 'Abrir tu app o wallet:' : 'Open your app or wallet:'}
               </p>
               <div className="grid grid-cols-4 gap-2">
-                {PANEL_APPS.map(app => {
-                  const isSel = selectedApp === app.id;
-                  return (
-                    <button
-                      key={app.id}
-                      type="button"
-                      onClick={() => setSelectedApp(isSel ? null : app.id)}
-                      className="flex flex-col items-center gap-1 py-3 px-1 rounded-xl border transition active:scale-[0.95]"
-                      style={isSel
-                        ? { background: app.bg, borderColor: app.border }
-                        : { background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(255,255,255,0.10)' }
-                      }
-                    >
-                      <span className="text-[20px] leading-none">{app.emoji}</span>
-                      <span className="text-[10px] font-semibold text-white/80 text-center leading-tight">{app.label}</span>
-                      <span className="text-[8px] text-white/30 leading-none">{app.geo}</span>
-                    </button>
-                  );
-                })}
+                {PANEL_APPS.map(app => (
+                  <a
+                    key={app.id}
+                    href={APP_OPEN_LINKS[app.id]}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex flex-col items-center gap-1 py-2.5 px-1 rounded-xl border transition active:scale-[0.95] no-underline"
+                    style={{ background: app.bg, borderColor: app.border }}
+                  >
+                    <span className="text-[20px] leading-none">{app.emoji}</span>
+                    <span className="text-[10px] font-semibold text-white/90 text-center leading-tight">{app.label}</span>
+                    <span className="text-[8px] text-white/35 leading-none">{app.geo}</span>
+                  </a>
+                ))}
               </div>
             </div>
 
-            {/* Steps for selected app */}
-            {selectedApp && selectedSteps.length > 0 && (
-              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 animate-in fade-in slide-in-from-top-1 duration-150">
-                <p className="text-[10px] font-semibold text-white/45 uppercase tracking-wide mb-2">
-                  {es ? `Pasos en ${selectedAppLabel}` : `Steps in ${selectedAppLabel}`}
-                </p>
-                <ol className="space-y-1.5">
-                  {selectedSteps.map((step, i) => (
-                    <li key={i} className="flex items-start gap-2">
-                      <span className="flex-shrink-0 w-4 h-4 rounded-full bg-white/10 flex items-center justify-center text-[9px] font-bold text-white/55 mt-0.5">
-                        {i + 1}
-                      </span>
-                      <span className="text-[11px] text-white/75 leading-relaxed">{step}</span>
-                    </li>
-                  ))}
-                </ol>
-              </div>
-            )}
+            {/* Fallback for environments that block the iframe */}
+            <button
+              type="button"
+              onClick={handleOpenPopup}
+              className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-[11px] font-semibold text-white/50 hover:text-white/80 transition-colors"
+              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+              </svg>
+              {es ? 'Abrir en ventana nueva' : 'Open in new window'}
+            </button>
           </>
         )}
 
-        {/* Cancel button — shown in all non-success states */}
         {phase !== 'success' && (
           <button
             type="button"

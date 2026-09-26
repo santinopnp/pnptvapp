@@ -11,8 +11,8 @@ interface FreeTierOverlayProps {
 }
 
 const PROMO_PLANS = [
-  { id: 'monthly-pass',            price: 24.99, labelEn: 'PRIME Monthly',       labelEs: 'PRIME mensual',    tagEn: '🔥 Most popular', tagEs: '🔥 Más popular',   subEn: '30 days full access', subEs: '30 días acceso completo' },
-  { id: 'prime-diamond-pass-365d', price: 99.99, labelEn: 'PRIME Diamond Pass',  labelEs: 'PRIME Diamond',    tagEn: '⭐ Best value',    tagEs: '⭐ Mejor precio',  subEn: '1 year full access',  subEs: '1 año acceso completo'   },
+  { id: 'monthly-pass',            price: 24.99,  labelEn: 'PRIME Monthly',       labelEs: 'PRIME mensual',    tagEn: '🔥 Most popular', tagEs: '🔥 Más popular',   subEn: '30 days full access',    subEs: '30 días acceso completo' },
+  { id: 'prime-lifetime-249',      price: 249.99, labelEn: 'PRIME Lifetime',      labelEs: 'PRIME de por vida', tagEn: '🖤 Founders deal', tagEs: '🖤 Oferta Founders', subEn: 'Pay once, access forever', subEs: 'Pago único, acceso siempre' },
 ] as const;
 
 export default function FreeTierOverlay({ label, requiredTier = 'member', children }: FreeTierOverlayProps) {
@@ -88,7 +88,7 @@ export default function FreeTierOverlay({ label, requiredTier = 'member', childr
             <WalletLoginGate lang={lang as 'es' | 'en'}>
             <div className="grid grid-cols-2 gap-2.5">
               {PROMO_PLANS.map(plan => {
-                const isLifetime = plan.id === 'prime-diamond-pass-365d';
+                const isLifetime = plan.id === 'prime-lifetime-249';
                 const isWalletOpen = walletPlanId === plan.id;
                 const cardStyle = isLifetime
                   ? { background: 'linear-gradient(145deg,rgba(20,20,20,0.95),rgba(30,25,20,0.95))', border: '1px solid rgba(230,145,56,0.40)' }
@@ -107,7 +107,7 @@ export default function FreeTierOverlay({ label, requiredTier = 'member', childr
                       <div className="flex items-baseline gap-0.5 leading-none mt-0.5">
                         <span className="text-[11px] font-bold" style={{ color: accent }}>$</span>
                         <span className="text-2xl font-black text-white">{plan.price}</span>
-                        {!isLifetime && <span className="text-[10px] font-semibold text-white/50 ml-0.5">{es ? '/año' : '/yr'}</span>}
+                        {!isLifetime && <span className="text-[10px] font-semibold text-white/50 ml-0.5">{es ? '/mes' : '/mo'}</span>}
                       </div>
                       <p className="text-[11px] font-bold text-white leading-tight">{es ? plan.labelEs : plan.labelEn}</p>
                       <p className="text-[10px] text-white/50 leading-snug">{es ? plan.subEs : plan.subEn}</p>
@@ -167,7 +167,7 @@ export default function FreeTierOverlay({ label, requiredTier = 'member', childr
         onClose={() => setNpPickerPlanId(null)}
         planId={npPickerPlanId}
         lang={lang}
-        planLabel={npPickerPlanId === 'prime-diamond-pass-365d' ? 'PRIME Diamond Pass' : 'PRIME Monthly'}
+        planLabel={npPickerPlanId === 'prime-lifetime-249' ? 'PRIME Lifetime' : 'PRIME Monthly'}
       />
     </>
   );
