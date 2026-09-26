@@ -9263,7 +9263,12 @@ app.get('/api/webapp/me/suggested-follows', requireSessionAuth, asyncHandler(asy
       u.id,
       u.username,
       u.first_name,
-      u.avatar_url,
+      CASE
+        WHEN u.photo_file_id IS NULL           THEN NULL
+        WHEN u.photo_file_id LIKE 'http%'      THEN u.photo_file_id
+        WHEN u.photo_file_id LIKE '/uploads/%' THEN u.photo_file_id
+        ELSE '/uploads/avatars/' || u.photo_file_id
+      END AS avatar_url,
       u.bio,
       u.followers_count,
       u.creator_status,
