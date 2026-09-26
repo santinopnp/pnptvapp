@@ -2402,26 +2402,6 @@ export default function CreatorProfilePage() {
           {/* Wall — Posts / Tagged tabs. */}
           <div className="space-y-3">
             {/* Creator Video Upload Entry Card above the post wall — only on Posts tab */}
-            {isOwnProfile && wallTab === "posts" && (
-              <div className="mb-4 p-4 rounded-2xl bg-white/5 border border-white/10 shadow-lg">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <Video className="w-5 h-5 text-pink-500" />
-                    <h3 className="text-sm font-bold text-white">Upload Video & Create Post</h3>
-                  </div>
-                  <span className="text-[11px] px-2.5 py-0.5 rounded-full bg-pink-500/20 text-pink-300 font-semibold border border-pink-500/30">
-                    ✨ AI Generator Enabled
-                  </span>
-                </div>
-                <PostComposer
-                  onPostCreated={(newPost) => {
-                    setPosts((prev) => [newPost, ...prev]);
-                  }}
-                  placeholder="What's happening? Attach a video or photo with AI title, description & tags..."
-                />
-              </div>
-            )}
-
             {/* Video Upload Modal */}
             {showVideoUploadModal && (
               <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md" onClick={() => setShowVideoUploadModal(false)}>
