@@ -7093,6 +7093,7 @@ app.get('/api/webapp/admin/analytics/umami', adminGuard, asyncHandler(webappAdmi
 app.get('/api/webapp/admin/analytics/metabase', adminGuard, asyncHandler(webappAdminController.getMetabaseCard));
 app.get('/api/webapp/admin/analytics/usage', adminGuard, asyncHandler(webappAdminController.getUsageAnalytics));
 app.get('/api/webapp/admin/analytics/tier-features', adminGuard, asyncHandler(webappAdminController.getTierFeatureSplit));
+app.get('/api/webapp/admin/analytics/growth-sales', adminGuard, asyncHandler(webappAdminController.getGrowthSalesReport));
 // EfiPay reseller endpoints — called by easybots.store, auth via x-reseller-secret header
 const efiPayResellerLimiter = rateLimit({ windowMs: 60 * 1000, max: 30, standardHeaders: true, legacyHeaders: false });
 app.get('/api/internal/efipay-reseller/product', efiPayResellerLimiter, asyncHandler(webappAdminController.efiPayResellerProduct));

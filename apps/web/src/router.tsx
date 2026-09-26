@@ -325,6 +325,7 @@ const PlanManagement = lazy(() => import("@/pages/admin/PlanManagement"));
 const ContentModeration = lazy(() => import("@/pages/admin/ContentModeration"));
 const HangoutModeration = lazy(() => import("@/pages/admin/HangoutModeration"));
 const AdminReports = lazy(() => import("@/pages/admin/Reports"));
+const GrowthSalesReport = lazy(() => import("@/pages/admin/GrowthSalesReport"));
 const CreatorApplications = lazy(() => import("@/pages/admin/CreatorApplications"));
 const AdminNotifications = lazy(() => import("@/pages/admin/AdminNotifications"));
 const ExternalServices = lazy(() => import("@/pages/admin/ExternalServices"));
@@ -933,6 +934,14 @@ export const router = createBrowserRouter([
         element: (
           <ModuleLoader>
             <AdminReports />
+          </ModuleLoader>
+        ),
+      },
+      {
+        path: "growth-sales",
+        element: (
+          <ModuleLoader>
+            <GrowthSalesReport />
           </ModuleLoader>
         ),
       },
