@@ -205,6 +205,14 @@ async function initializeQueues() {
     jobId: 'cron-call-booking-expire',
   });
 
+  // Privy wallet reconciler — 04:00 UTC daily (detects DB↔Privy address drift,
+  // auto-fixes and alerts ops. See project_privy_orphan_wallets_2026_09_27.md.)
+  await cronQueue.add('wallet-reconcile', {}, {
+    repeat: { pattern: '0 4 * * *', tz: 'UTC' },
+    attempts: 2, removeOnFail: false,
+    jobId: 'cron-wallet-reconcile',
+  });
+
   // Dash/BTCPay reconciliation — every 10 min
   await cronQueue.add('btcpay-reconcile', {}, {
     repeat: { pattern: '*/10 * * * *', tz: 'UTC' },

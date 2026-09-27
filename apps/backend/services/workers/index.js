@@ -298,6 +298,16 @@ async function cronProcessor(job) {
       return;
     }
 
+    case 'wallet-reconcile': {
+      const svc = _safeRequire('../walletReconcilerService');
+      if (!svc || typeof svc.reconcile !== 'function') { logger.warn('[BullMQ] wallet-reconcile: service not found'); return; }
+      const results = await svc.reconcile();
+      if (results.drifted > 0 || results.orphaned > 0 || results.errors > 0) {
+        logger.info('[BullMQ] wallet-reconcile completed', results);
+      }
+      return;
+    }
+
     case 'nowpayments-reconcile': {
       const PaymentRecoveryService = _safeRequire('../paymentRecoveryService');
       if (!PaymentRecoveryService) { logger.warn('[BullMQ] nowpayments-reconcile: service not found'); return; }

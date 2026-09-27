@@ -17,6 +17,38 @@ const { query } = require('../config/postgres');
 const logger = require('../utils/logger');
 const { provisionCreatorWallet } = require('./payoutSplitService');
 
+async function _notifyWalletChanged({ pnptvUserId, oldWallet, newWallet }) {
+  try {
+    const sendSystemDM = require('./sendSystemDM');
+    const SYSTEM_SENDER = process.env.SYSTEM_SENDER_ID || '8552451957';
+    const body = `⚠️ Wallet update detected
+
+Your PNPtv wallet address just changed:
+  old: ${oldWallet || '—'}
+  new: ${newWallet}
+
+If you sent USDC or ETH to the OLD address, those funds are still there and will NOT show up in the app. Reply to this DM and we'll help you move them.`;
+    await sendSystemDM(SYSTEM_SENDER, String(pnptvUserId), body, query);
+  } catch (err) {
+    logger.warn('[privy-link] wallet-change notification failed', { pnptvUserId, err: err.message });
+  }
+
+  try {
+    const channel = process.env.SLACK_OPS_ADMIN_ALERTS_CHANNEL || process.env.SLACK_OPS_ALERTS_CHANNEL;
+    const token = process.env.SLACK_BOT_TOKEN;
+    if (channel && token) {
+      await fetch('https://slack.com/api/chat.postMessage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json; charset=utf-8', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          channel,
+          text: `🔁 Wallet change — user \`${pnptvUserId}\`\n  old: \`${oldWallet || '—'}\`\n  new: \`${newWallet}\``,
+        }),
+      });
+    }
+  } catch { /* non-fatal */ }
+}
+
 let _privyClient = null;
 function getPrivyClient() {
   if (_privyClient) return _privyClient;
@@ -91,16 +123,57 @@ async function verifyAndLink({ pnptvUserId, privyToken }) {
     throw e;
   }
 
-  await query(
-    `UPDATE users
-        SET privy_id         = $1,
-            wallet_address   = COALESCE(NULLIF($2::text, ''), wallet_address),
-            wallet_linked_at = COALESCE(wallet_linked_at, CASE WHEN $2::text <> '' THEN NOW() ELSE wallet_linked_at END)
-      WHERE id = $3`,
-    [privyId, walletAddress || '', pnptvUserId],
+  // Read the outgoing state so we can archive it if the incoming values differ.
+  // Without this the address becomes write-once and any Privy-side rotation
+  // strands the funds sitting on the old address (see wallet_changes audit).
+  const priorRes = await query(
+    `SELECT privy_id AS old_privy_id, wallet_address AS old_wallet_address
+       FROM users WHERE id = $1`,
+    [pnptvUserId],
   );
+  const prior = priorRes.rows[0] || {};
+  const oldWallet = prior.old_wallet_address ? String(prior.old_wallet_address).toLowerCase() : null;
+  const newWallet = walletAddress || null;
+  const walletChanged = Boolean(newWallet) && oldWallet !== newWallet;
+  const privyIdChanged = Boolean(privyId) && prior.old_privy_id && prior.old_privy_id !== privyId;
 
-  logger.info('[privy-link] linked', { pnptvUserId, privyId, walletAddress });
+  if (walletChanged) {
+    await query(
+      `UPDATE users
+          SET privy_id                = $1,
+              wallet_address          = $2,
+              previous_wallet_address = CASE WHEN $3::text IS NULL THEN previous_wallet_address ELSE $3::text END,
+              wallet_linked_at        = NOW()
+        WHERE id = $4`,
+      [privyId, newWallet, oldWallet, pnptvUserId],
+    );
+    await query(
+      `INSERT INTO wallet_changes (user_id, old_wallet_address, new_wallet_address, old_privy_id, new_privy_id, source)
+       VALUES ($1, $2, $3, $4, $5, 'privy-link')`,
+      [String(pnptvUserId), oldWallet, newWallet, prior.old_privy_id || null, privyId],
+    );
+    logger.warn('[privy-link] wallet address changed — funds on old address may be stranded', {
+      pnptvUserId, privyId, oldWallet, newWallet,
+    });
+    _notifyWalletChanged({ pnptvUserId, oldWallet, newWallet }).catch(() => {});
+  } else {
+    await query(
+      `UPDATE users
+          SET privy_id         = $1,
+              wallet_address   = COALESCE(NULLIF($2::text, ''), wallet_address),
+              wallet_linked_at = COALESCE(wallet_linked_at, CASE WHEN $2::text <> '' THEN NOW() ELSE wallet_linked_at END)
+        WHERE id = $3`,
+      [privyId, walletAddress || '', pnptvUserId],
+    );
+    if (privyIdChanged) {
+      await query(
+        `INSERT INTO wallet_changes (user_id, old_wallet_address, new_wallet_address, old_privy_id, new_privy_id, source)
+         VALUES ($1, $2, $3, $4, $5, 'privy-link')`,
+        [String(pnptvUserId), oldWallet, newWallet, prior.old_privy_id, privyId],
+      );
+    }
+    logger.info('[privy-link] linked', { pnptvUserId, privyId, walletAddress });
+  }
 
   // If this user is an active creator without a wallet, provision one now
   // that we have a privy_id to attach it to. Fire-and-forget.
