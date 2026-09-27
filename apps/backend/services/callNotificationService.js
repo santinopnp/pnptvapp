@@ -486,7 +486,9 @@ function scheduleCallReminders(bookingId, creatorId, memberId, startAt, callInfo
   const ONE_HOUR_MS = 60 * 60 * 1000;
   const FIFTEEN_MIN_MS = 15 * 60 * 1000;
 
-  const joinUrl = callInfo?.meetingUrl || APP_URL;
+  // Fallback to the CallRoom deep link for THIS booking — never the site root,
+  // because the "Join Now" button was landing on the homepage.
+  const joinUrl = callInfo?.meetingUrl || callInfo?.joinUrl || `${APP_URL}/call/${bookingId}`;
 
   async function sendReminder(label, includeEmail) {
     const formattedTime = formatDateTime(startAt);
@@ -661,7 +663,9 @@ async function reconcileReminders() {
     let count = 0;
     for (const row of rows) {
       try {
-        const callInfo = { joinUrl: `${APP_URL}/call/${row.credit_id || row.booking_id}` };
+        // meetingUrl is what sendReminder reads; joinUrl was ignored before.
+        const deepLink = `${APP_URL}/call/${row.credit_id || row.booking_id}`;
+        const callInfo = { meetingUrl: deepLink, joinUrl: deepLink };
         scheduleCallReminders(row.booking_id, row.creator_id, row.member_id, row.start_at, callInfo, row.duration_minutes);
         count++;
       } catch (schedErr) {
