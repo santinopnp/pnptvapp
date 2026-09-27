@@ -14768,7 +14768,7 @@ app.post('/api/webapp/payments/onchain/prepare', requireSessionAuth, usdcPrepare
   const userId = String(user.telegram_id || user.id);
   const { query: dbQuery } = require('../../config/postgres');
   const webappUrl = process.env.WEBAPP_URL || 'https://pnptv.app';
-  const ALLOWED_CURRENCIES = ['btc', 'eth', 'etharb', 'usdcmatic', 'usdterc20', 'ltc', 'usdcsol'];
+  const ALLOWED_CURRENCIES = ['btc', 'eth', 'etharb', 'usdcmatic', 'usdterc20', 'ltc'];
   const PAY_CURRENCY = ALLOWED_CURRENCIES.includes(reqPayCurrency) ? reqPayCurrency : 'btc';
 
   // Resume: if there's a pending onchain order for this plan < 23h old, reuse it

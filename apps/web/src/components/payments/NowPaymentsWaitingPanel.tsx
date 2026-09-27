@@ -1,7 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { NowPaymentsOrder } from "@/hooks/useNowPayments";
 import { prepareOnchainSubscription, getUsdcSubscriptionStatus } from "@/lib/api";
-import { QRCodeSVG } from 'qrcode.react';
 
 
 interface NowPaymentsWaitingPanelProps {
@@ -17,27 +16,33 @@ interface NowPaymentsWaitingPanelProps {
 // ── App picker guide — collapsed by default, replaces raw coin instructions ───
 
 export const PANEL_APPS = [
-  { id: 'binance',  label: 'Binance',     geo: 'Global', emoji: '🟡', bg: 'rgba(240,185,11,0.15)',  border: 'rgba(240,185,11,0.45)'  },
-  { id: 'coinbase', label: 'Coinbase',    geo: 'Global', emoji: '🔵', bg: 'rgba(0,82,255,0.22)',    border: 'rgba(0,82,255,0.50)'    },
-  { id: 'kraken',   label: 'Kraken',      geo: 'Global', emoji: '🟣', bg: 'rgba(128,0,232,0.15)',   border: 'rgba(128,0,232,0.45)'   },
-  { id: 'phantom',  label: 'Phantom',     geo: 'Global', emoji: '👻', bg: 'rgba(155,93,229,0.18)',  border: 'rgba(155,93,229,0.50)'  },
-  { id: 'trust',    label: 'Trust',       geo: 'Global', emoji: '🔷', bg: 'rgba(51,117,187,0.18)',  border: 'rgba(51,117,187,0.45)'  },
+  { id: 'revolut',  label: 'Revolut',  geo: 'EU',     emoji: '🟣', bg: 'rgba(91,106,208,0.22)',  border: 'rgba(91,106,208,0.55)'  },
+  { id: 'cashapp',  label: 'Cash App', geo: 'US/UK',  emoji: '💚', bg: 'rgba(0,214,79,0.15)',    border: 'rgba(0,214,79,0.50)'    },
+  { id: 'paypal',   label: 'PayPal',   geo: 'Global', emoji: '🔵', bg: 'rgba(0,48,135,0.40)',    border: 'rgba(0,112,255,0.50)'   },
+  { id: 'venmo',    label: 'Venmo',    geo: 'US',     emoji: '🔵', bg: 'rgba(0,140,255,0.22)',   border: 'rgba(0,140,255,0.50)'   },
+  { id: 'n26',      label: 'N26',      geo: 'EU',     emoji: '⚫', bg: 'rgba(80,80,80,0.30)',    border: 'rgba(120,120,120,0.50)' },
+  { id: 'binance',  label: 'Binance',  geo: 'Global', emoji: '🟡', bg: 'rgba(240,185,11,0.15)',  border: 'rgba(240,185,11,0.45)'  },
+  { id: 'coinbase', label: 'Coinbase', geo: 'Global', emoji: '🔵', bg: 'rgba(0,82,255,0.22)',    border: 'rgba(0,82,255,0.50)'    },
 ] as const;
 
 export const PANEL_STEPS_EN: Record<string, string[]> = {
-  binance:  ["Open Binance → tap 'Wallets' → 'Spot'", "Find 'USDC' → tap 'Send'", "⚠️ Select network: Solana (SOL) — do NOT pick BEP20, ERC20 or any other network", "Paste the address shown above (or scan the QR)", "Enter the exact amount → Confirm"],
-  coinbase: ["Open Coinbase → tap 'Send & Receive' → 'Send'", "Search for 'USD Coin (USDC)'", "Select network: Solana", "Paste the address shown above (or scan the QR)", "Enter the exact amount → Continue → Send now"],
-  kraken:   ["Open Kraken → tap 'Send'", "Search for 'USDC' → select it", "⚠️ Select network: Solana (SOL) — not ERC20 or others", "Paste the address shown above (or scan the QR)", "Enter the exact amount → Confirm"],
-  phantom:  ["Open Phantom → tap the USDC token in your wallet", "Tap 'Send'", "Paste the address shown above (or scan the QR)", "Enter the exact amount → Review → Confirm"],
-  trust:    ["Open Trust Wallet → tap 'Send'", "Search for 'USDC' → select the Solana (SOL) version", "Paste the address shown above (or scan the QR)", "Enter the exact amount → Confirm"],
+  revolut:  ["Open Revolut → search 'Bitcoin' in the top search bar", "Tap Bitcoin (BTC) → tap 'Send'", "Tap 'Send to crypto address'", "Paste the address shown above (or scan the QR)", "Enter the exact amount shown → Confirm"],
+  cashapp:  ["Open Cash App → tap the Bitcoin tab (₿) at the bottom", "Tap 'Send Bitcoin'", "Paste the address shown above (or scan the QR)", "Enter the exact amount shown → Confirm"],
+  paypal:   ["Open PayPal → tap 'Crypto'", "Tap 'Bitcoin (BTC)'", "Tap 'Transfer' → 'External wallet'", "Paste the address shown above (or scan the QR)", "Enter the exact amount → Review → Send"],
+  venmo:    ["Open Venmo → tap 'Crypto' in the bottom menu", "Tap 'Bitcoin (BTC)'", "Tap 'Transfer out' → 'External wallet'", "Paste the address shown above (or scan the QR)", "Enter the exact amount → Confirm"],
+  n26:      ["Open N26 → tap 'Crypto' in the bottom menu", "Tap 'Bitcoin (BTC)'", "Tap 'Send' → 'External address'", "Paste the address shown above (or scan the QR)", "Enter the exact amount → Confirm"],
+  binance:  ["Open Binance → tap 'Wallets' → 'Spot'", "Find Bitcoin (BTC) → tap 'Send'", "⚠️ Select network: Bitcoin (BTC) — do NOT pick BNB or other networks", "Paste the address shown above (or scan the QR)", "Enter the exact amount → Confirm"],
+  coinbase: ["Open Coinbase → tap 'Assets' → find 'Bitcoin'", "Tap 'Send'", "Paste the address shown above (or scan the QR)", "Enter the exact amount → Continue → Send now"],
 };
 
 export const PANEL_STEPS_ES: Record<string, string[]> = {
-  binance:  ["Abre Binance → toca 'Billeteras' → 'Spot'", "Busca 'USDC' → toca 'Enviar'", "⚠️ Elige la red: Solana (SOL) — NO elijas BEP20, ERC20 u otra red", "Pega la dirección de arriba (o escanea el QR)", "Ingresa el monto exacto → Confirma"],
-  coinbase: ["Abre Coinbase → toca 'Enviar y recibir' → 'Enviar'", "Busca 'USD Coin (USDC)'", "Selecciona red: Solana", "Pega la dirección de arriba (o escanea el QR)", "Ingresa el monto exacto → Continuar → Enviar ahora"],
-  kraken:   ["Abre Kraken → toca 'Enviar'", "Busca 'USDC' → selecciónalo", "⚠️ Elige la red: Solana (SOL) — no ERC20 ni otras", "Pega la dirección de arriba (o escanea el QR)", "Ingresa el monto exacto → Confirma"],
-  phantom:  ["Abre Phantom → toca el token USDC en tu billetera", "Toca 'Enviar'", "Pega la dirección de arriba (o escanea el QR)", "Ingresa el monto exacto → Revisar → Confirma"],
-  trust:    ["Abre Trust Wallet → toca 'Enviar'", "Busca 'USDC' → selecciona la versión Solana (SOL)", "Pega la dirección de arriba (o escanea el QR)", "Ingresa el monto exacto → Confirma"],
+  revolut:  ["Abre Revolut → busca 'Bitcoin' en la barra de búsqueda", "Toca Bitcoin (BTC) → toca 'Enviar'", "Toca 'Enviar a dirección cripto'", "Pega la dirección de arriba (o escanea el QR)", "Ingresa el monto exacto → Confirma"],
+  cashapp:  ["Abre Cash App → toca la pestaña Bitcoin (₿) abajo", "Toca 'Enviar Bitcoin'", "Pega la dirección de arriba (o escanea el QR)", "Ingresa el monto exacto → Confirma"],
+  paypal:   ["Abre PayPal → toca 'Criptomonedas'", "Toca 'Bitcoin (BTC)'", "Toca 'Transferir' → 'Billetera externa'", "Pega la dirección de arriba (o escanea el QR)", "Ingresa el monto exacto → Revisar → Enviar"],
+  venmo:    ["Abre Venmo → toca 'Cripto' en el menú inferior", "Toca 'Bitcoin (BTC)'", "Toca 'Transferir' → 'Billetera externa'", "Pega la dirección de arriba (o escanea el QR)", "Ingresa el monto exacto → Confirma"],
+  n26:      ["Abre N26 → toca 'Cripto' en el menú inferior", "Toca 'Bitcoin (BTC)'", "Toca 'Enviar' → 'Dirección externa'", "Pega la dirección de arriba (o escanea el QR)", "Ingresa el monto exacto → Confirma"],
+  binance:  ["Abre Binance → toca 'Billeteras' → 'Spot'", "Busca Bitcoin (BTC) → toca 'Enviar'", "⚠️ Elige la red: Bitcoin (BTC) — NO elijas BNB ni otra red", "Pega la dirección de arriba (o escanea el QR)", "Ingresa el monto exacto → Confirma"],
+  coinbase: ["Abre Coinbase → toca 'Activos' → busca 'Bitcoin'", "Toca 'Enviar'", "Pega la dirección de arriba (o escanea el QR)", "Ingresa el monto exacto → Continuar → Enviar ahora"],
 };
 
 function AppGuidePanel({ es }: { es: boolean }) {
@@ -67,8 +72,8 @@ function AppGuidePanel({ es }: { es: boolean }) {
         <div className="px-3 pb-4 border-t border-white/10 pt-3 animate-in fade-in slide-in-from-top-1 duration-200">
           <p className="text-[10px] text-pnp-textSecondary/70 mb-2.5 leading-relaxed">
             {es
-              ? "Elige tu app y te damos los pasos exactos para enviar USDC en Solana desde ella:"
-              : "Pick your app and we'll show you the exact steps to send USDC on Solana from it:"}
+              ? "Elige tu app y te damos los pasos exactos para pagar con Bitcoin desde ella:"
+              : "Pick your app and we'll show you the exact steps to pay with Bitcoin from it:"}
           </p>
 
           {/* App grid */}
@@ -130,11 +135,13 @@ function AppGuidePanel({ es }: { es: boolean }) {
 // NowPayments blocks iframe embedding, so we must use popup (feedback_nowpayments_iframe_blocked).
 // onLaunch / launching props kept for backward compat but are ignored.
 const APP_OPEN_LINKS: Record<string, string> = {
+  revolut:  'https://revolut.com/app',
+  cashapp:  'https://cash.app',
+  paypal:   'https://paypal.com/myaccount/crypto',
+  venmo:    'https://venmo.com',
+  n26:      'https://app.n26.com',
   binance:  'https://app.binance.com',
   coinbase: 'https://coinbase.com',
-  kraken:   'https://kraken.com',
-  phantom:  'https://phantom.app',
-  trust:    'https://trustwallet.com',
 };
 
 export function NpAppPickerSheet({
@@ -191,7 +198,7 @@ export function NpAppPickerSheet({
     setPayAddress(null);
     setPayAmount(null);
     try {
-      const res = await prepareOnchainSubscription(planId, 'usdcsol');
+      const res = await prepareOnchainSubscription(planId, 'btc');
       if (!res.success || !res.payAddress || !res.orderId) {
         throw new Error(res.error || (es ? 'No se pudo crear el pago.' : 'Could not create payment.'));
       }
@@ -250,7 +257,7 @@ export function NpAppPickerSheet({
 
         <div className="flex items-center justify-between">
           <p className="text-base font-black text-white">
-            {es ? 'Pagar con USDC (Solana)' : 'Pay with USDC (Solana)'}
+            {es ? '₿ Pagar con Bitcoin' : '₿ Pay with Bitcoin'}
           </p>
           <button
             type="button"
@@ -308,19 +315,13 @@ export function NpAppPickerSheet({
           <>
             {/* Address + amount block */}
             <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-2.5">
-              {/* QR code — centered, white background for scanner contrast */}
-              <div className="flex justify-center pb-1">
-                <div className="p-2 bg-white rounded-xl">
-                  <QRCodeSVG value={payAddress} size={140} level="M" />
-                </div>
-              </div>
               {payAmount && (
                 <div className="text-center">
                   <p className="text-[10px] text-white/35 mb-0.5">
                     {es ? 'Monto exacto a enviar' : 'Exact amount to send'}
                   </p>
                   <p className="text-2xl font-black text-white">
-                    {payAmount} <span style={{ color: '#9b5de5' }}>USDC</span>
+                    {payAmount} <span style={{ color: '#f7931a' }}>BTC</span>
                   </p>
                 </div>
               )}
