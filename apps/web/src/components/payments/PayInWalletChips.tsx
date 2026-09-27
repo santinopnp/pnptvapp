@@ -1507,6 +1507,15 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
   const [sendConfirm, setSendConfirm] = _useState(false);
   const [refreshTick, setRefreshTick] = _useState(0);
 
+  // Dust → Ru$h converter state. Card renders when the wallet holds <$10 USDC
+  // on Base. One-tap sweep-and-mint with a +10% platform-margin bonus, 1× per
+  // 24h per user. Cooldown flag is set client-side on 429 so the UI reflects
+  // the backend rate limit immediately without a second round-trip.
+  const [dustBusy, setDustBusy] = _useState(false);
+  const [dustError, setDustError] = _useState<string | null>(null);
+  const [dustSuccess, setDustSuccess] = _useState<{ tokens: number; usd: number } | null>(null);
+  const [dustCooldown, setDustCooldown] = _useState(false);
+
   const _usdcBridgeStorageKey = address ? `pnptv.usdcBridge.${address.toLowerCase()}` : null;
 
   // Restore in-flight USDC bridge from localStorage on mount / address change.
@@ -1597,6 +1606,56 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
       if (/cancel|closed|reject/i.test(msg)) return;
       setError(`Payment provider error: ${msg}`);
       reportWalletClientError("addFunds", err, { source: "WalletHomeSheet", address });
+    }
+  };
+
+  // Sweep entire on-chain USDC balance (<$10) and credit as Ru$h with +10%
+  // bonus. Server reads the balance on-chain and enforces both the <$10 gate
+  // and the 24h cooldown; client input is untrusted. Only rendered for the
+  // embedded PNPtv wallet so gas topup covers the transfer fee.
+  const handleDustConvert = async () => {
+    if (!activeWallet || !isActiveEmbedded) return;
+    if (usdc == null || usdc <= 0 || usdc >= 10) return;
+    setDustError(null);
+    setDustBusy(true);
+    try {
+      const intent = await initiateWalletCheckout({
+        rail: "usdc",
+        surface: "rush",
+        entitlementSpec: { dustConvert: true },
+        metadata: { source: "wallet_dust_convert" },
+      });
+      if (!intent.receivingAddress || !intent.amountUsdc) throw new Error("intent_missing_fields");
+
+      try { await requestGasTopup(activeWallet.address); } catch { /* non-fatal */ }
+
+      const data = encodeFunctionData({
+        abi: _USDC_ABI, functionName: "transfer",
+        args: [intent.receivingAddress as `0x${string}`, parseUnits(intent.amountUsdc.toFixed(6), 6)],
+      });
+      const res = await privySendTransaction(
+        { chainId: 8453, to: _USDC_BASE as `0x${string}`, data, value: "0" },
+        { sponsor: false, address: activeWallet.address, uiOptions: { showWalletUIs: true } }
+      );
+      const txHash = res.hash as `0x${string}`;
+      const verified = await verifyWalletCheckoutTx(intent.intentId, txHash);
+      if (!verified.ok) throw new Error(verified.reason || "verify_failed");
+      const tokensCredited = Number(verified.rushCredited) || 0;
+      setDustSuccess({ tokens: tokensCredited, usd: Number(intent.amountUsdc) });
+      setRefreshTick((n) => n + 1);
+    } catch (err: unknown) {
+      const status = (err as { status?: number }).status;
+      const msg = err instanceof Error ? err.message : String(err);
+      if (status === 429 || /dust_cooldown/i.test(msg)) {
+        setDustCooldown(true);
+      } else if (/User rejected|user denied|cancel|closed|reject/i.test(msg)) {
+        // silent — user backed out
+      } else {
+        setDustError(msg);
+        reportWalletClientError("dustConvert", err, { source: "WalletHomeSheet", address: activeWallet.address });
+      }
+    } finally {
+      setDustBusy(false);
     }
   };
 
@@ -2660,6 +2719,74 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
                   </p>
                 </div>
               </div>
+
+              {/* Dust → Ru$h converter — only when embedded wallet holds <$10 USDC.
+                  One-tap sweep with +10% bonus, 1× per 24h. */}
+              {isActiveEmbedded && usdc != null && usdc > 0.17 && usdc < 10 && !isReadOnlyView && (() => {
+                const _dustEs = typeof navigator !== "undefined" && navigator.language?.toLowerCase().startsWith("es");
+                const _dustTokens = Math.floor(usdc * 6 * 1.10);
+                return (
+                  <div className="rounded-2xl border border-pink-400/40 bg-gradient-to-br from-pink-500/[0.12] via-fuchsia-500/[0.08] to-purple-500/[0.10] p-3.5 space-y-2.5">
+                    {dustSuccess ? (
+                      <div className="flex items-start gap-2.5">
+                        <span className="text-2xl leading-none">💎</span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-bold text-white">
+                            {_dustEs ? `+${dustSuccess.tokens.toLocaleString()} Ru$h acreditados` : `+${dustSuccess.tokens.toLocaleString()} Ru$h credited`}
+                          </p>
+                          <p className="text-[11px] text-white/70 mt-0.5">
+                            {_dustEs
+                              ? `Convertiste $${dustSuccess.usd.toFixed(2)} en Ru$h con bono +10%`
+                              : `Converted $${dustSuccess.usd.toFixed(2)} into Ru$h with +10% bonus`}
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="flex items-start gap-2.5">
+                          <span className="text-xl leading-none pt-0.5">💎</span>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-bold text-white">
+                              {_dustEs ? "Convertí tu polvo en Ru$h" : "Convert your dust to Ru$h"}
+                            </p>
+                            <p className="text-[11px] text-white/75 mt-0.5 leading-snug">
+                              {_dustEs
+                                ? `$${usdc.toFixed(2)} USDC → ${_dustTokens.toLocaleString()} Ru$h · +10% bono`
+                                : `$${usdc.toFixed(2)} USDC → ${_dustTokens.toLocaleString()} Ru$h · +10% bonus`}
+                            </p>
+                            <p className="text-[10px] text-white/50 mt-0.5">
+                              {_dustEs ? "1× por día · Ru$h usable en cualquier tip" : "1× per day · Ru$h usable on any tip"}
+                            </p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (dustBusy || dustCooldown) return;
+                            const confirmMsg = _dustEs
+                              ? `Convertir TODO tu USDC ($${usdc.toFixed(2)}) en ${_dustTokens.toLocaleString()} Ru$h?`
+                              : `Convert ALL your USDC ($${usdc.toFixed(2)}) into ${_dustTokens.toLocaleString()} Ru$h?`;
+                            if (!confirm(confirmMsg)) return;
+                            handleDustConvert();
+                          }}
+                          disabled={dustBusy || dustCooldown}
+                          className="w-full py-2.5 rounded-xl text-[12px] font-bold text-white transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+                          style={{ background: "linear-gradient(135deg, #D4007A, #7B61FF)" }}
+                        >
+                          {dustBusy
+                            ? (_dustEs ? "Convirtiendo…" : "Converting…")
+                            : dustCooldown
+                              ? (_dustEs ? "Ya convertiste hoy · vuelve mañana" : "Already converted today · come back tomorrow")
+                              : (_dustEs ? "Convertir todo →" : "Convert all →")}
+                        </button>
+                        {dustError && (
+                          <p className="text-[11px] text-red-300 leading-snug">{dustError}</p>
+                        )}
+                      </>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* Wallet address */}
               <div className="rounded-xl border border-white/10 bg-white/[0.04] p-3 space-y-2">

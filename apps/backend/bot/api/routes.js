@@ -17241,6 +17241,52 @@ app.post('/api/wallet/checkout/initiate', walletSpendLimiter, requireSessionAuth
   }
 }));
 
+// Read on-chain USDC balance on Base for a given EVM address.
+// Returns number (USD) or null on RPC failure. Uses same 10s cache the
+// /api/wallet/balance/usdc endpoint uses so both surfaces stay coherent.
+async function _readUsdcBaseBalance(address) {
+  if (!address || !/^0x[a-fA-F0-9]{40}$/.test(address)) return null;
+  const { cache } = require('../../config/redis');
+  const normalized = address.toLowerCase();
+  const cacheKey = `wallet:usdc:${normalized}`;
+  const cached = await cache.get(cacheKey).catch(() => null);
+  if (cached != null) return Number(cached);
+  const apiKey = process.env.ALCHEMY_API_KEY;
+  if (!apiKey) return null;
+  const url = `https://base-mainnet.g.alchemy.com/v2/${apiKey}`;
+  const USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+  const data = '0x70a08231' + normalized.replace(/^0x/, '').padStart(64, '0');
+  try {
+    const rpcRes = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_call',
+        params: [{ to: USDC, data }, 'latest'] }),
+    });
+    const j = await rpcRes.json();
+    const hex = j.result || '0x0';
+    const usdc = Number(BigInt(hex)) / 1_000_000;
+    await cache.set(cacheKey, String(usdc), 10).catch(() => {});
+    return usdc;
+  } catch (_) {
+    return null;
+  }
+}
+
+// Resolve the user's preferred wallet address then read its on-chain USDC on Base.
+// Returns { address, usdc } or { address: null } if no wallet linked.
+async function _getUsdcOnBaseForUser(userId, dbQuery) {
+  const { rows } = await dbQuery(
+    `SELECT COALESCE(preferred_wallet_address, wallet_address) AS addr
+       FROM users WHERE id = $1 LIMIT 1`,
+    [String(userId)]
+  );
+  const address = rows[0]?.addr ? String(rows[0].addr).toLowerCase() : null;
+  if (!address) return { address: null, usdc: null };
+  const usdc = await _readUsdcBaseBalance(address);
+  return { address, usdc };
+}
+
 async function _resolveCanonicalPurchase(userId, surface, spec, dbQuery) {
   const throwErr = (msg, status = 400) => { const e = new Error(msg); e.status = status; throw e; };
   const cid = spec?.creator_id ? String(spec.creator_id) : null;
@@ -17332,6 +17378,29 @@ async function _resolveCanonicalPurchase(userId, surface, spec, dbQuery) {
   }
 
   if (surface === 'rush') {
+    // Dust conversion: user has <$10 USDC on Base; convert full balance to Ru$h
+    // with a +10% platform-margin bonus. Amount comes from on-chain read,
+    // never from client. 24h cooldown per user (setting the key before intent
+    // creation so an abandoned tap still consumes the daily window).
+    if (spec?.dustConvert === true) {
+      const { cache } = require('../../config/redis');
+      const cooldownKey = `dust:convert:${userId}`;
+      const held = await cache.get(cooldownKey).catch(() => null);
+      if (held) throwErr('dust_cooldown', 429);
+      const { usdc } = await _getUsdcOnBaseForUser(String(userId), dbQuery);
+      if (usdc == null) throwErr('wallet_balance_unavailable', 503);
+      if (usdc <= 0) throwErr('no_dust_to_convert', 400);
+      if (usdc >= 10) throwErr('dust_not_eligible', 400);
+      await cache.set(cooldownKey, '1', 86400).catch(() => {});
+      const usd = Math.floor(usdc * 100) / 100;
+      if (usd < 0.17) throwErr('dust_below_min_ru$h', 400);
+      const baseTokens = usd * 6;
+      const tokens = Math.floor(baseTokens * 1.10);
+      return {
+        amountUsd: usd,
+        resolvedSpec: { tokens, packageId: 'dust_convert' },
+      };
+    }
     const pkgId = spec?.packageId ? String(spec.packageId) : null;
     if (pkgId) {
       const DashTokenService = require('../../services/dashTokenService');
