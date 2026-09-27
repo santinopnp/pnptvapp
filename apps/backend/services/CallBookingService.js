@@ -201,9 +201,16 @@ class CallBookingService {
       );
 
       await client.query('COMMIT');
-      logger.info('Call booking successful', { bookingId: bookingResult.rows[0].id, memberId, creatorId });
-      
-      return bookingResult.rows[0];
+      const booking = bookingResult.rows[0];
+      logger.info('Call booking successful', { bookingId: booking.id, memberId, creatorId });
+
+      // Fire-and-forget: DM both parties with a join link (/call/<uuid>).
+      // Never let a notify failure surface to the caller.
+      CallBookingService._notifyBookingConfirmed(booking, memberId, creatorId).catch((err) => {
+        logger.warn('CallBookingService: post-book notify failed', { bookingId: booking.id, error: err.message });
+      });
+
+      return booking;
 
     } catch (error) {
       await client.query('ROLLBACK');
@@ -422,6 +429,47 @@ class CallBookingService {
         }
       })();
     }
+  }
+
+  /**
+   * Fire-and-forget DM/push/in-app to both parties after a booking is created.
+   * Deep-link resolves to /call/<bookingUuid> (CallRoom) via notificationBotDelivery.
+   */
+  static async _notifyBookingConfirmed(booking, memberId, creatorId) {
+    const bookingUuid = booking.id;
+    const startAt = booking.start_time_utc;
+
+    const { rows } = await query(
+      `SELECT id, username, first_name FROM users WHERE id = ANY($1::text[])`,
+      [[memberId, creatorId]]
+    );
+    const byId = Object.fromEntries(rows.map((r) => [String(r.id), r]));
+    const memberName = byId[memberId]?.first_name || byId[memberId]?.username || 'A member';
+    const creatorName = byId[creatorId]?.first_name || byId[creatorId]?.username || 'the creator';
+
+    const whenUtc = moment.utc(startAt).format('MMM D, HH:mm [UTC]');
+    const whenBogota = moment.utc(startAt).tz('America/Bogota').format('MMM D, h:mm A [(Bogotá)]');
+
+    await Promise.all([
+      NotificationEmitter.emit({
+        type: 'call_booking',
+        category: 'commerce',
+        priority: 'high',
+        targetUserId: memberId,
+        entityType: 'booking',
+        entityId: bookingUuid,
+        message: `Your call with ${creatorName} is confirmed for ${whenBogota} / ${whenUtc}. Tap to open the room.`,
+      }),
+      NotificationEmitter.emit({
+        type: 'call_booking',
+        category: 'commerce',
+        priority: 'high',
+        targetUserId: creatorId,
+        entityType: 'booking',
+        entityId: bookingUuid,
+        message: `${memberName} booked a call with you for ${whenBogota} / ${whenUtc}. Tap to open the room.`,
+      }),
+    ]);
   }
 }
 
