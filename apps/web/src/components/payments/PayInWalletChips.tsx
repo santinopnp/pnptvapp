@@ -1615,7 +1615,7 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
   // embedded PNPtv wallet so gas topup covers the transfer fee.
   const handleDustConvert = async () => {
     if (!activeWallet || !isActiveEmbedded) return;
-    if (usdc == null || usdc <= 0 || usdc >= 10) return;
+    if (usdc == null || usdc <= 0 || usdc >= 50) return;
     setDustError(null);
     setDustBusy(true);
     try {
@@ -2720,9 +2720,9 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
                 </div>
               </div>
 
-              {/* Dust → Ru$h converter — only when embedded wallet holds <$10 USDC.
+              {/* Dust → Ru$h converter — only when embedded wallet holds <$50 USDC.
                   One-tap sweep with +10% bonus, 1× per 24h. */}
-              {isActiveEmbedded && usdc != null && usdc > 0.17 && usdc < 10 && !isReadOnlyView && (() => {
+              {isActiveEmbedded && usdc != null && usdc > 0.17 && usdc < 50 && !isReadOnlyView && (() => {
                 const _dustEs = typeof navigator !== "undefined" && navigator.language?.toLowerCase().startsWith("es");
                 const _dustTokens = Math.floor(usdc * 6 * 1.10);
                 return (

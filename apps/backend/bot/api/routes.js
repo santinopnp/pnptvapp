@@ -17378,7 +17378,7 @@ async function _resolveCanonicalPurchase(userId, surface, spec, dbQuery) {
   }
 
   if (surface === 'rush') {
-    // Dust conversion: user has <$10 USDC on Base; convert full balance to Ru$h
+    // Dust conversion: user has <$50 USDC on Base; convert full balance to Ru$h
     // with a +10% platform-margin bonus. Amount comes from on-chain read,
     // never from client. 24h cooldown per user (setting the key before intent
     // creation so an abandoned tap still consumes the daily window).
@@ -17390,7 +17390,7 @@ async function _resolveCanonicalPurchase(userId, surface, spec, dbQuery) {
       const { usdc } = await _getUsdcOnBaseForUser(String(userId), dbQuery);
       if (usdc == null) throwErr('wallet_balance_unavailable', 503);
       if (usdc <= 0) throwErr('no_dust_to_convert', 400);
-      if (usdc >= 10) throwErr('dust_not_eligible', 400);
+      if (usdc >= 50) throwErr('dust_not_eligible', 400);
       await cache.set(cooldownKey, '1', 86400).catch(() => {});
       const usd = Math.floor(usdc * 100) / 100;
       if (usd < 0.17) throwErr('dust_below_min_ru$h', 400);
