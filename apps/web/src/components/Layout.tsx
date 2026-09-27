@@ -20,7 +20,7 @@ import { AdSlot } from "@/components/AdSlot";
 import { FeaturedModelInterstitial, PnpFamWelcomeGate } from "@/components/badges/PnpFamWelcomeGate";
 import { Toast } from "@/components/Toast";
 import { useNearbyToggle } from "@/components/NearbyBadge";
-import { getMessageThreads, getHangoutGroups, markThreadAsRead, getProfile, getForYouRecommendations, followUser, getCryptoGuideStatus, getPublicCreatorProfile, toggleSuperGod, getWalletUsdcBalance, getSubscriptionPlans, getWalletBalance, getTokenPackages, updateProfile, type MessageThread, type HangoutGroup, type ForYouRecommendations, type ForYouSuggestedCreator, type ForYouSuggestedFollow, type ForYouContextHint, type CryptoGuideStatus, type CreatorPublicProfile, type SubscriptionPlan, type TokenPackage } from "@/lib/api";
+import { getMessageThreads, getHangoutGroups, markThreadAsRead, getProfile, getForYouRecommendations, followUser, getCryptoGuideStatus, getPublicCreatorProfile, toggleSuperGod, getWalletUsdcBalance, getSubscriptionPlans, getWalletBalance, getTokenPackages, updateProfile, getExchangeRates, type MessageThread, type HangoutGroup, type ForYouRecommendations, type ForYouSuggestedCreator, type ForYouSuggestedFollow, type ForYouContextHint, type CryptoGuideStatus, type CreatorPublicProfile, type SubscriptionPlan, type TokenPackage } from "@/lib/api";
 import { useTier } from "@/hooks/useTier";
 import { useI18n } from "@/lib/i18n";
 import { connectSocket } from "@/lib/socket";
@@ -2742,6 +2742,8 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
   const [homePlansError, setHomePlansError] = useState<string | null>(null);
   const [selectedHomePlan, setSelectedHomePlan] = useState<SubscriptionPlan | null>(null);
   const [homeNpOpen, setHomeNpOpen] = useState(false);
+  const [homeCallOpen, setHomeCallOpen] = useState(false);
+  const formatLocalPrice = useLocalPrice();
 
   // Founders aggressive promo — active for 60 min after onboarding completion.
   const [foundersSecsLeft, setFoundersSecsLeft] = useState(0);
@@ -2798,7 +2800,7 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
         : Promise.resolve(null),
       getWalletBalance().catch(() => null),
     ]).then(([plansRes, balRes, rushRes]) => {
-      const HIDDEN_IDS = new Set(["prime-trial-3d"]);
+      const HIDDEN_IDS = new Set(["prime-trial-3d", "lifetime-pass"]);
       setHomePlans((plansRes.plans || []).filter((p) => p.active && !HIDDEN_IDS.has(p.id)));
       setHomeUsdcBalance(balRes && balRes.hasWallet ? balRes.usdc : null);
       if (rushRes?.success) setHomeRushBalance((rushRes.regularBalance ?? 0) + (rushRes.giftedBalance ?? 0));
@@ -2911,7 +2913,7 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
   // ── Shared helpers (defined before early returns so they're always in scope) ─
 
   const formatPlanDuration = (days: number) => {
-    if (days >= 36500) return "Founders";
+    if (days >= 36500) return "Lifetime";
     if (days >= 365) return `${Math.round(days / 365)}y`;
     if (days >= 30) return `${Math.round(days / 30)}mo`;
     return `${days}d`;
@@ -3256,15 +3258,43 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
                                   </p>
                                   <p className="text-[10px] text-white/50">{duration}</p>
                                 </div>
-                                <p
-                                  className="text-sm font-black flex-shrink-0"
-                                  style={{ color: isPrime ? "#D4007A" : "#5ED1C4" }}
-                                >
-                                  ${price % 1 === 0 ? price.toFixed(0) : price.toFixed(2)}<span className="text-[9px] font-normal opacity-50 ml-0.5">+fees</span>
-                                </p>
+                                <div className="text-right flex-shrink-0">
+                                  <p
+                                    className="text-sm font-black"
+                                    style={{ color: isPrime ? "#D4007A" : "#5ED1C4" }}
+                                  >
+                                    ${price % 1 === 0 ? price.toFixed(0) : price.toFixed(2)}<span className="text-[9px] font-normal opacity-50 ml-0.5">+fees</span>
+                                  </p>
+                                  {formatLocalPrice(price) && (
+                                    <p className="text-[9px] text-white/30 leading-none mt-0.5">{formatLocalPrice(price)}</p>
+                                  )}
+                                </div>
                               </button>
                             );
                           })}
+                          <div className="mt-1 pt-1.5 border-t border-white/[0.06]">
+                            <button
+                              type="button"
+                              onClick={() => { setHomePanelOpen(false); setHomeCallOpen(true); }}
+                              className="w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl border text-left transition active:scale-[0.98] hover:bg-white/[0.06]"
+                              style={{ borderColor: "rgba(255,255,255,0.1)", background: "rgba(255,255,255,0.03)" }}
+                            >
+                              <div className="flex-1 min-w-0">
+                                <p className="text-xs font-bold text-white truncate">
+                                  📞 {lang === "es" ? "Reserva una llamada con Santino" : "Book a call with Santino"}
+                                </p>
+                                <p className="text-[10px] text-white/50">
+                                  {lang === "es" ? "30 o 60 min · privado" : "30 or 60 min · private"}
+                                </p>
+                              </div>
+                              <div className="text-right flex-shrink-0">
+                                <p className="text-sm font-black" style={{ color: "#D4007A" }}>from $60</p>
+                                {formatLocalPrice(60) && (
+                                  <p className="text-[9px] text-white/30 leading-none mt-0.5">{formatLocalPrice(60)}</p>
+                                )}
+                              </div>
+                            </button>
+                          </div>
                         </div>
                       )}
                     </>
@@ -3340,6 +3370,24 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
               planId="lifetime-pass"
               lang={lang}
               planLabel="PNPtv! Founders"
+            />
+          </Suspense>
+        )}
+
+        {/* Book a call with Santino — triggered from the home panel */}
+        {homeCallOpen && (
+          <Suspense fallback={null}>
+            <LazyBookCallModal
+              open={homeCallOpen}
+              onClose={() => setHomeCallOpen(false)}
+              creator={{
+                id: "8599671840",
+                username: "SantinoFurioso",
+                photo_url: null,
+                creator_type: "full_time",
+                creator_price_usd: 0,
+              }}
+              isOnline={true}
             />
           </Suspense>
         )}
@@ -3703,11 +3751,70 @@ const LazyWalletPayCard = lazy(async () => {
   return { default: mod.WalletPayCard };
 });
 
+// ─── Local-currency price hook ────────────────────────────────────────────────
+// Country → ISO 4217 currency code. USD-dollarized countries (EC, PA) stay USD.
+const COUNTRY_CURRENCY: Record<string, string> = {
+  US: 'USD', CA: 'CAD', MX: 'MXN',
+  CO: 'COP', VE: 'VES', EC: 'USD', PA: 'USD', CR: 'CRC',
+  BR: 'BRL', AR: 'ARS', CL: 'CLP', PE: 'PEN', UY: 'UYU',
+  DO: 'DOP', CU: 'CUP', PR: 'USD', HN: 'HNL', GT: 'GTQ',
+  SV: 'USD', NI: 'NIO', BO: 'BOB', PY: 'PYG',
+  GB: 'GBP',
+  DE: 'EUR', FR: 'EUR', ES: 'EUR', IT: 'EUR', NL: 'EUR',
+  PT: 'EUR', AT: 'EUR', BE: 'EUR', GR: 'EUR', IE: 'EUR', FI: 'EUR',
+  AU: 'AUD', NZ: 'NZD', JP: 'JPY', KR: 'KRW',
+  IN: 'INR', ZA: 'ZAR', NG: 'NGN', IL: 'ILS',
+  TR: 'TRY', CH: 'CHF', SE: 'SEK', NO: 'NOK', DK: 'DKK', PL: 'PLN',
+};
+
+function getDetectedCurrency(): string {
+  try {
+    const locale = navigator.language || 'en-US';
+    const region = new Intl.Locale(locale).region;
+    return region ? (COUNTRY_CURRENCY[region] ?? 'USD') : 'USD';
+  } catch { return 'USD'; }
+}
+
+let _ratesCache: { rates: Record<string, number>; ts: number } | null = null;
+
+function useLocalPrice() {
+  const [rates, setRates] = useState<Record<string, number>>(_ratesCache?.rates ?? {});
+  const currency = useMemo(() => getDetectedCurrency(), []);
+
+  useEffect(() => {
+    if (currency === 'USD') return;
+    if (_ratesCache && Date.now() - _ratesCache.ts < 3_600_000) {
+      setRates(_ratesCache.rates);
+      return;
+    }
+    getExchangeRates()
+      .then((r) => { _ratesCache = r; setRates(r.rates); })
+      .catch(() => {});
+  }, [currency]);
+
+  const format = useCallback((usd: number): string => {
+    if (currency === 'USD' || !rates[currency]) return '';
+    const local = usd * rates[currency];
+    try {
+      return `≈ ${new Intl.NumberFormat(navigator.language, {
+        style: 'currency', currency, maximumFractionDigits: 0,
+      }).format(local)}`;
+    } catch { return ''; }
+  }, [currency, rates]);
+
+  return format;
+}
+
 // Lazy-load NpAppPickerSheet for Founders crypto path in home panel.
 const LazyNpAppPickerSheet = lazy(async () => {
   const mod = await import("@/components/payments/NowPaymentsWaitingPanel");
   return { default: mod.NpAppPickerSheet };
 });
+
+// Lazy-load BookCallModal for the "Book a call with Santino" entry in the home panel.
+const LazyBookCallModal = lazy(() =>
+  import("@/components/creators/BookCallModal").then((m) => ({ default: m.BookCallModal }))
+);
 
 // REMOVED 2026-05-01 — FloatingMainStagePlayer (220×130 fixed PiP video).
 // Replaced by MainStageLiveBanner mounted on Home / Live / Chat pages.

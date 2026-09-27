@@ -23,11 +23,6 @@ import { TutorialOverlay } from "@/components/tutorial/TutorialOverlay";
 import { useI18n } from "@/lib/i18n";
 import {
   WalletPayCard,
-  WalletCheckoutHero,
-  MetaMaskIcon,
-  TrustWalletIcon,
-  WalletConnectIcon,
-  trustWalletDeepLink,
 } from "@/components/payments/PayInWalletChips";
 import { PANEL_APPS, PANEL_STEPS_EN, PANEL_STEPS_ES, NpAppPickerSheet } from "@/components/payments/NowPaymentsWaitingPanel";
 import { connectSocket } from "@/lib/socket";
@@ -35,7 +30,7 @@ import { connectSocket } from "@/lib/socket";
 const MEMBER_PLAN_IDS = new Set(["member_monthly"]);
 // These are filtered at the backend too (planModel.getPublicPlans HIDDEN_LEGACY_IDS).
 // Frontend set is kept as a second safety net for any plan that slips through.
-const HIDDEN_PLAN_IDS = new Set(["prime-trial-3d", "lifetime80", "monthly-pass-promo-15", "yearly50", "lifetime-pass", "lifetime100"]);
+const HIDDEN_PLAN_IDS = new Set(["prime-trial-3d", "lifetime80", "monthly-pass-promo-15", "yearly50", "lifetime100"]);
 
 const RECURRING_PLANS = new Set(["prime-week-pass-7d", "monthly-pass", "prime-diamond-pass-365d"]);
 
@@ -825,100 +820,6 @@ export default function Subscribe() {
 
         </div>
       )}
-      {/* Marketing hero — Rush wallet reveal loop (autoplay muted, no controls) */}
-      <div className="w-full mb-4 rounded-2xl overflow-hidden" style={{ background: "#0a0a0a", border: "1px solid rgba(255,255,255,0.06)" }}>
-        <video
-          autoPlay
-          muted
-          loop
-          playsInline
-          preload="metadata"
-          poster={`/videos/rush-marketing-vertical-${t.lang === "es" ? "es" : "en"}.jpg`}
-          className="w-full h-auto block"
-          aria-label={t.lang === "es" ? "Cómo funciona el pago con Ru$h" : "How Ru$h payment works"}
-        >
-          <source src={`/videos/rush-marketing-vertical-${t.lang === "es" ? "es" : "en"}.mp4`} type="video/mp4" />
-        </video>
-      </div>
-
-      {/* New-to-crypto onboarding card — links to /crypto-guide */}
-      <a
-        href="/crypto-guide"
-        className="group block w-full mb-4 rounded-2xl overflow-hidden transition-transform active:scale-[0.99] hover:-translate-y-0.5"
-        style={{
-          background: "linear-gradient(135deg, rgba(247,147,26,0.16) 0%, rgba(0,141,228,0.12) 55%, rgba(16,185,129,0.14) 100%)",
-          border: "1px solid rgba(247,147,26,0.35)",
-          boxShadow: "0 8px 24px rgba(0,0,0,0.25), 0 0 0 1px rgba(255,255,255,0.03) inset",
-        }}
-      >
-        <div className="p-4 flex items-center gap-3.5">
-          {/* Stacked coin icons */}
-          <div className="relative flex-shrink-0" style={{ width: 56, height: 44 }}>
-            {[
-              { bg: "#F7931A", letter: "₿",  offset: 0,  z: 40, ring: "#F7931A" },  // Bitcoin
-              { bg: "#26A17B", letter: "₮",  offset: 14, z: 30, ring: "#26A17B" },  // USDT
-              { bg: "#5ED1C4", letter: "$",  offset: 28, z: 20, ring: "#5ED1C4" },  // USDC
-              { bg: "#627EEA", letter: "Ξ",  offset: 42, z: 10, ring: "#627EEA" },  // ETH
-            ].map((c) => (
-              <div
-                key={c.letter}
-                className="absolute top-0 w-11 h-11 rounded-full flex items-center justify-center text-white font-black text-lg"
-                style={{
-                  left: c.offset,
-                  zIndex: c.z,
-                  background: c.bg,
-                  border: "2.5px solid #0D0D0D",
-                  boxShadow: `0 0 12px ${c.ring}55`,
-                }}
-                aria-hidden="true"
-              >
-                {c.letter}
-              </div>
-            ))}
-          </div>
-
-          {/* Copy */}
-          <div className="flex-1 min-w-0 ml-4">
-            <div className="flex items-center gap-1.5 mb-0.5">
-              <span
-                className="text-[10px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-md"
-                style={{ background: "rgba(247,147,26,0.2)", color: "#F7931A", border: "1px solid rgba(247,147,26,0.4)" }}
-              >
-                {t.lang === "es" ? "Guía completa" : "Full guide"}
-              </span>
-              <span className="text-[10px] font-semibold text-pnp-textSecondary">
-                {t.lang === "es" ? "3 min de lectura" : "3 min read"}
-              </span>
-            </div>
-            <p className="text-sm font-bold text-pnp-textPrimary leading-tight">
-              {t.lang === "es" ? "¿Primera vez pagando con crypto?" : "First time paying with crypto?"}
-            </p>
-            <p className="text-xs text-pnp-textSecondary mt-1 leading-snug">
-              {t.lang === "es"
-                ? "Compra USDT, Bitcoin o USDC en 5 minutos — sin experiencia previa."
-                : "Buy USDT, Bitcoin or USDC in 5 minutes — no experience needed."}
-            </p>
-          </div>
-
-          {/* CTA arrow */}
-          <div
-            className="flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center transition-transform group-hover:translate-x-0.5"
-            style={{ background: "linear-gradient(135deg,#F7931A,#D4007A)", boxShadow: "0 4px 12px rgba(247,147,26,0.35)" }}
-            aria-hidden="true"
-          >
-            <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
-            </svg>
-          </div>
-        </div>
-      </a>
-
-      {/* Wallet-first pitch — one balance, one tap, no wallet apps. Rendered
-          above the promo/plan grid so users know how checkout works before
-          they pick a plan. */}
-      <div className="mb-4">
-        <WalletCheckoutHero lang={t.lang as "es" | "en"} compact />
-      </div>
 
       {/* Promo code banner — applied state */}
       {appliedPromo && (

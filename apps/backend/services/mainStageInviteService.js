@@ -157,7 +157,7 @@ async function previewInvite(code) {
   const pool = getPool();
   const { rows } = await pool.query(
     `SELECT msi.expires_at, msi.revoked_at, msi.used_count, msi.max_uses,
-            u.first_name, u.username
+            u.first_name, u.username, u.live_channel
      FROM main_stage_invites msi
      JOIN users u ON u.id = msi.created_by
      WHERE msi.code = $1
@@ -177,7 +177,7 @@ async function previewInvite(code) {
   const valid = !isRevoked && !isExpired && !isExhausted;
   const hostName = r.first_name || r.username || null;
 
-  return { valid, hostName, expiresAt: r.expires_at, permanent: r.expires_at === null };
+  return { valid, hostName, hostLiveChannel: r.live_channel || null, expiresAt: r.expires_at, permanent: r.expires_at === null };
 }
 
 /**

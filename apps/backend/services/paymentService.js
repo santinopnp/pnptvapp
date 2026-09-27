@@ -1,4 +1,5 @@
 const PaymentModel = require('../models/paymentModel');
+const ga4Service = require('./ga4Service');
 const InvoiceService = require('./invoiceservice');
 const EmailService = require('./emailservice');
 const PlanModel = require('../models/planModel');
@@ -695,6 +696,7 @@ class PaymentService {
       // Look up what add-ons this plan grants, with per-add-on duration overrides
       const addOnsResult = await query(`
         SELECT pa.add_on_id, pa.is_lifetime, pa.duration_days AS addon_duration_days,
+               pa.scope_id,
                p.duration_days AS plan_duration_days, a.name AS add_on_name,
                p.bonus_tokens
         FROM plan_add_ons pa
@@ -725,12 +727,14 @@ class PaymentService {
 
           // Per-resource scoping: which add-ons are scoped, and which metadata
           // field supplies the resource id.
-          //   channel-access        → paymentMetadata.channelId
+          //   channel-access        → paymentMetadata.channelId || plan_add_ons.scope_id
           //   hangout-access        → paymentMetadata.hangoutGroupId
           //   creator-subscription  → paymentMetadata.creatorId
           let scopeCreatorId = null;
-          if (row.add_on_id === 'channel-access' && paymentMetadata?.channelId) {
-            scopeCreatorId = String(paymentMetadata.channelId);
+          if (row.add_on_id === 'channel-access') {
+            scopeCreatorId = paymentMetadata?.channelId
+              ? String(paymentMetadata.channelId)
+              : (row.scope_id ? String(row.scope_id) : null);
           } else if (row.add_on_id === 'hangout-access' && paymentMetadata?.hangoutGroupId) {
             scopeCreatorId = String(paymentMetadata.hangoutGroupId);
           } else if (row.add_on_id === 'creator-subscription' && paymentMetadata?.creatorId) {
@@ -1159,6 +1163,17 @@ class PaymentService {
           } catch (partnerErr) {
             logger.warn('[PartnerGroup] creditPartnerRevenue hook failed (non-critical)', { userId, planId, error: partnerErr.message });
           }
+
+          // GA4 purchase event — server-side Measurement Protocol
+          try {
+            await ga4Service.trackPurchase({
+              userId,
+              planId,
+              transactionId: resolvedPaymentId,
+              amountUsd: paymentMetadata?.amount_usd || paymentMetadata?.grossUsd || paymentMetadata?.price_amount || null,
+              source,
+            });
+          } catch (_ga4Err) { /* non-fatal */ }
         }
       }
     } catch (err) {

@@ -2608,6 +2608,23 @@ const authStatusLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
+// GET /api/webapp/exchange-rates — public, Redis-cached 1 h
+// Proxies open.er-api.com (free, no key). Returns { rates: { COP: 4100, ... }, ts: <ms> }.
+app.get('/api/webapp/exchange-rates', asyncHandler(async (_req, res) => {
+  const CACHE_KEY = 'pnpapp:exchange-rates:v1';
+  const cached = await redisClient.get(CACHE_KEY).catch(() => null);
+  if (cached) return res.json(JSON.parse(cached));
+  try {
+    const resp = await axios.get('https://open.er-api.com/v6/latest/USD', { timeout: 8000 });
+    if (resp.data?.result !== 'success' || !resp.data?.rates) throw new Error('bad response');
+    const payload = { rates: resp.data.rates, ts: Date.now() };
+    await redisClient.setex(CACHE_KEY, 3600, JSON.stringify(payload)).catch(() => {});
+    return res.json(payload);
+  } catch {
+    return res.json({ rates: {}, ts: Date.now() });
+  }
+}));
+
 app.get('/api/auth-status', authStatusLimiter, (req, res, next) => {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.set('Pragma', 'no-cache');
@@ -9282,7 +9299,7 @@ app.get('/api/webapp/me/suggested-follows', requireSessionAuth, asyncHandler(asy
       ) AS already_follows
     FROM users u
     WHERE u.id <> $1
-      AND u.banned_at IS NULL
+      AND u.tier <> 'banned'
       AND u.creator_status = 'active'
       AND (
         u.crystal_creator_active_until = 'infinity'
@@ -13176,7 +13193,7 @@ app.post('/api/wallet/buy-nowpayments', walletBuyLimiter, requireSessionAuth, as
   // Accept any NP-supported coin. When null, NP shows the full picker on the invoice page.
   const ALLOWED_PAY_CURRENCIES = new Set([
     'btc', 'eth', 'ltc', 'doge', 'xmr', 'sol', 'trx', 'bnbbsc', 'matic',
-    'usdcerc20', 'usdcsol', 'usdttrc20', 'usdtbsc', 'usdterc20',
+    'usdcsol', 'usdttrc20', 'usdtbsc', 'usdterc20',
   ]);
   const payCurrency = (rawPayCurrency && ALLOWED_PAY_CURRENCIES.has(String(rawPayCurrency).toLowerCase()))
     ? String(rawPayCurrency).toLowerCase() : null;
@@ -14562,7 +14579,7 @@ app.post('/api/webapp/payments/usdc/prepare', requireSessionAuth, usdcPrepareLim
 
   const ALLOWED_PAY_CURRENCIES_PREPARE = new Set([
     'btc', 'eth', 'ltc', 'doge', 'xmr', 'sol', 'trx', 'bnbbsc', 'matic',
-    'usdcerc20', 'usdcsol', 'usdcbase', 'usdttrc20', 'usdtbsc', 'usdterc20',
+    'usdcsol', 'usdcbase', 'usdttrc20', 'usdtbsc', 'usdterc20',
   ]);
   const validPayCurrency = (rawPayCurrency && ALLOWED_PAY_CURRENCIES_PREPARE.has(String(rawPayCurrency).toLowerCase()))
     ? String(rawPayCurrency).toLowerCase() : null;
@@ -24822,15 +24839,24 @@ app.get('/internal/zoho/crm/search', requireInternalSecret, asyncHandler(async (
     if (!q) return res.status(400).json({ error: 'q param required' });
     const field = String(req.query.field || 'email').toLowerCase();
 
-    const fieldMap = { email: 'Email', username: 'Telegram_Handle', name: 'Full_Name' };
-    const zohoField = fieldMap[field] || 'Email';
-
     const axios = require('axios');
     const token = await zoho.getAccessToken();
     const apiDomain = process.env.ZOHO_API_DOMAIN || 'https://www.zohoapis.com';
 
-    const resp = await axios.get(`${apiDomain}/crm/v2/Contacts/search`, {
-      params: { criteria: `(${zohoField}:contains:${q})` },
+    // v3 API: use dedicated params for email/word; criteria for custom fields.
+    // criteria:contains on v2 returned 400 for every query — v2 is deprecated.
+    let searchParams;
+    if (field === 'email') {
+      searchParams = { email: q };
+    } else if (field === 'username') {
+      searchParams = { criteria: `(Telegram_Handle:equals:${q})` };
+    } else {
+      // name or default — word search scans Full_Name and other text fields
+      searchParams = { word: q };
+    }
+
+    const resp = await axios.get(`${apiDomain}/crm/v3/Contacts/search`, {
+      params: searchParams,
       headers: { Authorization: `Zoho-oauthtoken ${token}` },
       timeout: 15000,
     });
@@ -24857,7 +24883,7 @@ app.patch('/internal/zoho/crm/contacts/:contactId', requireInternalSecret, async
     const token = await zoho.getAccessToken();
     const apiDomain = process.env.ZOHO_API_DOMAIN || 'https://www.zohoapis.com';
 
-    const resp = await axios.put(`${apiDomain}/crm/v2/Contacts/${contactId}`, {
+    const resp = await axios.put(`${apiDomain}/crm/v3/Contacts/${contactId}`, {
       data: [fields],
     }, {
       headers: { Authorization: `Zoho-oauthtoken ${token}`, 'Content-Type': 'application/json' },

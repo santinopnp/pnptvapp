@@ -11,8 +11,8 @@ interface FreeTierOverlayProps {
 }
 
 const PROMO_PLANS = [
-  { id: 'monthly-pass',            price: 24.99, labelEn: 'PRIME Monthly',       labelEs: 'PRIME mensual',    tagEn: '🔥 Most popular', tagEs: '🔥 Más popular',   subEn: '30 days full access', subEs: '30 días acceso completo' },
-  { id: 'prime-diamond-pass-365d', price: 99.99, labelEn: 'PRIME Diamond Pass',  labelEs: 'PRIME Diamond',    tagEn: '⭐ Best value',    tagEs: '⭐ Mejor precio',  subEn: '1 year full access',  subEs: '1 año acceso completo'   },
+  { id: 'monthly-pass',  price: 24.99, labelEn: 'PRIME Monthly',  labelEs: 'PRIME mensual',  tagEn: '🔥 Most popular',    tagEs: '🔥 Más popular',     subEn: '30 days full access',             subEs: '30 días acceso completo' },
+  { id: 'lifetime-pass', price: 99.99, labelEn: 'PNPtv Founders', labelEs: 'PNPtv Founders', tagEn: '🖤 Founders edition', tagEs: '🖤 Edición Founders', subEn: '18 mo PRIME + lifetime membership', subEs: '18 meses PRIME + membresía vitalicia' },
 ] as const;
 
 export default function FreeTierOverlay({ label, requiredTier = 'member', children }: FreeTierOverlayProps) {
@@ -85,10 +85,9 @@ export default function FreeTierOverlay({ label, requiredTier = 'member', childr
               <p className="text-xs text-white/50 mt-0.5">{es ? 'Elige tu plan — pago único, sin suscripción' : 'Pick a plan — one-time payment, no subscription'}</p>
             </div>
 
-            <WalletLoginGate lang={lang as 'es' | 'en'}>
             <div className="grid grid-cols-2 gap-2.5">
               {PROMO_PLANS.map(plan => {
-                const isLifetime = plan.id === 'prime-diamond-pass-365d';
+                const isLifetime = plan.id === 'lifetime-pass';
                 const isWalletOpen = walletPlanId === plan.id;
                 const cardStyle = isLifetime
                   ? { background: 'linear-gradient(145deg,rgba(20,20,20,0.95),rgba(30,25,20,0.95))', border: '1px solid rgba(230,145,56,0.40)' }
@@ -107,20 +106,23 @@ export default function FreeTierOverlay({ label, requiredTier = 'member', childr
                       <div className="flex items-baseline gap-0.5 leading-none mt-0.5">
                         <span className="text-[11px] font-bold" style={{ color: accent }}>$</span>
                         <span className="text-2xl font-black text-white">{plan.price}</span>
-                        {!isLifetime && <span className="text-[10px] font-semibold text-white/50 ml-0.5">{es ? '/año' : '/yr'}</span>}
+                        {!isLifetime && <span className="text-[10px] font-semibold text-white/50 ml-0.5">{es ? '/mes' : '/mo'}</span>}
                       </div>
                       <p className="text-[11px] font-bold text-white leading-tight">{es ? plan.labelEs : plan.labelEn}</p>
                       <p className="text-[10px] text-white/50 leading-snug">{es ? plan.subEs : plan.subEn}</p>
                     </div>
                     <div className="px-3 pb-3 space-y-1.5">
-                      <button
-                        type="button"
-                        onClick={() => setWalletPlanId(isWalletOpen ? null : plan.id)}
-                        className="w-full py-2.5 rounded-xl text-[11px] font-black text-white transition-all active:scale-[0.97]"
-                        style={{ background: isWalletOpen ? 'linear-gradient(135deg,#34d399,#10b981)' : 'linear-gradient(135deg,#10b981,#059669)' }}
-                      >
-                        {es ? '💳 Tarjeta · Apple Pay · Wallet' : '💳 Card · Apple Pay · Wallet'}
-                      </button>
+                      <WalletLoginGate lang={lang as 'es' | 'en'}>
+                        <button
+                          type="button"
+                          onClick={() => setWalletPlanId(isWalletOpen ? null : plan.id)}
+                          className="w-full py-2.5 rounded-xl text-[11px] font-black text-white transition-all active:scale-[0.97]"
+                          style={{ background: isWalletOpen ? 'linear-gradient(135deg,#34d399,#10b981)' : 'linear-gradient(135deg,#10b981,#059669)' }}
+                        >
+                          {es ? '💳 Tarjeta · Apple Pay · Wallet' : '💳 Card · Apple Pay · Wallet'}
+                        </button>
+                      </WalletLoginGate>
+                      {/* Crypto button is outside WalletLoginGate — always visible */}
                       <button
                         type="button"
                         onClick={() => setNpPickerPlanId(plan.id)}
@@ -149,7 +151,6 @@ export default function FreeTierOverlay({ label, requiredTier = 'member', childr
                 );
               })}
             </div>
-            </WalletLoginGate>
 
             <button
               type="button"
@@ -167,7 +168,7 @@ export default function FreeTierOverlay({ label, requiredTier = 'member', childr
         onClose={() => setNpPickerPlanId(null)}
         planId={npPickerPlanId}
         lang={lang}
-        planLabel={npPickerPlanId === 'prime-diamond-pass-365d' ? 'PRIME Diamond Pass' : 'PRIME Monthly'}
+        planLabel={npPickerPlanId === 'lifetime-pass' ? 'PNPtv Founders — 18 mo PRIME + Lifetime Basic' : 'PRIME Monthly'}
       />
     </>
   );

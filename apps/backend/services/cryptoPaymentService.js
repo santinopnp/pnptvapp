@@ -257,6 +257,16 @@ class CryptoPaymentService {
         metadata,
         `crypto_${payment.id}`
       );
+      if (grantResult?.errors > 0) {
+        await query(
+          `UPDATE checkout_intents SET status = 'grant_failed', grant_result = $1 WHERE id = $2`,
+          [JSON.stringify(grantResult), payment.id]
+        );
+        logger.error('CryptoPayment: grant returned errors — marked grant_failed', {
+          paymentId: payment.id, userId: payment.user_id, planId: payment.plan_id, grantResult,
+        });
+        return;
+      }
       await query(
         `UPDATE checkout_intents SET grant_result = $1 WHERE id = $2`,
         [JSON.stringify(grantResult), payment.id]

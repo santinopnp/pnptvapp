@@ -97,7 +97,7 @@ class Plan {
       'prime-trial-3d',
       'monthly-pass-promo-15',
       'yearly50',       // legacy annual; promo section retired — no longer surfaced
-      'lifetime-pass',  // retired Founders SKU; superseded, not publicly listed
+      // 'lifetime-pass' — re-listed for Founders last-call campaign 2026-09-26
     ]);
     // custom-prime-* are one-time operator-issued plans — never surface publicly
     const isCustomPlan = (plan) => plan.id.startsWith('custom-prime-');
@@ -628,28 +628,28 @@ class Plan {
       {
         id: 'lifetime-pass',
         sku: 'EASYBOTS-PNP-000',
-        display_name: 'LIFETIME PASS',
-        name: 'Lifetime Pass',
-        nameEs: 'Pase de por Vida',
+        display_name: 'PNPTV FOUNDERS',
+        name: 'PNPtv Founders',
+        nameEs: 'PNPtv Founders',
         tier: 'PRIME',
-        price: 249.99,
+        price: 99.99,
         currency: 'USD',
         duration: 36500,
         features: [
-          '♾️ Lifetime access - pay once, stay forever',
+          '🖤 Lifetime membership — pay once, stay forever',
+          '⭐ 18 months of full PRIME access included',
           '👑 Full VIP status in The Circle',
-          '📍 Premium Nearby with priority visibility',
-          '🎥 Unlimited Hangouts - you are the party',
+          '🎥 Unlimited Hangouts with Santino & Lex',
           '📺 All PNP Latino Live + private streams',
-          '🎬 Live sessions with Santino himself',
+          '🛡 No recurring charges — ever',
         ],
         featuresEs: [
-          '♾️ Acceso de por vida - paga una vez, quédate siempre',
+          '🖤 Membresía vitalicia — paga una vez, quédate siempre',
+          '⭐ 18 meses de acceso PRIME completo incluidos',
           '👑 Estatus VIP completo en El Círculo',
-          '📍 Nearby Premium con visibilidad prioritaria',
-          '🎥 Hangouts ilimitados - tú eres la fiesta',
+          '🎥 Hangouts ilimitados con Santino & Lex',
           '📺 Todo PNP Latino Live + streams privados',
-          '🎬 Sesiones en vivo con Santino',
+          '🛡 Sin cobros recurrentes — nunca',
         ],
         active: true,
       },

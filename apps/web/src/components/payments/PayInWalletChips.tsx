@@ -340,18 +340,16 @@ function usePrivyRecovery() {
     return () => { cancelled = true; };
   }, []);
 
-  if (!ready && elapsedMs < 5000) return { status: "initializing" as const, elapsedMs, wallets, serverWalletAddr };
+  if (!ready && elapsedMs < 20000) return { status: "initializing" as const, elapsedMs, wallets, serverWalletAddr };
   if (ready && !authenticated) return { status: "needs_login" as const, elapsedMs, wallets, serverWalletAddr };
-  // SDK never became ready after 5s — total hang (iOS Safari storage partitioning,
-  // network failure during Privy init). If server confirms user had a wallet,
-  // return no_wallet so the 30s auto-reload fires; otherwise fall through to
-  // needs_login to show the re-auth prompt.
-  if (!ready && elapsedMs >= 5000) return {
-    status: serverHasPrivy === true ? "no_wallet" as const : "needs_login" as const,
-    elapsedMs, wallets, serverWalletAddr,
-  };
-  // Authenticated but no wallets — only alarming when server says user should have one
-  if (authenticated && wallets.length === 0 && serverHasPrivy === true && elapsedMs > 5000) {
+  // SDK still not ready after 20s — genuinely hung (iOS Safari storage partitioning,
+  // network failure during Privy init). Fall through to needs_login so the re-auth
+  // prompt shows; the no_wallet auto-reload trap on this path locked out normal
+  // users whose SDK was just slow (2026-09-25 outage: 39h zero checkouts).
+  if (!ready && elapsedMs >= 20000) return { status: "needs_login" as const, elapsedMs, wallets, serverWalletAddr };
+  // Authenticated but no wallets after 20s — Privy legitimately takes 5–15s on
+  // slow mobile networks, so only flag no_wallet after a generous window.
+  if (authenticated && wallets.length === 0 && serverHasPrivy === true && elapsedMs > 20000) {
     return { status: "no_wallet" as const, elapsedMs, wallets, serverWalletAddr };
   }
   return { status: "ready" as const, elapsedMs, wallets, serverWalletAddr };

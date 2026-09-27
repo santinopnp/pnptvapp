@@ -958,6 +958,15 @@ export default function MainStage() {
 
   const visiblePin = pin && pin.id !== dismissedPinId && Date.now() < pin.expiresAt ? pin : null;
 
+  const [pinCopied, setPinCopied] = useState(false);
+  const copyPin = useCallback(() => {
+    if (!visiblePin) return;
+    navigator.clipboard.writeText(visiblePin.text).then(() => {
+      setPinCopied(true);
+      setTimeout(() => setPinCopied(false), 1800);
+    }).catch(() => {});
+  }, [visiblePin]);
+
   useEffect(() => { sidebarTabRef.current = sidebarTab; }, [sidebarTab]);
 
   useEffect(() => {
@@ -1127,7 +1136,7 @@ export default function MainStage() {
     return () => { socket.off('mainstage:skip-vote-update', onSkipVoteUpdate); };
   }, []);
 
-  const hasMic = isAdmin || participantTier === 'member' || participantTier === 'prime';
+  const hasMic = isParticipant;
   const canPlayNext = isAdmin || participantTier === 'prime';
 
   const handleVoteSkip = useCallback(async () => {
@@ -2725,7 +2734,13 @@ export default function MainStage() {
                   <p className="text-[9px] font-bold uppercase tracking-widest text-white/50">
                     {visiblePin.sender}
                   </p>
-                  <p className="text-[12px] leading-snug text-white/92 break-words">{visiblePin.text}</p>
+                  <p
+                    className="text-[12px] leading-snug text-white/92 break-words cursor-pointer select-all"
+                    title="Click to copy"
+                    onClick={copyPin}
+                  >
+                    {pinCopied ? <span className="text-green-400 text-[11px] font-semibold">✓ Copied!</span> : visiblePin.text}
+                  </p>
                 </div>
                 <button
                   type="button"
@@ -3356,7 +3371,13 @@ export default function MainStage() {
             <p className="text-[9px] font-bold uppercase tracking-widest text-white/85">
               {visiblePin.sender}
             </p>
-            <p className="text-[12px] leading-snug text-white break-words">{visiblePin.text}</p>
+            <p
+              className="text-[12px] leading-snug text-white break-words cursor-pointer select-all"
+              title="Click to copy"
+              onClick={copyPin}
+            >
+              {pinCopied ? <span className="text-green-300 text-[11px] font-semibold">✓ Copied!</span> : visiblePin.text}
+            </p>
           </div>
           <button
             type="button"

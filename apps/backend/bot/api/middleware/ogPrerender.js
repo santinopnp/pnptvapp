@@ -365,12 +365,15 @@ async function getMainStageInviteOg(code) {
       };
     }
     const host = preview.hostName;
+    const image = preview.hostLiveChannel
+      ? `${BASE_URL}/api/og/snapshot/${encodeURIComponent(preview.hostLiveChannel)}.jpg`
+      : MAIN_STAGE_IMAGE;
     return {
       title: 'Bye Zoom. Join Main Stage.',
       description: host
         ? `${host} is hosting. Hottest PNP Streaming Party. By PNPtv!`
         : 'Hottest PNP Streaming Party. By PNPtv!',
-      image: MAIN_STAGE_IMAGE,
+      image,
       url: `${BASE_URL}/main-stage/join/${code}`,
       type: 'video.other',
     };

@@ -562,13 +562,13 @@ class TokenCheckoutService {
     let npPayInfo = {};
     const ALLOWED_TOKEN_PAY_CURRENCIES = new Set([
       'btc', 'eth', 'ltc', 'doge', 'xmr', 'sol', 'trx', 'bnbbsc', 'matic',
-      'usdcerc20', 'usdcsol', 'usdttrc20', 'usdtbsc', 'usdterc20',
+      'usdcsol', 'usdttrc20', 'usdtbsc', 'usdterc20',
     ]);
     const requestedCurrency = payCurrency ? String(payCurrency).toLowerCase() : null;
     const validPayCurrency = (requestedCurrency && ALLOWED_TOKEN_PAY_CURRENCIES.has(requestedCurrency))
-      ? requestedCurrency : 'usdcerc20';
+      ? requestedCurrency : 'usdcsol';
     if (requestedCurrency && requestedCurrency !== validPayCurrency) {
-      logger.warn('TokenCheckoutService.createNowPaymentsCheckout: unsupported pay_currency — falling back to usdcerc20', {
+      logger.warn('TokenCheckoutService.createNowPaymentsCheckout: unsupported pay_currency — falling back to usdcsol', {
         userId, packageId, requested: requestedCurrency,
       });
     }
