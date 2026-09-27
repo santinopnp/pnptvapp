@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useEffect } from "react";
+import React, { useState, useCallback, useRef, useEffect, lazy, Suspense } from "react";
 import { useNavigate } from "react-router-dom";
 
 const PRIME_PLANS = [
@@ -53,6 +53,10 @@ import { useAuth } from "@/hooks/useAuth";
 import { useTier } from "@/hooks/useTier";
 
 declare const window: Window & { twttr?: any };
+
+const LazyBuyTokensModal = lazy(() =>
+  import("@/components/BuyTokensModal").then((m) => ({ default: m.BuyTokensModal }))
+);
 
 const CAROUSEL_VIDEO_RE = /\.(mp4|webm|mov|m4v)(\?|$)/i;
 function isCarouselVideo(url: string) { return CAROUSEL_VIDEO_RE.test(url); }
@@ -453,7 +457,11 @@ export default function SocialPostCard({
   const isSantinoPost =
     ["8599671840", "8552451957"].includes(String(post.author_id)) ||
     String(post.author_username || "").toLowerCase() === "santinoFurioso".toLowerCase();
+  const isPnptvOfficial =
+    String(post.author_id) === "8552451957" ||
+    String(post.author_username || "").toLowerCase() === "pnptv";
   const [showBookCallModal, setShowBookCallModal] = useState(false);
+  const [showBuyRushModal, setShowBuyRushModal] = useState(false);
   const showPrimeUpsell = isPrimeCreator && viewerTier !== "prime" && !post.is_exclusive && !isOwn;
   const primeUpsellKey = `pnp_prime_upsell_dismissed_${post.author_id}`;
   const [primeUpsellDismissed, setPrimeUpsellDismissed] = useState(() => {
@@ -1743,6 +1751,17 @@ export default function SocialPostCard({
               {/* Santino + Lex action pills — Subscribe to PRIME (non-PRIME only) + Book a Call (Santino only) */}
               {isPrimeCreator && !isOwn && (
                 <div className="mt-2.5 flex gap-2" onClick={(e) => e.stopPropagation()}>
+                  {isPnptvOfficial && (
+                    <button
+                      type="button"
+                      onClick={() => setShowBuyRushModal(true)}
+                      className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-[11px] font-bold text-white transition-all active:scale-95"
+                      style={{ background: "linear-gradient(135deg, #D4007A, #7B61FF)" }}
+                    >
+                      <span>💎</span>
+                      <span>{lang === "es" ? "Comprar Ru$h" : "Buy Ru$h"}</span>
+                    </button>
+                  )}
                   {showPrimeUpsell && (
                     <button
                       type="button"
@@ -1754,7 +1773,7 @@ export default function SocialPostCard({
                       <span>{lang === "es" ? "Suscríbete a PRIME" : "Subscribe to PRIME"}</span>
                     </button>
                   )}
-                  {isSantinoPost && (
+                  {isSantinoPost && !isPnptvOfficial && (
                     <button
                       type="button"
                       onClick={() => setShowBookCallModal(true)}
@@ -2524,6 +2543,15 @@ export default function SocialPostCard({
           }}
           isOnline={true}
         />
+      )}
+
+      {showBuyRushModal && (
+        <Suspense fallback={null}>
+          <LazyBuyTokensModal
+            isOpen={showBuyRushModal}
+            onClose={() => setShowBuyRushModal(false)}
+          />
+        </Suspense>
       )}
     </div>
   );
