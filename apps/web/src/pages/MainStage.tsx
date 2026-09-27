@@ -958,6 +958,15 @@ export default function MainStage() {
 
   const visiblePin = pin && pin.id !== dismissedPinId && Date.now() < pin.expiresAt ? pin : null;
 
+  const [pinCopied, setPinCopied] = useState(false);
+  const copyPin = useCallback(() => {
+    if (!visiblePin) return;
+    navigator.clipboard.writeText(visiblePin.text).then(() => {
+      setPinCopied(true);
+      setTimeout(() => setPinCopied(false), 1800);
+    }).catch(() => {});
+  }, [visiblePin]);
+
   useEffect(() => { sidebarTabRef.current = sidebarTab; }, [sidebarTab]);
 
   useEffect(() => {
