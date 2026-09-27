@@ -1777,6 +1777,18 @@ export async function verifyWalletCheckoutTx(intentId: number, txHash: string): 
   return res.json();
 }
 
+export async function getDustConfig(): Promise<{
+  ok: boolean;
+  threshold_usd: number;
+  min_usd: number;
+  bonus_pct: number;
+  eth_gas_reserve: number;
+}> {
+  const res = await fetch(`${API_BASE}/api/wallet/dust-config`, { credentials: "include" });
+  if (!res.ok) throw new Error(`dust-config ${res.status}`);
+  return res.json();
+}
+
 // Seed a small amount of Base ETH into the caller's embedded wallet so it can
 // pay its own gas for the next USDC/ETH transfer. Best-effort — resolves even
 // on 503 (treasury unavailable) so the caller can proceed with the tx attempt.

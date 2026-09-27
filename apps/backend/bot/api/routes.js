@@ -1662,6 +1662,7 @@ const limiter = rateLimit({
       '/api/webapp/notifications/counts',
       '/api/webapp/dm/presence',
       '/api/wallet/packages',           // read-only, fetched on every BuyTokensModal open
+      '/api/wallet/dust-config',        // read-only, fetched on WalletHomeSheet open
       '/api/wallet/presale-status',     // read-only, fetched on every BuyTokensModal open
       '/api/wallet/balance',            // Ru$h balance — polled by WalletFloater + checkout
       '/api/wallet/balance/usdc',       // USDC on-chain balance — polled every 3s during card onramp
@@ -13002,6 +13003,20 @@ app.get('/api/wallet/packages', requireSessionAuth, (req, res) => {
   res.json({ success: true, packages: DashTokenService.TOKEN_PACKAGES });
 });
 
+// GET /api/wallet/dust-config — current dust-convert threshold + min. Read by
+// WalletHomeSheet to decide when to render the sweep CTA. Threshold is server-
+// controlled so ops can adjust it without a frontend deploy.
+app.get('/api/wallet/dust-config', requireSessionAuth, asyncHandler(async (_req, res) => {
+  const thresholdUsd = await _getDustThresholdUsd();
+  res.json({
+    ok: true,
+    threshold_usd: thresholdUsd,
+    min_usd: 0.17,
+    bonus_pct: 10,
+    eth_gas_reserve: DUST_ETH_GAS_RESERVE,
+  });
+}));
+
 // GET /api/wallet/linked — session-scoped linked-wallet lookup. Returns the
 // user's linked embedded-wallet address (populated via /api/privy/link) so the
 // frontend can render a READ-ONLY wallet view on devices where Privy hasn't
@@ -17273,6 +17288,35 @@ async function _readUsdcBaseBalance(address) {
   }
 }
 
+// Read on-chain native ETH balance on Base for a given EVM address.
+// Returns number (ETH) or null on RPC failure.
+async function _readEthBaseBalance(address) {
+  if (!address || !/^0x[a-fA-F0-9]{40}$/.test(address)) return null;
+  const { cache } = require('../../config/redis');
+  const normalized = address.toLowerCase();
+  const cacheKey = `wallet:eth:${normalized}`;
+  const cached = await cache.get(cacheKey).catch(() => null);
+  if (cached != null) return Number(cached);
+  const apiKey = process.env.ALCHEMY_API_KEY;
+  if (!apiKey) return null;
+  const url = `https://base-mainnet.g.alchemy.com/v2/${apiKey}`;
+  try {
+    const rpcRes = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_getBalance',
+        params: [normalized, 'latest'] }),
+    });
+    const j = await rpcRes.json();
+    const wei = BigInt(j.result || '0x0');
+    const eth = Number(wei) / 1e18;
+    await cache.set(cacheKey, String(eth), 10).catch(() => {});
+    return eth;
+  } catch (_) {
+    return null;
+  }
+}
+
 // Resolve the user's preferred wallet address then read its on-chain USDC on Base.
 // Returns { address, usdc } or { address: null } if no wallet linked.
 async function _getUsdcOnBaseForUser(userId, dbQuery) {
@@ -17286,6 +17330,41 @@ async function _getUsdcOnBaseForUser(userId, dbQuery) {
   const usdc = await _readUsdcBaseBalance(address);
   return { address, usdc };
 }
+
+// Same as _getUsdcOnBaseForUser but reads native ETH balance instead.
+async function _getEthOnBaseForUser(userId, dbQuery) {
+  const { rows } = await dbQuery(
+    `SELECT COALESCE(preferred_wallet_address, wallet_address) AS addr
+       FROM users WHERE id = $1 LIMIT 1`,
+    [String(userId)]
+  );
+  const address = rows[0]?.addr ? String(rows[0].addr).toLowerCase() : null;
+  if (!address) return { address: null, eth: null };
+  const eth = await _readEthBaseBalance(address);
+  return { address, eth };
+}
+
+// Dust converter threshold — reads Redis key `config:dust:threshold_usd`
+// (60s cache). Default $50 if unset. Adjust via:
+//   docker exec redis-pnptv redis-cli SET config:dust:threshold_usd 75
+async function _getDustThresholdUsd() {
+  const { cache } = require('../../config/redis');
+  const cached = await cache.get('config:dust:threshold_usd:cache').catch(() => null);
+  if (cached != null) {
+    const n = Number(cached);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  const raw = await cache.get('config:dust:threshold_usd').catch(() => null);
+  const n = Number(raw);
+  const threshold = (Number.isFinite(n) && n > 0) ? n : 50;
+  await cache.set('config:dust:threshold_usd:cache', String(threshold), 60).catch(() => {});
+  return threshold;
+}
+
+// Gas reserve kept in the wallet during an ETH sweep so the tx itself can
+// still be signed and mined. 0.0003 ETH is ~2× typical Base transfer cost
+// under normal congestion.
+const DUST_ETH_GAS_RESERVE = 0.0003;
 
 async function _resolveCanonicalPurchase(userId, surface, spec, dbQuery) {
   const throwErr = (msg, status = 400) => { const e = new Error(msg); e.status = status; throw e; };
@@ -17378,27 +17457,47 @@ async function _resolveCanonicalPurchase(userId, surface, spec, dbQuery) {
   }
 
   if (surface === 'rush') {
-    // Dust conversion: user has <$50 USDC on Base; convert full balance to Ru$h
-    // with a +10% platform-margin bonus. Amount comes from on-chain read,
-    // never from client. 24h cooldown per user (setting the key before intent
-    // creation so an abandoned tap still consumes the daily window).
+    // Dust conversion: user has < configured threshold in USDC (or ETH) on
+    // Base; convert full balance to Ru$h with a +10% platform-margin bonus.
+    // Amounts come from on-chain reads, never from client. 24h cooldown per
+    // user (setting the key before intent creation so an abandoned tap still
+    // consumes the daily window; the cooldown is shared across assets so a
+    // user can't USDC-sweep + ETH-sweep back-to-back).
     if (spec?.dustConvert === true) {
       const { cache } = require('../../config/redis');
       const cooldownKey = `dust:convert:${userId}`;
       const held = await cache.get(cooldownKey).catch(() => null);
       if (held) throwErr('dust_cooldown', 429);
-      const { usdc } = await _getUsdcOnBaseForUser(String(userId), dbQuery);
-      if (usdc == null) throwErr('wallet_balance_unavailable', 503);
-      if (usdc <= 0) throwErr('no_dust_to_convert', 400);
-      if (usdc >= 50) throwErr('dust_not_eligible', 400);
-      await cache.set(cooldownKey, '1', 86400).catch(() => {});
-      const usd = Math.floor(usdc * 100) / 100;
+      const threshold = await _getDustThresholdUsd();
+      const asset = spec?.dustAsset === 'eth' ? 'eth' : 'usdc';
+
+      let usd;
+      if (asset === 'eth') {
+        const { eth } = await _getEthOnBaseForUser(String(userId), dbQuery);
+        if (eth == null) throwErr('wallet_balance_unavailable', 503);
+        const spendableEth = eth - DUST_ETH_GAS_RESERVE;
+        if (spendableEth <= 0) throwErr('no_dust_to_convert', 400);
+        const price = await _getEthUsdPrice();
+        if (!price) throwErr('eth_price_unavailable', 503);
+        const rawUsd = spendableEth * price;
+        if (rawUsd <= 0) throwErr('no_dust_to_convert', 400);
+        if (rawUsd >= threshold) throwErr('dust_not_eligible', 400);
+        usd = Math.floor(rawUsd * 100) / 100;
+      } else {
+        const { usdc } = await _getUsdcOnBaseForUser(String(userId), dbQuery);
+        if (usdc == null) throwErr('wallet_balance_unavailable', 503);
+        if (usdc <= 0) throwErr('no_dust_to_convert', 400);
+        if (usdc >= threshold) throwErr('dust_not_eligible', 400);
+        usd = Math.floor(usdc * 100) / 100;
+      }
+
       if (usd < 0.17) throwErr('dust_below_min_ru$h', 400);
+      await cache.set(cooldownKey, '1', 86400).catch(() => {});
       const baseTokens = usd * 6;
       const tokens = Math.floor(baseTokens * 1.10);
       return {
         amountUsd: usd,
-        resolvedSpec: { tokens, packageId: 'dust_convert' },
+        resolvedSpec: { tokens, packageId: 'dust_convert', dustAsset: asset },
       };
     }
     const pkgId = spec?.packageId ? String(spec.packageId) : null;

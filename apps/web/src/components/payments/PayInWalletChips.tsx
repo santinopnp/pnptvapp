@@ -1157,7 +1157,7 @@ export function WalletPayCard({
 // on open + on drill-in return. Lazy-loaded from Layout.tsx.
 
 import { lazy as _lazy, Suspense as _Suspense } from "react";
-import { getWalletBalance as _getWalletBalance, getLinkedWallet as _getLinkedWallet, linkPrivyIdentity as _linkPrivyIdentity } from "@/lib/api";
+import { getWalletBalance as _getWalletBalance, getLinkedWallet as _getLinkedWallet, linkPrivyIdentity as _linkPrivyIdentity, getDustConfig as _getDustConfig } from "@/lib/api";
 const _LazyBuyTokensModal = _lazy(() =>
   import("@/components/BuyTokensModal").then((m) => ({ default: m.BuyTokensModal }))
 );
@@ -1507,14 +1507,34 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
   const [sendConfirm, setSendConfirm] = _useState(false);
   const [refreshTick, setRefreshTick] = _useState(0);
 
-  // Dust → Ru$h converter state. Card renders when the wallet holds <$10 USDC
-  // on Base. One-tap sweep-and-mint with a +10% platform-margin bonus, 1× per
-  // 24h per user. Cooldown flag is set client-side on 429 so the UI reflects
-  // the backend rate limit immediately without a second round-trip.
+  // Dust → Ru$h converter state. Card renders when the embedded wallet holds
+  // less than the server-configured threshold in either USDC or ETH on Base.
+  // One-tap sweep-and-mint with a +10% platform-margin bonus, 1× per 24h per
+  // user (cooldown shared across assets). Cooldown flag is set client-side on
+  // 429 so the UI reflects the backend rate limit without a second round-trip.
   const [dustBusy, setDustBusy] = _useState(false);
   const [dustError, setDustError] = _useState<string | null>(null);
   const [dustSuccess, setDustSuccess] = _useState<{ tokens: number; usd: number } | null>(null);
   const [dustCooldown, setDustCooldown] = _useState(false);
+  const [dustCfg, setDustCfg] = _useState<{ threshold_usd: number; min_usd: number; bonus_pct: number; eth_gas_reserve: number } | null>(null);
+  const [ethUsdPrice, setEthUsdPrice] = _useState<number | null>(null);
+
+  // Fetch dust config once per sheet open; failure falls back to prior
+  // hardcoded gates (50/0.17) so the CTA still functions if the endpoint
+  // is temporarily unavailable.
+  _useEffect(() => {
+    let cancelled = false;
+    _getDustConfig()
+      .then((c) => { if (!cancelled) setDustCfg({ threshold_usd: c.threshold_usd, min_usd: c.min_usd, bonus_pct: c.bonus_pct, eth_gas_reserve: c.eth_gas_reserve }); })
+      .catch(() => { /* fallback to defaults */ });
+    // ETH spot price (public endpoint, no auth) — used to preview the ETH
+    // sweep USD value when USDC is zero but ETH has dust.
+    fetch('https://api.coinbase.com/v2/prices/ETH-USD/spot')
+      .then((r) => r.json())
+      .then((j) => { if (!cancelled) { const n = Number(j?.data?.amount); if (Number.isFinite(n) && n > 0) setEthUsdPrice(n); } })
+      .catch(() => { /* preview only; server has its own price */ });
+    return () => { cancelled = true; };
+  }, []);
 
   const _usdcBridgeStorageKey = address ? `pnptv.usdcBridge.${address.toLowerCase()}` : null;
 
@@ -1609,39 +1629,55 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
     }
   };
 
-  // Sweep entire on-chain USDC balance (<$10) and credit as Ru$h with +10%
-  // bonus. Server reads the balance on-chain and enforces both the <$10 gate
+  // Sweep the wallet's dust (USDC or ETH on Base) into Ru$h with +10% bonus.
+  // Server reads the balance on-chain and enforces both the threshold gate
   // and the 24h cooldown; client input is untrusted. Only rendered for the
-  // embedded PNPtv wallet so gas topup covers the transfer fee.
-  const handleDustConvert = async () => {
+  // embedded PNPtv wallet so gas topup covers USDC transfer fee. For ETH, a
+  // small gas reserve (server-configured) is left behind so the tx can be
+  // signed and mined.
+  const handleDustConvert = async (asset: "usdc" | "eth") => {
     if (!activeWallet || !isActiveEmbedded) return;
-    if (usdc == null || usdc <= 0 || usdc >= 50) return;
     setDustError(null);
     setDustBusy(true);
     try {
       const intent = await initiateWalletCheckout({
-        rail: "usdc",
+        rail: asset === "eth" ? "eth" : "usdc",
         surface: "rush",
-        entitlementSpec: { dustConvert: true },
-        metadata: { source: "wallet_dust_convert" },
+        entitlementSpec: { dustConvert: true, dustAsset: asset },
+        metadata: { source: "wallet_dust_convert", asset },
       });
-      if (!intent.receivingAddress || !intent.amountUsdc) throw new Error("intent_missing_fields");
 
       try { await requestGasTopup(activeWallet.address); } catch { /* non-fatal */ }
 
-      const data = encodeFunctionData({
-        abi: _USDC_ABI, functionName: "transfer",
-        args: [intent.receivingAddress as `0x${string}`, parseUnits(intent.amountUsdc.toFixed(6), 6)],
-      });
-      const res = await privySendTransaction(
-        { chainId: 8453, to: _USDC_BASE as `0x${string}`, data, value: "0" },
-        { sponsor: false, address: activeWallet.address, uiOptions: { showWalletUIs: true } }
-      );
-      const txHash = res.hash as `0x${string}`;
+      let txHash: `0x${string}`;
+      if (asset === "eth") {
+        const weiExpected = (intent as { amountWeiExpected?: string }).amountWeiExpected;
+        if (!intent.receivingAddress || !weiExpected) throw new Error("intent_missing_fields");
+        const res = await privySendTransaction(
+          { chainId: 8453, to: intent.receivingAddress as `0x${string}`, value: weiExpected },
+          { sponsor: false, address: activeWallet.address, uiOptions: { showWalletUIs: true } }
+        );
+        txHash = res.hash as `0x${string}`;
+      } else {
+        if (!intent.receivingAddress || !intent.amountUsdc) throw new Error("intent_missing_fields");
+        const data = encodeFunctionData({
+          abi: _USDC_ABI, functionName: "transfer",
+          args: [intent.receivingAddress as `0x${string}`, parseUnits(intent.amountUsdc.toFixed(6), 6)],
+        });
+        const res = await privySendTransaction(
+          { chainId: 8453, to: _USDC_BASE as `0x${string}`, data, value: "0" },
+          { sponsor: false, address: activeWallet.address, uiOptions: { showWalletUIs: true } }
+        );
+        txHash = res.hash as `0x${string}`;
+      }
+
       const verified = await verifyWalletCheckoutTx(intent.intentId, txHash);
       if (!verified.ok) throw new Error(verified.reason || "verify_failed");
       const tokensCredited = Number(verified.rushCredited) || 0;
-      setDustSuccess({ tokens: tokensCredited, usd: Number(intent.amountUsdc) });
+      const sweptUsd = asset === "eth"
+        ? Number((intent as { amountEth?: number }).amountEth || 0) * Number((intent as { ethUsdPrice?: number }).ethUsdPrice || 0)
+        : Number(intent.amountUsdc);
+      setDustSuccess({ tokens: tokensCredited, usd: sweptUsd });
       setRefreshTick((n) => n + 1);
     } catch (err: unknown) {
       const status = (err as { status?: number }).status;
@@ -1652,7 +1688,7 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
         // silent — user backed out
       } else {
         setDustError(msg);
-        reportWalletClientError("dustConvert", err, { source: "WalletHomeSheet", address: activeWallet.address });
+        reportWalletClientError("dustConvert", err, { source: "WalletHomeSheet", address: activeWallet.address, asset });
       }
     } finally {
       setDustBusy(false);
@@ -2720,11 +2756,25 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
                 </div>
               </div>
 
-              {/* Dust → Ru$h converter — only when embedded wallet holds <$50 USDC.
-                  One-tap sweep with +10% bonus, 1× per 24h. */}
-              {isActiveEmbedded && usdc != null && usdc > 0.17 && usdc < 50 && !isReadOnlyView && (() => {
+              {/* Dust → Ru$h converter — renders when the embedded wallet holds
+                  less than the server-configured threshold in either USDC or
+                  ETH on Base. USDC takes priority when both have dust. */}
+              {isActiveEmbedded && !isReadOnlyView && (() => {
+                const _threshold = dustCfg?.threshold_usd ?? 50;
+                const _min = dustCfg?.min_usd ?? 0.17;
+                const _ethReserve = dustCfg?.eth_gas_reserve ?? 0.0003;
+                const _bonus = 1 + (dustCfg?.bonus_pct ?? 10) / 100;
+                const _usdcEligible = usdc != null && usdc >= _min && usdc < _threshold;
+                const _ethSpendable = (eth != null && ethUsdPrice != null)
+                  ? Math.max(0, eth - _ethReserve) * ethUsdPrice
+                  : 0;
+                const _ethEligible = !_usdcEligible && _ethSpendable >= _min && _ethSpendable < _threshold;
+                if (!_usdcEligible && !_ethEligible && !dustSuccess) return null;
+                const _asset: "usdc" | "eth" = _usdcEligible ? "usdc" : "eth";
+                const _sweepUsd = _asset === "usdc" ? Number(usdc) : _ethSpendable;
+                const _dustTokens = Math.floor(_sweepUsd * 6 * _bonus);
                 const _dustEs = typeof navigator !== "undefined" && navigator.language?.toLowerCase().startsWith("es");
-                const _dustTokens = Math.floor(usdc * 6 * 1.10);
+                const _assetLabel = _asset === "usdc" ? "USDC" : "ETH";
                 return (
                   <div className="rounded-2xl border border-pink-400/40 bg-gradient-to-br from-pink-500/[0.12] via-fuchsia-500/[0.08] to-purple-500/[0.10] p-3.5 space-y-2.5">
                     {dustSuccess ? (
@@ -2736,8 +2786,8 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
                           </p>
                           <p className="text-[11px] text-white/70 mt-0.5">
                             {_dustEs
-                              ? `Convertiste $${dustSuccess.usd.toFixed(2)} en Ru$h con bono +10%`
-                              : `Converted $${dustSuccess.usd.toFixed(2)} into Ru$h with +10% bonus`}
+                              ? `Convertiste $${dustSuccess.usd.toFixed(2)} en Ru$h con bono +${dustCfg?.bonus_pct ?? 10}%`
+                              : `Converted $${dustSuccess.usd.toFixed(2)} into Ru$h with +${dustCfg?.bonus_pct ?? 10}% bonus`}
                           </p>
                         </div>
                       </div>
@@ -2751,11 +2801,17 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
                             </p>
                             <p className="text-[11px] text-white/75 mt-0.5 leading-snug">
                               {_dustEs
-                                ? `$${usdc.toFixed(2)} USDC → ${_dustTokens.toLocaleString()} Ru$h · +10% bono`
-                                : `$${usdc.toFixed(2)} USDC → ${_dustTokens.toLocaleString()} Ru$h · +10% bonus`}
+                                ? `$${_sweepUsd.toFixed(2)} ${_assetLabel} → ${_dustTokens.toLocaleString()} Ru$h · +${dustCfg?.bonus_pct ?? 10}% bono`
+                                : `$${_sweepUsd.toFixed(2)} ${_assetLabel} → ${_dustTokens.toLocaleString()} Ru$h · +${dustCfg?.bonus_pct ?? 10}% bonus`}
                             </p>
                             <p className="text-[10px] text-white/50 mt-0.5">
-                              {_dustEs ? "1× por día · Ru$h usable en cualquier tip" : "1× per day · Ru$h usable on any tip"}
+                              {_asset === "eth"
+                                ? (_dustEs
+                                  ? `1× por día · deja ${_ethReserve} ETH para gas`
+                                  : `1× per day · leaves ${_ethReserve} ETH for gas`)
+                                : (_dustEs
+                                  ? "1× por día · Ru$h usable en cualquier tip"
+                                  : "1× per day · Ru$h usable on any tip")}
                             </p>
                           </div>
                         </div>
@@ -2763,11 +2819,12 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
                           type="button"
                           onClick={() => {
                             if (dustBusy || dustCooldown) return;
+                            const label = _assetLabel;
                             const confirmMsg = _dustEs
-                              ? `Convertir TODO tu USDC ($${usdc.toFixed(2)}) en ${_dustTokens.toLocaleString()} Ru$h?`
-                              : `Convert ALL your USDC ($${usdc.toFixed(2)}) into ${_dustTokens.toLocaleString()} Ru$h?`;
+                              ? `Convertir tu ${label} ($${_sweepUsd.toFixed(2)}) en ${_dustTokens.toLocaleString()} Ru$h?`
+                              : `Convert your ${label} ($${_sweepUsd.toFixed(2)}) into ${_dustTokens.toLocaleString()} Ru$h?`;
                             if (!confirm(confirmMsg)) return;
-                            handleDustConvert();
+                            handleDustConvert(_asset);
                           }}
                           disabled={dustBusy || dustCooldown}
                           className="w-full py-2.5 rounded-xl text-[12px] font-bold text-white transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
