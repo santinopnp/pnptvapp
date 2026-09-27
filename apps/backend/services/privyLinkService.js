@@ -34,7 +34,7 @@ If you sent USDC or ETH to the OLD address, those funds are still there and will
   }
 
   try {
-    const channel = process.env.SLACK_OPS_ADMIN_ALERTS_CHANNEL || process.env.SLACK_OPS_ALERTS_CHANNEL;
+    const channel = process.env.SLACK_OPS_ADMIN_CHANNEL || process.env.SLACK_OPS_INCIDENTS_CHANNEL;
     const token = process.env.SLACK_BOT_TOKEN;
     if (channel && token) {
       await fetch('https://slack.com/api/chat.postMessage', {

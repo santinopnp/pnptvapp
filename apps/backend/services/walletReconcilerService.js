@@ -47,7 +47,7 @@ function _walletsOf(privyUser) {
 }
 
 async function _postSlack(text) {
-  const channel = process.env.SLACK_OPS_ADMIN_ALERTS_CHANNEL || process.env.SLACK_OPS_ALERTS_CHANNEL;
+  const channel = process.env.SLACK_OPS_ADMIN_CHANNEL || process.env.SLACK_OPS_INCIDENTS_CHANNEL;
   const token = process.env.SLACK_BOT_TOKEN;
   if (!channel || !token) return;
   try {
