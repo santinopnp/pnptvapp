@@ -2608,6 +2608,23 @@ const authStatusLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
+// GET /api/webapp/exchange-rates — public, Redis-cached 1 h
+// Proxies open.er-api.com (free, no key). Returns { rates: { COP: 4100, ... }, ts: <ms> }.
+app.get('/api/webapp/exchange-rates', asyncHandler(async (_req, res) => {
+  const CACHE_KEY = 'pnpapp:exchange-rates:v1';
+  const cached = await redisClient.get(CACHE_KEY).catch(() => null);
+  if (cached) return res.json(JSON.parse(cached));
+  try {
+    const resp = await axios.get('https://open.er-api.com/v6/latest/USD', { timeout: 8000 });
+    if (resp.data?.result !== 'success' || !resp.data?.rates) throw new Error('bad response');
+    const payload = { rates: resp.data.rates, ts: Date.now() };
+    await redisClient.setex(CACHE_KEY, 3600, JSON.stringify(payload)).catch(() => {});
+    return res.json(payload);
+  } catch {
+    return res.json({ rates: {}, ts: Date.now() });
+  }
+}));
+
 app.get('/api/auth-status', authStatusLimiter, (req, res, next) => {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.set('Pragma', 'no-cache');

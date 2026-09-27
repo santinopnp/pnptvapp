@@ -11457,3 +11457,7 @@ export function dismissFoundersPopup(): Promise<{ ok: boolean }> {
 export function dismissYear50Popup(): Promise<{ ok: boolean }> {
   return request<{ ok: boolean }>('/api/webapp/me/dismiss-year50-popup', { method: 'POST' });
 }
+
+export function getExchangeRates(): Promise<{ rates: Record<string, number>; ts: number }> {
+  return request<{ rates: Record<string, number>; ts: number }>('/api/webapp/exchange-rates');
+}
