@@ -65,6 +65,9 @@ export function getNotificationDeepLink(notif: {
     case "live_stream_started":
       return entityId ? `/live/${entityId}` : "/live";
 
+    case "main_stage_join":
+      return "/main-stage";
+
     case "availability_expiring":
       return "/creators/availability";
 

@@ -208,12 +208,9 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
           firstName: data.displayName,
           photoUrl: data.photoUrl ?? undefined,
         },
-        // type "system" with metadata.url "/" makes getNotificationDeepLink
-        // return "/" — which the Toast component's handleTap navigates to via
-        // react-router navigate(), landing the user on the Main Stage page.
-        type: "system",
-        entityType: undefined,
-        entityId: undefined,
+        type: "main_stage_join",
+        entityType: "user",
+        entityId: data.userId,
       });
     };
 

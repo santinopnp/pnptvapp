@@ -1133,8 +1133,9 @@ async function addCammer(identity) {
     logger.warn('[MainStage] notifyCammerJoined failed', { identity, error: err.message })
   );
 
-  // Fire-and-forget Socket.IO toast to online followers. De-duped with same
-  // 15-min window as notifyCammerJoined via a shared Redis key.
+  // Fire-and-forget: persisted push to non-member followers + socket toast
+  // to online followers. Uses its own dedupe key; member followers are
+  // excluded from persisted push to avoid doubling with notifyCammerJoined.
   notifyFollowersOnStage(identity).catch((err) =>
     logger.warn('[MainStage] notifyFollowersOnStage failed', { identity, error: err.message })
   );
@@ -1213,24 +1214,25 @@ async function notifyCammerJoined(identity) {
 }
 
 /**
- * Emit a `friend_on_stage` Socket.IO event to the online followers of a cammer
- * who just joined the Main Stage. Best-effort — swallows all failures. Shares
- * the same 15-min Redis dedupe key as notifyCammerJoined so a single join event
- * doesn't produce both a push notification AND a socket toast to the same user.
+ * Notify ALL followers of a cammer who just joined Main Stage.
  *
- * Follower fan-out is capped at 200 rows. Only followers whose
- * `presence:online:{id}` Redis key is set (refreshed every 60s by the
- * heartbeat in dmService) receive the event.
+ * Two-channel delivery:
+ *   1. NotificationEmitter.emitToMany() → persisted DB record + push for
+ *      followers who are NOT pnp-members (online or offline), capped at 500.
+ *      Member followers are excluded here because they already receive a
+ *      push from notifyCammerJoined; sending both would double-push.
+ *   2. friend_on_stage Socket.IO event → richer real-time toast for online
+ *      followers only (no DB write, instant, capped by the same 500).
+ *
+ * Deduped per-cammer with a 15-min Redis key that is independent from
+ * notifyCammerJoined's dedupe key.
  */
 async function notifyFollowersOnStage(identity) {
-  if (!_io) return;
   const idStr = String(identity);
   if (idStr === MEDIA_BOT_IDENTITY) return;
   if (idStr.startsWith('guest_') || idStr.startsWith('viewer_')) return;
 
   const redis = getRedis();
-  // Independent dedupe key — does not share with notifyCammerJoined's push key
-  // so both push (pnp-member only) and socket toast (all followers) can fire.
   const socketDedupeKey = `mainstage:socket:sent:${idStr}`;
   const acquired = await redis.set(socketDedupeKey, '1', 'EX', 15 * 60, 'NX').catch(() => null);
   if (!acquired) {
@@ -1240,7 +1242,6 @@ async function notifyFollowersOnStage(identity) {
 
   const pool = getPool();
 
-  // Resolve cammer display name and current cammer count in parallel.
   const [userRes, stateSnap] = await Promise.all([
     pool.query(
       `SELECT u.id, u.username, u.first_name,
@@ -1259,7 +1260,6 @@ async function notifyFollowersOnStage(identity) {
   const displayName = cammer.first_name || cammer.username || 'Someone';
   const participantCount = stateSnap?.counts?.participants ?? 1;
 
-  // Fetch up to 200 followers of this user — no tier filter; free users included.
   const { rows: followerRows } = await pool.query(
     `SELECT uf.follower_id::text AS follower_id
        FROM user_follows uf
@@ -1267,36 +1267,69 @@ async function notifyFollowersOnStage(identity) {
       WHERE uf.following_id::text = $1
         AND u.deleted_at IS NULL
         AND COALESCE(u.tier, 'free') != 'banned'
-      LIMIT 200`,
+      LIMIT 500`,
     [idStr]
   );
 
   if (followerRows.length === 0) return;
 
-  // Batch-check online presence in Redis using a pipeline to avoid N+1 RTTs.
-  const pipeline = redis.pipeline();
-  for (const row of followerRows) {
-    pipeline.exists(`presence:online:${row.follower_id}`);
-  }
-  const presenceResults = await pipeline.exec().catch(() => null);
-  if (!presenceResults) return;
+  const followerIds = followerRows.map((r) => r.follower_id);
 
+  // 1. Persisted notification + push for followers who are NOT pnp-members.
+  // Member followers already get a push from notifyCammerJoined — excluding
+  // them here prevents a double-push landing on their device.
+  const { rows: memberRows } = await pool.query(
+    `SELECT ue.user_id::text AS user_id
+       FROM user_entitlements ue
+      WHERE ue.add_on_id = 'pnp-member'
+        AND (ue.is_lifetime = true OR ue.expires_at > NOW())
+        AND ue.user_id::text = ANY($1::text[])`,
+    [followerIds]
+  );
+  const memberIdSet = new Set(memberRows.map((r) => r.user_id));
+  const nonMemberFollowerIds = followerIds.filter((id) => !memberIdSet.has(id));
+
+  if (nonMemberFollowerIds.length > 0) {
+    const NotificationEmitter = require('./notificationEmitter');
+    await NotificationEmitter.emitToMany(nonMemberFollowerIds, {
+      type: 'main_stage_join',
+      category: 'social',
+      priority: 'normal',
+      actorId: cammer.id,
+      entityType: 'user',
+      entityId: cammer.id,
+      message: `${displayName} is live on Main Stage`,
+    }).catch((err) =>
+      logger.warn('[MainStage] notifyFollowersOnStage emitToMany failed', { message: err.message })
+    );
+  }
+
+  // 2. Socket.IO toast for online followers (regardless of member status).
   let emitCount = 0;
-  for (let i = 0; i < followerRows.length; i++) {
-    const isOnline = presenceResults[i]?.[1] === 1;
-    if (!isOnline) continue;
-    const followerId = followerRows[i].follower_id;
-    _io.to(`user:${followerId}`).emit('friend_on_stage', {
-      userId: cammer.id,
-      displayName,
-      participantCount,
-      photoUrl: cammer.photo_url || null,
-    });
-    emitCount++;
+  if (_io) {
+    const pipeline = redis.pipeline();
+    for (const id of followerIds) pipeline.exists(`presence:online:${id}`);
+    const presenceResults = await pipeline.exec().catch(() => null);
+    if (presenceResults) {
+      for (let i = 0; i < followerIds.length; i++) {
+        const isOnline = presenceResults[i]?.[1] === 1;
+        if (!isOnline) continue;
+        _io.to(`user:${followerIds[i]}`).emit('friend_on_stage', {
+          userId: cammer.id,
+          displayName,
+          participantCount,
+          photoUrl: cammer.photo_url || null,
+        });
+        emitCount++;
+      }
+    }
   }
 
   logger.info('[MainStage] notifyFollowersOnStage delivered', {
-    identity: idStr, followerCount: followerRows.length, emitCount,
+    identity: idStr,
+    followerCount: followerRows.length,
+    persistedPush: nonMemberFollowerIds.length,
+    socketToast: emitCount,
   });
 }
 

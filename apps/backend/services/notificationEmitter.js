@@ -53,6 +53,7 @@ const TYPE_TO_PREF = {
   reaction_chat: 'reactions',
   mention_post: 'mentions',
   mention_chat: 'mentions',
+  main_stage_join: 'live_events',
 };
 
 // TTL constants (seconds)
@@ -181,6 +182,8 @@ function buildNotificationUrl(type, entityType, entityId) {
       return '/subscribe';
     case 'live_stream_started':
       return entityId ? `/live/${entityId}` : '/live';
+    case 'main_stage_join':
+      return '/main-stage';
     default:
       return '/';
   }
@@ -214,9 +217,10 @@ function buildPushTitle(type, row) {
     case 'creator_subscriber_left': return 'Subscriber Left';
     case 'creator_strike':         return 'Content Strike';
     case 'creator_suspended':      return 'Creator Status';
-    case 'announcement':  return 'PNPtv Announcement';
-    case 'system':        return 'PNPtv';
-    default:              return 'PNPtv';
+    case 'announcement':      return 'PNPtv Announcement';
+    case 'system':            return 'PNPtv';
+    case 'main_stage_join':   return actor ? `🎤 ${actor} is Live` : '🎤 Someone went live';
+    default:                  return 'PNPtv';
   }
 }
 
@@ -236,6 +240,7 @@ function buildPushBody(type, row) {
     case 'group_join':    return msg || `${actor} joined your group`;
     case 'mention_post':  return msg || `${actor} mentioned you in a post`;
     case 'mention_chat':  return msg || `${actor} mentioned you in chat`;
+    case 'main_stage_join': return msg || `${actor} is live on Main Stage — tap to join`;
     default:              return msg || 'Tap to view';
   }
 }
