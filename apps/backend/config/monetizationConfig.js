@@ -32,14 +32,10 @@ const SANTINO_USER_ID = '8599671840';
 const LEX_USER_ID = '8f5f4dd1-7bdb-4571-b026-e09d91113c91';
 const LEX_PRIME_HANGOUT_GROUP_ID = null; // hangout 785 was hard-deleted; not restored
 
-// Amadeus — Jonathan's stage persona (Content & Talent Producer, joined
-// 2026-08-09). Third founder-tier identity for PNPtv! Mode / Main Stage focus.
-const AMADEUS_USER_ID = '7bdabb03-b447-4e8e-b989-efe1b5e773fd';
-
 // PNPtv! Mode founders — permanent grant (pnptv_mode_expires_at='infinity').
 // Detection queries JOIN users WHERE pnptv_mode_expires_at > NOW(), but this
 // list is the source of truth for seeding + admin displays.
-const PNPTV_MODE_FOUNDER_IDS = [SANTINO_USER_ID, LEX_USER_ID, AMADEUS_USER_ID];
+const PNPTV_MODE_FOUNDER_IDS = [SANTINO_USER_ID, LEX_USER_ID];
 
 // Tips landing during an active pnptv_mode_sessions row keep the same 70/30
 // split as regular tips (TIP_CREATOR_RATE is now 0.70 as of 2026-09-06 —
@@ -110,7 +106,6 @@ module.exports = {
   GIFTED_ALLOWED_PERFORMER_USER_IDS,
   SANTINO_USER_ID,
   LEX_USER_ID,
-  AMADEUS_USER_ID,
   PNPTV_MODE_FOUNDER_IDS,
   PNPTV_MODE_CREATOR_TIP_RATE,
   PNPTV_MODE_PLATFORM_TIP_RATE,
