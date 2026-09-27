@@ -1687,6 +1687,12 @@ const limiter = rateLimit({
       '/api/live/available',             // Available-now creators — polled every 20s
       '/api/proxy/live/streams',         // Live stream list — polled
       '/api/main-stage/cammers',         // Main Stage cammer list — polled
+      // Nearby: session-auth gated, but the mobile client fires these on every
+      // GPS tick (sub-second). A user walking through the Nearby screen for a
+      // minute can hit 60+ times and blow the 600/15min bucket, then get 429
+      // on Hangouts/Events/Analytics/DMs unrelated to Nearby.
+      '/api/webapp/nearby/search',
+      '/api/webapp/nearby/update-location',
     ];
     // Skip high-frequency streaming endpoints that poll every 2-5s while a
     // user watches a live stream — otherwise watchers exhaust their 600/15min
