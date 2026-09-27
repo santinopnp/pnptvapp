@@ -2800,7 +2800,7 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
         : Promise.resolve(null),
       getWalletBalance().catch(() => null),
     ]).then(([plansRes, balRes, rushRes]) => {
-      const HIDDEN_IDS = new Set(["prime-trial-3d"]);
+      const HIDDEN_IDS = new Set(["prime-trial-3d", "lifetime-pass"]);
       setHomePlans((plansRes.plans || []).filter((p) => p.active && !HIDDEN_IDS.has(p.id)));
       setHomeUsdcBalance(balRes && balRes.hasWallet ? balRes.usdc : null);
       if (rushRes?.success) setHomeRushBalance((rushRes.regularBalance ?? 0) + (rushRes.giftedBalance ?? 0));
@@ -2913,7 +2913,7 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
   // ── Shared helpers (defined before early returns so they're always in scope) ─
 
   const formatPlanDuration = (days: number) => {
-    if (days >= 36500) return "Founders";
+    if (days >= 36500) return "Lifetime";
     if (days >= 365) return `${Math.round(days / 365)}y`;
     if (days >= 30) return `${Math.round(days / 30)}mo`;
     return `${days}d`;
