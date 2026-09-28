@@ -640,9 +640,8 @@ async function initializeQueues() {
     jobId: 'cron-sunday-spun-days-recap',
   });
 
-  // Privy wallet purge is intentionally not scheduled automatically.
-  // Run manually: node scripts/purge-privy-unused-wallets.js [--execute]
-  // Re-enable only after verifying funded-wallet guards on both Base + Ethereum.
+  // Privy wallet purge intentionally removed 2026-09-28 (see project_privy_orphan_wallets_2026_09_27.md).
+  // The purge codepath is the root cause of the orphan-wallet crisis; do NOT re-add it.
 
   logger.info('[BullMQ] Queues initialized and repeatable jobs registered');
 }
