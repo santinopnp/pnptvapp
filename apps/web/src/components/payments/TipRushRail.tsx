@@ -239,7 +239,7 @@ export function TipRushRail({
             className="w-full py-2 rounded-xl text-sm font-bold text-white transition active:scale-95 disabled:opacity-40"
             style={{ background: "linear-gradient(135deg,#D4007A,#E69138)" }}
           >
-            {sending ? (es ? "Enviando…" : "Sending…") : tipAmount ? `${es ? "Enviar" : "Send"} ${tipAmount} 💎` : (es ? "Ingresa un monto" : "Enter amount")}
+            {sending ? (es ? "Enviando…" : "Sending…") : tipAmount ? `${es ? "Enviar" : "Send"} ${tipAmount} Ru$h 💎` : (es ? "Ingresa un monto" : "Enter amount")}
           </button>
         )}
         {result === "error" && <p className="text-xs text-red-400 mt-1">{errorMsg}</p>}

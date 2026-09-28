@@ -3166,8 +3166,8 @@ export default function MainStage() {
                           : "bg-white/[0.05] text-white/80 border border-white/10 hover:bg-white/[0.10]"
                       }`}
                     >
-                      <span className="block text-sm font-bold">${amt}</span>
-                      <span className="block text-[10px] opacity-70">{rushAmt} 💎</span>
+                      <span className="block text-sm font-bold">{rushAmt} Ru$h 💎</span>
+                      <span className="block text-[10px] opacity-70">~${amt}</span>
                     </button>
                   );
                 })}
@@ -3187,7 +3187,7 @@ export default function MainStage() {
                   }
                 }}
                 className="w-full py-2 px-3 rounded-lg text-sm text-white bg-white/[0.05] border border-white/10 focus:border-pink-400/60 focus:outline-none"
-                placeholder="Custom amount ($)"
+                placeholder="Custom USD amount"
               />
               <input id="pnp-mainstage-8"
                 type="text"
@@ -3263,7 +3263,7 @@ export default function MainStage() {
                         message: tipMessage.trim() || undefined,
                       }}
                       metadata={{ context: "main_stage", donation: isDonationMode ? "platform" : undefined }}
-                      label={isDonationMode ? `Send $${tipAmount} donation` : `Send $${tipAmount} tip`}
+                      label={isDonationMode ? `Send ${tipAmount * 6} Ru$h 💎 donation` : `Send ${tipAmount * 6} Ru$h 💎 tip`}
                       lang="en"
                       onSuccess={() => setTimeout(() => { setShowTipSheet(false); setTipSelectedCreatorId(null); }, 1200)}
                       compact

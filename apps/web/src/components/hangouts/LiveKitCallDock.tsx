@@ -664,13 +664,14 @@ function TipSheet({
               key={amt}
               type="button"
               onClick={() => setAmount(amt)}
-              className={`py-2.5 rounded-lg text-sm font-bold transition-colors ${
+              className={`py-2.5 rounded-lg text-center transition-colors ${
                 amount === amt
                   ? "bg-gradient-to-r from-pink-500 to-orange-400 text-white"
                   : "bg-white/[0.05] text-white/80 border border-white/10 hover:bg-white/[0.10]"
               }`}
             >
-              ${amt}
+              <span className="block text-sm font-bold">{amt * 6} Ru$h 💎</span>
+              <span className="block text-[10px] opacity-70">~${amt}</span>
             </button>
           ))}
         </div>
@@ -686,7 +687,7 @@ function TipSheet({
             if (Number.isFinite(v) && v > 0) setAmount(Math.min(500, v));
           }}
           className="w-full py-2 px-3 rounded-lg text-sm text-white bg-white/[0.05] border border-white/10 focus:border-pink-400/60 focus:outline-none"
-          placeholder="Custom amount ($)"
+          placeholder="Custom USD amount"
         />
 
         <input id="pnp-livekitcalldock-2"
@@ -703,7 +704,7 @@ function TipSheet({
           amountUsd={amount}
           entitlementSpec={{ creator_id: creatorId, message: message.trim() || undefined }}
           metadata={{ context: "in_call", creator_name: displayName }}
-          label={`Send $${amount} tip`}
+          label={`Send ${amount * 6} Ru$h 💎 tip`}
           lang="en"
           onSuccess={() => setTimeout(onClose, 1200)}
           compact

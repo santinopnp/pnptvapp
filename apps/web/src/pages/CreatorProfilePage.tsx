@@ -2284,7 +2284,7 @@ export default function CreatorProfilePage() {
                         amountUsd={tipAmount / 6}
                         entitlementSpec={{ creatorId: data.creator.id, message: tipMessage.trim() || undefined }}
                         metadata={{ creatorId: data.creator.id, source: "creator_profile_tip" }}
-                        label={`Send $${(tipAmount / 6).toFixed(2)} tip`}
+                        label={`Send ${tipAmount} Ru$h 💎 tip`}
                         lang="en"
                         compact
                         onSuccess={() => {

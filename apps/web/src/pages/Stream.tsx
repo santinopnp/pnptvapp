@@ -2666,7 +2666,7 @@ function StreamInner() {
                     <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 mt-3">
                       {recentTips.map((tip) => (
                         <div key={tip.id} className="flex-shrink-0 px-2.5 py-1 rounded-full bg-pnp-surface border border-pnp-border text-[10px]">
-                          <span className="text-gradient font-medium">${tip.amount}</span>
+                          <span className="text-gradient font-medium">{tip.amount} Ru$h 💎</span>
                           <span className="text-pnp-textSecondary mx-1">by</span>
                           <span className="text-pnp-textPrimary">@{tip.user_username}</span>
                           <span className="text-pnp-textSecondary/50 ml-1">{formatTimeAgo(tip.created_at)}</span>
@@ -2713,10 +2713,10 @@ function StreamInner() {
                                   <span className="w-4 h-4 border-2 border-pnp-accent border-t-transparent rounded-full animate-spin" />
                                 ) : (
                                   <>
-                                    <span className="text-sm font-bold text-gradient">{pkg.tokenCost}F</span>
+                                    <span className="text-sm font-bold text-gradient">{pkg.tokenCost} Ru$h 💎</span>
                                     <span className="text-[10px] text-pnp-textSecondary">{pkg.durationMinutes} min</span>
                                     {tokenBalance !== null && tokenBalance < pkg.tokenCost && (
-                                      <span className="text-[9px] text-pnp-error mt-0.5">Need {pkg.tokenCost - tokenBalance} more</span>
+                                      <span className="text-[9px] text-pnp-error mt-0.5">Need {pkg.tokenCost - tokenBalance} Ru$h 💎 more</span>
                                     )}
                                   </>
                                 )}
@@ -3395,9 +3395,9 @@ function StreamInner() {
                             <>
                               <span className="text-[11px] text-pnp-textPrimary">{pkg.durationMinutes} min session</span>
                               <div className="text-right">
-                                <span className="text-sm font-bold text-gradient">{pkg.tokenCost}T</span>
+                                <span className="text-sm font-bold text-gradient">{pkg.tokenCost} Ru$h 💎</span>
                                 {tokenBalance !== null && tokenBalance < pkg.tokenCost && (
-                                  <p className="text-[9px] text-pnp-error">Need {pkg.tokenCost - tokenBalance} more</p>
+                                  <p className="text-[9px] text-pnp-error">Need {pkg.tokenCost - tokenBalance} Ru$h 💎 more</p>
                                 )}
                               </div>
                             </>

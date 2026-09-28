@@ -2990,7 +2990,7 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
                             <span className="text-sm font-black text-white">
                               ${pkg.usd}<span className="text-[9px] font-normal opacity-50 ml-0.5">+fees</span>
                             </span>
-                            <span className="text-xs font-bold text-white/80">{Number(pkg.tokens).toLocaleString()} 💎</span>
+                            <span className="text-xs font-bold text-white/80">{Number(pkg.tokens).toLocaleString()} Ru$h 💎</span>
                             {(pkg.bonus ?? 0) > 0 && (
                               <span className="text-[10px] font-semibold text-emerald-400">+{pkg.bonus} bonus</span>
                             )}

@@ -1869,7 +1869,7 @@ function HangoutChatPanel({
                     className="w-full rounded-xl py-2 text-sm font-semibold text-white transition-all active:scale-95 disabled:opacity-30"
                     style={{ background: "linear-gradient(135deg, #D4007A, #E69138)", touchAction: "manipulation" }}
                   >
-                    {tipLoading ? "Sending…" : tipAmount ? `Send ${tipAmount}💎` : "Select an amount"}
+                    {tipLoading ? "Sending…" : tipAmount ? `Send ${tipAmount} Ru$h 💎` : "Select an amount"}
                   </button>
                 </>
               )}

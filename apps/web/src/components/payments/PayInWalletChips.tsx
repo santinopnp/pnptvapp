@@ -3327,8 +3327,8 @@ export function TipButton({
                         : "bg-white/[0.05] text-white/80 border border-white/10 hover:bg-white/[0.10]"
                     }`}
                   >
-                    <span className="block text-sm font-bold">${amt}</span>
-                    <span className="block text-[10px] opacity-70">{rushAmt} 💎</span>
+                    <span className="block text-sm font-bold">{rushAmt} Ru$h 💎</span>
+                    <span className="block text-[10px] opacity-70">~${amt}</span>
                   </button>
                 );
               })}
@@ -3350,7 +3350,7 @@ export function TipButton({
                 }
               }}
               className="w-full py-2 px-3 rounded-lg text-sm text-white bg-white/[0.05] border border-white/10 focus:border-pink-400/60 focus:outline-none"
-              placeholder={es ? "Cantidad personalizada ($)" : "Custom amount ($)"}
+              placeholder={es ? "Monto personalizado (USD)" : "Custom USD amount"}
             />
             <input id="pnp-payinwalletchips-5"
               type="text"
@@ -3424,7 +3424,7 @@ export function TipButton({
                       message: tipMessage.trim() || undefined,
                     }}
                     metadata={{ context: "content_page" }}
-                    label={es ? `Enviar propina de $${tipAmount}` : `Send $${tipAmount} tip`}
+                    label={es ? `Enviar ${tipAmount * 6} Ru$h 💎` : `Send ${tipAmount * 6} Ru$h 💎 tip`}
                     lang={lang}
                     onSuccess={() => setTimeout(closeSheet, 1200)}
                     compact
