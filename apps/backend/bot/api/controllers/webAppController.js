@@ -2848,6 +2848,30 @@ const updateProfile = async (req, res) => {
 
     logger.info(`Profile updated: user ${user.id}`);
 
+    // JIT sync to Zoho CRM so /admin + Zoho stay aligned with whatever
+    // creators/performers edit in Creator Studio. Skips regular members to
+    // avoid noise — only fires when user has an active creator/performer role.
+    setImmediate(async () => {
+      try {
+        const { rows: roleRows } = await query(
+          `SELECT 1 FROM users u
+             LEFT JOIN performers p ON p.user_id = u.id
+            WHERE u.id = $1
+              AND (u.creator_status IN ('active','pending_review','approved','approved_hold')
+                   OR p.status = 'active'
+                   OR u.role IN ('creator','model','star','admin','superadmin'))
+            LIMIT 1`,
+          [user.id]
+        );
+        if (roleRows.length > 0) {
+          const zohoSync = require('../../../services/zohoSyncService');
+          await zohoSync.syncOneUser(String(user.id));
+        }
+      } catch (err) {
+        logger.warn('updateProfile: Zoho JIT sync failed (non-fatal)', { userId: user.id, error: err.message });
+      }
+    });
+
     // Fire-and-forget admin alert on identity change. Never awaited so
     // Telegram latency can't slow the response. Skip if we couldn't
     // snapshot (already logged), no identity fields were provided, or

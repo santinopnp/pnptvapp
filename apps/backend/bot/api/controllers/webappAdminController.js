@@ -2058,12 +2058,19 @@ const makeCreator = async (req, res) => {
     }
 
     // Verify the target user exists
-    const userCheck = await query('SELECT id, username FROM users WHERE id = $1', [userId]);
+    const userCheck = await query('SELECT id, username, email FROM users WHERE id = $1', [userId]);
     if (userCheck.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'User not found' });
     }
     if (!userCheck.rows[0].username || !userCheck.rows[0].username.trim()) {
       return res.status(422).json({ success: false, error: 'Cannot activate creator — user has no username set. Set a username first.' });
+    }
+    if (!userCheck.rows[0].email || !userCheck.rows[0].email.trim()) {
+      return res.status(422).json({
+        success: false,
+        code: 'EMAIL_REQUIRED',
+        error: 'Cannot activate creator — user has no email on file. Add an email in the user profile first (required for Zoho CRM + Slack onboarding + payouts).',
+      });
     }
 
     // If a channelRef is being assigned, check it is not already taken by another user

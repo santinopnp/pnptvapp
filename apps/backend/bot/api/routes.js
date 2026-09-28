@@ -4624,6 +4624,18 @@ app.post('/api/webapp/settings/change-email', requireSessionAuth, changeEmailLim
   }
 
   logger.info('[change-email] Email changed', { userId: user.id, newEmail: rawEmail });
+
+  // JIT sync to Zoho CRM so /admin + Zoho reflect the new email within seconds.
+  // Fire-and-forget: any failure is logged, never blocks the response.
+  setImmediate(async () => {
+    try {
+      const zohoSync = require('../../services/zohoSyncService');
+      await zohoSync.syncOneUser(String(user.id));
+    } catch (err) {
+      logger.warn('[change-email] Zoho JIT sync failed (non-fatal)', { userId: user.id, error: err.message });
+    }
+  });
+
   res.json({ success: true, email: rawEmail });
 }));
 
@@ -8530,6 +8542,44 @@ app.get('/api/webapp/admin/add-ons',      adminGuard, asyncHandler(planBuilderCo
 // Plan add-on mappings
 app.get('/api/webapp/admin/plans/:planId/add-ons', adminGuard, asyncHandler(webappAdminController.getPlanAddOns));
 app.put('/api/webapp/admin/plans/:planId/add-ons', adminGuard, asyncHandler(webappAdminController.setPlanAddOns));
+
+// Admin edit a user's email on their behalf (for creators/performers missing
+// an email — required for Zoho CRM + Slack #ext-<handle> onboarding + payouts).
+// Fires JIT Zoho sync on success so /admin + Zoho stay aligned.
+app.patch('/api/webapp/admin/users/:userId/email', adminGuard, asyncHandler(async (req, res) => {
+  const { userId } = req.params;
+  const rawEmail = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  if (!rawEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail)) {
+    return res.status(400).json({ error: 'Please provide a valid email address.' });
+  }
+  if (rawEmail.endsWith('@telegram.pnptv.app')) {
+    return res.status(400).json({ error: 'Please use a real email address (not a placeholder).' });
+  }
+  const pool = getPool();
+  const dup = await pool.query(
+    `SELECT id FROM users WHERE LOWER(email) = $1 AND id != $2 AND COALESCE(is_deleted, false) = false LIMIT 1`,
+    [rawEmail, userId]
+  );
+  if (dup.rows.length > 0) {
+    return res.status(409).json({ error: 'That email is already linked to another account.' });
+  }
+  const upd = await pool.query(
+    `UPDATE users SET email = $1, updated_at = NOW() WHERE id = $2 RETURNING id, email`,
+    [rawEmail, userId]
+  );
+  if (upd.rowCount === 0) return res.status(404).json({ error: 'User not found' });
+  logger.info('[admin/email] admin set email', { userId, adminId: req.user?.id, email: rawEmail });
+  setImmediate(async () => {
+    try {
+      const zohoSync = require('../../services/zohoSyncService');
+      await zohoSync.syncOneUser(String(userId));
+    } catch (err) {
+      logger.warn('[admin/email] Zoho JIT sync failed (non-fatal)', { userId, error: err.message });
+    }
+  });
+  return res.json({ success: true, user: upd.rows[0] });
+}));
+
 // User entitlement management
 app.get('/api/webapp/admin/users/:userId/entitlements', adminGuard, asyncHandler(webappAdminController.getUserEntitlements));
 app.post('/api/webapp/admin/users/:userId/entitlements', adminGuard, asyncHandler(webappAdminController.grantUserEntitlement));

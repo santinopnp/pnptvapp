@@ -216,10 +216,58 @@ async function saveCreatorSlackIds(dbQuery, userId, memberId, channelId) {
   );
 }
 
+/**
+ * Post a plain-text alert to #ops-admin-alerts (or SLACK_OPS_INCIDENTS_CHANNEL
+ * as fallback). Fire-and-forget: silently no-ops if token/channel missing.
+ * Used by enforcement helpers (Zoho sync, Slack onboarding, email guards) to
+ * surface backfill work without spamming users.
+ *
+ * @param {string} text — Slack message body (mrkdwn supported)
+ * @returns {Promise<void>}
+ */
+async function postOpsAdminAlert(text) {
+  try {
+    const token = _token();
+    const channel = process.env.SLACK_OPS_ADMIN_CHANNEL || process.env.SLACK_OPS_INCIDENTS_CHANNEL;
+    if (!token || !channel || !text) return;
+    await _slackCall('chat.postMessage', { channel, text, unfurl_links: false, unfurl_media: false });
+  } catch (err) {
+    logger.warn('[slackService] postOpsAdminAlert failed (non-fatal)', { error: err.message });
+  }
+}
+
+/**
+ * Post a Slack alert summarising a batch of creators/performers missing an
+ * email, so ops can nudge them individually. Deduped by handle; safe to call
+ * from any enforcement path.
+ *
+ * @param {object} args
+ * @param {string} args.source — where the batch came from (e.g. "zoho-sync", "slack-onboard")
+ * @param {string} [args.mode] — optional sub-mode label
+ * @param {Array<{id:string,username?:string,creator_status?:string,performer_status?:string}>} args.missing
+ * @returns {Promise<void>}
+ */
+async function postMissingEmailBatch({ source, mode, missing }) {
+  if (!Array.isArray(missing) || missing.length === 0) return;
+  const lines = missing.slice(0, 30).map(m => {
+    const flags = [
+      m.creator_status && m.creator_status !== 'none' ? `creator=${m.creator_status}` : null,
+      m.performer_status && m.performer_status !== 'none' ? `perf=${m.performer_status}` : null,
+    ].filter(Boolean).join(' · ') || 'no-role';
+    return `• \`${m.id}\` @${m.username || '?'} — ${flags}`;
+  });
+  const more = missing.length > 30 ? `\n_(+${missing.length - 30} more)_` : '';
+  const modeStr = mode ? ` (${mode})` : '';
+  const text = `📧 *Missing email* — ${missing.length} row(s) skipped by \`${source}${modeStr}\`. They cannot sync to Zoho / Slack until an email is on file.\n${lines.join('\n')}${more}`;
+  return postOpsAdminAlert(text);
+}
+
 module.exports = {
   lookupMemberByEmail,
   createExtChannel,
   inviteToChannel,
   inviteCreatorToWorkspace,
   saveCreatorSlackIds,
+  postOpsAdminAlert,
+  postMissingEmailBatch,
 };

@@ -310,6 +310,13 @@ export default function CreatorApplications() {
 
   const handleApprove = async (id: string) => {
     if (processing) return;
+    // Hard-block if email is missing — enforced server-side too, but a client
+    // check gives faster feedback and a clearer message than the raw 422.
+    const app = applications.find(a => a.id === id);
+    if (app && (!app.email || !app.email.trim())) {
+      setError(`Cannot approve @${app.username || app.user_id} — no email on file. Ask them to add one in Creator Studio → Settings, or edit it in the Active Creators tab.`);
+      return;
+    }
     setProcessing(id);
     try {
       await approveCreatorApplication(id, actionNotes[id]);
@@ -702,6 +709,22 @@ export default function CreatorApplications() {
                         </span>
                       </div>
 
+                      {/* Email — required for Zoho + Slack sync. Red badge when missing. */}
+                      <p className="text-xs mb-1 flex items-center gap-1.5 flex-wrap" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                        <span>Email:</span>
+                        {app.email && app.email.trim() ? (
+                          <span className="text-white/90">{app.email}</span>
+                        ) : (
+                          <span
+                            className="px-1.5 py-0.5 rounded font-semibold"
+                            style={{ background: "rgba(239,68,68,0.14)", color: "#EF4444" }}
+                            title="Required for Zoho CRM + Slack #ext-<handle> onboarding"
+                          >
+                            missing — required
+                          </span>
+                        )}
+                      </p>
+
                       <p className="text-xs mb-1" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
                         {t.creators.type}{" "}
                         <strong className="text-white">
@@ -778,13 +801,14 @@ export default function CreatorApplications() {
                           <div className="flex gap-2">
                             <button
                               onClick={() => handleApprove(app.id)}
-                              disabled={processing === app.id}
-                              className="flex-1 py-2 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50"
+                              disabled={processing === app.id || !app.email || !app.email.trim()}
+                              className="flex-1 py-2 rounded-lg text-xs font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                               style={{
                                 background: "rgba(94,209,196,0.15)",
                                 color: "#5ED1C4",
                                 border: "1px solid rgba(94,209,196,0.3)",
                               }}
+                              title={!app.email || !app.email.trim() ? "Email required — cannot approve until user adds one" : "Approve application"}
                             >
                               {processing === app.id ? t.shared.processing : t.shared.approve}
                             </button>
