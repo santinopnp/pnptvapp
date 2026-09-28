@@ -1197,6 +1197,88 @@ async function cronProcessor(job) {
       return;
     }
 
+    case 'sunday-spun-days-send': {
+      // Weekly Sunday $15/mo PRIME promo — invokes the broadcast script's
+      // main() function directly. The script guards with require.main check
+      // so importing here does NOT auto-fire.
+      try {
+        const ssd = _safeRequire('../../scripts/broadcast-sunday-spun-days');
+        if (!ssd || typeof ssd.main !== 'function') {
+          logger.warn('[BullMQ] sunday-spun-days-send: script not found or malformed');
+          return;
+        }
+        // Redis dedup key covers same-week retries (broadcast script uses
+        // its own week-namespaced dedup set), but also skip the run entirely
+        // if BullMQ retried and the campaign row already finalized.
+        const { rows } = await pgQuery(
+          `SELECT tg_sent + dm_sent AS sent FROM sunday_spun_days_campaigns
+            WHERE fired_at > NOW() - INTERVAL '2 hours'
+              AND (tg_sent + dm_sent) > 10
+            ORDER BY fired_at DESC LIMIT 1`
+        );
+        if (rows.length > 0 && Number(rows[0].sent) > 10) {
+          logger.info('[BullMQ] sunday-spun-days-send: already fired within 2h, skipping');
+          return;
+        }
+        await ssd.main();
+      } catch (err) {
+        logger.error('[BullMQ] sunday-spun-days-send error', { err: err.message });
+      }
+      return;
+    }
+
+    case 'sunday-spun-days-recap': {
+      // Monday morning: post previous week's conversion + revenue to Slack.
+      try {
+        const SlackOps = _safeRequire('../slackOpsService');
+        const { rows: campaignRows } = await pgQuery(`
+          SELECT id, week_iso, audience_size, tg_sent, dm_sent, tg_failed, dm_failed
+            FROM sunday_spun_days_campaigns
+           WHERE fired_at > NOW() - INTERVAL '8 days'
+           ORDER BY fired_at DESC LIMIT 1
+        `);
+        if (campaignRows.length === 0) return;
+        const c = campaignRows[0];
+
+        const { rows: visitRows } = await pgQuery(
+          `SELECT COUNT(*)::int AS n, COUNT(DISTINCT user_id)::int AS uniq
+             FROM sunday_spun_days_visits WHERE week_iso = $1`,
+          [c.week_iso]
+        );
+        const { rows: convRows } = await pgQuery(`
+          SELECT COUNT(*)::int AS paid,
+                 COALESCE(SUM(amount_usd), 0)::numeric(10,2) AS revenue
+            FROM checkout_intents
+           WHERE metadata->>'campaign_id' = 'sunday_spun_days'
+             AND status = 'confirmed'
+             AND confirmed_at > NOW() - INTERVAL '8 days'
+        `);
+        const visits = visitRows[0]?.n || 0;
+        const unique = visitRows[0]?.uniq || 0;
+        const paid = convRows[0]?.paid || 0;
+        const revenue = convRows[0]?.revenue || 0;
+        const ctr = c.audience_size > 0 ? (visits * 100 / c.audience_size).toFixed(1) : '0.0';
+        const cvr = visits > 0 ? (paid * 100 / visits).toFixed(1) : '0.0';
+
+        const text = [
+          `📈 *Sunday Spun Days recap — ${c.week_iso}*`,
+          `• Audience: ${c.audience_size}`,
+          `• Sent: TG ${c.tg_sent} (${c.tg_failed} failed) · DM ${c.dm_sent} (${c.dm_failed} failed)`,
+          `• Landing visits: ${visits} (${unique} unique · CTR ${ctr}%)`,
+          `• Paid: ${paid} (CVR ${cvr}%)`,
+          `• Revenue: $${revenue}`,
+        ].join('\n');
+
+        if (SlackOps && typeof SlackOps._post === 'function') {
+          const channel = process.env.SLACK_OPS_ADMIN_CHANNEL;
+          if (channel) await SlackOps._post(channel, text, null).catch(() => {});
+        }
+      } catch (err) {
+        logger.error('[BullMQ] sunday-spun-days-recap error', { err: err.message });
+      }
+      return;
+    }
+
     default:
       logger.warn(`[BullMQ] cronProcessor: unhandled job name "${job.name}"`);
   }

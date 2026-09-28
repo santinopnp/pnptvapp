@@ -519,7 +519,7 @@ async function verifyAndFulfillUsdc(opts) {
     // Rescue window: an EXPIRED intent still matches via tx_hash for 24h after
     // creation — covers late-arriving webhooks after the 20-min intent expiry.
     const { rows: intentRows } = await client.query(
-      `SELECT id, user_id, amount_usd, entitlement_spec, surface, receiving_address, status
+      `SELECT id, user_id, amount_usd, entitlement_spec, surface, receiving_address, status, metadata
          FROM checkout_intents
         WHERE provider = 'wallet_usdc'
           AND status IN ('pending', 'expired')
@@ -554,8 +554,24 @@ async function verifyAndFulfillUsdc(opts) {
 
     // Amount guard — the tx_hash-primary match still gets amount-validated here
     // so a $0.01 transfer can't fulfill a $9.99 intent even if the frontend
-    // recorded the wrong hash.
-    if (Math.abs(Number(intent.amount_usd) - Number(amountReceived)) > 0.01) {
+    // recorded the wrong hash. Promo campaigns that fund via MoonPay/Meld may
+    // land <expected USDC (external fund provider deducts fees off the top);
+    // metadata.campaign_id === 'sunday_spun_days' allows the received amount
+    // to be up to 8% short of the expected price while still fulfilling.
+    let intentMetadata = {};
+    try {
+      intentMetadata = typeof intent.metadata === 'string'
+        ? JSON.parse(intent.metadata)
+        : (intent.metadata || {});
+    } catch { intentMetadata = {}; }
+    const expected = Number(intent.amount_usd);
+    const received = Number(amountReceived);
+    const isCampaignSSD = intentMetadata.campaign_id === 'sunday_spun_days';
+    const overpayOk = received - expected <= 0.01;                 // never accept overpay drift
+    const shortfallOk = isCampaignSSD
+      ? (expected - received) <= (expected * 0.08)                 // –8% for SSD
+      : (expected - received) <= 0.01;                             // 1¢ default
+    if (!(overpayOk && shortfallOk)) {
       await client.query(
         `UPDATE checkout_intents SET status = 'failed',
              grant_result = jsonb_build_object('reason', 'amount_mismatch', 'received', $2::text, 'expected', amount_usd::text),

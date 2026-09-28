@@ -1043,4 +1043,7 @@ module.exports = {
   _direct_notifyNewTelegramUser: notifyNewTelegramUser,
   _direct_notifyLeakageDetected: notifyLeakageDetected,
   _direct_notifyAdsHealthFail: notifyAdsHealthFail,
+  // Low-level post helper — used by ad-hoc campaign recaps (e.g. Sunday Spun
+  // Days) so they don't have to duplicate the token/channel/HTTPS boilerplate.
+  _post,
 };

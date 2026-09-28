@@ -282,6 +282,7 @@ const Social = lazy(() => import("@/pages/Social"));
 const Profile = lazy(() => import("@/pages/Profile"));
 const CreatorProfilePage = lazy(() => import("@/pages/CreatorProfilePage"));
 const Subscribe = lazy(() => import("@/pages/Subscribe"));
+const RedeemSundaySpunDays = lazy(() => import("@/pages/RedeemSundaySpunDays"));
 const MyAccess = lazy(() => import("@/pages/MyAccess"));
 const MySubscriptions = lazy(() => import("@/pages/MySubscriptions"));
 const DirectMessages = lazy(() => import("@/pages/DirectMessages"));
@@ -745,6 +746,19 @@ export const router = createBrowserRouter([
           <ModuleLoader>
             <VerificationGate>
               <Subscribe />
+            </VerificationGate>
+          </ModuleLoader>
+        ),
+      },
+      {
+        // Sunday Spun Days — hidden promo landing. Only reachable via DM/TG
+        // links. VerificationGate ensures the user has cleared age + terms
+        // before any pay button renders.
+        path: "redeem/ssd",
+        element: (
+          <ModuleLoader>
+            <VerificationGate>
+              <RedeemSundaySpunDays />
             </VerificationGate>
           </ModuleLoader>
         ),

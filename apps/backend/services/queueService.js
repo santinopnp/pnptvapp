@@ -622,6 +622,24 @@ async function initializeQueues() {
     jobId: 'cron-channel-pass-expiry-sweep',
   });
 
+  // Sunday Spun Days — weekly $15/month PRIME promo.
+  // Fires Sundays 18:00 UTC (= 13:00 America/Bogota, primary Latam scroll window).
+  // Idempotent via broadcast_dedup ISO-week namespace; Slack pings on start+end.
+  await cronQueue.add('sunday-spun-days-send', {}, {
+    repeat: { pattern: '0 18 * * 0', tz: 'UTC' },
+    attempts: 1, removeOnFail: false,
+    jobId: 'cron-sunday-spun-days-send',
+  });
+
+  // Sunday Spun Days — Monday recap of previous week's campaign results.
+  // Fires Mondays 14:00 UTC (~= 09:00 America/Bogota); posts revenue + CTR
+  // to #ops-admin-alerts from checkout_intents metadata JOIN.
+  await cronQueue.add('sunday-spun-days-recap', {}, {
+    repeat: { pattern: '0 14 * * 1', tz: 'UTC' },
+    attempts: 1, removeOnFail: false,
+    jobId: 'cron-sunday-spun-days-recap',
+  });
+
   // Privy wallet purge is intentionally not scheduled automatically.
   // Run manually: node scripts/purge-privy-unused-wallets.js [--execute]
   // Re-enable only after verifying funded-wallet guards on both Base + Ethereum.

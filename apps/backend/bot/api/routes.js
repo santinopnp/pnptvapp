@@ -14927,6 +14927,46 @@ app.get('/api/webapp/payments/usdc/status/:orderId', requireSessionAuth, usdcSta
   });
 }));
 
+// POST /api/webapp/sunday-spun-days/track-visit — logs a hit on the /redeem/ssd
+// landing so the Monday recap can compute CTR (audience → landing → checkout →
+// paid). Auth is not required — the URL is invite-only via DM, but we still
+// dedup writes by ISO week + user_id to avoid double-counting F5 reloads.
+app.post('/api/webapp/sunday-spun-days/track-visit', asyncHandler(async (req, res) => {
+  const userId = req.session?.user?.id || null;
+  const { query: dbQuery } = require('../../config/postgres');
+  const now = new Date();
+  const iso = _isoWeekUTC(now);
+  try {
+    if (userId) {
+      const dup = await dbQuery(
+        `SELECT 1 FROM sunday_spun_days_visits
+          WHERE user_id = $1 AND week_iso = $2 LIMIT 1`,
+        [String(userId), iso]
+      );
+      if (dup.rows.length > 0) return res.json({ ok: true, deduped: true });
+    }
+    await dbQuery(
+      `INSERT INTO sunday_spun_days_visits (user_id, week_iso, session_id)
+       VALUES ($1, $2, $3)`,
+      [userId ? String(userId) : null, iso, req.sessionID || null]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    logger.warn('[ssd/track-visit] error', { err: err.message });
+    res.json({ ok: false });
+  }
+}));
+
+// Shared ISO week helper (mirrors broadcast-sunday-spun-days.js).
+function _isoWeekUTC(d) {
+  const t = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  const dayNum = (t.getUTCDay() + 6) % 7;
+  t.setUTCDate(t.getUTCDate() - dayNum + 3);
+  const firstThu = new Date(Date.UTC(t.getUTCFullYear(), 0, 4));
+  const week = 1 + Math.round(((t - firstThu) / 86400000 - 3 + ((firstThu.getUTCDay() + 6) % 7)) / 7);
+  return `${t.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
+}
+
 // POST /api/webapp/tip-tokens — instant Rush token tip to any active performer
 app.post('/api/webapp/tip-tokens', requireSessionAuth, tipLimiter, asyncHandler(async (req, res) => {
   const payerUser = req.session?.user;
