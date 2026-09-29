@@ -3,28 +3,41 @@
 /**
  * payoutSplitService.js
  *
- * Three responsibilities:
+ * Four responsibilities:
  *
- * 1. Standard 70/20/10 USDC split dispatch (dispatchSplit) — creator cashouts:
- *      70% → creator's wallet
- *      20% → PNPtv Treasury (PNPTV_TREASURY_WALLET, falls back to the legacy
- *            SANTINO_PAYOUT_ADDRESS env var so nothing changes on deploy
- *            until ops sets the new var)
+ * 1. Creator cashout payout (dispatchSplit) — sends 100% of the requested,
+ *    already-net cashout amount to the creator's wallet. ONE on-chain leg.
+ *
+ *    Fixed 2026-09-29: creator_earnings.amount_creator is already the
+ *    creator's net 70% share — it's computed with CREATOR_REVENUE_RATE at
+ *    the moment revenue is recorded (see pnpLiveTipsService, paymentService,
+ *    etc). This function used to re-apply ANOTHER 70/20/10 split on top of
+ *    that already-net amount at cashout time, so a creator only ever
+ *    received 0.70 × 0.70 = 49% of what the customer originally paid,
+ *    instead of the 70% advertised in the Creator Program Terms. There is
+ *    no double deduction anymore: the customer's gross payment already sits
+ *    in the treasury-controlled receiving address the moment it lands
+ *    on-chain, and cashout simply releases the creator's already-computed
+ *    share to them — nothing else needs to move.
+ *
+ * 2. PRIME Channel subscription split (distributePrimeChannelSplit) and
+ *    3. RUSH credit spend split (dispatchRushSplit) — both apply a 70/20/10
+ *    split to a GROSS amount (customer payment / credit spent, not a
+ *    ledger-derived net figure):
+ *      70% → creator bucket (PRIME: split 35/35 between the two co-founders)
+ *      20% → PNPtv Treasury
  *      10% → Creators Resources Budget / reinvestment wallet (0x326B…81A)
+ *    NOT WIRED to any automatic trigger yet (2026-09-29) — every other
+ *    revenue surface (tips, subs, calls, current PRIME) flows through the
+ *    creator_earnings ledger + 7-day hold + manual cashout, and wiring these
+ *    in parallel without reconciling that ledger risks double-paying. They
+ *    are exposed for manual/scripted use until that reconciliation happens.
  *
- * 2. PRIME Channel subscription split (distributePrimeChannelSplit) — same
- *    70/20/10 shape, but the 70% creator bucket is split 35/35 between the
- *    two PRIME co-founders (lifetime), per PRIME_CHANNEL_CRYPTO_* config.
- *
- * 3. RUSH credit spend split (dispatchRushSplit) — same 70/20/10 shape,
- *    dispatched at spend time (RUSH balances sit 100% in treasury until spent;
- *    no holds).
- *
- * All three run their legs in parallel (explicit nonce allocation — viem's
- * sendTransaction resolves the current nonce per call, so concurrent sends
- * from the same EOA need pre-assigned nonces to avoid collisions), retry each
- * leg up to 3x with exponential backoff, and log every attempt + outcome to
- * payment_transactions.
+ * All three dispatch functions run their legs in parallel (explicit nonce
+ * allocation — viem's sendTransaction resolves the current nonce per call,
+ * so concurrent sends from the same EOA need pre-assigned nonces to avoid
+ * collisions), retry each leg up to 3x with exponential backoff, and log
+ * every attempt + outcome to payment_transactions.
  *
  * 4. Creator wallet provisioning (provisionCreatorWallet) — when a user gains
  *    creator_status='active', ensures they have a Privy embedded wallet.
@@ -32,8 +45,8 @@
  * Env (all required for dispatch; wallet provisioning also needs PRIVY_*):
  *   GAS_TREASURY_PRIVATE_KEY    — treasury EOA private key (0x…)
  *   ALCHEMY_API_KEY             — Base RPC
- *   CREATORS_BUDGET_ADDRESS     — reinvestment fund bucket (all three splits)
- *   PNPTV_TREASURY_WALLET       — treasury bucket (standard + PRIME + RUSH splits)
+ *   CREATORS_BUDGET_ADDRESS     — reinvestment fund bucket (PRIME/RUSH splits)
+ *   PNPTV_TREASURY_WALLET       — treasury bucket (PRIME/RUSH splits)
  *   SANTINO_PAYOUT_ADDRESS      — legacy fallback for PNPTV_TREASURY_WALLET
  *   SANTINO_PRIME_WALLET        — PRIME co-founder #1 (Santino), lifetime
  *   PNP_LATINO_PRIME_WALLET     — PRIME co-founder #2 (Lex), lifetime
@@ -172,44 +185,25 @@ async function _dispatchLegsInParallel(legs, { paymentId, purpose } = {}) {
 // ── Public: dispatch standard 70/20/10 USDC split ─────────────────────────────
 
 /**
- * Send the standard 70/20/10 USDC split from treasury.
+ * Pay out a creator cashout: sends 100% of the requested amount straight to
+ * the creator's wallet. `amountUsd` is already the creator's net share (it's
+ * a sum of creator_earnings.amount_creator rows, each already computed at
+ * CREATOR_REVENUE_RATE when the revenue was recorded) — do NOT re-split it.
  *
  * @param {object} opts
  * @param {string} opts.orderId        — fiat_cashout_orders.id (for logging)
- * @param {string} opts.creatorId      — users.id
- * @param {number} opts.amountUsd      — gross amount to split (creator's 100%)
+ * @param {string} opts.creatorId      — users.id (for logging)
+ * @param {number} opts.amountUsd      — net cashout amount to pay the creator
  * @param {string} opts.creatorAddress — 0x… wallet address for the creator
- * @returns {Promise<{ txCreator, txTreasury, txReinvestment }>}
+ * @returns {Promise<{ txCreator, amtCreator }>}
  */
 async function dispatchSplit({ orderId, creatorId, amountUsd, creatorAddress }) {
-  const reinvestmentAddress = process.env.CREATORS_BUDGET_ADDRESS;
-  const treasuryAddress = _treasuryAddress();
-
-  if (!reinvestmentAddress || !treasuryAddress) {
-    throw Object.assign(
-      new Error('payout_split_disabled: CREATORS_BUDGET_ADDRESS or PNPTV_TREASURY_WALLET/SANTINO_PAYOUT_ADDRESS not set'),
-      { code: 'SPLIT_CONFIG_MISSING' },
-    );
-  }
-
-  const amtCreator = Math.round(amountUsd * SPLIT_CREATOR * 100) / 100;
-  const amtTreasury = Math.round(amountUsd * SPLIT_TREASURY * 100) / 100;
-  // Reinvestment gets the remainder to avoid rounding gaps
-  const amtReinvestment = Math.round((amountUsd - amtCreator - amtTreasury) * 100) / 100;
-
-  const [creator, treasury, reinvestment] = await _dispatchLegsInParallel(
-    [
-      { to: creatorAddress, usd: amtCreator, label: 'cashout_split_creator' },
-      { to: treasuryAddress, usd: amtTreasury, label: 'cashout_split_treasury' },
-      { to: reinvestmentAddress, usd: amtReinvestment, label: 'cashout_split_reinvestment' },
-    ],
+  const [creator] = await _dispatchLegsInParallel(
+    [{ to: creatorAddress, usd: amountUsd, label: 'cashout_creator_payout' }],
     { paymentId: orderId, purpose: null },
   );
 
-  return {
-    txCreator: creator.hash, txTreasury: treasury.hash, txReinvestment: reinvestment.hash,
-    amtCreator, amtTreasury, amtReinvestment,
-  };
+  return { txCreator: creator.hash, amtCreator: amountUsd };
 }
 
 // ── Public: PRIME Channel subscription split (35/35/20/10) ───────────────────
