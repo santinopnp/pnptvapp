@@ -651,14 +651,18 @@ async function initializeQueues() {
   const MONDAYS_SPUNDAYS_LAUNCH_AT = new Date('2026-10-05T14:00:00Z');
   const MONDAYS_SPUNDAYS_EXPIRES_AT = new Date('2026-10-06T14:00:00Z');
   const msUntilLaunch = MONDAYS_SPUNDAYS_LAUNCH_AT.getTime() - Date.now();
-  if (msUntilLaunch > 0) {
+  const msUntilExpire = MONDAYS_SPUNDAYS_EXPIRES_AT.getTime() - Date.now();
+  // If this setup runs after launch but before expiry (e.g. a deploy/restart
+  // mid-window), fire immediately instead of silently skipping the campaign —
+  // only gate on the hard deadline. The fixed jobId still makes repeat calls
+  // a no-op once the job exists.
+  if (msUntilExpire > 0) {
     await cronQueue.add('mondays-spundays-send', {}, {
-      delay: msUntilLaunch,
+      delay: Math.max(msUntilLaunch, 0),
       attempts: 1, removeOnFail: false,
       jobId: 'once-mondays-spundays-send-2026-10-05',
     });
   }
-  const msUntilExpire = MONDAYS_SPUNDAYS_EXPIRES_AT.getTime() - Date.now();
   if (msUntilExpire > 0) {
     await cronQueue.add('mondays-spundays-expire', {}, {
       delay: msUntilExpire,

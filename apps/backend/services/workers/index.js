@@ -1293,6 +1293,9 @@ async function cronProcessor(job) {
         await msd.main();
       } catch (err) {
         logger.error('[BullMQ] mondays-spundays-send error', { err: err.message });
+        // Rethrow so BullMQ marks this one-shot job failed (not completed) —
+        // a broadcast failure must stay visible/retryable, not silently eaten.
+        throw err;
       }
       return;
     }
@@ -1315,6 +1318,9 @@ async function cronProcessor(job) {
         logger.info('[BullMQ] mondays-spundays-expire: plan deactivated');
       } catch (err) {
         logger.error('[BullMQ] mondays-spundays-expire error', { err: err.message });
+        // Rethrow so BullMQ retries (attempts: 2) instead of marking this
+        // completed — the UPDATE is idempotent, so a retry is safe.
+        throw err;
       }
       return;
     }

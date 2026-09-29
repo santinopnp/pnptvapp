@@ -252,7 +252,11 @@ async function main() {
     `redis://:${process.env.REDIS_PNPTV_PASSWORD}@redis-pnptv:6379/0`;
   const redis = DRY_RUN ? null : new IORedis(redisUrl, { lazyConnect: true });
   if (redis) {
-    try { await redis.connect(); } catch {}
+    // A failed connect here must be fatal, not swallowed — otherwise the
+    // sismember/sadd dedup calls below run against a dead client and either
+    // hang or silently skip every user. Let it throw so the BullMQ job
+    // records a real failure instead of a false "completed" with 0 sends.
+    await redis.connect();
     redis.on('error', () => {});
   }
 
@@ -429,12 +433,14 @@ async function main() {
     `• Skipped (dedup): ${stats.skip}\n` +
     `Closes in 24h — this exact offer will not repeat.`
   );
-
-  process.exit(0);
 }
 
+// Only run if invoked directly (`node <this file>`) — and only then does a
+// clean exit belong here. When workers/index.js `require()`s this module and
+// calls `main()` from inside the long-running BullMQ worker process, calling
+// process.exit() would kill that worker, not just this campaign run.
 if (require.main === module) {
-  main().catch(err => { console.error('Fatal:', err.message); process.exit(1); });
+  main().then(() => process.exit(0)).catch(err => { console.error('Fatal:', err.message); process.exit(1); });
 }
 
 module.exports = { main, CAMPAIGN_SLUG, PLAN_ID };
