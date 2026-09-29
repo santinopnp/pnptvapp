@@ -17234,6 +17234,9 @@ app.post('/api/privy/payment-method', requireSessionAuth, asyncHandler(async (re
     return res.json({ ok: true, ...result });
   } catch (err) {
     if (err.code === 'UNSUPPORTED_PAYMENT_METHOD') return res.status(400).json({ error: 'unsupported_payment_method' });
+    if (err.code === 'NOT_ELIGIBLE') return res.status(403).json({ error: 'not_an_active_creator' });
+    if (err.code === 'NO_WALLET') return res.status(409).json({ error: 'no_wallet_linked' });
+    if (err.code === 'USER_NOT_FOUND') return res.status(404).json({ error: 'user_not_found' });
     logger.error('[privy/payment-method] unexpected error', { err: err.message, userId });
     return res.status(500).json({ error: 'payment_method_failed' });
   }

@@ -73,10 +73,11 @@ async function requestRefund({ paymentId, userId, reason }) {
     throw err('PAYMENT_NOT_CONFIRMED', 'Only confirmed on-chain payments can be refunded');
   }
 
-  const dup = await query(
-    `SELECT id FROM refunds WHERE payment_id = $1 AND status IN ('pending', 'approved') LIMIT 1`,
-    [paymentId],
-  );
+  // One refund attempt per payment, period — including past denials. Without
+  // this a user could reopen an already-denied (even already-signed) case
+  // indefinitely hoping for a different reviewer. A support agent can always
+  // handle a genuine exception outside this API.
+  const dup = await query(`SELECT id FROM refunds WHERE payment_id = $1 LIMIT 1`, [paymentId]);
   if (dup.rowCount > 0) {
     throw err('REFUND_ALREADY_EXISTS', 'A refund request already exists for this payment', 409);
   }
@@ -120,47 +121,109 @@ async function getRefund(refundId, { userId, isAdmin = false } = {}) {
 async function approveRefund(refundId, opts = {}) {
   const { notes = null, reviewedBy = null } = typeof opts === 'string' ? { notes: opts } : opts;
 
-  const { rows } = await query(`SELECT * FROM refunds WHERE id = $1 LIMIT 1`, [refundId]);
-  const refund = rows[0];
-  if (!refund) throw err('REFUND_NOT_FOUND', 'Refund not found', 404);
-  if (refund.status !== 'pending') throw err('REFUND_NOT_PENDING', 'Refund already reviewed', 409);
-
-  const { rows: userRows } = await query(
-    `SELECT wallet_address, privy_id FROM users WHERE id = $1 LIMIT 1`,
-    [refund.user_id],
+  // Atomically claim the row (pending -> approving) before doing anything
+  // else. Without this, two concurrent approve calls (two admins, or a retry
+  // racing the original request) both pass a plain SELECT-based pending
+  // check and each send USDC — a real double-payout. Only the caller whose
+  // UPDATE actually matched a pending row proceeds.
+  const { rows: claimed } = await query(
+    `UPDATE refunds
+        SET status = 'approving', reviewed_by = $2, review_notes = $3, reviewed_at = NOW(), updated_at = NOW()
+      WHERE id = $1 AND status = 'pending'
+      RETURNING *`,
+    [refundId, reviewedBy, notes],
   );
-  const user = userRows[0];
-  if (!user) throw err('USER_NOT_FOUND', 'Refund recipient no longer exists', 404);
+  if (claimed.length === 0) {
+    const { rows: existing } = await query(`SELECT id FROM refunds WHERE id = $1 LIMIT 1`, [refundId]);
+    if (existing.length === 0) throw err('REFUND_NOT_FOUND', 'Refund not found', 404);
+    throw err('REFUND_NOT_PENDING', 'Refund already reviewed or approval already in progress', 409);
+  }
+  const refund = claimed[0];
 
-  let toAddress = user.wallet_address;
-  if (!toAddress) {
-    if (!user.privy_id) {
-      throw err('NO_WALLET_NO_PRIVY', 'User has no wallet and no linked Privy identity — cannot create one to refund into');
+  // Phase 1 — resolve the destination wallet. Nothing has been sent yet, so
+  // any failure here safely releases the claim back to 'pending'.
+  let toAddress;
+  try {
+    const { rows: userRows } = await query(
+      `SELECT wallet_address, privy_id FROM users WHERE id = $1 LIMIT 1`,
+      [refund.user_id],
+    );
+    const user = userRows[0];
+    if (!user) throw err('USER_NOT_FOUND', 'Refund recipient no longer exists', 404);
+
+    toAddress = user.wallet_address;
+    if (!toAddress) {
+      if (!user.privy_id) {
+        throw err('NO_WALLET_NO_PRIVY', 'User has no wallet and no linked Privy identity — cannot create one to refund into');
+      }
+      const { provisionCreatorWallet } = require('./payoutSplitService');
+      const provisioned = await provisionCreatorWallet(refund.user_id);
+      if (!provisioned.address) {
+        throw err('WALLET_PROVISION_FAILED', provisioned.reason || 'Could not create a wallet for this user');
+      }
+      toAddress = provisioned.address;
     }
-    const { provisionCreatorWallet } = require('./payoutSplitService');
-    const provisioned = await provisionCreatorWallet(refund.user_id);
-    if (!provisioned.address) {
-      throw err('WALLET_PROVISION_FAILED', provisioned.reason || 'Could not create a wallet for this user');
-    }
-    toAddress = provisioned.address;
+  } catch (preSendErr) {
+    await query(
+      `UPDATE refunds SET status = 'pending', updated_at = NOW() WHERE id = $1 AND status = 'approving'`,
+      [refundId],
+    ).catch(() => {});
+    throw preSendErr;
   }
 
-  const txHash = await _sendRefundUsdc({
-    refundId: refund.id,
-    toAddress,
-    amountUsd: parseFloat(refund.amount_usd),
-  });
+  // Phase 2 — send the USDC. sendTreasuryLeg only throws after exhausting
+  // its own 3 retries, so a throw here means we're confident nothing landed
+  // on-chain — still safe to release the claim.
+  let txHash;
+  try {
+    // Shares the treasury EOA's process-wide nonce allocator with
+    // payoutSplitService's cashout/PRIME/RUSH dispatch — sending USDC from
+    // an independent nonce source here would race and collide with those.
+    const { sendTreasuryLeg } = require('./payoutSplitService');
+    txHash = await sendTreasuryLeg({
+      paymentId: String(refund.id),
+      purpose: 'refund',
+      to: toAddress,
+      usd: parseFloat(refund.amount_usd),
+    });
+  } catch (sendErr) {
+    await query(
+      `UPDATE refunds SET status = 'pending', updated_at = NOW() WHERE id = $1 AND status = 'approving'`,
+      [refundId],
+    ).catch(() => {});
+    throw sendErr;
+  }
 
-  const { rows: updated } = await query(
-    `UPDATE refunds
-        SET status = 'approved', reviewed_by = $2, review_notes = $3,
-            reviewed_at = NOW(), to_address = $4, tx_hash = $5, updated_at = NOW()
-      WHERE id = $1
-      RETURNING *`,
-    [refundId, reviewedBy, notes, toAddress, txHash],
-  );
-  logger.info('[refundService] refund approved & paid', { refundId, txHash, toAddress, amountUsd: refund.amount_usd });
-  return updated[0];
+  // Phase 3 — the USDC is on-chain now. This write must NEVER revert status
+  // back to 'pending' on failure — that would let a retry send a second
+  // refund for money that's already gone. Retry the bookkeeping write a few
+  // times instead, and if it still fails, surface a distinct error so
+  // ops tooling pages a human rather than silently losing the tx_hash.
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const { rows: updated } = await query(
+        `UPDATE refunds
+            SET status = 'approved', to_address = $2, tx_hash = $3, updated_at = NOW()
+          WHERE id = $1 AND status = 'approving'
+          RETURNING *`,
+        [refundId, toAddress, txHash],
+      );
+      logger.info('[refundService] refund approved & paid', { refundId, txHash, toAddress, amountUsd: refund.amount_usd });
+      return updated[0];
+    } catch (dbErr) {
+      logger.error('[refundService] USDC sent but refund row update failed — retrying', {
+        refundId, txHash, toAddress, attempt, err: dbErr.message,
+      });
+      if (attempt === 3) {
+        _notifyOpsPaidButUnrecorded({ refundId, txHash, toAddress, amountUsd: refund.amount_usd }).catch(() => {});
+        throw Object.assign(
+          new Error('Refund paid on-chain but the database update failed — needs manual reconciliation'),
+          { code: 'PAID_BUT_UNRECORDED', status: 500, txHash, toAddress },
+        );
+      }
+      await new Promise((res) => setTimeout(res, 500 * attempt));
+    }
+  }
 }
 
 /**
@@ -172,22 +235,24 @@ async function approveRefund(refundId, opts = {}) {
  * @returns {Promise<object>} the updated refunds row
  */
 async function denyRefund(refundId, reasons, reviewedBy = null) {
-  const { rows } = await query(`SELECT * FROM refunds WHERE id = $1 LIMIT 1`, [refundId]);
-  const refund = rows[0];
-  if (!refund) throw err('REFUND_NOT_FOUND', 'Refund not found', 404);
-  if (refund.status !== 'pending') throw err('REFUND_NOT_PENDING', 'Refund already reviewed', 409);
-
   const deadline = new Date(Date.now() + REFUND_DENIAL_SIGNATURE_TIMEOUT_HOURS * 3600 * 1000);
 
+  // Guarded on status='pending' so two concurrent deny calls (or a deny
+  // racing an approve) can't both apply — only the first to match wins.
   const { rows: updated } = await query(
     `UPDATE refunds
         SET status = 'denied', reviewed_by = $2, denial_reasons = $3,
             reviewed_at = NOW(), signature_requested_at = NOW(),
             signature_deadline_at = $4, updated_at = NOW()
-      WHERE id = $1
+      WHERE id = $1 AND status = 'pending'
       RETURNING *`,
     [refundId, reviewedBy, reasons ? String(reasons).slice(0, 2000) : null, deadline],
   );
+  if (updated.length === 0) {
+    const { rows: existing } = await query(`SELECT id FROM refunds WHERE id = $1 LIMIT 1`, [refundId]);
+    if (existing.length === 0) throw err('REFUND_NOT_FOUND', 'Refund not found', 404);
+    throw err('REFUND_NOT_PENDING', 'Refund already reviewed', 409);
+  }
   const denied = updated[0];
   logger.info('[refundService] refund denied', { refundId, deadline });
   _notifyUserDenied(denied).catch((e) => logger.warn('[refundService] denial DM failed', { err: e.message }));
@@ -235,7 +300,8 @@ async function recordRefundDenialSignature(refundId, signature) {
   }
 
   if (refund.signature_deadline_at && new Date() > new Date(refund.signature_deadline_at)) {
-    logger.warn('[refundService] denial signature received past deadline', { refundId, deadline: refund.signature_deadline_at });
+    logger.warn('[refundService] denial signature rejected — past deadline', { refundId, deadline: refund.signature_deadline_at });
+    throw err('SIGNATURE_EXPIRED', 'The signing window for this denial has expired — contact support', 410);
   }
 
   const signatureHash = crypto.createHash('sha256').update(signature).digest('hex');
@@ -250,62 +316,21 @@ async function recordRefundDenialSignature(refundId, signature) {
   return updated[0];
 }
 
-// ── On-chain USDC send for approved refunds ───────────────────────────────────
-
-async function _sendRefundUsdc({ refundId, toAddress, amountUsd }) {
-  const { createWalletClient, createPublicClient, http, encodeFunctionData, parseUnits } = require('viem');
-  const { privateKeyToAccount } = require('viem/accounts');
-  const { base } = require('viem/chains');
-
-  const pk = process.env.GAS_TREASURY_PRIVATE_KEY;
-  if (!pk) throw err('REFUND_DISABLED', 'GAS_TREASURY_PRIVATE_KEY not configured', 503);
-
-  const account = privateKeyToAccount(pk.startsWith('0x') ? pk : `0x${pk}`);
-  const rpcUrl = process.env.ALCHEMY_API_KEY
-    ? `https://base-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`
-    : 'https://mainnet.base.org';
-  const walletClient = createWalletClient({ account, chain: base, transport: http(rpcUrl) });
-
-  const USDC_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
-  const USDC_TRANSFER_ABI = [{
-    name: 'transfer', type: 'function', stateMutability: 'nonpayable',
-    inputs: [{ name: 'to', type: 'address' }, { name: 'value', type: 'uint256' }],
-    outputs: [{ type: 'bool' }],
-  }];
-  const value = parseUnits(amountUsd.toFixed(6), 6);
-  const data = encodeFunctionData({ abi: USDC_TRANSFER_ABI, functionName: 'transfer', args: [toAddress, value] });
-
-  const MAX_ATTEMPTS = 3;
-  let lastErr;
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    try {
-      const hash = await walletClient.sendTransaction({ to: USDC_ADDRESS, data });
-      await _logRefundTx({ refundId, txHash: hash, fromAddress: account.address, toAddress, amountUsd, status: 'sent', attempt });
-      logger.info('[refundService] refund USDC sent', { refundId, toAddress, amountUsd, hash, attempt });
-      return hash;
-    } catch (e) {
-      lastErr = e;
-      await _logRefundTx({ refundId, fromAddress: account.address, toAddress, amountUsd, status: 'failed', error: e.message, attempt });
-      if (attempt < MAX_ATTEMPTS) await new Promise((res) => setTimeout(res, 1000 * 2 ** (attempt - 1)));
-    }
-  }
-  throw err('REFUND_SEND_FAILED', `Refund USDC send failed after ${MAX_ATTEMPTS} attempts: ${lastErr.message}`, 502);
-}
-
-async function _logRefundTx({ refundId, txHash, fromAddress, toAddress, amountUsd, status, error, attempt }) {
-  try {
-    await query(
-      `INSERT INTO payment_transactions
-         (payment_id, purpose, tx_hash, from_address, to_address, token, chain, amount_usd, status, error, attempt)
-       VALUES ($1, 'refund', $2, $3, $4, 'USDC', 'base', $5, $6, $7, $8)`,
-      [String(refundId), txHash || null, fromAddress || null, toAddress, amountUsd, status, error || null, attempt],
-    );
-  } catch (e) {
-    logger.warn('[refundService] failed to log payment_transactions row', { refundId, err: e.message });
-  }
-}
-
 // ── Notifications ─────────────────────────────────────────────────────────────
+
+async function _notifyOpsPaidButUnrecorded({ refundId, txHash, toAddress, amountUsd }) {
+  const channel = process.env.SLACK_OPS_ADMIN_CHANNEL || process.env.SLACK_OPS_INCIDENTS_CHANNEL;
+  const token = process.env.SLACK_BOT_TOKEN;
+  if (!channel || !token) return;
+  await fetch('https://slack.com/api/chat.postMessage', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json; charset=utf-8', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({
+      channel,
+      text: `🚨 Refund \`${refundId}\` — USDC SENT ($${amountUsd} → \`${toAddress}\`, tx \`${txHash}\`) but the DB update failed 3x. Needs manual reconciliation: mark it approved by hand once verified.`,
+    }),
+  });
+}
 
 async function _notifyOpsNewRefund(refund) {
   const channel = process.env.SLACK_OPS_ADMIN_CHANNEL || process.env.SLACK_OPS_INCIDENTS_CHANNEL;

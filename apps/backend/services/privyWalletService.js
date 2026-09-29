@@ -11,6 +11,9 @@
  *    Provisions a Privy embedded wallet if the user doesn't have one yet,
  *    then auto-configures their payout method to PNPtv Treasury Wallet.
  *  - configurePaymentMethod(userId)  — sets users.has_pnptv_payout_configured.
+ *    Requires creator_status='active' AND a linked wallet_address — rejects
+ *    (NOT_ELIGIBLE / NO_WALLET) otherwise, so an ordinary user calling the
+ *    public route can't flip this flag on themselves.
  *  - getCreatorPayoutConfig(userId)  — read model for the "payment configured"
  *    UI state.
  *  - validateSingleWallet(address, userId) — app-level pre-check mirroring the
@@ -35,34 +38,46 @@ const PNPTV_TREASURY_METHOD = 'pnptv_treasury';
  *   2. Auto-configure payout method to PNPtv Treasury Wallet.
  *   3. Notify the user (DM) + ops (Slack) the first time this completes.
  *
- * Safe to call repeatedly — every step underneath is idempotent.
+ * Safe to call repeatedly — every step underneath is idempotent. If the
+ * wallet still isn't ready (no privy_id yet, or provisioning failed),
+ * configurePaymentMethod's eligibility check rejects with NOT_ELIGIBLE/
+ * NO_WALLET — that's expected and swallowed here; payoutConfigured stays
+ * false until a later call (next /api/privy/link, or re-approval) succeeds.
  *
  * @param {string} userId
- * @param {boolean} [forceCreate=false] — re-run wallet provisioning even if
- *   a prior attempt reported no_privy_id_yet (used by the /api/privy/link
- *   callback once a privy_id finally exists).
  * @returns {Promise<{ provisioned: boolean, address: string|null, payoutConfigured: boolean }>}
  */
-async function ensureCreatorWallet(userId, forceCreate = false) {
+async function ensureCreatorWallet(userId) {
   if (!userId) throw new Error('userId required');
 
   const walletResult = await provisionCreatorWallet(userId);
-  if (!walletResult.provisioned && !walletResult.address && !forceCreate) {
+  if (!walletResult.provisioned && !walletResult.address) {
     logger.info('[privyWallet] ensureCreatorWallet deferred', { userId, reason: walletResult.reason });
   }
 
-  const configResult = await configurePaymentMethod(userId, PNPTV_TREASURY_METHOD);
-
-  return {
-    provisioned: walletResult.provisioned,
-    address: walletResult.address,
-    payoutConfigured: configResult.configured || configResult.alreadyConfigured,
-  };
+  try {
+    const configResult = await configurePaymentMethod(userId, PNPTV_TREASURY_METHOD);
+    return {
+      provisioned: walletResult.provisioned,
+      address: walletResult.address,
+      payoutConfigured: configResult.configured || configResult.alreadyConfigured,
+    };
+  } catch (err) {
+    if (err.code === 'NOT_ELIGIBLE' || err.code === 'NO_WALLET') {
+      return { provisioned: walletResult.provisioned, address: walletResult.address, payoutConfigured: false };
+    }
+    throw err;
+  }
 }
 
 /**
  * Set the creator's payout method. Only 'pnptv_treasury' exists today.
  * Idempotent — returns alreadyConfigured=true without writing if already set.
+ *
+ * Requires the caller to actually be an active creator/performer with a
+ * linked wallet — without this check, any authenticated (non-creator) user
+ * could hit the public POST /api/privy/payment-method route and flip
+ * has_pnptv_payout_configured on themselves.
  *
  * @param {string} userId
  * @param {string} [method='pnptv_treasury']
@@ -77,23 +92,42 @@ async function configurePaymentMethod(userId, method = PNPTV_TREASURY_METHOD) {
   }
 
   const { rows } = await query(
-    `UPDATE users
-        SET has_pnptv_payout_configured = TRUE,
-            updated_at = NOW()
-      WHERE id = $1 AND has_pnptv_payout_configured IS NOT TRUE
-      RETURNING id`,
+    `SELECT creator_status, wallet_address, has_pnptv_payout_configured FROM users WHERE id = $1 LIMIT 1`,
     [String(userId)],
   );
-  const configured = rows.length > 0;
-
-  if (configured) {
-    logger.info('[privyWallet] payout method configured', { userId, method: PNPTV_TREASURY_METHOD });
-    _notifyPayoutConfigured(userId).catch((err) =>
-      logger.warn('[privyWallet] payout-configured notify failed', { userId, err: err.message }),
-    );
+  const user = rows[0];
+  if (!user) {
+    const e = new Error('user_not_found');
+    e.code = 'USER_NOT_FOUND';
+    e.status = 404;
+    throw e;
+  }
+  if (user.creator_status !== 'active') {
+    const e = new Error('not_an_active_creator');
+    e.code = 'NOT_ELIGIBLE';
+    e.status = 403;
+    throw e;
+  }
+  if (!user.wallet_address) {
+    const e = new Error('no_wallet_linked');
+    e.code = 'NO_WALLET';
+    e.status = 409;
+    throw e;
+  }
+  if (user.has_pnptv_payout_configured) {
+    return { configured: false, alreadyConfigured: true, method: PNPTV_TREASURY_METHOD };
   }
 
-  return { configured, alreadyConfigured: !configured, method: PNPTV_TREASURY_METHOD };
+  await query(
+    `UPDATE users SET has_pnptv_payout_configured = TRUE, updated_at = NOW() WHERE id = $1`,
+    [String(userId)],
+  );
+  logger.info('[privyWallet] payout method configured', { userId, method: PNPTV_TREASURY_METHOD });
+  _notifyPayoutConfigured(userId).catch((err) =>
+    logger.warn('[privyWallet] payout-configured notify failed', { userId, err: err.message }),
+  );
+
+  return { configured: true, alreadyConfigured: false, method: PNPTV_TREASURY_METHOD };
 }
 
 /**

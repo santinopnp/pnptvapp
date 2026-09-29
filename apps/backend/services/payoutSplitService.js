@@ -165,21 +165,79 @@ async function _sendLegWithRetry({ walletClient, account, to, usd, label, nonce,
 }
 
 /**
+ * Process-wide nonce reservation for the treasury EOA. `_dispatchLegsInParallel`
+ * pre-allocating nonces per-call was only safe within a single invocation —
+ * two concurrent invocations (a cashout dispatch racing a refund send, or two
+ * cashouts settling around the same time) both read the same "pending" nonce
+ * from the chain and collided. This chains every reservation onto the last
+ * one issued *synchronously* (no `await` before the chain is updated), so
+ * concurrent callers always get non-overlapping ranges regardless of when
+ * their underlying RPC calls actually resolve. refundService's USDC send
+ * shares this allocator via `sendTreasuryLeg` below — it must never build its
+ * own independent nonce source for the same EOA.
+ */
+let _nonceChainPromise = null;
+
+async function _reserveNonceRange(count) {
+  const { publicClient, account } = _clients();
+  if (!_nonceChainPromise) {
+    _nonceChainPromise = publicClient.getTransactionCount({ address: account.address, blockTag: 'pending' });
+  }
+  const myBase = _nonceChainPromise;
+  _nonceChainPromise = myBase.then((base) => base + count);
+  return myBase;
+}
+
+/**
  * Send several USDC legs in parallel from the treasury EOA. Nonces are
- * pre-allocated sequentially so concurrent sendTransaction calls from the
- * same account don't race for the same nonce.
+ * reserved from the shared process-wide allocator so concurrent dispatches
+ * (from this function or from `sendTreasuryLeg`) never collide.
  *
  * @param {Array<{ to: string, usd: number, label: string }>} legs
  * @returns {Promise<Array<{ label, to, usd, hash }>>}
  */
 async function _dispatchLegsInParallel(legs, { paymentId, purpose } = {}) {
-  const { walletClient, publicClient, account } = _clients();
-  const baseNonce = await publicClient.getTransactionCount({ address: account.address, blockTag: 'pending' });
-  return Promise.all(
-    legs.map((leg, i) =>
-      _sendLegWithRetry({ walletClient, account, to: leg.to, usd: leg.usd, label: leg.label, nonce: baseNonce + i, paymentId, purpose: purpose || leg.label }),
-    ),
-  );
+  const { walletClient, account } = _clients();
+  const baseNonce = await _reserveNonceRange(legs.length);
+  try {
+    return await Promise.all(
+      legs.map((leg, i) =>
+        _sendLegWithRetry({ walletClient, account, to: leg.to, usd: leg.usd, label: leg.label, nonce: baseNonce + i, paymentId, purpose: purpose || leg.label }),
+      ),
+    );
+  } catch (err) {
+    // A leg exhausted its retries — on-chain nonce state for this EOA is now
+    // uncertain (was it mined, dropped, replaced?). Force the next caller to
+    // re-fetch from the chain rather than keep extending a possibly-wrong
+    // local counter forever.
+    _nonceChainPromise = null;
+    throw err;
+  }
+}
+
+/**
+ * Send a single USDC leg from the treasury EOA, reserving its nonce from the
+ * same shared allocator as `_dispatchLegsInParallel`. Public because
+ * refundService's approved-refund payout shares this treasury EOA and MUST
+ * NOT allocate nonces independently.
+ *
+ * @param {object} opts
+ * @param {string} opts.paymentId — free-form id for payment_transactions (e.g. refund id)
+ * @param {string} opts.purpose
+ * @param {string} opts.to
+ * @param {number} opts.usd
+ * @returns {Promise<string>} tx hash
+ */
+async function sendTreasuryLeg({ paymentId, purpose, to, usd }) {
+  const { walletClient, account } = _clients();
+  const baseNonce = await _reserveNonceRange(1);
+  try {
+    const { hash } = await _sendLegWithRetry({ walletClient, account, to, usd, label: purpose, nonce: baseNonce, paymentId, purpose });
+    return hash;
+  } catch (err) {
+    _nonceChainPromise = null;
+    throw err;
+  }
 }
 
 // ── Public: dispatch standard 70/20/10 USDC split ─────────────────────────────
@@ -357,6 +415,7 @@ module.exports = {
   distributePrimeChannelSplit,
   dispatchRushSplit,
   provisionCreatorWallet,
+  sendTreasuryLeg,
   SPLIT_CREATOR,
   SPLIT_TREASURY,
   SPLIT_REINVESTMENT,
