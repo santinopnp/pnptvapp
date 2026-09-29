@@ -105,8 +105,12 @@ const CRYSTAL_CREATOR_COMMISSION_PCT   = 15;      // 15% platform cut (creator k
 // Earnings hold period: newly-recorded earnings sit in 'holding' status for this
 // many hours before maturing to 'available'. This gives the platform time to
 // process any refund or chargeback before paying out the creator.
-const EARNINGS_HOLD_HOURS = 168;        // tokens + crypto: 7-day hold
-const EARNINGS_HOLD_HOURS_EFIPAY = 336; // eFiPay (reseller): 14-day hold (higher chargeback window)
+// Lowered 168h -> 48h on 2026-09-29 per Carlos: matured earnings now auto-pay
+// to the creator's Privy wallet (cashoutService.runAutoPayoutSweep) instead of
+// sitting until a manual cashout, so the hold only needs to cover the window
+// in which a card/crypto chargeback can still land.
+const EARNINGS_HOLD_HOURS = 48;         // tokens + crypto: 48-hour hold
+const EARNINGS_HOLD_HOURS_EFIPAY = 336; // eFiPay (reseller): unchanged — 14-day hold (higher chargeback window)
 
 module.exports = {
   // Exported as top-level named constants for direct destructured imports.
