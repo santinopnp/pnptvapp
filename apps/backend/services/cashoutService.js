@@ -244,7 +244,9 @@ async function requestCashout({ creatorId, amountUsd, lane, destination }) {
       orderId: order.id, creatorId, amountUsd, lane, earningCount: earningIds.length,
     });
 
-    // ── Dispatch — on-chain 70/10/20 USDC split from treasury ───────────────
+    // ── Dispatch — 100% of the net cashout amount, on-chain, to the creator ──
+    // (payoutSplitService.dispatchSplit — fixed 2026-09-29, see its docstring:
+    // amountUsd here is already the creator's net share, not a gross figure)
     let dispatchResult;
     try {
       dispatchResult = await dispatchSplit({

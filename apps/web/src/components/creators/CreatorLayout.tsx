@@ -38,6 +38,7 @@ import {
   listCreatorInviteLinks,
   createCreatorInviteLink,
   deleteCreatorInviteLink,
+  getPaymentMethodConfig,
   type XAutoCampaign,
   type XAutoCampaignPost,
   type CreatorChannel,
@@ -1123,6 +1124,24 @@ export function CreatorConsents() {
       .then((res) => { if (res.success) setAnnounceConsent({ consented: res.consented, consentedAt: res.consentedAt }); })
       .catch(() => { /* silent — section shows a retry if it stays null */ });
   }, []);
+
+  // "Billetera de pagos configurada" — auto-set server-side the moment a
+  // creator/performer is approved (privyWalletService.ensureCreatorWallet).
+  // No user action exists for this row; it's a status readout only.
+  const [payoutConfig, setPayoutConfig] = React.useState<{
+    walletAddress: string | null;
+    hasPnptvPayoutConfigured: boolean;
+    creatorStatus: string | null;
+  } | null>(null);
+  React.useEffect(() => {
+    getPaymentMethodConfig()
+      .then((res) => setPayoutConfig({
+        walletAddress: res.walletAddress,
+        hasPnptvPayoutConfigured: res.hasPnptvPayoutConfigured,
+        creatorStatus: res.creatorStatus,
+      }))
+      .catch(() => { /* silent — row just doesn't render */ });
+  }, []);
   const toggleAnnounceConsent = async (next: boolean) => {
     setAnnounceBusy(true);
     setAnnounceError(null);
@@ -1313,6 +1332,13 @@ export function CreatorConsents() {
         : "Configure at least one payout method (fiat OR crypto) to receive earnings.",
       ...(!consents.wallet_address_set ? { actionLabel: "Configure Payouts", onAction: () => navigate("/creators/settings") } : {}),
     },
+    ...(payoutConfig ? [{
+      label: "Billetera de pagos configurada",
+      status: (payoutConfig.hasPnptvPayoutConfigured ? "accepted" : "info") as ConsentRowStatus,
+      detail: payoutConfig.hasPnptvPayoutConfigured
+        ? `PNPtv Treasury Wallet · USDC (Base)${payoutConfig.walletAddress ? ` · ${payoutConfig.walletAddress.slice(0, 6)}…${payoutConfig.walletAddress.slice(-4)}` : ""}`
+        : "Se configura automáticamente cuando tu perfil de Creador/Performer queda activo.",
+    } as ConsentRow] : []),
   ] : [];
 
   // Pending-count summary — counts rows that block go-live. Payout rows are OR

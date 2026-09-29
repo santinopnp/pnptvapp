@@ -2003,6 +2003,24 @@ export async function linkPrivyIdentity(privyToken: string): Promise<{ ok: true;
 // via /api/privy/link). Lets the wallet UI render a read-only balance view on
 // devices where Privy hasn't been authenticated locally — the pnptv session
 // cookie is cross-device, whereas Privy's useWallets() is per-browser.
+// Read the "Billetera de pagos configurada" state — auto-set by the backend
+// (privyWalletService.ensureCreatorWallet) the moment a creator/performer is
+// approved. Only 'pnptv_treasury' exists as a payout method today.
+export async function getPaymentMethodConfig(): Promise<{
+  ok: true;
+  walletAddress: string | null;
+  hasPnptvPayoutConfigured: boolean;
+  creatorStatus: string | null;
+  method: "pnptv_treasury" | null;
+}> {
+  const res = await fetch(`${API_BASE}/api/privy/payment-method`, { credentials: "include" });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(error.error || `API error ${res.status}`);
+  }
+  return res.json();
+}
+
 export async function getLinkedWallet(): Promise<{
   ok: true;
   walletAddress: string | null;
@@ -2032,6 +2050,63 @@ export async function setPreferredWalletServer(address: string | null): Promise<
       body: JSON.stringify({ address }),
     });
   } catch { /* non-fatal — localStorage still holds the choice on this device */ }
+}
+
+// ── Refunds ────────────────────────────────────────────────────────────────
+// 72h manual-review queue for USDC-on-Base checkout_intents payments. See
+// apps/backend/services/refundService.js.
+
+export interface RefundRecord {
+  id: number;
+  payment_id: number;
+  user_id: string;
+  amount_usd: string;
+  reason: string | null;
+  status: "pending" | "approved" | "denied";
+  denial_reasons: string | null;
+  to_address: string | null;
+  tx_hash: string | null;
+  refund_denial_signed: boolean;
+  signature_deadline_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function requestRefund(paymentId: number, reason?: string): Promise<{ ok: true; refund: RefundRecord }> {
+  const res = await fetch(`${API_BASE}/api/refund/request`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ paymentId, reason }),
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(error.message || error.error || `API error ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function getRefund(refundId: number): Promise<{ ok: true; refund: RefundRecord; denialMessageToSign?: string }> {
+  const res = await fetch(`${API_BASE}/api/refund/${refundId}`, { credentials: "include" });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(error.message || error.error || `API error ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function signRefundDenial(refundId: number, signature: string): Promise<{ ok: true; refund: RefundRecord }> {
+  const res = await fetch(`${API_BASE}/api/refund/${refundId}/sign-denial`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ signature }),
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(error.message || error.error || `API error ${res.status}`);
+  }
+  return res.json();
 }
 
 export async function deleteAvatar(): Promise<{ success: boolean }> {

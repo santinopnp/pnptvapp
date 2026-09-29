@@ -15,7 +15,7 @@
 
 const { query } = require('../config/postgres');
 const logger = require('../utils/logger');
-const { provisionCreatorWallet } = require('./payoutSplitService');
+const { validateSingleWallet, ensureCreatorWallet } = require('./privyWalletService');
 
 async function _notifyWalletChanged({ pnptvUserId, oldWallet, newWallet }) {
   try {
@@ -137,13 +137,22 @@ async function verifyAndLink({ pnptvUserId, privyToken }) {
   const walletChanged = Boolean(newWallet) && oldWallet !== newWallet;
   const privyIdChanged = Boolean(privyId) && prior.old_privy_id && prior.old_privy_id !== privyId;
 
+  // Max 1 wallet per user, enforced app-side (friendly error) on top of the
+  // DB unique index (idx_users_wallet_address_unique, migration 370). Only
+  // relevant when the incoming address is new/changed — re-linking the same
+  // address the user already owns is always fine.
+  if (walletChanged) {
+    await validateSingleWallet(newWallet, pnptvUserId);
+  }
+
   if (walletChanged) {
     await query(
       `UPDATE users
-          SET privy_id                = $1,
-              wallet_address          = $2,
-              previous_wallet_address = CASE WHEN $3::text IS NULL THEN previous_wallet_address ELSE $3::text END,
-              wallet_linked_at        = NOW()
+          SET privy_id                     = $1,
+              wallet_address               = $2,
+              previous_wallet_address      = CASE WHEN $3::text IS NULL THEN previous_wallet_address ELSE $3::text END,
+              wallet_linked_at             = NOW(),
+              has_pnptv_payout_configured  = FALSE
         WHERE id = $4`,
       [privyId, newWallet, oldWallet, pnptvUserId],
     );
@@ -175,20 +184,21 @@ async function verifyAndLink({ pnptvUserId, privyToken }) {
     logger.info('[privy-link] linked', { pnptvUserId, privyId, walletAddress });
   }
 
-  // If this user is an active creator without a wallet, provision one now
-  // that we have a privy_id to attach it to. Fire-and-forget.
-  if (!walletAddress) {
-    query(
-      `SELECT 1 FROM users WHERE id = $1 AND creator_status = 'active' AND wallet_address IS NULL LIMIT 1`,
-      [pnptvUserId],
-    ).then(({ rowCount }) => {
-      if (rowCount > 0) {
-        provisionCreatorWallet(pnptvUserId).catch((e) =>
-          logger.warn('[privy-link] wallet provision failed', { pnptvUserId, error: e.message })
-        );
-      }
-    }).catch(() => {});
-  }
+  // "wallet_linked" for active creators/performers: make sure the wallet is
+  // provisioned (in case a wallet still isn't attached) and the payout
+  // method is (re-)configured to PNPtv Treasury Wallet — walletChanged just
+  // reset has_pnptv_payout_configured above, so this re-confirms it against
+  // the newly-linked address. Fire-and-forget.
+  query(
+    `SELECT 1 FROM users WHERE id = $1 AND creator_status = 'active' LIMIT 1`,
+    [pnptvUserId],
+  ).then(({ rowCount }) => {
+    if (rowCount > 0) {
+      ensureCreatorWallet(pnptvUserId).catch((e) =>
+        logger.warn('[privy-link] ensureCreatorWallet failed', { pnptvUserId, error: e.message })
+      );
+    }
+  }).catch(() => {});
 
   return { privyId, walletAddress };
 }
