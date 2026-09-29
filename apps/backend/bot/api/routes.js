@@ -3538,6 +3538,11 @@ app.post('/api/webapp/auth/magic/start', magicLinkLimiter, asyncHandler(webAppCo
 // before the user clicks. See webAppController.magicLinkVerify comment.
 app.get('/api/webapp/auth/magic/verify', magicLinkVerifyLimiter, asyncHandler(webAppController.magicLinkVerify));
 app.post('/api/webapp/auth/magic/verify', magicLinkVerifyLimiter, asyncHandler(webAppController.magicLinkConfirm));
+// Telegram webview → external browser, keeping the user signed in. Start needs
+// the existing session; verify/confirm consume a single-use 120s token.
+app.post('/api/webapp/auth/handoff/start', requireSessionAuthNoConsent, authLimiter, asyncHandler(webAppController.browserHandoffStart));
+app.get('/api/webapp/auth/handoff', magicLinkVerifyLimiter, asyncHandler(webAppController.browserHandoffVerify));
+app.post('/api/webapp/auth/handoff', magicLinkVerifyLimiter, asyncHandler(webAppController.browserHandoffConfirm));
 app.get('/api/webapp/auth/passkey/begin', authLimiter, asyncHandler(webAppController.passkeyBegin));
 app.post('/api/webapp/auth/passkey/finish', passkeyFinishLimiter, asyncHandler(webAppController.passkeyFinish));
 // Passkey management (for authenticated users adding/removing passkeys)

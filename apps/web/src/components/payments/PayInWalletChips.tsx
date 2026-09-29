@@ -221,6 +221,7 @@ export function WalletCheckoutHero({ lang = "en", compact = false }: { lang?: "e
 import { useEffect as _useEffect, useState as _useState, useRef as _useRef } from "react";
 import { usePrivy, useWallets, useAddFunds, useConnectWallet, useSendTransaction, useUnlinkWallet, useCreateWallet } from "@privy-io/react-auth";
 import { getLinkedWallet } from "@/lib/api";
+import { OpenInBrowserButton } from "@/components/telegram/OpenInBrowserButton";
 import { createWalletClient, custom, encodeFunctionData, parseUnits, parseEther } from "viem";
 import { base, mainnet } from "viem/chains";
 
@@ -347,19 +348,19 @@ export function onrampErrorMessage(kind: OnrampErrorKind, es: boolean, rawMsg: s
     case "popup_blocked":
       return isInAppBrowser()
         ? (es
-          ? "Esta app no deja abrir la ventana de pago. Abre pnptv.app en Safari o Chrome, o paga con 🎫 Ru$h 💎."
-          : "This app won't open the payment window. Open pnptv.app in Safari or Chrome, or pay with 🎫 Ru$h 💎.")
+          ? "Esta app no deja abrir la ventana de pago. Ábrelo en tu navegador para pagar con Apple Pay o Google Pay."
+          : "This app won't open the payment window. Open it in your browser to pay with Apple Pay or Google Pay.")
         : (es
           ? "Tu navegador bloqueó la ventana de pago. Permite ventanas emergentes para pnptv.app y vuelve a tocar Recargar."
           : "Your browser blocked the payment window. Allow pop-ups for pnptv.app and tap Top up again.");
     case "card_blocked":
       return es
-        ? "El emisor/Stripe rechazó esta tarjeta por seguridad. No se hizo ningún cargo. Prueba con otra tarjeta, Apple Pay/Google Pay, o paga con 🎫 Ru$h 💎."
-        : "Stripe/your bank declined this card for security reasons. You were not charged. Try another card, Apple Pay/Google Pay, or pay with 🎫 Ru$h 💎.";
+        ? "Stripe rechazó esta tarjeta por seguridad. No se hizo ningún cargo. Prueba con Apple Pay o Google Pay."
+        : "Stripe declined this card for security reasons. You were not charged. Try Apple Pay or Google Pay.";
     case "glitch":
       return es
-        ? "El pago con tarjeta está fallando en este momento. Prueba con 🎫 Ru$h 💎 (también con tarjeta, pipeline distinta) o vuelve a intentarlo en unos minutos."
-        : "Card top-up is glitching right now. Try 🎫 Ru$h 💎 instead (also card-based, different pipeline) or retry in a couple of minutes.";
+        ? "El pago con tarjeta está fallando en este momento. Prueba con Apple Pay o Google Pay, o vuelve a intentarlo en unos minutos."
+        : "Card top-up is glitching right now. Try Apple Pay or Google Pay, or retry in a couple of minutes.";
     default:
       return es ? `No se pudo abrir el pago: ${rawMsg}` : `Could not open payment: ${rawMsg}`;
   }
@@ -504,6 +505,9 @@ export function WalletPayCard({
   // or (b) 60s of polling elapses. Prevents the "Pay with card" button from
   // re-appearing as if nothing happened while Stripe onramp settles.
   const [funding, setFunding] = _useState(false);
+  // Last addFunds failure was a blocked popup → offer one-tap "Open in
+  // browser" (only renders inside Telegram).
+  const [popupBlocked, setPopupBlocked] = _useState(false);
   const [eth, setEth] = _useState<number | null>(null);
   // Tracks whether the onramp poll has been cancelled (component unmounted).
   const pollCancelledRef = _useRef(false);
@@ -834,6 +838,7 @@ export function WalletPayCard({
   const handleFund = async () => {
     if (!activeWallet) return;
     setError(null);
+    setPopupBlocked(false);
     try {
       // useAddFunds (Privy v3) surfaces ALL enabled onramps including Stripe,
       // whereas the legacy useFundWallet excludes Stripe by design. destination
@@ -905,11 +910,12 @@ export function WalletPayCard({
       const msg = err instanceof Error ? err.message : String(err);
       // Popup-blocked / Stripe risk declines / onramp glitches all leave the
       // user uncharged. Show copy specific to each so they know what to do
-      // next (allow pop-ups, open in a real browser, use another card, or
-      // fall back to Ru$h) instead of the raw Privy error.
+      // next (allow pop-ups, open in a real browser, or use Apple Pay /
+      // Google Pay) instead of the raw Privy error.
       const kind = classifyOnrampError(msg);
       if (kind === "cancel") return;
       setError(onrampErrorMessage(kind, es, msg));
+      setPopupBlocked(kind === "popup_blocked");
       reportWalletClientError("addFunds", err, {
         surface, amountUsd, address: activeWallet?.address,
         walletType: activeWallet?.walletClientType,
@@ -1078,6 +1084,7 @@ export function WalletPayCard({
           {error}
         </div>
       )}
+      {error && popupBlocked && <OpenInBrowserButton es={es} />}
       {connectError && (
         <div className="text-[11px] text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2 py-1.5">
           {connectError}

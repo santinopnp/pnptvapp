@@ -18,6 +18,7 @@ import {
 import { usePrivy, useWallets, useAddFunds, useSendTransaction } from "@privy-io/react-auth";
 import { createWalletClient, custom, encodeFunctionData, parseUnits } from "viem";
 import { base } from "viem/chains";
+import { OpenInBrowserButton } from "@/components/telegram/OpenInBrowserButton";
 import { WalletCheckoutHero, grossUpForOnramp, getPreferredWallet, setPreferredWallet, classifyOnrampError, onrampErrorMessage, hasUserActivation, isInAppBrowser } from "@/components/payments/PayInWalletChips";
 
 const USDC_BASE_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
@@ -134,6 +135,9 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
   // (non-cancel errors). Until this is true, keep showing the spinner so a
   // silent Privy cancel doesn't flash the old NowPayments panel.
   const [autoTriggerDone, setAutoTriggerDone] = useState(false);
+  // Last card top-up failed because the payment popup was blocked → offer
+  // one-tap "Open in browser" (renders only inside Telegram).
+  const [popupBlocked, setPopupBlocked] = useState(false);
 
   // Activation-code redemption (users who received a code out-of-band, e.g. via
   // support, ops top-up, or a legacy card checkout). Not a purchase path we
@@ -474,6 +478,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
     if (!activeWallet) return;
     const price = Number(pkg.usd);
     setError(null);
+    setPopupBlocked(false);
     setPayingPackageId(pkg.id);
     try {
       // Privy Stripe onramp — user pays with card/Apple Pay/Google Pay, USDC
@@ -521,6 +526,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
       const kind = classifyOnrampError(msg);
       if (kind === "cancel") return;
       setError(onrampErrorMessage(kind, es, msg));
+      setPopupBlocked(kind === "popup_blocked");
       reportWalletClientError("buyTokensAddFunds", err, {
         surface: "rush", packageId: pkg.id, amountUsd: price,
         address: activeWallet?.address, walletType: activeWallet?.walletClientType,
@@ -538,6 +544,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
     if (!activeWallet) return;
     const actualTokens = tokens ?? Math.round(usd * 6);
     setError(null);
+    setPopupBlocked(false);
     setPayingCustom(true);
     try {
       await addFunds({
@@ -588,6 +595,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
       // the card button is exactly what fixes a blocked popup — unlock the UI.
       setAutoTriggerDone(true);
       setError(onrampErrorMessage(kind, es, msg));
+      setPopupBlocked(kind === "popup_blocked");
     } finally {
       setPayingCustom(false);
     }
@@ -872,6 +880,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
               {error}
             </div>
           )}
+          {error && popupBlocked && <OpenInBrowserButton es={es} />}
           {success && (
             <div className="text-xs font-semibold text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 rounded-md px-3 py-2">
               +{success.tokens.toLocaleString()} Ru$h 💎 {es ? "acreditados" : "credited"}

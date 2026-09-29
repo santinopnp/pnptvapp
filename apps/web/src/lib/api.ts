@@ -570,6 +570,12 @@ export function magicLinkStart(email: string): Promise<{ success: boolean; error
   return request("/api/webapp/auth/magic/start", { method: "POST", body: { email } });
 }
 
+// Telegram webview → external browser: mints a single-use token that signs
+// the user in when the returned URL is opened in Safari/Chrome.
+export function browserHandoffStart(): Promise<{ success: boolean; url?: string; expiresIn?: number }> {
+  return request("/api/webapp/auth/handoff/start", { method: "POST", body: {} });
+}
+
 export function addRecoveryEmail(email: string): Promise<{ success: boolean; error?: string }> {
   return request("/api/webapp/auth/add-recovery-email", { method: "POST", body: { email } });
 }
