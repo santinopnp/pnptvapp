@@ -61,6 +61,35 @@ async function setFeatureEnabled(enabled) {
   await cache.set(KEY_ENABLED, enabled ? '1' : '0');
 }
 
+// Master kill switch for the pre-existing PASSIVE ad system (ExoClick
+// display/popunder/video, served via /api/ads/config). This is deliberately
+// separate from KEY_ENABLED above, which only gates the newer rewarded-ad-
+// unlock feature and fails CLOSED by design (a rewarded ad is a paid grant
+// of access — safest default on Redis trouble is "don't grant it").
+//
+// The passive ad system is different: it has been live for months and is
+// how every free-tier/anonymous user's ad impressions are served, so it
+// fails OPEN. An unset key (fresh Redis, a flush, a restart, or someone
+// using KEY_ENABLED as an incident kill switch for the rewarded feature)
+// must not silently turn off ads for the entire free-tier base with no
+// error and no log line — that was the bug this flag fixes.
+const KEY_DISPLAY_ADS_ENABLED = 'ads:display:enabled';
+
+async function isDisplayAdsEnabled() {
+  try {
+    const v = await cache.get(KEY_DISPLAY_ADS_ENABLED);
+    if (v === null || v === undefined) return true; // fail open
+    return String(v) !== '0';
+  } catch (err) {
+    logger.warn('[adUnlock] isDisplayAdsEnabled read failed', { err: err.message });
+    return true; // fail open
+  }
+}
+
+async function setDisplayAdsEnabled(enabled) {
+  await cache.set(KEY_DISPLAY_ADS_ENABLED, enabled ? '1' : '0');
+}
+
 /**
  * Server-side check whether the user's tier is eligible to see ads.
  * PRIME + admin + banned never see ads. Free + member (basic) both do —
@@ -263,6 +292,8 @@ function getUxVariant(bucketKey) {
 module.exports = {
   isFeatureEnabled,
   setFeatureEnabled,
+  isDisplayAdsEnabled,
+  setDisplayAdsEnabled,
   isTierEligibleForAds,
   getTierAdLevel,
   getUxVariant,
