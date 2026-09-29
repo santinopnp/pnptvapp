@@ -94,7 +94,7 @@ function dmText(name, lang) {
 
 2 meses completos de PNPtv + PRIME Channel por solo $20.
 
-¿Usas Revolut, Cash App, Venmo o N26? Copia la dirección crypto que te damos al pagar, complétalo desde tu app siguiendo sus instrucciones, y tu plan se activa automáticamente.
+Toca el enlace de abajo para ver cómo pagar con cripto usando solo la app que ya conoces y usas — tu plan se activa al instante.
 
 ⏳ Se apaga ${EXPIRES_AT_LABEL_ES}. Cuando el conteo llega a cero, no vuelve — ni el próximo lunes, ni nunca.
 
@@ -104,7 +104,7 @@ Reclamá acá 👉 ${REDEEM_URL}`;
 
 2 full months of PNPtv + PRIME Channel for just $20.
 
-Using Revolut, Cash App, Venmo, or N26? Copy the crypto address we give you at checkout, complete it from your app following its instructions, and your plan activates automatically.
+Click the link below to find out how to pay with crypto using just the app you already know and love — plan activates right away.
 
 ⏳ Closes ${EXPIRES_AT_LABEL_EN}. Once the countdown hits zero, it's gone — not next Monday, not ever.
 
@@ -148,10 +148,10 @@ const FEED_CONTENT = `🚨 Mondays Spundays — oferta única, nunca vuelve
 const EMAIL_SUBJECT_ES = 'Oferta única: PNPtv + PRIME Channel por $20 (nunca vuelve)';
 const EMAIL_SUBJECT_EN = 'One-time offer: PNPtv + PRIME Channel for $20 (never repeats)';
 const EMAIL_MESSAGE_ES = `Hoy es <b>Mondays Spundays</b>: 2 meses completos de PNPtv + acceso al <b>PRIME Channel</b>, todo por <b>$20 USD</b>.<br/><br/>
-¿Usas Revolut, Cash App, Venmo o N26? Copia la dirección crypto del checkout, complétalo desde tu app siguiendo sus instrucciones, y tu plan se activa automáticamente.<br/><br/>
+Toca el botón de abajo para ver cómo pagar con cripto usando solo la app que ya conoces y usas — tu plan se activa al instante.<br/><br/>
 ⏳ La oferta se apaga en 24 horas y <b>nunca vuelve</b> — ni el próximo lunes, ni después.`;
 const EMAIL_MESSAGE_EN = `Today is <b>Mondays Spundays</b>: 2 full months of PNPtv + access to the <b>PRIME Channel</b>, all for <b>$20 USD</b>.<br/><br/>
-Using Revolut, Cash App, Venmo, or N26? Copy the crypto address at checkout, complete it from your app following its instructions, and your plan activates automatically.<br/><br/>
+Click the button below to find out how to pay with crypto using just the app you already know and love — plan activates right away.<br/><br/>
 ⏳ The offer shuts off in 24 hours and <b>never returns</b> — not next Monday, not ever.`;
 
 // ─── TELEGRAM HELPERS ─────────────────────────────────────────────────────────
