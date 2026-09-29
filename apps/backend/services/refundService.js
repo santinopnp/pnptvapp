@@ -77,18 +77,32 @@ async function requestRefund({ paymentId, userId, reason }) {
   // this a user could reopen an already-denied (even already-signed) case
   // indefinitely hoping for a different reviewer. A support agent can always
   // handle a genuine exception outside this API.
+  //
+  // This SELECT-then-INSERT is not atomic on its own — two concurrent
+  // requests for the same payment can both pass it before either INSERT
+  // commits. idx_refunds_payment_id_unique (migration 409) is the real
+  // backstop: the second INSERT's 23505 is caught below and translated to
+  // the same friendly error.
   const dup = await query(`SELECT id FROM refunds WHERE payment_id = $1 LIMIT 1`, [paymentId]);
   if (dup.rowCount > 0) {
     throw err('REFUND_ALREADY_EXISTS', 'A refund request already exists for this payment', 409);
   }
 
-  const { rows: inserted } = await query(
-    `INSERT INTO refunds (payment_id, user_id, amount_usd, reason, status)
-     VALUES ($1, $2, $3, $4, 'pending')
-     RETURNING *`,
-    [paymentId, String(userId), payment.amount_usd, reason ? String(reason).slice(0, 2000) : null],
-  );
-  const refund = inserted[0];
+  let refund;
+  try {
+    const { rows: inserted } = await query(
+      `INSERT INTO refunds (payment_id, user_id, amount_usd, reason, status)
+       VALUES ($1, $2, $3, $4, 'pending')
+       RETURNING *`,
+      [paymentId, String(userId), payment.amount_usd, reason ? String(reason).slice(0, 2000) : null],
+    );
+    refund = inserted[0];
+  } catch (insertErr) {
+    if (insertErr.code === '23505') {
+      throw err('REFUND_ALREADY_EXISTS', 'A refund request already exists for this payment', 409);
+    }
+    throw insertErr;
+  }
   logger.info('[refundService] refund requested', { refundId: refund.id, paymentId, userId });
   _notifyOpsNewRefund(refund).catch((e) => logger.warn('[refundService] ops notify failed', { err: e.message }));
   return refund;

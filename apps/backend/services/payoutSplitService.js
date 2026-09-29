@@ -195,26 +195,46 @@ async function _reserveNonceRange(count) {
  * reserved from the shared process-wide allocator so concurrent dispatches
  * (from this function or from `sendTreasuryLeg`) never collide.
  *
+ * Uses Promise.allSettled rather than Promise.all: if one leg exhausts its
+ * retries after others already landed on-chain, a plain Promise.all would
+ * reject with only that one error, discarding which legs actually succeeded
+ * — a caller that then blindly retries the whole batch would re-send the
+ * already-successful legs (e.g. double-pay the creator). The thrown error
+ * here instead carries `.results` (every leg's outcome, success or failure)
+ * so a caller can react per-leg (or at minimum log/alert with full context)
+ * rather than guessing.
+ *
  * @param {Array<{ to: string, usd: number, label: string }>} legs
  * @returns {Promise<Array<{ label, to, usd, hash }>>}
  */
 async function _dispatchLegsInParallel(legs, { paymentId, purpose } = {}) {
   const { walletClient, account } = _clients();
   const baseNonce = await _reserveNonceRange(legs.length);
-  try {
-    return await Promise.all(
-      legs.map((leg, i) =>
-        _sendLegWithRetry({ walletClient, account, to: leg.to, usd: leg.usd, label: leg.label, nonce: baseNonce + i, paymentId, purpose: purpose || leg.label }),
-      ),
-    );
-  } catch (err) {
-    // A leg exhausted its retries — on-chain nonce state for this EOA is now
-    // uncertain (was it mined, dropped, replaced?). Force the next caller to
-    // re-fetch from the chain rather than keep extending a possibly-wrong
-    // local counter forever.
+  const settled = await Promise.allSettled(
+    legs.map((leg, i) =>
+      _sendLegWithRetry({ walletClient, account, to: leg.to, usd: leg.usd, label: leg.label, nonce: baseNonce + i, paymentId, purpose: purpose || leg.label }),
+    ),
+  );
+
+  const failed = settled.filter((r) => r.status === 'rejected');
+  if (failed.length > 0) {
+    // At least one leg exhausted its retries — on-chain nonce state for this
+    // EOA is now uncertain (was it mined, dropped, replaced?). Force the
+    // next caller to re-fetch from the chain rather than keep extending a
+    // possibly-wrong local counter forever.
     _nonceChainPromise = null;
-    throw err;
+    logger.error('[payoutSplit] partial dispatch failure', {
+      paymentId, purpose,
+      succeeded: settled.filter((r) => r.status === 'fulfilled').map((r) => r.value),
+      failed: failed.map((r) => r.reason?.message),
+    });
+    throw Object.assign(
+      new Error(`payout batch had ${failed.length}/${legs.length} leg(s) fail: ${failed.map((r) => r.reason?.message).join('; ')}`),
+      { code: 'PAYOUT_BATCH_PARTIAL_FAILURE', results: settled },
+    );
   }
+
+  return settled.map((r) => r.value);
 }
 
 /**
@@ -309,9 +329,11 @@ async function distributePrimeChannelSplit({ subscriptionId, amountUsd }) {
   const creatorPool = Math.round(amountUsd * PRIME_CHANNEL_CRYPTO_CREATOR_RATE * 100) / 100;
   const amtSantino = Math.round((creatorPool / 2) * 100) / 100;
   const amtLex = Math.round((creatorPool / 2) * 100) / 100;
-  const amtTreasury = Math.round(amountUsd * PRIME_CHANNEL_CRYPTO_TREASURY_RATE * 100) / 100;
-  // Reinvestment gets the remainder to avoid rounding gaps
-  const amtReinvestment = Math.round((amountUsd - amtSantino - amtLex - amtTreasury) * 100) / 100;
+  const amtReinvestment = Math.round(amountUsd * PRIME_CHANNEL_CRYPTO_REINVESTMENT_RATE * 100) / 100;
+  // Treasury absorbs the rounding remainder — it's the platform's own bucket,
+  // so a few cents of rounding drift landing there (rather than in a fixed
+  // co-founder split) is the sensible place for it to go.
+  const amtTreasury = Math.round((amountUsd - amtSantino - amtLex - amtReinvestment) * 100) / 100;
 
   const [santino, lex, treasury, reinvestment] = await _dispatchLegsInParallel(
     [
@@ -355,8 +377,10 @@ async function dispatchRushSplit({ rushSpendId, creatorId, amountUsd, creatorAdd
   }
 
   const amtCreator = Math.round(amountUsd * SPLIT_CREATOR * 100) / 100;
-  const amtTreasury = Math.round(amountUsd * SPLIT_TREASURY * 100) / 100;
-  const amtReinvestment = Math.round((amountUsd - amtCreator - amtTreasury) * 100) / 100;
+  const amtReinvestment = Math.round(amountUsd * SPLIT_REINVESTMENT * 100) / 100;
+  // Treasury absorbs the rounding remainder — see distributePrimeChannelSplit
+  // above for the same rationale.
+  const amtTreasury = Math.round((amountUsd - amtCreator - amtReinvestment) * 100) / 100;
 
   const [creator, treasury, reinvestment] = await _dispatchLegsInParallel(
     [

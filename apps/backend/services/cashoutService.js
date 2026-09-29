@@ -95,13 +95,15 @@ async function getCreatorBalance(creatorId) {
  * Request a cash-out.
  *
  * Validates available balance, locks the oldest available earnings rows totaling
- * amountUsd (SKIP LOCKED so concurrent requests don't race), inserts a
- * fiat_cashout_orders row, marks those earnings as 'in_payout', then dispatches
- * to the appropriate lane handler.
+ * at least amountUsd (SKIP LOCKED so concurrent requests don't race — this can
+ * overshoot amountUsd since earnings rows are indivisible), inserts a
+ * fiat_cashout_orders row for the actual (possibly-larger) locked total, marks
+ * those earnings as 'in_payout', then dispatches that same total on-chain.
  *
  * @param {object} opts
  * @param {string} opts.creatorId
- * @param {number} opts.amountUsd     — must be > 0 and <= available_usd
+ * @param {number} opts.amountUsd     — minimum requested amount; must be > 0 and <= available_usd. The
+ *                                       actual amount paid (order.amount_usd) may be slightly higher.
  * @param {string} opts.lane          — 'meru' | 'btc' | 'dash' | 'usdt_tron' | 'usdt_base'
  * @param {object} opts.destination   — lane-specific payload; see validateLaneDestination
  * @returns {Promise<{ order: object, dispatch: object }>}
@@ -204,6 +206,8 @@ async function requestCashout({ creatorId, amountUsd, lane, destination }) {
     );
 
     // Walk the candidates and pick the minimum set that covers amountUsd.
+    // Earnings rows are indivisible, so this can overshoot the requested
+    // amount (e.g. two $60 rows to cover a $100 request => $120 selected).
     let accumulated = 0;
     const selected = [];
     for (const row of candidates) {
@@ -219,13 +223,17 @@ async function requestCashout({ creatorId, amountUsd, lane, destination }) {
 
     const earningIds = selected.map(r => r.id);
 
-    // ── Insert the order ──────────────────────────────────────────────────
+    // The order (and the on-chain dispatch below) must reflect `accumulated`
+    // — the actual sum of the selected, now-locked earnings rows — not the
+    // originally-requested `amountUsd`. Dispatching only `amountUsd` while
+    // marking the full `accumulated` total as paid_out silently lost the
+    // overshoot (the difference) with no record of where it went.
     const { rows: orderRows } = await client.query(
       `INSERT INTO fiat_cashout_orders
          (creator_id, amount_usd, lane, status, destination, earning_ids)
        VALUES ($1, $2, $3, 'pending', $4::jsonb, $5::uuid[])
        RETURNING *`,
-      [String(creatorId), amountUsd, lane, JSON.stringify(destination), earningIds]
+      [String(creatorId), accumulated, lane, JSON.stringify(destination), earningIds]
     );
     const order = orderRows[0];
 
@@ -241,18 +249,20 @@ async function requestCashout({ creatorId, amountUsd, lane, destination }) {
     await client.query('COMMIT');
 
     logger.info('[cashoutService] cashout order created', {
-      orderId: order.id, creatorId, amountUsd, lane, earningCount: earningIds.length,
+      orderId: order.id, creatorId, amountUsd, accumulated, lane, earningCount: earningIds.length,
     });
 
     // ── Dispatch — 100% of the net cashout amount, on-chain, to the creator ──
     // (payoutSplitService.dispatchSplit — fixed 2026-09-29, see its docstring:
     // amountUsd here is already the creator's net share, not a gross figure)
+    // MUST use `accumulated`, not the originally-requested `amountUsd` — the
+    // earnings rows actually locked/marked paid_out below total `accumulated`.
     let dispatchResult;
     try {
       dispatchResult = await dispatchSplit({
         orderId: order.id,
         creatorId,
-        amountUsd,
+        amountUsd: accumulated,
         creatorAddress: destination.address,
       });
 
