@@ -283,6 +283,7 @@ const Profile = lazy(() => import("@/pages/Profile"));
 const CreatorProfilePage = lazy(() => import("@/pages/CreatorProfilePage"));
 const Subscribe = lazy(() => import("@/pages/Subscribe"));
 const RedeemSundaySpunDays = lazy(() => import("@/pages/RedeemSundaySpunDays"));
+const RedeemMondaysSpundays = lazy(() => import("@/pages/RedeemMondaysSpundays"));
 const MyAccess = lazy(() => import("@/pages/MyAccess"));
 const MySubscriptions = lazy(() => import("@/pages/MySubscriptions"));
 const DirectMessages = lazy(() => import("@/pages/DirectMessages"));
@@ -759,6 +760,18 @@ export const router = createBrowserRouter([
           <ModuleLoader>
             <VerificationGate>
               <RedeemSundaySpunDays />
+            </VerificationGate>
+          </ModuleLoader>
+        ),
+      },
+      {
+        // Mondays Spundays — one-time hidden promo landing ($20 → 2mo PRIME +
+        // PRIME Channel). Only reachable via DM/TG/email links.
+        path: "redeem/mondays",
+        element: (
+          <ModuleLoader>
+            <VerificationGate>
+              <RedeemMondaysSpundays />
             </VerificationGate>
           </ModuleLoader>
         ),

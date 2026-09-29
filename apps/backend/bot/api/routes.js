@@ -14957,6 +14957,33 @@ app.post('/api/webapp/sunday-spun-days/track-visit', asyncHandler(async (req, re
   }
 }));
 
+// POST /api/webapp/mondays-spundays/track-visit — logs a hit on the
+// /redeem/mondays landing (one-time $20 → 2mo PRIME + PRIME Channel offer).
+// Auth is not required — the URL is invite-only via DM/Telegram/email, but
+// we dedup writes by user_id since this is a one-time (not weekly) campaign.
+app.post('/api/webapp/mondays-spundays/track-visit', asyncHandler(async (req, res) => {
+  const userId = req.session?.user?.id || null;
+  const { query: dbQuery } = require('../../config/postgres');
+  try {
+    if (userId) {
+      const dup = await dbQuery(
+        `SELECT 1 FROM mondays_spundays_visits WHERE user_id = $1 LIMIT 1`,
+        [String(userId)]
+      );
+      if (dup.rows.length > 0) return res.json({ ok: true, deduped: true });
+    }
+    await dbQuery(
+      `INSERT INTO mondays_spundays_visits (user_id, session_id)
+       VALUES ($1, $2)`,
+      [userId ? String(userId) : null, req.sessionID || null]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    logger.warn('[mondays-spundays/track-visit] error', { err: err.message });
+    res.json({ ok: false });
+  }
+}));
+
 // Shared ISO week helper (mirrors broadcast-sunday-spun-days.js).
 function _isoWeekUTC(d) {
   const t = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
