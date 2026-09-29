@@ -1312,8 +1312,8 @@ export default function Profile() {
                 pnptvFamSince: profile.pnptvFamSince ?? null,
                 crystalCreator: profile.crystalCreator,
                 creatorVerified: profile.creatorVerified,
-                colombiaBadge: profile.colombiaBadge,
                 partnerBadgeColor: profile.partnerBadgeColor ?? profile.partner_badge_color ?? null,
+                badges: (profile as { badges?: string[] | null }).badges ?? null,
               }}
             />
             <div className="flex items-center gap-2 flex-wrap mt-1.5">
@@ -1379,7 +1379,7 @@ export default function Profile() {
                   )}
                 </>
               )}
-              {/* creatorVerified and colombiaBadge now render as icons in BadgeRow above */}
+              {/* creatorVerified now renders as an icon in BadgeRow above */}
               {isFounder && (
                 <span
                   className="inline-flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-full"

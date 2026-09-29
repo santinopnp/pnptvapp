@@ -1325,8 +1325,9 @@ export interface UserProfile {
   } | null;
   // Wellness: cumulative days of self-care breaks across all sessions
   wellnessDaysAccumulated?: number;
-  // Colombia Socio badge
-  colombiaBadge?: boolean;
+  // Legacy Telegram-era persona badges (Cloudy Days group). Rendered by
+  // BadgeRow; not awarded to new users.
+  badges?: string[] | null;
   // Hex color from the invite link this user joined through, if any — used
   // as a profile page background accent.
   profileColor?: string | null;

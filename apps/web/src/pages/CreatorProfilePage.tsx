@@ -1326,8 +1326,8 @@ export default function CreatorProfilePage() {
                   pnptvFamSince: (creator as { pnptvFamSince?: string | null }).pnptvFamSince ?? null,
                   crystalCreator: creatorIsCrystal,
                   creatorVerified: creator.creator_verified,
-                  colombiaBadge: (creator as { colombiaBadge?: boolean }).colombiaBadge,
                   partnerBadgeColor: (creator as { partnerBadgeColor?: string | null }).partnerBadgeColor ?? null,
+                  badges: (creator as { badges?: string[] | null }).badges ?? null,
                 }}
               />
             </div>

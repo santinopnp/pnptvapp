@@ -23318,7 +23318,7 @@ app.get('/api/public/creator/:username',
               is_whale_pig,
               is_pnptv_fam,
               pnptv_fam_since,
-              colombia_badge,
+              badges,
               partner_badge_color
        FROM users
        WHERE LOWER(username) = LOWER($1) AND creator_status = 'active'
@@ -23793,7 +23793,7 @@ app.get('/api/public/creator/:username',
         pnptvFamSince: creator.pnptv_fam_since
           ? new Date(creator.pnptv_fam_since).toISOString()
           : null,
-        colombiaBadge: !!creator.colombia_badge,
+        badges: Array.isArray(creator.badges) ? creator.badges : [],
         partnerBadgeColor: creator.partner_badge_color || null,
       },
       isSubscribed,

@@ -1927,7 +1927,7 @@ const getPublicProfile = async (req, res) => {
         exclusiveVideoCount: result.exclusiveVideoCount,
         exclusivePhotoCount: result.exclusivePhotoCount,
         profileColor: profile.profile_color || null,
-        colombiaBadge: !!profile.colombia_badge,
+        badges: Array.isArray(profile.badges) ? profile.badges : [],
         pnptvFam: !!profile.is_pnptv_fam,
         pnptvFamSince: profile.pnptv_fam_since
           ? new Date(profile.pnptv_fam_since).toISOString()

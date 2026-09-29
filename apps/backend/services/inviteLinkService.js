@@ -304,7 +304,7 @@ async function claimPendingPrime(userId) {
  *   3. Check no duplicate redemption.
  *   4. Grant pnp-member (lifetime). For co_only: also grant pnp-col (lifetime) so user can use the app.
  *   5. For co_only links: store pending_prime_hours instead of granting PRIME immediately.
- *   6. Set colombia_badge = true, increment use_count, record in invite_link_uses.
+ *   6. Increment use_count, record in invite_link_uses.
  *
  * @param {string} code
  * @param {string} userId
@@ -457,11 +457,6 @@ async function redeemLink(code, userId, { ip = null } = {}) {
           primeGranted = true;
         }
       }
-    }
-
-    // Set colombia_badge only for Colombia-specific links
-    if (!resourceType && link.co_only) {
-      await client.query(`UPDATE users SET colombia_badge = true WHERE id = $1`, [uid]);
     }
 
     await client.query(`UPDATE invite_links SET use_count = use_count + 1 WHERE code = $1`, [normalCode]);

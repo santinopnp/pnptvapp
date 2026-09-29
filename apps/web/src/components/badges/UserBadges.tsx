@@ -3,15 +3,33 @@ import { Crown, Gem, BadgeCheck, Handshake } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import { CRYSTAL_UI_ENABLED } from "@/lib/api";
 
-export type BadgeKey = "pnptv_fam" | "crystal" | "verified" | "colombia" | "partner";
+export type BadgeKey =
+  | "pnptv_fam"
+  | "crystal"
+  | "verified"
+  | "partner"
+  | "meth_alpha"
+  | "slam_slut"
+  | "spun_royal"
+  | "chem_mermaids";
+
+// Legacy Telegram-era persona badges from the Cloudy Days group. Stored in
+// users.badges TEXT[] as canonical slugs (see migration 411). Rendered but
+// NOT awarded to new users.
+const CLOUDY_DAYS_PERSONAS: readonly BadgeKey[] = [
+  "meth_alpha",
+  "slam_slut",
+  "spun_royal",
+  "chem_mermaids",
+];
 
 export interface BadgeSource {
   pnptvFam?: boolean;
   pnptvFamSince?: string | null;
   crystalCreator?: boolean;
   creatorVerified?: boolean;
-  colombiaBadge?: boolean;
   partnerBadgeColor?: string | null;
+  badges?: string[] | null;
 }
 
 type Size = "sm" | "md" | "lg";
@@ -25,18 +43,17 @@ interface BuiltBadge {
   since?: string | null;
 }
 
-/**
- * Priority-descending list of badges to render. Most exclusive first
- * (fam → crystal → verified → colombia → partner) so the leftmost slot in
- * the row is the most distinctive.
- */
 export function buildBadges(source: BadgeSource): BuiltBadge[] {
   const out: BuiltBadge[] = [];
   if (source.pnptvFam) out.push({ key: "pnptv_fam", since: source.pnptvFamSince ?? null });
   if (CRYSTAL_UI_ENABLED && source.crystalCreator) out.push({ key: "crystal" });
   if (source.creatorVerified) out.push({ key: "verified" });
-  if (source.colombiaBadge) out.push({ key: "colombia" });
   if (source.partnerBadgeColor) out.push({ key: "partner", color: source.partnerBadgeColor });
+  if (source.badges && source.badges.length) {
+    for (const persona of CLOUDY_DAYS_PERSONAS) {
+      if (source.badges.includes(persona)) out.push({ key: persona });
+    }
+  }
   return out;
 }
 
@@ -89,15 +106,6 @@ function BadgeIcon({ badge, size = "md" }: BadgeIconProps) {
           IconEl: BadgeCheck,
           shadow: "0 2px 10px rgba(42,157,146,0.4)",
         };
-      case "colombia":
-        return {
-          bg: "linear-gradient(180deg, #FCD116 0%, #FCD116 50%, #003893 50%, #003893 75%, #CE1126 75%, #CE1126 100%)",
-          border: "rgba(255,255,255,0.35)",
-          color: "#ffffff",
-          IconEl: null,
-          shadow: "0 2px 10px rgba(0,0,0,0.35)",
-          emoji: "🇨🇴",
-        };
       case "partner":
         return {
           bg: `linear-gradient(135deg, ${badge.color || "#8b5cf6"} 0%, rgba(0,0,0,0.25) 100%)`,
@@ -105,6 +113,42 @@ function BadgeIcon({ badge, size = "md" }: BadgeIconProps) {
           color: "#ffffff",
           IconEl: Handshake,
           shadow: `0 2px 10px ${badge.color ? badge.color + "80" : "rgba(139,92,246,0.45)"}`,
+        };
+      case "meth_alpha":
+        return {
+          bg: "linear-gradient(135deg, #1a1035 0%, #3d2a6b 50%, #6b4bd6 100%)",
+          border: "rgba(180,140,255,0.55)",
+          color: "#f4ecff",
+          IconEl: null,
+          shadow: "0 2px 10px rgba(107,75,214,0.45)",
+          emoji: "🧠",
+        };
+      case "slam_slut":
+        return {
+          bg: "linear-gradient(135deg, #3d0a0a 0%, #8a1a1a 50%, #ff5a2c 100%)",
+          border: "rgba(255,120,80,0.60)",
+          color: "#fff0e6",
+          IconEl: null,
+          shadow: "0 2px 10px rgba(255,90,44,0.45)",
+          emoji: "🔥",
+        };
+      case "spun_royal":
+        return {
+          bg: "linear-gradient(135deg, #2a1a05 0%, #6b4a12 50%, #d4a445 100%)",
+          border: "rgba(240,200,110,0.65)",
+          color: "#2a1a05",
+          IconEl: null,
+          shadow: "0 2px 10px rgba(212,164,69,0.45)",
+          emoji: "👑",
+        };
+      case "chem_mermaids":
+        return {
+          bg: "linear-gradient(135deg, #05202a 0%, #147a8c 50%, #6bd4c9 100%)",
+          border: "rgba(140,220,215,0.60)",
+          color: "#e6faf8",
+          IconEl: null,
+          shadow: "0 2px 10px rgba(20,122,140,0.45)",
+          emoji: "🐚",
         };
     }
   }, [badge.key, badge.color]);

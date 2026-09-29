@@ -178,13 +178,25 @@ const strings = {
         name: "Verified Creator",
         reason: "Identity verified by PNPtv.",
       },
-      colombia: {
-        name: "Socio Colombia",
-        reason: "Verified member from Colombia — supports the local community.",
-      },
       partner: {
         name: "PNP Partners Network",
         reason: "Member of a PNP Partners network — invited through a partner referral link.",
+      },
+      meth_alpha: {
+        name: "Meth Alpha",
+        reason: "Legacy Cloudy Days badge — the sharp mind of the crew.",
+      },
+      slam_slut: {
+        name: "Slam Slut",
+        reason: "Legacy Cloudy Days badge — hard and unashamed.",
+      },
+      spun_royal: {
+        name: "Spun Royal",
+        reason: "Legacy Cloudy Days badge — the crown of the group.",
+      },
+      chem_mermaids: {
+        name: "Chem Mermaid",
+        reason: "Legacy Cloudy Days badge — fluid, playful, deep.",
       },
     },
 
@@ -783,13 +795,25 @@ const strings = {
         name: "Creador Verificado",
         reason: "Identidad verificada por PNPtv.",
       },
-      colombia: {
-        name: "Socio Colombia",
-        reason: "Miembro verificado de Colombia — apoya a la comunidad local.",
-      },
       partner: {
         name: "Red de Partners PNP",
         reason: "Miembro de una red de Partners PNP — invitado por un enlace de referido.",
+      },
+      meth_alpha: {
+        name: "Meth Alpha",
+        reason: "Insignia legado de Cloudy Days — la mente aguda del grupo.",
+      },
+      slam_slut: {
+        name: "Slam Slut",
+        reason: "Insignia legado de Cloudy Days — duro y sin vergüenza.",
+      },
+      spun_royal: {
+        name: "Spun Royal",
+        reason: "Insignia legado de Cloudy Days — la corona del grupo.",
+      },
+      chem_mermaids: {
+        name: "Chem Mermaid",
+        reason: "Insignia legado de Cloudy Days — fluido, juguetón, profundo.",
       },
     },
 

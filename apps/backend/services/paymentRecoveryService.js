@@ -1748,6 +1748,141 @@ class PaymentRecoveryService {
       return null;
     }
   }
+
+  /**
+   * Send a warm support DM from SantinoFurioso to any member whose payment
+   * attempt went abandoned/expired/failed in the last 24h (and >=15 min ago).
+   *
+   * Cool-off: one DM per user per 72h regardless of how many attempts. Users
+   * who completed a successful payment after their abandonment are skipped.
+   * Kill switch: Redis key pnpapp:abandonment_dm:enabled (default '1').
+   *
+   * Runs from the BullMQ 'abandoned-payment-dm' worker on a 15-min tick.
+   */
+  static async sendAbandonmentDMs() {
+    const results = {
+      candidates: 0,
+      sent: 0,
+      skipped_dm_error: 0,
+      startTime: new Date(),
+      endTime: null,
+    };
+
+    const SANTINO_USER_ID = '8599671840';
+    const DM_TEXT =
+      'ey papi I noticed you tried to make a payment. Do you have any questions about it? I am here to help. Thanks for supporting';
+
+    try {
+      // Kill switch
+      try {
+        const redis = getRedis();
+        const enabled = await redis.get('pnpapp:abandonment_dm:enabled');
+        if (enabled === '0') {
+          logger.info('[abandonment-dm] disabled via kill switch');
+          results.endTime = new Date();
+          return results;
+        }
+      } catch (_) { /* redis down — proceed (fail-open on kill switch read) */ }
+
+      // Union across all three payment surfaces. `created_at` used uniformly as
+      // the attempt timestamp; the 15-min-old / 24h-recent bounds keep us out
+      // of both "user is still mid-flow" and "attempt is ancient history" cases.
+      const { rows: candidates } = await query(`
+        WITH abandoned AS (
+          SELECT user_id::text AS user_id,
+                 'payments:' || status AS triggered_by,
+                 id::text AS triggered_ref,
+                 created_at AS attempt_at
+            FROM payments
+           WHERE status IN ('abandoned', 'expired', 'failed')
+             AND created_at BETWEEN NOW() - INTERVAL '24 hours' AND NOW() - INTERVAL '15 minutes'
+             AND user_id IS NOT NULL
+          UNION ALL
+          SELECT user_id::text,
+                 'checkout_intents:' || status,
+                 id::text,
+                 created_at
+            FROM checkout_intents
+           WHERE status IN ('expired', 'failed')
+             AND created_at BETWEEN NOW() - INTERVAL '24 hours' AND NOW() - INTERVAL '15 minutes'
+             AND user_id IS NOT NULL
+          UNION ALL
+          SELECT user_id::text,
+                 'dash:' || status,
+                 id::text,
+                 created_at
+            FROM dash_subscription_orders
+           WHERE status IN ('expired', 'failed')
+             AND created_at BETWEEN NOW() - INTERVAL '24 hours' AND NOW() - INTERVAL '15 minutes'
+             AND user_id IS NOT NULL
+        )
+        SELECT DISTINCT ON (a.user_id)
+               a.user_id, a.triggered_by, a.triggered_ref, a.attempt_at
+          FROM abandoned a
+          JOIN users u ON u.id = a.user_id
+         WHERE u.id <> $1  -- never DM Santino himself
+           AND NOT EXISTS (
+                 SELECT 1 FROM abandoned_payment_dms d
+                  WHERE d.user_id = a.user_id
+                    AND d.sent_at > NOW() - INTERVAL '72 hours'
+               )
+           AND NOT EXISTS (
+                 SELECT 1 FROM payments p
+                  WHERE p.user_id = a.user_id
+                    AND p.status = 'completed'
+                    AND p.completed_at > a.attempt_at
+               )
+         ORDER BY a.user_id, a.attempt_at DESC
+         LIMIT 200
+      `, [SANTINO_USER_ID]);
+
+      results.candidates = candidates.length;
+      if (candidates.length === 0) {
+        results.endTime = new Date();
+        return results;
+      }
+
+      const DmService = require('./dmService');
+
+      for (const c of candidates) {
+        try {
+          const msg = await DmService.sendMessage(
+            SANTINO_USER_ID,
+            c.user_id,
+            { content: DM_TEXT },
+            { isAdmin: true }
+          );
+          await query(
+            `INSERT INTO abandoned_payment_dms (user_id, triggered_by, triggered_ref, dm_id, metadata)
+             VALUES ($1, $2, $3, $4, $5::jsonb)`,
+            [
+              c.user_id,
+              c.triggered_by,
+              c.triggered_ref,
+              msg?.id || null,
+              JSON.stringify({ attempt_at: c.attempt_at }),
+            ]
+          );
+          results.sent++;
+        } catch (dmErr) {
+          results.skipped_dm_error++;
+          logger.warn('[abandonment-dm] DM failed', {
+            userId: c.user_id,
+            triggeredBy: c.triggered_by,
+            triggeredRef: c.triggered_ref,
+            error: dmErr?.message || String(dmErr),
+          });
+        }
+      }
+
+      logger.info('[abandonment-dm] completed', results);
+    } catch (error) {
+      logger.error('[abandonment-dm] fatal error', { error: error?.message || String(error) });
+    }
+
+    results.endTime = new Date();
+    return results;
+  }
 }
 
 module.exports = PaymentRecoveryService;

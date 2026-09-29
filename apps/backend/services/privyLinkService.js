@@ -17,40 +17,81 @@ const { query } = require('../config/postgres');
 const logger = require('../utils/logger');
 const { validateSingleWallet, ensureCreatorWallet } = require('./privyWalletService');
 
-// USDC on Base — used by _oldWalletUsdBalance to check if a rotated-away
-// wallet still holds user funds. Same address as in payoutSplitService.
-const USDC_BASE = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+// USDC contract addresses per EVM chain that fiat ramps (Revolut, MoonPay,
+// Meld, Banxa, Coinbase, etc.) commonly deposit to. Used by
+// _oldWalletUsdBalance to decide whether a rotated-away wallet still holds
+// user funds and must be preserved as multi_wallet_funded_exception.
+// Extended 2026-09-29 after the kobton1 incident where $322 USDC on Ethereum
+// mainnet was invisible because this guard was Base-only.
+// USDC contract addresses forced to lowercase to bypass viem's EIP-55 checksum
+// validation (viem rejects mixed-case addresses that don't match the exact
+// checksum spec — this bit us during the kobton1 audit when a single wrong
+// capitalization caused silent "0 balance" returns for all mainnet queries).
+const USDC_CHAINS = [
+  { name: 'ethereum', chain: 'mainnet', address: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', rpcHost: 'eth-mainnet.g.alchemy.com', fallback: 'https://cloudflare-eth.com' },
+  { name: 'base',     chain: 'base',    address: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', rpcHost: 'base-mainnet.g.alchemy.com', fallback: 'https://mainnet.base.org' },
+  { name: 'polygon',  chain: 'polygon', address: '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359', rpcHost: 'polygon-mainnet.g.alchemy.com', fallback: 'https://polygon-rpc.com' },
+  { name: 'arbitrum', chain: 'arbitrum', address: '0xaf88d065e77c8cc2239327c5edb3a432268e5831', rpcHost: 'arb-mainnet.g.alchemy.com', fallback: 'https://arb1.arbitrum.io/rpc' },
+];
+
 const USDC_BALANCE_ABI = [{
   name: 'balanceOf', type: 'function', stateMutability: 'view',
   inputs: [{ name: 'account', type: 'address' }],
   outputs: [{ type: 'uint256' }],
 }];
 
+// Kept for external callers that still import USDC_BASE.
+const USDC_BASE = USDC_CHAINS.find(c => c.name === 'base').address;
+
 /**
- * On-chain USDC balance of an address on Base, in USD (float). Returns 0 on
- * any error — we prefer a false negative (silently upgrade to the new
- * wallet) over a false positive (leave both wallets when there's actually
- * no reason to).
+ * On-chain USDC balance of an address, summed across every EVM chain that
+ * fiat ramps commonly deposit to (Ethereum mainnet, Base, Polygon, Arbitrum).
+ * Returned in USD (float).
+ *
+ * Fail-closed on the AGGREGATE: if any chain query errors, we log but include
+ * 0 for that chain. We never fail-open in a way that would let a funded
+ * wallet be silently rotated — a partial number is safer than 0.
  */
 async function _oldWalletUsdBalance(address) {
   if (!address) return 0;
-  try {
-    const { createPublicClient, http } = require('viem');
-    const { base } = require('viem/chains');
-    const rpc = process.env.ALCHEMY_API_KEY
-      ? `https://base-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`
-      : 'https://mainnet.base.org';
-    const client = createPublicClient({ chain: base, transport: http(rpc) });
+  const { createPublicClient, http } = require('viem');
+  const viemChains = require('viem/chains');
+  const chainMap = {
+    mainnet: viemChains.mainnet,
+    base: viemChains.base,
+    polygon: viemChains.polygon,
+    arbitrum: viemChains.arbitrum,
+  };
+  const alchemyKey = process.env.ALCHEMY_API_KEY;
+
+  const results = await Promise.allSettled(USDC_CHAINS.map(async (c) => {
+    const rpc = alchemyKey ? `https://${c.rpcHost}/v2/${alchemyKey}` : c.fallback;
+    const client = createPublicClient({ chain: chainMap[c.chain], transport: http(rpc) });
     const raw = await client.readContract({
-      address: USDC_BASE, abi: USDC_BALANCE_ABI, functionName: 'balanceOf', args: [address],
+      address: c.address, abi: USDC_BALANCE_ABI, functionName: 'balanceOf', args: [address],
     });
-    return Number(raw) / 1_000_000; // USDC has 6 decimals
-  } catch (err) {
-    logger.warn('[privy-link] USDC balance check failed for old wallet', {
-      address, err: err.message,
-    });
-    return 0;
+    return { name: c.name, usd: Number(raw) / 1_000_000 };
+  }));
+
+  let total = 0;
+  const perChain = {};
+  results.forEach((r, i) => {
+    const cname = USDC_CHAINS[i].name;
+    if (r.status === 'fulfilled') {
+      perChain[cname] = r.value.usd;
+      total += r.value.usd;
+    } else {
+      perChain[cname] = null;
+      logger.warn('[privy-link] USDC balance check failed', {
+        address, chain: cname, err: r.reason?.message || String(r.reason),
+      });
+    }
+  });
+
+  if (total > 0.01) {
+    logger.info('[privy-link] old wallet funded — will preserve', { address, total, perChain });
   }
+  return total;
 }
 
 async function _notifyWalletChanged({ pnptvUserId, oldWallet, newWallet, oldWalletUsdBalance = 0 }) {

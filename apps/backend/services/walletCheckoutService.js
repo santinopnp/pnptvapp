@@ -566,10 +566,13 @@ async function verifyAndFulfillUsdc(opts) {
     } catch { intentMetadata = {}; }
     const expected = Number(intent.amount_usd);
     const received = Number(amountReceived);
-    const isCampaignSSD = intentMetadata.campaign_id === 'sunday_spun_days';
+    // Same –8% shortfall tolerance applies to Mondays Spundays (mondays_spundays)
+    // — externally-funded USDC buys on this promo also lose ~3-5% to ramp fees.
+    const isPromoWithFundingSkim = intentMetadata.campaign_id === 'sunday_spun_days'
+      || intentMetadata.campaign_id === 'mondays_spundays';
     const overpayOk = received - expected <= 0.01;                 // never accept overpay drift
-    const shortfallOk = isCampaignSSD
-      ? (expected - received) <= (expected * 0.08)                 // –8% for SSD
+    const shortfallOk = isPromoWithFundingSkim
+      ? (expected - received) <= (expected * 0.08)                 // –8% for SSD/MSD
       : (expected - received) <= 0.01;                             // 1¢ default
     if (!(overpayOk && shortfallOk)) {
       await client.query(

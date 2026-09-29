@@ -198,6 +198,16 @@ async function initializeQueues() {
     jobId: 'cron-payment-cleanup',
   });
 
+  // Abandonment recovery DM from SantinoFurioso — every 15 min.
+  // Sends one warm "need help?" DM per user per 72h whose payment attempt
+  // went abandoned/expired/failed 15min-24h ago. Kill switch: Redis
+  // pnpapp:abandonment_dm:enabled = '0'. See paymentRecoveryService.sendAbandonmentDMs.
+  await cronQueue.add('abandoned-payment-dm', {}, {
+    repeat: { pattern: '*/15 * * * *', tz: 'UTC' },
+    attempts: 2, removeOnFail: false,
+    jobId: 'cron-abandoned-payment-dm',
+  });
+
   // Call booking expiry — every hour at :30
   await cronQueue.add('call-booking-expire', {}, {
     repeat: { pattern: '30 * * * *', tz: 'UTC' },

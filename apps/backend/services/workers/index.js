@@ -284,6 +284,16 @@ async function cronProcessor(job) {
       return;
     }
 
+    case 'abandoned-payment-dm': {
+      const PaymentRecoveryService = _safeRequire('../paymentRecoveryService');
+      if (!PaymentRecoveryService) { logger.warn('[BullMQ] abandoned-payment-dm: service not found'); return; }
+      const results = await PaymentRecoveryService.sendAbandonmentDMs();
+      if (results.sent > 0 || results.skipped_dm_error > 0) {
+        logger.info('[BullMQ] abandoned-payment-dm completed', results);
+      }
+      return;
+    }
+
     case 'call-booking-expire': {
       const { expireAbandonedBookings } = _safeRequire('../callCheckoutService') || {};
       if (typeof expireAbandonedBookings !== 'function') { logger.warn('[BullMQ] call-booking-expire: expireAbandonedBookings not found'); return; }
