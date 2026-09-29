@@ -306,6 +306,65 @@ export function grossUpForOnramp(targetUsd: number): string {
   return Math.max(15, grossed).toFixed(0);
 }
 
+// Privy's Stripe onramp opens its checkout via window.open. Browsers only
+// allow that inside a live user gesture, and in-app webviews (Telegram,
+// Instagram, TikTok, Facebook) often refuse popups entirely — both surface
+// as "Unable to open payment window". Separately, Stripe's risk engine
+// declines some cards with "This transaction has been blocked"; that is a
+// card decline, not a popup problem, and needs different copy.
+export type OnrampErrorKind = "cancel" | "popup_blocked" | "card_blocked" | "glitch" | "other";
+
+export function classifyOnrampError(msg: string): OnrampErrorKind {
+  if (/transaction has been blocked|card (was |has been )?(declined|blocked)/i.test(msg)) return "card_blocked";
+  if (/unable to open payment window|pop-?up.*blocked/i.test(msg)) return "popup_blocked";
+  if (/cancel|closed|reject|exited/i.test(msg)) return "cancel";
+  if (/unable to check payment status|something went wrong setting up checkout/i.test(msg)) return "glitch";
+  return "other";
+}
+
+// Heuristic: embedded webviews where window.open is unreliable.
+export function isInAppBrowser(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    if ((window as { Telegram?: { WebApp?: { initData?: string } } }).Telegram?.WebApp?.initData) return true;
+  } catch { /* ignore */ }
+  const ua = navigator.userAgent || "";
+  return /FBAN|FBAV|Instagram|TikTok|musical_ly|Line\/|Snapchat|Twitter|; wv\)/i.test(ua);
+}
+
+// True while the browser still considers us inside a user gesture, i.e.
+// window.open will be allowed. Unknown (old Safari) → assume false so we
+// never trigger a popup that is doomed to be blocked.
+export function hasUserActivation(): boolean {
+  try {
+    const ua = (navigator as { userActivation?: { isActive: boolean } }).userActivation;
+    return !!ua?.isActive;
+  } catch { return false; }
+}
+
+export function onrampErrorMessage(kind: OnrampErrorKind, es: boolean, rawMsg: string): string {
+  switch (kind) {
+    case "popup_blocked":
+      return isInAppBrowser()
+        ? (es
+          ? "Esta app no deja abrir la ventana de pago. Abre pnptv.app en Safari o Chrome, o paga con 🎫 Ru$h 💎."
+          : "This app won't open the payment window. Open pnptv.app in Safari or Chrome, or pay with 🎫 Ru$h 💎.")
+        : (es
+          ? "Tu navegador bloqueó la ventana de pago. Permite ventanas emergentes para pnptv.app y vuelve a tocar Recargar."
+          : "Your browser blocked the payment window. Allow pop-ups for pnptv.app and tap Top up again.");
+    case "card_blocked":
+      return es
+        ? "El emisor/Stripe rechazó esta tarjeta por seguridad. No se hizo ningún cargo. Prueba con otra tarjeta, Apple Pay/Google Pay, o paga con 🎫 Ru$h 💎."
+        : "Stripe/your bank declined this card for security reasons. You were not charged. Try another card, Apple Pay/Google Pay, or pay with 🎫 Ru$h 💎.";
+    case "glitch":
+      return es
+        ? "El pago con tarjeta está fallando en este momento. Prueba con 🎫 Ru$h 💎 (también con tarjeta, pipeline distinta) o vuelve a intentarlo en unos minutos."
+        : "Card top-up is glitching right now. Try 🎫 Ru$h 💎 instead (also card-based, different pipeline) or retry in a couple of minutes.";
+    default:
+      return es ? `No se pudo abrir el pago: ${rawMsg}` : `Could not open payment: ${rawMsg}`;
+  }
+}
+
 /**
  * Detects a stuck-Privy state so the wallet UI can offer a clear recovery
  * path instead of silently showing an empty balance.
@@ -633,7 +692,14 @@ export function WalletPayCard({
         } catch { /* keep component-level value if fetch fails */ }
         if (liveUsdc == null || liveUsdc < amountUsd) {
           setPaying(false);
-          handleFund();
+          // The await above may have consumed the click's user activation;
+          // opening the onramp now would be popup-blocked ("Unable to open
+          // payment window"). Only auto-open while the gesture is still live,
+          // otherwise the Top-up button (canAfford=false) takes a fresh tap.
+          if (hasUserActivation()) handleFund();
+          else setError(es
+            ? "Te falta saldo. Toca Recargar con tarjeta para continuar."
+            : "Not enough balance. Tap Top up with card to continue.");
           return;
         }
       }
@@ -729,9 +795,17 @@ export function WalletPayCard({
       const isChain = /wrong network|unrecognized chain|chain mismatch|switch chain|network mismatch/i.test(msg);
 
       if (isInsufficientFunds && isEmbedded) {
-        // Silently open the fund flow — no error banner, one seamless step.
         setPaying(false);
-        handleFund();
+        // Several awaits ran since the click, so the gesture is usually gone
+        // and addFunds' popup would be blocked. Refresh the balance so the
+        // Top-up button renders and let the user tap it (fresh gesture).
+        if (hasUserActivation()) { handleFund(); return; }
+        getWalletUsdcBalance(activeWallet.address)
+          .then((r) => setUsdc(r.hasWallet ? (r.usdc ?? 0) : 0))
+          .catch(() => setUsdc(0));
+        setError(es
+          ? "Te falta saldo. Toca Recargar con tarjeta para continuar."
+          : "Not enough balance. Tap Top up with card to continue.");
         return;
       }
 
@@ -829,25 +903,17 @@ export function WalletPayCard({
       poll();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (/cancel|closed|reject/i.test(msg)) return;
-      // Privy's Stripe fiat onramp intermittently returns "Unable to check
-      // payment status" / "Unable to open payment window" — the user did NOT
-      // get charged, but the flow is dead. Point them at an alternative path
-      // (Ru$h purchase via our own Stripe wire, then pay the surface in Ru$h)
-      // instead of dumping the raw error message.
-      const isOnrampGlitch =
-        /unable to (check payment status|open payment window)/i.test(msg) ||
-        /something went wrong setting up checkout/i.test(msg);
-      if (isOnrampGlitch) {
-        setError(es
-          ? "El pago con tarjeta está fallando en este momento. Prueba con 🎫 Ru$h 💎 (también con tarjeta, pipeline distinta) o vuelve a intentarlo en unos minutos."
-          : "Card top-up is glitching right now. Try 🎫 Ru$h 💎 instead (also card-based, different pipeline) or retry in a couple of minutes.");
-      } else {
-        setError(es ? `No se pudo abrir el pago: ${msg}` : `Could not open payment: ${msg}`);
-      }
+      // Popup-blocked / Stripe risk declines / onramp glitches all leave the
+      // user uncharged. Show copy specific to each so they know what to do
+      // next (allow pop-ups, open in a real browser, use another card, or
+      // fall back to Ru$h) instead of the raw Privy error.
+      const kind = classifyOnrampError(msg);
+      if (kind === "cancel") return;
+      setError(onrampErrorMessage(kind, es, msg));
       reportWalletClientError("addFunds", err, {
         surface, amountUsd, address: activeWallet?.address,
         walletType: activeWallet?.walletClientType,
+        onrampErrorKind: kind, inAppBrowser: isInAppBrowser(),
       });
     }
   };
@@ -1623,9 +1689,12 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
       refresh();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (/cancel|closed|reject/i.test(msg)) return;
-      setError(`Payment provider error: ${msg}`);
-      reportWalletClientError("addFunds", err, { source: "WalletHomeSheet", address });
+      const kind = classifyOnrampError(msg);
+      if (kind === "cancel") return;
+      setError(kind === "other" ? `Payment provider error: ${msg}` : onrampErrorMessage(kind, false, msg));
+      reportWalletClientError("addFunds", err, {
+        source: "WalletHomeSheet", address, onrampErrorKind: kind, inAppBrowser: isInAppBrowser(),
+      });
     }
   };
 

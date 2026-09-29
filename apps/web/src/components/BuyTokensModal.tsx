@@ -18,7 +18,7 @@ import {
 import { usePrivy, useWallets, useAddFunds, useSendTransaction } from "@privy-io/react-auth";
 import { createWalletClient, custom, encodeFunctionData, parseUnits } from "viem";
 import { base } from "viem/chains";
-import { WalletCheckoutHero, grossUpForOnramp, getPreferredWallet, setPreferredWallet } from "@/components/payments/PayInWalletChips";
+import { WalletCheckoutHero, grossUpForOnramp, getPreferredWallet, setPreferredWallet, classifyOnrampError, onrampErrorMessage, hasUserActivation, isInAppBrowser } from "@/components/payments/PayInWalletChips";
 
 const USDC_BASE_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const BASE_CAIP2 = "eip155:8453" as const;
@@ -515,16 +515,16 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (/cancel|closed|reject/i.test(msg)) return;
-      const isWindowBlock = /unable to open|payment window|popup|blocked/i.test(msg);
-      setError(isWindowBlock
-        ? (es
-          ? "Pago con tarjeta no disponible en este dispositivo. Usa tu balance USDC arriba, o elige una app de criptos abajo ↓"
-          : "Card payment unavailable on this device. Use your USDC balance above, or choose a crypto app below ↓")
-        : (es ? `No se pudo abrir el pago: ${msg}` : `Could not open payment: ${msg}`));
+      // Old regex also matched Stripe's "This transaction has been blocked"
+      // (a card decline) and told the user card payments don't work on their
+      // device. classifyOnrampError separates popup-blocked from card-blocked.
+      const kind = classifyOnrampError(msg);
+      if (kind === "cancel") return;
+      setError(onrampErrorMessage(kind, es, msg));
       reportWalletClientError("buyTokensAddFunds", err, {
         surface: "rush", packageId: pkg.id, amountUsd: price,
         address: activeWallet?.address, walletType: activeWallet?.walletClientType,
+        onrampErrorKind: kind, inAppBrowser: isInAppBrowser(),
       });
     } finally {
       setPayingPackageId(null);
@@ -568,17 +568,26 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (/cancel|closed|reject/i.test(msg)) {
+      const kind = classifyOnrampError(msg);
+      if (kind === "cancel") {
         if (closeOnCancel) onClose();
         return;
       }
-      if (closeOnCancel) {
-        // Auto-trigger mode: close on any non-cancel error too, rather than
-        // flashing the full NowPayments UI. User can re-tap to retry.
+      reportWalletClientError("buyTokensAddFunds", err, {
+        surface: "rush", packageId: pkgId, amountUsd: usd,
+        address: activeWallet?.address, walletType: activeWallet?.walletClientType,
+        onrampErrorKind: kind, inAppBrowser: isInAppBrowser(),
+      });
+      if (closeOnCancel && kind !== "popup_blocked" && kind !== "card_blocked") {
+        // Auto-trigger mode: close on generic errors rather than flashing the
+        // full NowPayments UI. User can re-tap to retry.
         onClose();
         return;
       }
-      setError(es ? `No se pudo abrir el pago: ${msg}` : `Could not open payment: ${msg}`);
+      // Popup-blocked / card-declined need an explanation, and a fresh tap on
+      // the card button is exactly what fixes a blocked popup — unlock the UI.
+      setAutoTriggerDone(true);
+      setError(onrampErrorMessage(kind, es, msg));
     } finally {
       setPayingCustom(false);
     }
@@ -626,8 +635,14 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
           setAutoTriggerDone(true); // unlock full UI so error is visible
         })
         .finally(() => setPayingCustom(false));
-    } else {
+    } else if (hasUserActivation()) {
       void handleFundForCustomAmount(usd, tokens, pkgId, true);
+    } else {
+      // This effect runs after async wallet/package loading, so the click that
+      // opened the modal no longer counts as a user gesture — addFunds' Stripe
+      // popup would be blocked ("Unable to open payment window"). Show the
+      // full UI so the user's next tap on the card button opens it cleanly.
+      setAutoTriggerDone(true);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, walletLoading, loadingPackages, authenticated, activeWallet?.address, initialPackageId, initialAmountUsd]);
