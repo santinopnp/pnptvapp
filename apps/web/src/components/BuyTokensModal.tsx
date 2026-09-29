@@ -19,7 +19,7 @@ import { usePrivy, useWallets, useAddFunds, useSendTransaction } from "@privy-io
 import { createWalletClient, custom, encodeFunctionData, parseUnits } from "viem";
 import { base } from "viem/chains";
 import { OpenInBrowserButton } from "@/components/telegram/OpenInBrowserButton";
-import { WalletCheckoutHero, grossUpForOnramp, getPreferredWallet, setPreferredWallet, classifyOnrampError, onrampErrorMessage, hasUserActivation, isInAppBrowser } from "@/components/payments/PayInWalletChips";
+import { WalletCheckoutHero, grossUpForOnramp, getPreferredWallet, setPreferredWallet, classifyOnrampError, onrampErrorMessage, shouldOfferOpenInBrowser } from "@/components/payments/PayInWalletChips";
 
 const USDC_BASE_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const BASE_CAIP2 = "eip155:8453" as const;
@@ -135,9 +135,9 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
   // (non-cancel errors). Until this is true, keep showing the spinner so a
   // silent Privy cancel doesn't flash the old NowPayments panel.
   const [autoTriggerDone, setAutoTriggerDone] = useState(false);
-  // Last card top-up failed because the payment popup was blocked → offer
-  // one-tap "Open in browser" (renders only inside Telegram).
-  const [popupBlocked, setPopupBlocked] = useState(false);
+  // Last card top-up failed in a way only a real browser fixes (MoonPay
+  // popup) → offer the one-tap "Open in browser / Safari" escape.
+  const [offerOpenInBrowser, setOfferOpenInBrowser] = useState(false);
 
   // Activation-code redemption (users who received a code out-of-band, e.g. via
   // support, ops top-up, or a legacy card checkout). Not a purchase path we
@@ -478,7 +478,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
     if (!activeWallet) return;
     const price = Number(pkg.usd);
     setError(null);
-    setPopupBlocked(false);
+    setOfferOpenInBrowser(false);
     setPayingPackageId(pkg.id);
     try {
       // Privy Stripe onramp — user pays with card/Apple Pay/Google Pay, USDC
@@ -526,11 +526,11 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
       const kind = classifyOnrampError(msg);
       if (kind === "cancel") return;
       setError(onrampErrorMessage(kind, es, msg));
-      setPopupBlocked(kind === "popup_blocked");
+      setOfferOpenInBrowser(shouldOfferOpenInBrowser(kind));
       reportWalletClientError("buyTokensAddFunds", err, {
         surface: "rush", packageId: pkg.id, amountUsd: price,
         address: activeWallet?.address, walletType: activeWallet?.walletClientType,
-        onrampErrorKind: kind, inAppBrowser: isInAppBrowser(),
+        onrampErrorKind: kind,
       });
     } finally {
       setPayingPackageId(null);
@@ -544,7 +544,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
     if (!activeWallet) return;
     const actualTokens = tokens ?? Math.round(usd * 6);
     setError(null);
-    setPopupBlocked(false);
+    setOfferOpenInBrowser(false);
     setPayingCustom(true);
     try {
       await addFunds({
@@ -583,19 +583,19 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
       reportWalletClientError("buyTokensAddFunds", err, {
         surface: "rush", packageId: pkgId, amountUsd: usd,
         address: activeWallet?.address, walletType: activeWallet?.walletClientType,
-        onrampErrorKind: kind, inAppBrowser: isInAppBrowser(),
+        onrampErrorKind: kind,
       });
-      if (closeOnCancel && kind !== "popup_blocked" && kind !== "card_blocked") {
+      if (closeOnCancel && kind === "other") {
         // Auto-trigger mode: close on generic errors rather than flashing the
         // full NowPayments UI. User can re-tap to retry.
         onClose();
         return;
       }
-      // Popup-blocked / card-declined need an explanation, and a fresh tap on
-      // the card button is exactly what fixes a blocked popup — unlock the UI.
+      // Known onramp failures need an explanation and a next step (other
+      // provider / open in browser) — unlock the UI instead of closing.
       setAutoTriggerDone(true);
       setError(onrampErrorMessage(kind, es, msg));
-      setPopupBlocked(kind === "popup_blocked");
+      setOfferOpenInBrowser(shouldOfferOpenInBrowser(kind));
     } finally {
       setPayingCustom(false);
     }
@@ -643,14 +643,9 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
           setAutoTriggerDone(true); // unlock full UI so error is visible
         })
         .finally(() => setPayingCustom(false));
-    } else if (hasUserActivation()) {
-      void handleFundForCustomAmount(usd, tokens, pkgId, true);
     } else {
-      // This effect runs after async wallet/package loading, so the click that
-      // opened the modal no longer counts as a user gesture — addFunds' Stripe
-      // popup would be blocked ("Unable to open payment window"). Show the
-      // full UI so the user's next tap on the card button opens it cleanly.
-      setAutoTriggerDone(true);
+      // addFunds only opens Privy's in-page modal, so no user gesture needed.
+      void handleFundForCustomAmount(usd, tokens, pkgId, true);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, walletLoading, loadingPackages, authenticated, activeWallet?.address, initialPackageId, initialAmountUsd]);
@@ -880,7 +875,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
               {error}
             </div>
           )}
-          {error && popupBlocked && <OpenInBrowserButton es={es} />}
+          {error && offerOpenInBrowser && <OpenInBrowserButton es={es} />}
           {success && (
             <div className="text-xs font-semibold text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 rounded-md px-3 py-2">
               +{success.tokens.toLocaleString()} Ru$h 💎 {es ? "acreditados" : "credited"}

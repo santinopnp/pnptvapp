@@ -39,8 +39,8 @@ export function TelegramOpenInBrowserBanner() {
       >
         <p className="flex-1 text-[12px] leading-snug text-white/85">
           {es
-            ? "Estás en el navegador de Telegram. Para pagar con Apple Pay o Google Pay, ábrelo en tu navegador."
-            : "You're in Telegram's browser. To pay with Apple Pay or Google Pay, open it in your browser."}
+            ? "Estás en el navegador de Telegram. Para pagar con Apple Pay, Google Pay o MoonPay, ábrelo en tu navegador."
+            : "You're in Telegram's browser. To pay with Apple Pay, Google Pay or MoonPay, open it in your browser."}
         </p>
         <button
           type="button"
