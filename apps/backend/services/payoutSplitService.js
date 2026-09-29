@@ -62,6 +62,8 @@ const {
   PRIME_CHANNEL_CRYPTO_CREATOR_RATE,
   PRIME_CHANNEL_CRYPTO_TREASURY_RATE,
   PRIME_CHANNEL_CRYPTO_REINVESTMENT_RATE,
+  SANTINO_USER_ID,
+  LEX_USER_ID,
 } = require('../config/monetizationConfig');
 
 // ── USDC on Base ─────────────────────────────────────────────────────────────
@@ -267,8 +269,13 @@ async function dispatchSplit({ orderId, creatorId, amountUsd, creatorAddress }) 
 // ── Public: PRIME Channel subscription split (35/35/20/10) ───────────────────
 
 /**
- * Send the PRIME Channel exception split: 70% creator bucket split 35/35
- * between the two lifetime co-founders, 20% treasury, 10% reinvestment.
+ * Send the PRIME Channel bundle split: 70% creator bucket split 35/35 between
+ * the two co-founders, 20% treasury, 10% reinvestment.
+ *
+ * Co-founder wallets are read from `users.wallet_address` for SANTINO_USER_ID
+ * + LEX_USER_ID (no env vars needed) — they are creators like any other, just
+ * the beneficiaries of the app+PRIME-channel bundle. Once a co-founder rotates
+ * their wallet through Privy, this reads the new address automatically.
  *
  * @param {object} opts
  * @param {string} opts.subscriptionId — for logging/audit
@@ -276,14 +283,25 @@ async function dispatchSplit({ orderId, creatorId, amountUsd, creatorAddress }) 
  * @returns {Promise<{ txSantino, txLex, txTreasury, txReinvestment, amounts }>}
  */
 async function distributePrimeChannelSplit({ subscriptionId, amountUsd }) {
-  const santinoAddress = process.env.SANTINO_PRIME_WALLET;
-  const lexAddress = process.env.PNP_LATINO_PRIME_WALLET;
+  const { rows } = await query(
+    `SELECT id, wallet_address FROM users WHERE id IN ($1, $2)`,
+    [String(SANTINO_USER_ID), String(LEX_USER_ID)],
+  );
+  const byId = new Map(rows.map((r) => [String(r.id), r.wallet_address ? String(r.wallet_address).toLowerCase() : null]));
+  const santinoAddress = byId.get(String(SANTINO_USER_ID));
+  const lexAddress = byId.get(String(LEX_USER_ID));
   const treasuryAddress = _treasuryAddress();
   const reinvestmentAddress = process.env.CREATORS_BUDGET_ADDRESS;
 
   if (!santinoAddress || !lexAddress || !treasuryAddress || !reinvestmentAddress) {
+    const missing = [
+      !santinoAddress && `SANTINO wallet (users.id=${SANTINO_USER_ID})`,
+      !lexAddress && `LEX wallet (users.id=${LEX_USER_ID})`,
+      !treasuryAddress && 'PNPTV_TREASURY_WALLET/SANTINO_PAYOUT_ADDRESS',
+      !reinvestmentAddress && 'CREATORS_BUDGET_ADDRESS',
+    ].filter(Boolean).join(', ');
     throw Object.assign(
-      new Error('prime_split_disabled: SANTINO_PRIME_WALLET, PNP_LATINO_PRIME_WALLET, PNPTV_TREASURY_WALLET, or CREATORS_BUDGET_ADDRESS not set'),
+      new Error(`prime_split_disabled: missing ${missing}`),
       { code: 'PRIME_SPLIT_CONFIG_MISSING' },
     );
   }

@@ -17,11 +17,56 @@ const { query } = require('../config/postgres');
 const logger = require('../utils/logger');
 const { validateSingleWallet, ensureCreatorWallet } = require('./privyWalletService');
 
-async function _notifyWalletChanged({ pnptvUserId, oldWallet, newWallet }) {
+// USDC on Base — used by _oldWalletUsdBalance to check if a rotated-away
+// wallet still holds user funds. Same address as in payoutSplitService.
+const USDC_BASE = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+const USDC_BALANCE_ABI = [{
+  name: 'balanceOf', type: 'function', stateMutability: 'view',
+  inputs: [{ name: 'account', type: 'address' }],
+  outputs: [{ type: 'uint256' }],
+}];
+
+/**
+ * On-chain USDC balance of an address on Base, in USD (float). Returns 0 on
+ * any error — we prefer a false negative (silently upgrade to the new
+ * wallet) over a false positive (leave both wallets when there's actually
+ * no reason to).
+ */
+async function _oldWalletUsdBalance(address) {
+  if (!address) return 0;
+  try {
+    const { createPublicClient, http } = require('viem');
+    const { base } = require('viem/chains');
+    const rpc = process.env.ALCHEMY_API_KEY
+      ? `https://base-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`
+      : 'https://mainnet.base.org';
+    const client = createPublicClient({ chain: base, transport: http(rpc) });
+    const raw = await client.readContract({
+      address: USDC_BASE, abi: USDC_BALANCE_ABI, functionName: 'balanceOf', args: [address],
+    });
+    return Number(raw) / 1_000_000; // USDC has 6 decimals
+  } catch (err) {
+    logger.warn('[privy-link] USDC balance check failed for old wallet', {
+      address, err: err.message,
+    });
+    return 0;
+  }
+}
+
+async function _notifyWalletChanged({ pnptvUserId, oldWallet, newWallet, oldWalletUsdBalance = 0 }) {
   try {
     const sendSystemDM = require('./sendSystemDM');
     const SYSTEM_SENDER = process.env.SYSTEM_SENDER_ID || '8552451957';
-    const body = `⚠️ Wallet update detected
+    const funded = oldWalletUsdBalance > 0.01;
+    const body = funded
+      ? `⚠️ Tienes DOS billeteras activas ahora
+
+Detectamos una nueva billetera en tu cuenta:
+  Nueva (activa): ${newWallet}
+  Anterior (con fondos): ${oldWallet}  →  $${oldWalletUsdBalance.toFixed(2)} USDC
+
+Mantenemos ambas vivas para que no pierdas tus fondos. Cuando quieras mover el saldo de la antigua a la nueva, responde a este DM y te ayudamos.`
+      : `⚠️ Wallet update detected
 
 Your PNPtv wallet address just changed:
   old: ${oldWallet || '—'}
@@ -42,7 +87,9 @@ If you sent USDC or ETH to the OLD address, those funds are still there and will
         headers: { 'Content-Type': 'application/json; charset=utf-8', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           channel,
-          text: `🔁 Wallet change — user \`${pnptvUserId}\`\n  old: \`${oldWallet || '—'}\`\n  new: \`${newWallet}\``,
+          text: oldWalletUsdBalance > 0.01
+            ? `🔁💰 Wallet change — user \`${pnptvUserId}\` — OLD WALLET HOLDS $${oldWalletUsdBalance.toFixed(2)} USDC\n  old: \`${oldWallet || '—'}\` (funded, kept alive)\n  new: \`${newWallet}\``
+            : `🔁 Wallet change — user \`${pnptvUserId}\`\n  old: \`${oldWallet || '—'}\`\n  new: \`${newWallet}\``,
         }),
       });
     }
@@ -62,6 +109,14 @@ function getPrivyClient() {
   return _privyClient;
 }
 
+/**
+ * Strict Privy-only: we return an address ONLY when it's an embedded wallet
+ * provisioned by Privy. External wallets (MetaMask / Coinbase / WalletConnect
+ * / Trust / Rabby / etc.) are intentionally ignored so a user cannot link a
+ * signer we don't control. The Privy provider config (App.tsx) already omits
+ * the external-wallet login methods; this backend check is the belt-and-braces
+ * side, in case a legacy client still passes an external token.
+ */
 function extractWalletAddress(privyUser) {
   if (!privyUser) return null;
   const linked = Array.isArray(privyUser.linkedAccounts) ? privyUser.linkedAccounts : [];
@@ -69,8 +124,16 @@ function extractWalletAddress(privyUser) {
     (a) => a?.type === 'wallet' && (a.walletClientType === 'privy' || a.walletClient === 'privy'),
   );
   if (embedded?.address) return String(embedded.address).toLowerCase();
-  const anyWallet = linked.find((a) => a?.type === 'wallet' && a.address);
-  return anyWallet ? String(anyWallet.address).toLowerCase() : null;
+  // Non-Privy wallet detected — do NOT link. Caller sees walletAddress=null
+  // and treats it as "user still needs to create a Privy embedded wallet".
+  const external = linked.find((a) => a?.type === 'wallet' && a.address);
+  if (external?.address) {
+    logger.warn('[privy-link] ignoring external wallet — Privy embedded required', {
+      address: external.address,
+      walletClientType: external.walletClientType || external.walletClient,
+    });
+  }
+  return null;
 }
 
 /**
@@ -146,25 +209,35 @@ async function verifyAndLink({ pnptvUserId, privyToken }) {
   }
 
   if (walletChanged) {
+    // Funded-exception check: if the old address still holds USDC on Base,
+    // keep both wallets alive (previous_wallet_address preserved + a
+    // wallet_lock_reason marker so future audits know why). The DM/Slack
+    // notification uses the balance to switch to the "two wallets active"
+    // wording so the user knows nothing was lost.
+    const oldWalletUsdBalance = oldWallet ? await _oldWalletUsdBalance(oldWallet) : 0;
+    const isFundedException = oldWalletUsdBalance > 0.01;
+
     await query(
       `UPDATE users
           SET privy_id                     = $1,
               wallet_address               = $2,
               previous_wallet_address      = CASE WHEN $3::text IS NULL THEN previous_wallet_address ELSE $3::text END,
               wallet_linked_at             = NOW(),
-              has_pnptv_payout_configured  = FALSE
+              has_pnptv_payout_configured  = FALSE,
+              wallet_lock_reason           = CASE WHEN $5::boolean THEN 'multi_wallet_funded_exception' ELSE wallet_lock_reason END
         WHERE id = $4`,
-      [privyId, newWallet, oldWallet, pnptvUserId],
+      [privyId, newWallet, oldWallet, pnptvUserId, isFundedException],
     );
     await query(
       `INSERT INTO wallet_changes (user_id, old_wallet_address, new_wallet_address, old_privy_id, new_privy_id, source)
-       VALUES ($1, $2, $3, $4, $5, 'privy-link')`,
-      [String(pnptvUserId), oldWallet, newWallet, prior.old_privy_id || null, privyId],
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [String(pnptvUserId), oldWallet, newWallet, prior.old_privy_id || null, privyId,
+       isFundedException ? 'privy-link-funded-exception' : 'privy-link'],
     );
-    logger.warn('[privy-link] wallet address changed — funds on old address may be stranded', {
-      pnptvUserId, privyId, oldWallet, newWallet,
+    logger.warn('[privy-link] wallet address changed', {
+      pnptvUserId, privyId, oldWallet, newWallet, oldWalletUsdBalance, isFundedException,
     });
-    _notifyWalletChanged({ pnptvUserId, oldWallet, newWallet }).catch(() => {});
+    _notifyWalletChanged({ pnptvUserId, oldWallet, newWallet, oldWalletUsdBalance }).catch(() => {});
   } else {
     await query(
       `UPDATE users
@@ -253,109 +326,9 @@ async function listWalletAddressesRaw(privyId) {
     .map((a) => String(a.address).toLowerCase());
 }
 
-const BASE_RPC    = process.env.BASE_RPC_URL || 'https://mainnet.base.org';
-const ETH_RPC     = process.env.ETH_RPC_URL  || 'https://ethereum-rpc.publicnode.com';
-const USDC_BASE   = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
-const USDC_ETH    = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
-const ETH_DUST    = BigInt('10000000000000'); // 0.00001 ETH
-const USDC_DUST   = BigInt('1000');           // $0.001
-
-async function _isWalletFunded(address) {
-  if (!address) return false;
-  const addr = address.toLowerCase();
-  const data = '0x70a08231000000000000000000000000' + addr.slice(2);
-  const post = (rpc, body) =>
-    fetch(rpc, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-      .then(r => r.json()).then(j => BigInt(j.result || '0x0'));
-  try {
-    const [eb, ub, ee, ue] = await Promise.all([
-      post(BASE_RPC, { jsonrpc: '2.0', id: 1, method: 'eth_getBalance', params: [addr, 'latest'] }),
-      post(BASE_RPC, { jsonrpc: '2.0', id: 2, method: 'eth_call', params: [{ to: USDC_BASE, data }, 'latest'] }),
-      post(ETH_RPC,  { jsonrpc: '2.0', id: 3, method: 'eth_getBalance', params: [addr, 'latest'] }),
-      post(ETH_RPC,  { jsonrpc: '2.0', id: 4, method: 'eth_call', params: [{ to: USDC_ETH,  data }, 'latest'] }),
-    ]);
-    return eb > ETH_DUST || ub > USDC_DUST || ee > ETH_DUST || ue > USDC_DUST;
-  } catch {
-    return true; // RPC error → skip to be safe
-  }
-}
-
-/**
- * Delete Privy users (and their embedded wallets) for PNPtv accounts that have
- * never made any crypto payment. Frees wallet slots on the free Privy tier.
- *
- * Safe: skips funded wallets (Base + Ethereum mainnet), users with any
- * token_purchase, completed checkout_intent, or successful gas topup.
- * Archives privy_id to deleted_privy_accounts before nulling the users row.
- *
- * @returns {Promise<{candidates: number, deleted: number, funded: number, errors: number}>}
- */
-async function purgeUnusedWallets() {
-  const appId     = process.env.PRIVY_APP_ID;
-  const appSecret = process.env.PRIVY_APP_SECRET;
-  if (!appId || !appSecret) throw new Error('Missing PRIVY_APP_ID / PRIVY_APP_SECRET');
-
-  const { rows } = await query(`
-    SELECT u.id, u.privy_id, u.wallet_address
-    FROM users u
-    WHERE u.privy_id IS NOT NULL
-      AND NOT EXISTS (SELECT 1 FROM token_purchases tp WHERE tp.user_id = u.id)
-      AND NOT EXISTS (
-        SELECT 1 FROM gas_topups gt
-        WHERE gt.user_id::text = u.id::text AND gt.status = 'success'
-      )
-      AND NOT EXISTS (
-        SELECT 1 FROM checkout_intents ci
-        WHERE ci.user_id = u.id AND ci.status = 'completed'
-      )
-  `);
-
-  const authHeader = 'Basic ' + Buffer.from(`${appId}:${appSecret}`).toString('base64');
-  let deleted = 0;
-  let funded  = 0;
-  let errors  = 0;
-
-  for (const user of rows) {
-    try {
-      if (user.wallet_address && await _isWalletFunded(user.wallet_address)) {
-        logger.warn('[privy-purge] skipping funded wallet', { privyId: user.privy_id, wallet: user.wallet_address });
-        funded++;
-        await new Promise((res) => setTimeout(res, 200));
-        continue;
-      }
-      const r = await fetch(
-        `https://auth.privy.io/api/v1/users/${encodeURIComponent(user.privy_id)}`,
-        { method: 'DELETE', headers: { Authorization: authHeader, 'privy-app-id': appId } },
-      );
-      if (!r.ok && r.status !== 404) {
-        const body = await r.text().catch(() => '');
-        throw new Error(`Privy DELETE ${r.status}: ${body.slice(0, 200)}`);
-      }
-      await query(
-        `INSERT INTO deleted_privy_accounts (pnptv_user_id, privy_id, wallet_address, reason)
-         VALUES ($1, $2, $3, 'purge') ON CONFLICT (privy_id) DO NOTHING`,
-        [String(user.id), user.privy_id, user.wallet_address || null],
-      );
-      await query(
-        `UPDATE users SET privy_id = NULL, wallet_address = NULL, wallet_linked_at = NULL WHERE id = $1`,
-        [user.id],
-      );
-      deleted++;
-    } catch (err) {
-      logger.error('[privy-purge] failed to delete wallet', { privyId: user.privy_id, err: err.message });
-      errors++;
-    }
-    await new Promise((res) => setTimeout(res, 200));
-  }
-
-  logger.info('[privy-purge] completed', { candidates: rows.length, deleted, funded, errors });
-  return { candidates: rows.length, deleted, funded, errors };
-}
-
 module.exports = {
   verifyAndLink,
   extractWalletAddress,
   listWalletAddresses,
   listWalletAddressesRaw,
-  purgeUnusedWallets,
 };

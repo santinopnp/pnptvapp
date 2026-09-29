@@ -227,6 +227,15 @@ async function initializeQueues() {
     jobId: 'cron-nowpayments-reconcile',
   });
 
+  // Ru$h creator ledger sweep — every 10 min. Inline settle already fires
+  // when a creator crosses RUSH_MIN_SETTLE_USD; this is the safety net for
+  // failed inline settles (RPC blip, wallet still provisioning, etc).
+  await cronQueue.add('rush-ledger-sweep', {}, {
+    repeat: { pattern: '*/10 * * * *', tz: 'UTC' },
+    attempts: 2, removeOnFail: false,
+    jobId: 'cron-rush-ledger-sweep',
+  });
+
   // Lifetime100 abandoned-cart rescue — 7/22/37/52 of each hour
   await cronQueue.add('lifetime100-rescue', {}, {
     repeat: { pattern: '7,22,37,52 * * * *', tz: 'UTC' },
@@ -640,40 +649,8 @@ async function initializeQueues() {
     jobId: 'cron-sunday-spun-days-recap',
   });
 
-  // Mondays Spundays — ONE-TIME $20 → 2 months PRIME + PRIME Channel offer.
-  // Delay-based (not `repeat`), on purpose: this exact deal is marketed as
-  // never repeating, so it must fire once and never again — unlike Sunday
-  // Spun Days above. Fixed jobId makes re-running this setup on redeploy a
-  // no-op (BullMQ won't duplicate a delayed job with the same jobId).
-  // Launch: 2026-10-05 14:00 UTC (~09:00 America/Bogota). Keep in sync with
-  // EXPIRES_AT in RedeemMondaysSpundays.tsx and the labels in
-  // scripts/broadcast-mondays-spundays.js.
-  const MONDAYS_SPUNDAYS_LAUNCH_AT = new Date('2026-10-05T14:00:00Z');
-  const MONDAYS_SPUNDAYS_EXPIRES_AT = new Date('2026-10-06T14:00:00Z');
-  const msUntilLaunch = MONDAYS_SPUNDAYS_LAUNCH_AT.getTime() - Date.now();
-  const msUntilExpire = MONDAYS_SPUNDAYS_EXPIRES_AT.getTime() - Date.now();
-  // If this setup runs after launch but before expiry (e.g. a deploy/restart
-  // mid-window), fire immediately instead of silently skipping the campaign —
-  // only gate on the hard deadline. The fixed jobId still makes repeat calls
-  // a no-op once the job exists.
-  if (msUntilExpire > 0) {
-    await cronQueue.add('mondays-spundays-send', {}, {
-      delay: Math.max(msUntilLaunch, 0),
-      attempts: 1, removeOnFail: false,
-      jobId: 'once-mondays-spundays-send-2026-10-05',
-    });
-  }
-  if (msUntilExpire > 0) {
-    await cronQueue.add('mondays-spundays-expire', {}, {
-      delay: msUntilExpire,
-      attempts: 2, removeOnFail: false,
-      jobId: 'once-mondays-spundays-expire-2026-10-06',
-    });
-  }
-
-  // Privy wallet purge is intentionally not scheduled automatically.
-  // Run manually: node scripts/purge-privy-unused-wallets.js [--execute]
-  // Re-enable only after verifying funded-wallet guards on both Base + Ethereum.
+  // Privy wallet purge intentionally removed 2026-09-28 (see project_privy_orphan_wallets_2026_09_27.md).
+  // The purge codepath is the root cause of the orphan-wallet crisis; do NOT re-add it.
 
   logger.info('[BullMQ] Queues initialized and repeatable jobs registered');
 }
