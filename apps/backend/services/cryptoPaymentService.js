@@ -11,6 +11,13 @@ const USDC_BASE_CONTRACT = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 
 const ALLOWED_TOKENS = ['USDC', 'ETH'];
 
+// USDC-on-Base only, going forward: createPaymentIntent below rejects
+// anything else. ETH stays in ALLOWED_TOKENS so the webhook handler still
+// matches/confirms any ETH intent created before this policy took effect —
+// removing it there would silently strand an in-flight payment instead of
+// rejecting it up front.
+const PAYABLE_TOKENS = ['USDC'];
+
 // Token-aware amount tolerance for on-chain matching, in native units.
 // USDC: 2 cents. ETH: 0.00001 ETH (~$0.03 @ $3000 ETH).
 const AMOUNT_TOLERANCE = { USDC: 0.02, ETH: 0.00001 };
@@ -45,7 +52,11 @@ class CryptoPaymentService {
    */
   static async createPaymentIntent({ userId, planId, amountUsd, token = 'USDC', creatorId = null, scopeType = null, scopeId = null }) {
     if (!RECEIVING_ADDRESS) throw new Error('CRYPTO_RECEIVING_ADDRESS not configured');
-    if (!ALLOWED_TOKENS.includes(token)) throw new Error(`Unsupported token: ${token}`);
+    if (!PAYABLE_TOKENS.includes(token)) {
+      const err = new Error('Solo se acepta USDC en Base');
+      err.code = 'TOKEN_NOT_PAYABLE';
+      throw err;
+    }
 
     let expectedNative;
     let expectedUsdcCol = null;

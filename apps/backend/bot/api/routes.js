@@ -17071,7 +17071,7 @@ const cryptoIntentLimiter = rateLimit({
 
 // POST /api/crypto/payment-intent — create a pending on-chain payment intent
 // amountUsd is NEVER trusted from the client — always pulled from the plan record.
-const CRYPTO_ALLOWED_TOKENS = ['USDC', 'ETH'];
+const CRYPTO_ALLOWED_TOKENS = ['USDC']; // USDC-on-Base only — see cryptoPaymentService.PAYABLE_TOKENS
 const CRYPTO_ALLOWED_SCOPE_TYPES = new Set(['channel', 'hangout', 'creator-subscription']);
 app.post('/api/crypto/payment-intent', requireSessionAuth, cryptoIntentLimiter, asyncHandler(async (req, res) => {
   const user = req.session?.user;
@@ -17243,8 +17243,125 @@ app.post('/api/privy/link', requireSessionAuth, asyncHandler(async (req, res) =>
   } catch (err) {
     if (err.message === 'invalid_privy_token') return res.status(401).json({ error: 'invalid_privy_token' });
     if (err.message === 'privy_id_already_linked') return res.status(409).json({ error: 'privy_id_already_linked' });
+    if (err.code === 'MULTIPLE_WALLETS_NOT_ALLOWED') {
+      return res.status(409).json({ error: 'multiple_wallets_not_allowed', message: 'Solo puedes tener 1 billetera' });
+    }
     logger.error('[privy-link] unexpected error', { err: err.message, pnptvUserId });
     return res.status(500).json({ error: 'link_failed' });
+  }
+}));
+
+// POST /api/privy/payment-method — creator/performer confirms (or the system
+// auto-sets on approval) their payout method. Only 'pnptv_treasury' exists.
+app.post('/api/privy/payment-method', requireSessionAuth, asyncHandler(async (req, res) => {
+  const privyWalletService = require('../../services/privyWalletService');
+  const userId = req.session?.user?.id;
+  const method = String(req.body?.method || 'pnptv_treasury').trim();
+  try {
+    const result = await privyWalletService.configurePaymentMethod(userId, method);
+    return res.json({ ok: true, ...result });
+  } catch (err) {
+    if (err.code === 'UNSUPPORTED_PAYMENT_METHOD') return res.status(400).json({ error: 'unsupported_payment_method' });
+    if (err.code === 'NOT_ELIGIBLE') return res.status(403).json({ error: 'not_an_active_creator' });
+    if (err.code === 'NO_WALLET') return res.status(409).json({ error: 'no_wallet_linked' });
+    if (err.code === 'USER_NOT_FOUND') return res.status(404).json({ error: 'user_not_found' });
+    logger.error('[privy/payment-method] unexpected error', { err: err.message, userId });
+    return res.status(500).json({ error: 'payment_method_failed' });
+  }
+}));
+
+// GET /api/privy/payment-method — read the "Billetera de pagos configurada" state.
+app.get('/api/privy/payment-method', requireSessionAuth, asyncHandler(async (req, res) => {
+  const privyWalletService = require('../../services/privyWalletService');
+  const userId = req.session?.user?.id;
+  const config = await privyWalletService.getCreatorPayoutConfig(userId);
+  if (!config) return res.status(404).json({ error: 'user_not_found' });
+  return res.json({ ok: true, ...config });
+}));
+
+// POST /api/refund/request — file a 72h-review refund request for a
+// confirmed on-chain payment the caller owns.
+app.post('/api/refund/request', requireSessionAuth, asyncHandler(async (req, res) => {
+  const refundService = require('../../services/refundService');
+  const userId = req.session?.user?.id;
+  const paymentId = parseInt(req.body?.paymentId, 10);
+  const reason = req.body?.reason;
+  if (!Number.isFinite(paymentId)) return res.status(400).json({ error: 'paymentId is required' });
+  try {
+    const refund = await refundService.requestRefund({ paymentId, userId, reason });
+    return res.json({ ok: true, refund });
+  } catch (err) {
+    return res.status(err.status || 500).json({ error: err.code || 'refund_request_failed', message: err.message });
+  }
+}));
+
+// GET /api/refund/:refundId — poll refund status; includes the denial
+// message to sign once status='denied'.
+app.get('/api/refund/:refundId', requireSessionAuth, asyncHandler(async (req, res) => {
+  const refundService = require('../../services/refundService');
+  const userId = req.session?.user?.id;
+  const refundId = parseInt(req.params.refundId, 10);
+  if (!Number.isFinite(refundId)) return res.status(400).json({ error: 'invalid refundId' });
+  try {
+    const refund = await refundService.getRefund(refundId, { userId });
+    if (!refund) return res.status(404).json({ error: 'refund_not_found' });
+    const payload = { ok: true, refund };
+    if (refund.status === 'denied' && !refund.refund_denial_signed) {
+      payload.denialMessageToSign = refundService.getDenialMessage(refund);
+    }
+    return res.json(payload);
+  } catch (err) {
+    return res.status(err.status || 500).json({ error: err.code || 'refund_lookup_failed', message: err.message });
+  }
+}));
+
+// POST /api/refund/:refundId/sign-denial — submit the blockchain signature
+// acknowledging a refund denial (Privy wallet signMessage on the client).
+app.post('/api/refund/:refundId/sign-denial', requireSessionAuth, asyncHandler(async (req, res) => {
+  const refundService = require('../../services/refundService');
+  const userId = req.session?.user?.id;
+  const refundId = parseInt(req.params.refundId, 10);
+  const signature = req.body?.signature;
+  if (!Number.isFinite(refundId)) return res.status(400).json({ error: 'invalid refundId' });
+  try {
+    const owned = await refundService.getRefund(refundId, { userId });
+    if (!owned) return res.status(404).json({ error: 'refund_not_found' });
+    const refund = await refundService.recordRefundDenialSignature(refundId, signature);
+    return res.json({ ok: true, refund });
+  } catch (err) {
+    return res.status(err.status || 500).json({ error: err.code || 'sign_denial_failed', message: err.message });
+  }
+}));
+
+// POST /api/admin/refund/:refundId/approve — ops approves a pending refund;
+// USDC is sent immediately to the user's wallet (provisioned via Privy first
+// if they don't have one yet).
+app.post('/api/admin/refund/:refundId/approve', requireSessionAuth, adminGuard, asyncHandler(async (req, res) => {
+  const refundService = require('../../services/refundService');
+  const refundId = parseInt(req.params.refundId, 10);
+  if (!Number.isFinite(refundId)) return res.status(400).json({ error: 'invalid refundId' });
+  try {
+    const refund = await refundService.approveRefund(refundId, {
+      notes: req.body?.notes || null,
+      reviewedBy: req.session?.user?.id,
+    });
+    return res.json({ ok: true, refund });
+  } catch (err) {
+    return res.status(err.status || 500).json({ error: err.code || 'refund_approve_failed', message: err.message });
+  }
+}));
+
+// POST /api/admin/refund/:refundId/deny — ops denies a pending refund; the
+// user is then required to blockchain-sign a denial acknowledgement.
+app.post('/api/admin/refund/:refundId/deny', requireSessionAuth, adminGuard, asyncHandler(async (req, res) => {
+  const refundService = require('../../services/refundService');
+  const refundId = parseInt(req.params.refundId, 10);
+  if (!Number.isFinite(refundId)) return res.status(400).json({ error: 'invalid refundId' });
+  try {
+    const refund = await refundService.denyRefund(refundId, req.body?.reasons, req.session?.user?.id);
+    return res.json({ ok: true, refund });
+  } catch (err) {
+    return res.status(err.status || 500).json({ error: err.code || 'refund_deny_failed', message: err.message });
   }
 }));
 

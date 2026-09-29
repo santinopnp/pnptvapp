@@ -371,6 +371,8 @@ const MercadoPagoPage = lazy(() =>
 );
 const CryptoGuide = lazy(() => import("@/pages/CryptoGuide"));
 const ConnectWallet = lazy(() => import("@/pages/ConnectWallet"));
+const RefundRequest = lazy(() => import("@/pages/RefundRequest"));
+const RefundStatus = lazy(() => import("@/pages/RefundStatus"));
 const GamificationPage = lazy(() => import("@/pages/GamificationPage"));
 const ReferralCenter = lazy(() => import("@/pages/ReferralCenter"));
 const InvitePage = lazy(() => import("@/pages/InvitePage"));
@@ -1481,6 +1483,22 @@ export const router = createBrowserRouter([
     element: (
       <ModuleLoader>
         <ConnectWallet />
+      </ModuleLoader>
+    ),
+  },
+  {
+    path: "/refund/request",
+    element: (
+      <ModuleLoader>
+        <RefundRequest />
+      </ModuleLoader>
+    ),
+  },
+  {
+    path: "/refund/:refundId",
+    element: (
+      <ModuleLoader>
+        <RefundStatus />
       </ModuleLoader>
     ),
   },
