@@ -383,16 +383,32 @@ const banUser = async (req, res) => {
     const { ban, reason = '' } = req.body;
 
     if (ban) {
-      // Full ban: revoke tier, role, creator status, subscription
+      // Full ban: revoke tier/role/subscription AND make them invisible
+      // (profile 404s, posts + DMs cascaded to is_deleted=true). Without the
+      // cascade, feeds and DM threads still surface content from banned users.
       await query(
         `UPDATE users SET tier = 'banned', role = 'user', creator_status = 'none',
-         subscription_status = 'expired', updated_at = NOW() WHERE id = $1`,
+           subscription_status = 'expired', is_active = false,
+           is_deleted = true, deleted_at = COALESCE(deleted_at, NOW()),
+           updated_at = NOW()
+         WHERE id = $1`,
+        [userId]
+      );
+      await query(
+        `UPDATE social_posts SET is_deleted = true, updated_at = NOW()
+          WHERE user_id = $1 AND is_deleted = false`,
+        [userId]
+      );
+      await query(
+        `UPDATE direct_messages SET is_deleted = true
+          WHERE sender_id = $1 AND is_deleted = false`,
         [userId]
       );
 
-      // Invalidate Redis user cache immediately
-      const { cache } = require('../../../config/redis');
+      // Invalidate Redis caches immediately + stamp profile 404 tombstone
+      const { cache, getRedis } = require('../../../config/redis');
       await cache.del(`user:${userId}`);
+      try { await getRedis().set(`profile:404:${userId}`, '1', 'EX', 86400); } catch { /* non-fatal */ }
 
       // Destroy all active sessions so the user is kicked out immediately.
       // IMPORTANT: ioredis keyPrefix is prepended automatically to every key command,
@@ -412,18 +428,44 @@ const banUser = async (req, res) => {
         logger.warn('Failed to destroy sessions for banned user', { userId, error: sessErr.message });
       }
     } else {
-      // Unban: restore to free tier.
-      // Use 'churned' for subscription_status rather than 'free' — the user existed before the ban
-      // and 'churned' correctly reflects an ex-subscriber. An admin can manually re-upgrade if needed.
-      // (Setting to 'free' was wrong: it permanently cleared prior subscription state even for paid users.)
-      await query(
-        `UPDATE users SET tier = 'free', subscription_status = 'churned', updated_at = NOW() WHERE id = $1`,
+      // Unban: restore to free tier. Only cascade-restore posts/DMs/visibility
+      // if the row was actually banned right now (tier='banned'); otherwise a
+      // self-deleted account with a stale banned tag would get resurrected.
+      const { rows: prev } = await query(
+        `SELECT tier, is_deleted FROM users WHERE id = $1 FOR UPDATE`,
         [userId]
       );
+      const wasBanned = prev[0]?.tier === 'banned';
 
-      // Invalidate Redis user cache
-      const { cache } = require('../../../config/redis');
+      if (wasBanned) {
+        await query(
+          `UPDATE users SET tier = 'free', subscription_status = 'churned',
+             is_active = true, is_deleted = false, deleted_at = NULL,
+             updated_at = NOW()
+           WHERE id = $1`,
+          [userId]
+        );
+        await query(
+          `UPDATE social_posts SET is_deleted = false, updated_at = NOW()
+            WHERE user_id = $1 AND is_deleted = true`,
+          [userId]
+        );
+        await query(
+          `UPDATE direct_messages SET is_deleted = false
+            WHERE sender_id = $1 AND is_deleted = true`,
+          [userId]
+        );
+      } else {
+        await query(
+          `UPDATE users SET tier = 'free', subscription_status = 'churned', updated_at = NOW() WHERE id = $1`,
+          [userId]
+        );
+      }
+
+      // Invalidate Redis caches
+      const { cache, getRedis } = require('../../../config/redis');
       await cache.del(`user:${userId}`);
+      try { await getRedis().del(`profile:404:${userId}`); } catch { /* non-fatal */ }
     }
 
     logger.info(`Admin ${ban ? 'banned' : 'unbanned'} user`, {
@@ -738,13 +780,28 @@ const bulkUpdateUsers = async (req, res) => {
           await cache.del(`user:${userId}`);
         } else if (action === 'ban') {
           // Mirror single banUser: full state revocation + session destruction
+          // + cascade invisibility (profile 404, posts + DMs hidden).
           const r = await query(
             `UPDATE users SET tier = 'banned', role = 'user', creator_status = 'none',
-             subscription_status = 'expired', updated_at = NOW() WHERE id = $1`,
+               subscription_status = 'expired', is_active = false,
+               is_deleted = true, deleted_at = COALESCE(deleted_at, NOW()),
+               updated_at = NOW()
+             WHERE id = $1`,
             [userId]
           );
           if (r.rowCount === 0) { errors.push({ userId, error: 'User not found' }); failed++; continue; }
+          await query(
+            `UPDATE social_posts SET is_deleted = true, updated_at = NOW()
+              WHERE user_id = $1 AND is_deleted = false`,
+            [userId]
+          );
+          await query(
+            `UPDATE direct_messages SET is_deleted = true
+              WHERE sender_id = $1 AND is_deleted = false`,
+            [userId]
+          );
           await cache.del(`user:${userId}`);
+          try { await require('../../../config/redis').getRedis().set(`profile:404:${userId}`, '1', 'EX', 86400); } catch { /* non-fatal */ }
           try {
             const keys = await redis.keys('sess:*');
             for (const key of keys) {
@@ -755,13 +812,41 @@ const bulkUpdateUsers = async (req, res) => {
             logger.warn('bulkUpdateUsers: session destruction failed', { userId, error: sessErr.message });
           }
         } else if (action === 'unban') {
-          // Mirror single banUser: restore to free/churned
-          const r = await query(
-            `UPDATE users SET tier = 'free', subscription_status = 'churned', updated_at = NOW() WHERE id = $1`,
+          // Mirror single banUser: restore to free/churned, cascade-restore
+          // only if this row was actually banned (guards against resurrecting
+          // a self-deleted account with a stale banned marker).
+          const { rows: prev } = await query(
+            `SELECT tier FROM users WHERE id = $1 FOR UPDATE`,
             [userId]
           );
-          if (r.rowCount === 0) { errors.push({ userId, error: 'User not found' }); failed++; continue; }
+          if (!prev.length) { errors.push({ userId, error: 'User not found' }); failed++; continue; }
+          const wasBanned = prev[0].tier === 'banned';
+          if (wasBanned) {
+            await query(
+              `UPDATE users SET tier = 'free', subscription_status = 'churned',
+                 is_active = true, is_deleted = false, deleted_at = NULL,
+                 updated_at = NOW()
+               WHERE id = $1`,
+              [userId]
+            );
+            await query(
+              `UPDATE social_posts SET is_deleted = false, updated_at = NOW()
+                WHERE user_id = $1 AND is_deleted = true`,
+              [userId]
+            );
+            await query(
+              `UPDATE direct_messages SET is_deleted = false
+                WHERE sender_id = $1 AND is_deleted = true`,
+              [userId]
+            );
+          } else {
+            await query(
+              `UPDATE users SET tier = 'free', subscription_status = 'churned', updated_at = NOW() WHERE id = $1`,
+              [userId]
+            );
+          }
           await cache.del(`user:${userId}`);
+          try { await require('../../../config/redis').getRedis().del(`profile:404:${userId}`); } catch { /* non-fatal */ }
         } else if (action === 'delete') {
           const r = await query(
             `UPDATE users SET
