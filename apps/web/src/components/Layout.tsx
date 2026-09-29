@@ -868,7 +868,13 @@ export function Layout() {
   const isLandscape = useOrientation();
   const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" ? window.innerWidth < 1024 : false);
   const [showAgeGate, setShowAgeGate] = useState(() => {
-    try { return !sessionStorage.getItem("pnptv:age_confirmed"); } catch { return false; }
+    try {
+      const raw = localStorage.getItem("pnptv:age_confirmed_at");
+      if (!raw) return true;
+      const at = parseInt(raw, 10);
+      if (!Number.isFinite(at)) return true;
+      return (Date.now() - at) > 90 * 24 * 60 * 60 * 1000;
+    } catch { return false; }
   });
 
   // Username picker — Telegram users without a @username get a TG_<id> placeholder.
@@ -887,12 +893,10 @@ export function Layout() {
     return () => window.removeEventListener("pnp-cruise-mode", handler);
   }, []);
 
-  // Age gate fires on every new session for every route — no route exceptions
+  // Age-verified users (real KYC/DOB server-side) skip the cosmetic disclaimer.
   useEffect(() => {
-    if (!sessionStorage.getItem("pnptv:age_confirmed")) {
-      setShowAgeGate(true);
-    }
-  }, []);
+    if (isAuthenticated && user?.ageVerified) setShowAgeGate(false);
+  }, [isAuthenticated, user?.ageVerified]);
 
   const sidebarSections = [
     {
@@ -2337,7 +2341,8 @@ export function Layout() {
           message survives the redirect to /login. */}
       <FlashBanner />
 
-      {/* Age & content warning — required by law, shown once per browser session on every route.
+      {/* Age & content warning — required by law, shown at most once per 90 days per browser
+          (persistent via localStorage). Auto-skipped for users already age-verified server-side.
           Covers: USA 18 U.S.C. §2257 / COPPA; EU AVD / GDPR Art.8; LATAM & Asia adult-content laws. */}
       {showAgeGate && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.92)", backdropFilter: "blur(12px)" }}>
@@ -2376,7 +2381,7 @@ export function Layout() {
             <div className="px-6 pb-6 space-y-2.5">
               <button
                 onClick={() => {
-                  try { sessionStorage.setItem("pnptv:age_confirmed", "1"); } catch {}
+                  try { localStorage.setItem("pnptv:age_confirmed_at", String(Date.now())); } catch {}
                   setShowAgeGate(false);
                 }}
                 className="w-full py-3 rounded-xl font-bold text-white text-sm transition-opacity hover:opacity-90"
