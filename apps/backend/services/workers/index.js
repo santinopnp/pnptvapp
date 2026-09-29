@@ -1279,6 +1279,46 @@ async function cronProcessor(job) {
       return;
     }
 
+    case 'mondays-spundays-send': {
+      // One-time $20 → 2mo PRIME + PRIME Channel offer. Invokes the broadcast
+      // script's main() directly, same pattern as sunday-spun-days-send. This
+      // job fires exactly once (delay-based, not `repeat` — see queueService.js)
+      // so no 2-hour re-fire guard is needed here.
+      try {
+        const msd = _safeRequire('../../scripts/broadcast-mondays-spundays');
+        if (!msd || typeof msd.main !== 'function') {
+          logger.warn('[BullMQ] mondays-spundays-send: script not found or malformed');
+          return;
+        }
+        await msd.main();
+      } catch (err) {
+        logger.error('[BullMQ] mondays-spundays-send error', { err: err.message });
+      }
+      return;
+    }
+
+    case 'mondays-spundays-expire': {
+      // 24h after launch: deactivate the plan so no new checkouts can start.
+      // Pending orders already created before expiry still complete normally
+      // (the webhook grant path doesn't re-check plans.active).
+      try {
+        await pgQuery(
+          `UPDATE plans SET active = false, updated_at = NOW() WHERE id = 'mondays_spundays_promo_20'`
+        );
+        const SlackOps = _safeRequire('../slackOpsService');
+        if (SlackOps && typeof SlackOps._post === 'function') {
+          const channel = process.env.SLACK_OPS_ADMIN_CHANNEL;
+          if (channel) {
+            await SlackOps._post(channel, '🚨 *Mondays Spundays* — 24h window closed, plan deactivated. This offer will not repeat.', null).catch(() => {});
+          }
+        }
+        logger.info('[BullMQ] mondays-spundays-expire: plan deactivated');
+      } catch (err) {
+        logger.error('[BullMQ] mondays-spundays-expire error', { err: err.message });
+      }
+      return;
+    }
+
     default:
       logger.warn(`[BullMQ] cronProcessor: unhandled job name "${job.name}"`);
   }
