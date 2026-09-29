@@ -15,7 +15,7 @@ const PRICE_USD = 20;
 // so it matches the single broadcast fired by
 // scripts/broadcast-mondays-spundays.js. Keep in sync with LAUNCH_AT/
 // EXPIRES_AT in that script and in services/queueService.js.
-const EXPIRES_AT = "2026-10-06T14:00:00Z";
+const EXPIRES_AT = "2026-09-30T04:00:00Z";
 
 const CRYPTO_APP_LINKS = [
   { label: "Revolut", url: "https://www.revolut.com/ramp/" },

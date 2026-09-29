@@ -58,7 +58,7 @@ const SKIP_DM    = process.argv.includes('--skip-dm');
 const SKIP_EMAIL = process.argv.includes('--skip-email');
 const SKIP_FEED  = process.argv.includes('--skip-feed');
 
-const CAMPAIGN_SLUG = 'mondays_spundays_2026_10_05';
+const CAMPAIGN_SLUG = 'mondays_spundays_2026_09_29';
 const DEDUP_KEY      = `pnpapp:broadcast:dedup:mondays_spundays:v1`;
 const SYSTEM_SENDER  = '8552451957';
 const SANTINO_ID     = '8599671840';
@@ -69,8 +69,8 @@ const PLAN_ID    = 'mondays_spundays_promo_20';
 
 // Must match EXPIRES_AT in RedeemMondaysSpundays.tsx and the delayed BullMQ
 // expire job in queueService.js.
-const EXPIRES_AT_LABEL_EN = 'Tuesday 14:00 UTC (~09:00 Bogota)';
-const EXPIRES_AT_LABEL_ES = 'martes 14:00 UTC (~09:00 Bogotá)';
+const EXPIRES_AT_LABEL_EN = 'in 24 hours';
+const EXPIRES_AT_LABEL_ES = 'en 24 horas';
 
 const BOT_TOKEN   = process.env.BOT_TOKEN;
 const TG_DELAY_MS = 150;
