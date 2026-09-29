@@ -80,7 +80,7 @@ async function requestRefund({ paymentId, userId, reason }) {
   //
   // This SELECT-then-INSERT is not atomic on its own — two concurrent
   // requests for the same payment can both pass it before either INSERT
-  // commits. idx_refunds_payment_id_unique (migration 409) is the real
+  // commits. idx_refunds_payment_id_unique (migration 413) is the real
   // backstop: the second INSERT's 23505 is caught below and translated to
   // the same friendly error.
   const dup = await query(`SELECT id FROM refunds WHERE payment_id = $1 LIMIT 1`, [paymentId]);
