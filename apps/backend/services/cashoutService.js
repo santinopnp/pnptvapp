@@ -221,6 +221,25 @@ async function requestCashout({ creatorId, amountUsd, lane, destination }) {
       throw err('INSUFFICIENT_BALANCE', `Available balance ($${accumulated.toFixed(2)}) is less than requested amount ($${amountUsd.toFixed(2)})`);
     }
 
+    // Re-check both caps against `accumulated` (what will actually be locked
+    // and paid), not the originally-requested `amountUsd`. The pre-checks
+    // above only validated the request; an overshoot from indivisible
+    // earnings rows could otherwise commit and pay out above either cap.
+    if (accumulated > MAX_CASHOUT_USD_PER_REQUEST) {
+      await client.query('ROLLBACK');
+      throw err(
+        'AMOUNT_OVER_PER_REQUEST_CAP',
+        `Your oldest available earnings can't be split — locking enough rows to cover $${amountUsd.toFixed(2)} would pay out $${accumulated.toFixed(2)}, over the $${MAX_CASHOUT_USD_PER_REQUEST.toFixed(2)} single-request cap. Try a smaller amount.`
+      );
+    }
+    if (dayTotal + accumulated > MAX_CASHOUT_USD_PER_DAY) {
+      await client.query('ROLLBACK');
+      throw err(
+        'AMOUNT_OVER_DAY_CAP',
+        `Locking enough earnings to cover $${amountUsd.toFixed(2)} would pay out $${accumulated.toFixed(2)}, pushing your 24h total to $${(dayTotal + accumulated).toFixed(2)} — over the $${MAX_CASHOUT_USD_PER_DAY.toFixed(2)} cap. Try a smaller amount.`
+      );
+    }
+
     const earningIds = selected.map(r => r.id);
 
     // The order (and the on-chain dispatch below) must reflect `accumulated`

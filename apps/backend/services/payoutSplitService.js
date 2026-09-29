@@ -20,24 +20,31 @@
  *    on-chain, and cashout simply releases the creator's already-computed
  *    share to them — nothing else needs to move.
  *
- * 2. PRIME Channel subscription split (distributePrimeChannelSplit) and
- *    3. RUSH credit spend split (dispatchRushSplit) — both apply a 70/20/10
- *    split to a GROSS amount (customer payment / credit spent, not a
- *    ledger-derived net figure):
- *      70% → creator bucket (PRIME: split 35/35 between the two co-founders)
- *      20% → PNPtv Treasury
- *      10% → Creators Resources Budget / reinvestment wallet (0x326B…81A)
- *    NOT WIRED to any automatic trigger yet (2026-09-29) — every other
- *    revenue surface (tips, subs, calls, current PRIME) flows through the
- *    creator_earnings ledger + 7-day hold + manual cashout, and wiring these
- *    in parallel without reconciling that ledger risks double-paying. They
- *    are exposed for manual/scripted use until that reconciliation happens.
+ * 2. PRIME Channel subscription split (distributePrimeChannelSplit) — applies
+ *    a 70/20/10 split to the GROSS PRIME payment (not a ledger-derived net
+ *    figure): the 70% creator bucket splits 35/35 between the two
+ *    co-founders (their wallets read live from users.wallet_address by
+ *    SANTINO_USER_ID/LEX_USER_ID), 20% to PNPtv Treasury, 10% to the
+ *    Creators Resources Budget / reinvestment wallet (0x326B…81A). LIVE —
+ *    called from walletCheckoutService._fulfill for surface='prime' +
+ *    provider='wallet_usdc' payments. Safe: PRIME revenue never also goes
+ *    through the creator_earnings ledger, so there's no double-pay.
  *
- * All three dispatch functions run their legs in parallel (explicit nonce
- * allocation — viem's sendTransaction resolves the current nonce per call,
- * so concurrent sends from the same EOA need pre-assigned nonces to avoid
- * collisions), retry each leg up to 3x with exponential backoff, and log
- * every attempt + outcome to payment_transactions.
+ * 3. RUSH credit spend split (dispatchRushSplit) — pays a creator's already-
+ *    net share in a single leg (see its own docstring). NOT CURRENTLY
+ *    CALLED (disconnected 2026-09-29) — every Ru$h-funded surface
+ *    (tips, subs, channel passes, calls) already credits creator_earnings
+ *    regardless of payment method, so a separate on-chain settlement path
+ *    here paid the creator twice. See the removed trigger in
+ *    walletCheckoutService.js `_fulfill` and rushLedgerService.js's header
+ *    comment for the full incident writeup. Exposed for manual/scripted use
+ *    only until a properly-reconciled reintroduction.
+ *
+ * dispatchSplit and distributePrimeChannelSplit run their legs in parallel
+ * (explicit nonce allocation — viem's sendTransaction resolves the current
+ * nonce per call, so concurrent sends from the same EOA need pre-assigned
+ * nonces to avoid collisions), retry each leg up to 3x with exponential
+ * backoff, and log every attempt + outcome to payment_transactions.
  *
  * 4. Creator wallet provisioning (provisionCreatorWallet) — when a user gains
  *    creator_status='active', ensures they have a Privy embedded wallet.
@@ -354,47 +361,36 @@ async function distributePrimeChannelSplit({ subscriptionId, amountUsd }) {
 // ── Public: RUSH credit spend split (dispatched at spend time) ───────────────
 
 /**
- * Dispatch the standard 70/20/10 split for a RUSH credit spend event. RUSH
- * balances sit 100% in treasury on purchase; this is called at spend time
- * (no holds) so the creator gets their 70% the moment the credit is used.
+ * Pay a creator for a settled RUSH credit spend: sends 100% of `amountUsd`
+ * straight to their wallet — no internal re-split.
+ *
+ * NOT CURRENTLY CALLED (2026-09-29) — see the removed trigger in
+ * walletCheckoutService.js `_fulfill` for why: creator_earnings already
+ * credits every Ru$h-funded surface, so a separate on-chain settlement path
+ * here would pay the creator twice. Kept for a future, properly-reconciled
+ * reintroduction.
+ *
+ * `amountUsd` MUST already be the creator's net share — its only real caller
+ * (rushLedgerService.settleIfEligible, disconnected) accumulates exactly
+ * that (see rushLedgerService.js's own docstring: "creator's SHARE in USD,
+ * already net of platform cut"). This function used to re-apply its own
+ * 70/20/10 split on top of that already-net figure — the same
+ * double-deduction bug fixed in dispatchSplit above — so a creator only
+ * ever received 0.70 × 0.70 = 49% of what they'd actually earned.
  *
  * @param {object} opts
- * @param {string} opts.rushSpendId
- * @param {string} opts.creatorId
- * @param {number} opts.amountUsd      — value of the RUSH credit spent
+ * @param {string} opts.rushSpendId    — for logging (payment_transactions)
+ * @param {string} opts.creatorId      — users.id (for logging)
+ * @param {number} opts.amountUsd      — creator's net share to pay out
  * @param {string} opts.creatorAddress
- * @returns {Promise<{ txCreator, txTreasury, txReinvestment, amounts }>}
+ * @returns {Promise<{ txCreator, amtCreator }>}
  */
 async function dispatchRushSplit({ rushSpendId, creatorId, amountUsd, creatorAddress }) {
-  const reinvestmentAddress = process.env.CREATORS_BUDGET_ADDRESS;
-  const treasuryAddress = _treasuryAddress();
-
-  if (!reinvestmentAddress || !treasuryAddress) {
-    throw Object.assign(
-      new Error('rush_split_disabled: CREATORS_BUDGET_ADDRESS or PNPTV_TREASURY_WALLET/SANTINO_PAYOUT_ADDRESS not set'),
-      { code: 'SPLIT_CONFIG_MISSING' },
-    );
-  }
-
-  const amtCreator = Math.round(amountUsd * SPLIT_CREATOR * 100) / 100;
-  const amtReinvestment = Math.round(amountUsd * SPLIT_REINVESTMENT * 100) / 100;
-  // Treasury absorbs the rounding remainder — see distributePrimeChannelSplit
-  // above for the same rationale.
-  const amtTreasury = Math.round((amountUsd - amtCreator - amtReinvestment) * 100) / 100;
-
-  const [creator, treasury, reinvestment] = await _dispatchLegsInParallel(
-    [
-      { to: creatorAddress, usd: amtCreator, label: 'rush_split_creator' },
-      { to: treasuryAddress, usd: amtTreasury, label: 'rush_split_treasury' },
-      { to: reinvestmentAddress, usd: amtReinvestment, label: 'rush_split_reinvestment' },
-    ],
+  const [creator] = await _dispatchLegsInParallel(
+    [{ to: creatorAddress, usd: amountUsd, label: 'rush_creator_payout' }],
     { paymentId: rushSpendId, purpose: null },
   );
-
-  return {
-    txCreator: creator.hash, txTreasury: treasury.hash, txReinvestment: reinvestment.hash,
-    amounts: { amtCreator, amtTreasury, amtReinvestment },
-  };
+  return { txCreator: creator.hash, amtCreator: amountUsd };
 }
 
 // ── Public: creator wallet provisioning ──────────────────────────────────────
