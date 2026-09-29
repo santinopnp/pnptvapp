@@ -25063,7 +25063,7 @@ app.get('/internal/zoho/crm/search', requireInternalSecret, asyncHandler(async (
     if (field === 'email') {
       searchParams = { email: q };
     } else if (field === 'username') {
-      searchParams = { criteria: `(Telegram_Handle:equals:${q})` };
+      searchParams = { criteria: `(Telegram_Handle:equals:${zoho.escapeCriteriaValue(q)})` };
     } else {
       // name or default — word search scans Full_Name and other text fields
       searchParams = { word: q };

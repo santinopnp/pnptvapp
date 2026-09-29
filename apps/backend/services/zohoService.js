@@ -21,6 +21,7 @@ const API = process.env.ZOHO_API_DOMAIN || 'https://www.zohoapis.com';
 
 let cachedToken = null;
 let cachedExpiry = 0;
+let refreshPromise = null;
 
 function isConfigured() {
   return !!(process.env.ZOHO_CLIENT_ID && process.env.ZOHO_CLIENT_SECRET && process.env.ZOHO_REFRESH_TOKEN);
@@ -30,6 +31,17 @@ async function getAccessToken() {
   if (!isConfigured()) throw new Error('Zoho not configured');
   if (cachedToken && Date.now() < cachedExpiry - 60_000) return cachedToken;
 
+  // Share one in-flight refresh between concurrent callers. Zoho rate-limits
+  // refresh-token grants, so a burst of parallel refreshes can lock out every call.
+  if (!refreshPromise) {
+    refreshPromise = refreshAccessToken().finally(() => {
+      refreshPromise = null;
+    });
+  }
+  return refreshPromise;
+}
+
+async function refreshAccessToken() {
   const resp = await axios.post(
     `${ACCOUNTS}/oauth/v2/token`,
     null,
@@ -50,6 +62,14 @@ async function getAccessToken() {
   cachedToken = resp.data.access_token;
   cachedExpiry = Date.now() + (resp.data.expires_in || 3600) * 1000;
   return cachedToken;
+}
+
+/**
+ * Escape a value for use inside a Zoho CRM search criteria expression.
+ * Zoho requires parentheses and commas in values to be backslash-escaped.
+ */
+function escapeCriteriaValue(value) {
+  return String(value).replace(/([\\(),])/g, '\\$1');
 }
 
 /**
@@ -91,7 +111,7 @@ async function upsertContactByPnptvId(pnptvId, fields) {
   const token = await getAccessToken();
   const body = { data: [{ PNPtv_ID: pnptvId, ...fields }] };
 
-  const existing = await searchOne('Contacts', `(PNPtv_ID:equals:${pnptvId})`);
+  const existing = await searchOne('Contacts', `(PNPtv_ID:equals:${escapeCriteriaValue(pnptvId)})`);
 
   if (existing?.id) {
     const resp = await axios.put(
@@ -141,4 +161,4 @@ async function bulkUpsert(module, records, duplicateCheckFields = ['PNPtv_ID']) 
   return resp.data?.data || [];
 }
 
-module.exports = { isConfigured, getAccessToken, searchOne, upsertContactByPnptvId, bulkUpsert };
+module.exports = { isConfigured, getAccessToken, escapeCriteriaValue, searchOne, upsertContactByPnptvId, bulkUpsert };
