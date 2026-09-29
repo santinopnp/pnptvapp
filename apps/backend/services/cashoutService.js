@@ -244,7 +244,7 @@ async function requestCashout({ creatorId, amountUsd, lane, destination }) {
       orderId: order.id, creatorId, amountUsd, lane, earningCount: earningIds.length,
     });
 
-    // ── Dispatch — on-chain 70/10/20 USDC split from treasury ───────────────
+    // ── Dispatch — on-chain 70/20/10 USDC split from treasury ───────────────
     let dispatchResult;
     try {
       dispatchResult = await dispatchSplit({

@@ -58,6 +58,21 @@ const PRIME_PLATFORM_RATE = 0.50;
 const PRIME_CREATOR_RATE  = 0.25; // per co-founder — Santino AND Lex each get this
 const PRIME_REVENUE_RECIPIENTS = [SANTINO_USER_ID, LEX_USER_ID];
 
+// PRIME Channel crypto payout split — distinct from PRIME_PLATFORM_RATE /
+// PRIME_CREATOR_RATE above, which drive token-ledger accounting for PRIME
+// membership grants. This split governs the on-chain USDC-on-Base payout
+// dispatch for PRIME Channel subscription revenue, via
+// payoutSplitService.distributePrimeChannelSplit(): the 70% creator bucket
+// is split evenly (35% + 35%, lifetime/vitalicio) between the two PRIME
+// co-founders below; 20% goes to PNPtv Treasury and 10% to the creator
+// reinvestment fund. Payout addresses come from SANTINO_PRIME_WALLET /
+// PNP_LATINO_PRIME_WALLET / PNPTV_TREASURY_WALLET / CREATORS_BUDGET_ADDRESS —
+// these IDs are for identification/logging only.
+const PRIME_CHANNEL_CRYPTO_CREATOR_RATE      = 0.70;
+const PRIME_CHANNEL_CRYPTO_TREASURY_RATE     = 0.20;
+const PRIME_CHANNEL_CRYPTO_REINVESTMENT_RATE = 0.10;
+const PRIME_CHANNEL_CRYPTO_CO_FOUNDER_IDS    = [SANTINO_USER_ID, LEX_USER_ID];
+
 // PRIME hangout group IDs — every qualifying PRIME member is auto-joined.
 // Lex's original room 785 was hard-deleted 2026-08-08; not restored.
 const SANTINO_PRIME_HANGOUT_GROUP_ID = 719;
@@ -113,6 +128,10 @@ module.exports = {
   PRIME_PLATFORM_RATE,
   PRIME_CREATOR_RATE,
   PRIME_REVENUE_RECIPIENTS,
+  PRIME_CHANNEL_CRYPTO_CREATOR_RATE,
+  PRIME_CHANNEL_CRYPTO_TREASURY_RATE,
+  PRIME_CHANNEL_CRYPTO_REINVESTMENT_RATE,
+  PRIME_CHANNEL_CRYPTO_CO_FOUNDER_IDS,
   SANTINO_PRIME_HANGOUT_GROUP_ID,
   LEX_PRIME_HANGOUT_GROUP_ID,
   PRIME_HANGOUT_GROUP_IDS,

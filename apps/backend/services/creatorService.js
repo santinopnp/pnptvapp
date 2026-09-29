@@ -1,7 +1,7 @@
 const crypto = require('crypto');
 const { query } = require('../config/postgres');
 const logger = require('../utils/logger');
-const { provisionCreatorWallet } = require('./payoutSplitService');
+const { ensureCreatorWallet } = require('./privyWalletService');
 const NotificationEmitter = require('./notificationEmitter');
 const sendSystemDM = require('./sendSystemDM');
 const { CREATOR_REVENUE_RATE, PLATFORM_COMMISSION_RATE, EARNINGS_HOLD_HOURS } = require('../config/monetizationConfig');
@@ -224,8 +224,9 @@ class CreatorService {
       [userId]
     );
 
-    // Ensure creator has an embedded wallet for payouts (fire-and-forget)
-    provisionCreatorWallet(userId).catch((e) =>
+    // Ensure creator has an embedded wallet + PNPtv Treasury payout method
+    // configured, and gets notified (fire-and-forget)
+    ensureCreatorWallet(userId).catch((e) =>
       logger.warn('[creatorService] wallet provision failed', { userId, error: e.message })
     );
 
@@ -2363,8 +2364,9 @@ class CreatorService {
       [enrollment.user_id]
     );
 
-    // Ensure creator has an embedded wallet for payouts (fire-and-forget)
-    provisionCreatorWallet(enrollment.user_id).catch((e) =>
+    // Ensure creator has an embedded wallet + PNPtv Treasury payout method
+    // configured, and gets notified (fire-and-forget)
+    ensureCreatorWallet(enrollment.user_id).catch((e) =>
       logger.warn('[creatorService] wallet provision failed on approval', { userId: enrollment.user_id, error: e.message })
     );
 
