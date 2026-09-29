@@ -945,6 +945,216 @@ Object.assign(AdminDashboardService, {
   },
 });
 
+// ── Growth & Sales Report ────────────────────────────────────────────────────
+// Trial-expiration cliff alert, real plan composition of the PRIME tier, and
+// hour-of-day traffic (a dimension the existing usage-analytics endpoints
+// don't break out). Everything else the report needs (revenue, conversion,
+// creator leaderboard, signup trend) is already served by getRevenueOverview,
+// getConversionMetrics, getCreatorLeaderboard and getNewMembersTrend above —
+// the frontend page calls those directly instead of duplicating them here.
+Object.assign(AdminDashboardService, {
+  /**
+   * Users on the free 3-day trial (tier=PRIME, subscription_type='trial') are
+   * not paying customers — flag how many are about to lapse, how many could
+   * even be auto-charged (card on file), and how many have been reminded.
+   */
+  async getTrialCliffStats() {
+    const cacheKey = 'pnpapp:admin:trial-cliff';
+    try {
+      const cached = await cache.get(cacheKey);
+      if (cached) return cached;
+    } catch (_) {}
+
+    const [cohortRes, peakRes, nudgesRes] = await Promise.all([
+      query(`
+        SELECT
+          COUNT(*)                                                                 AS cohort_total,
+          COUNT(*) FILTER (WHERE card_token IS NOT NULL)                           AS with_card,
+          COUNT(*) FILTER (WHERE last_active >= NOW() - INTERVAL '3 days')         AS active_recent,
+          COUNT(*) FILTER (WHERE telegram IS NOT NULL)                             AS telegram_reachable,
+          COUNT(*) FILTER (WHERE plan_expiry < NOW())                              AS already_expired,
+          COUNT(*) FILTER (WHERE plan_expiry BETWEEN NOW() AND NOW() + INTERVAL '7 days') AS expiring_7d
+        FROM users
+        WHERE tier = 'PRIME' AND subscription_type = 'trial'
+      `),
+      query(`
+        SELECT date_trunc('hour', plan_expiry) AS expiry_hour, COUNT(*) AS n
+        FROM users
+        WHERE tier = 'PRIME' AND subscription_type = 'trial'
+          AND plan_expiry BETWEEN NOW() AND NOW() + INTERVAL '7 days'
+        GROUP BY 1
+        ORDER BY n DESC
+        LIMIT 1
+      `),
+      query(`SELECT COUNT(*) AS n FROM nudge_trial_day_2_log WHERE status = 'sent'`)
+        .catch(() => ({ rows: [{ n: 0 }] })),
+    ]);
+
+    const c = cohortRes.rows[0] || {};
+    const peak = peakRes.rows[0] || null;
+    const result = {
+      cohortTotal:       parseInt(c.cohort_total, 10)   || 0,
+      withCard:          parseInt(c.with_card, 10)      || 0,
+      activeRecent:      parseInt(c.active_recent, 10)  || 0,
+      telegramReachable: parseInt(c.telegram_reachable, 10) || 0,
+      alreadyExpired:    parseInt(c.already_expired, 10) || 0,
+      expiring7d:        parseInt(c.expiring_7d, 10)     || 0,
+      nudgesSent:        parseInt(nudgesRes.rows[0]?.n, 10) || 0,
+      peakExpiryAt:      peak ? peak.expiry_hour : null,
+      peakExpiryCount:   peak ? (parseInt(peak.n, 10) || 0) : 0,
+    };
+
+    try { await cache.set(cacheKey, result, 120); } catch (_) {}
+    return result;
+  },
+
+  /** How much of the "PRIME" tier is the free trial vs. a real paid plan. */
+  async getPrimeComposition() {
+    const cacheKey = 'pnpapp:admin:prime-composition';
+    try {
+      const cached = await cache.get(cacheKey);
+      if (cached) return cached;
+    } catch (_) {}
+
+    const result = await query(`
+      SELECT
+        CASE
+          WHEN subscription_type = 'trial' THEN 'Free trial (3 days)'
+          WHEN plan_id LIKE 'lifetime%' OR plan_id LIKE '%lifetime%' THEN 'Lifetime / Founders'
+          WHEN plan_id LIKE '%diamond%' OR plan_id LIKE '%crystal%'  THEN 'Diamond / Crystal Pass'
+          WHEN plan_id LIKE '%week-pass%'                            THEN 'Week Pass'
+          WHEN plan_id = 'monthly-pass'                              THEN 'Monthly Pass (recurring)'
+          WHEN plan_id LIKE '%annual%' OR plan_id LIKE '%yearly%'    THEN 'Annual'
+          WHEN plan_id IS NULL                                       THEN 'No plan on file'
+          ELSE 'Other paid plan'
+        END AS bucket,
+        COUNT(*) AS n
+      FROM users
+      WHERE tier = 'PRIME'
+      GROUP BY 1
+      ORDER BY n DESC
+    `);
+    const rows = result.rows.map(r => ({ bucket: r.bucket, count: parseInt(r.n, 10) || 0 }));
+    try { await cache.set(cacheKey, rows, 300); } catch (_) {}
+    return rows;
+  },
+
+  /**
+   * Hour-of-day traffic (America/Bogota) over the trailing N days — overall,
+   * by tier and by a small set of high-signal features. Four scans of
+   * user_access_logs, so run them SEQUENTIALLY (see getUsageAnalytics above —
+   * parallel scans of this table compete for the same resources).
+   */
+  async getHourlyTraffic(days = 14) {
+    const cacheKey = `pnpapp:admin:hourly-traffic:${days}`;
+    try {
+      const cached = await cache.get(cacheKey);
+      if (cached) return cached;
+    } catch (_) {}
+
+    const HOUR_EXPR = `extract(hour FROM (l.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota'))::int`;
+
+    const overallRes = await analyticsQuery(`
+      SELECT ${HOUR_EXPR} AS hour, COUNT(*) AS n
+      FROM user_access_logs l
+      WHERE l.created_at >= NOW() - INTERVAL '1 day' * $1
+      GROUP BY 1 ORDER BY 1
+    `, [days]);
+
+    const tierRes = await analyticsQuery(`
+      SELECT u.tier, ${HOUR_EXPR} AS hour, COUNT(*) AS n
+      FROM user_access_logs l
+      JOIN users u ON u.id = l.user_id
+      WHERE l.created_at >= NOW() - INTERVAL '1 day' * $1
+        AND u.tier IN ('PRIME', 'member', 'free')
+      GROUP BY 1, 2 ORDER BY 1, 2
+    `, [days]);
+
+    const countryRes = await analyticsQuery(`
+      WITH base AS (
+        SELECT
+          CASE
+            WHEN u.country ILIKE 'usa' OR u.country ILIKE 'us' OR u.country ILIKE 'united states%' THEN 'United States'
+            WHEN u.country ILIKE 'mexico' OR u.country ILIKE 'méxico' THEN 'Mexico'
+            WHEN u.country ILIKE 'colombia' THEN 'Colombia'
+            WHEN u.country ILIKE 'spain' OR u.country ILIKE 'españa' THEN 'Spain'
+            WHEN u.country ILIKE 'australia' THEN 'Australia'
+            WHEN u.country ILIKE 'canada' THEN 'Canada'
+            ELSE NULL
+          END AS country,
+          ${HOUR_EXPR} AS hour
+        FROM user_access_logs l
+        JOIN users u ON u.id = l.user_id
+        WHERE l.created_at >= NOW() - INTERVAL '1 day' * $1
+      )
+      SELECT country, hour, COUNT(*) AS n
+      FROM base
+      WHERE country IS NOT NULL
+      GROUP BY 1, 2 ORDER BY 1, 2
+    `, [days]);
+
+    const featureRes = await analyticsQuery(`
+      SELECT
+        CASE
+          WHEN l.path LIKE '%/main-stage%'        THEN 'Main Stage'
+          WHEN l.path LIKE '%/hangouts%'           THEN 'Hangouts'
+          WHEN l.path LIKE '%/dm/%'                THEN 'DM'
+          WHEN l.path LIKE '%/uploads/avatars%'    THEN 'Avatars / Media'
+          WHEN l.path LIKE '%featured-creator%'    THEN 'Featured Creator'
+          WHEN l.path LIKE '%spenders-online%'     THEN 'Spenders Online'
+          WHEN l.path LIKE '%auth%' OR l.path LIKE '%passkey%' THEN 'Auth / Login'
+          ELSE 'Other'
+        END AS feature,
+        ${HOUR_EXPR} AS hour,
+        COUNT(*) AS n
+      FROM user_access_logs l
+      WHERE l.created_at >= NOW() - INTERVAL '1 day' * $1
+      GROUP BY 1, 2
+      HAVING (CASE
+          WHEN l.path LIKE '%/main-stage%'        THEN 'Main Stage'
+          WHEN l.path LIKE '%/hangouts%'           THEN 'Hangouts'
+          WHEN l.path LIKE '%/dm/%'                THEN 'DM'
+          WHEN l.path LIKE '%/uploads/avatars%'    THEN 'Avatars / Media'
+          WHEN l.path LIKE '%featured-creator%'    THEN 'Featured Creator'
+          WHEN l.path LIKE '%spenders-online%'     THEN 'Spenders Online'
+          WHEN l.path LIKE '%auth%' OR l.path LIKE '%passkey%' THEN 'Auth / Login'
+          ELSE 'Other'
+        END) != 'Other'
+      ORDER BY 1, 2
+    `, [days]);
+
+    const toInt = (v) => parseInt(v, 10) || 0;
+    const result = {
+      days,
+      overall:  overallRes.rows.map(r => ({ hour: toInt(r.hour), n: toInt(r.n) })),
+      byTier:   tierRes.rows.map(r => ({ tier: r.tier, hour: toInt(r.hour), n: toInt(r.n) })),
+      byCountry: countryRes.rows.map(r => ({ country: r.country, hour: toInt(r.hour), n: toInt(r.n) })),
+      byFeature: featureRes.rows.map(r => ({ feature: r.feature, hour: toInt(r.hour), n: toInt(r.n) })),
+    };
+
+    try { await cache.set(cacheKey, result, 300); } catch (_) {}
+    return result;
+  },
+
+  /**
+   * Everything the Growth & Sales admin report needs that isn't already
+   * covered by an existing endpoint.
+   */
+  async getGrowthSalesReport() {
+    const [trialCliff, primeComposition, hourlyTraffic] = await Promise.all([
+      this.getTrialCliffStats(),
+      this.getPrimeComposition(),
+      this.getHourlyTraffic(14),
+    ]);
+    return {
+      generatedAt: new Date().toISOString(),
+      trialCliff,
+      primeComposition,
+      hourlyTraffic,
+    };
+  },
+});
+
 async function getCallAnalytics() {
   const surveyStats = await query(`
     SELECT
