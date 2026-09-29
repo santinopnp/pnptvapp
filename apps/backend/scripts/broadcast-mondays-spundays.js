@@ -117,14 +117,14 @@ function tgCaption(name, lang) {
     return (
       `🚨 <b>Mondays Spundays</b> — oferta única\n\n` +
       `Hola${n} — <b>2 meses de PNPtv + PRIME Channel por $20</b>.\n\n` +
-      `💳 ¿Usas Revolut, Cash App, Venmo o N26? Copia la dirección crypto del checkout y sigue las instrucciones de tu app — tu plan se activa solo.\n\n` +
+      `💳 Toca el botón de abajo para ver cómo pagar con cripto usando solo la app que ya conoces y usas — tu plan se activa al instante.\n\n` +
       `⏳ Se apaga ${EXPIRES_AT_LABEL_ES}. <b>Nunca vuelve.</b>`
     );
   }
   return (
     `🚨 <b>Mondays Spundays</b> — one-time offer\n\n` +
     `Hey${n} — <b>2 months of PNPtv + PRIME Channel for $20</b>.\n\n` +
-    `💳 Using Revolut, Cash App, Venmo, or N26? Copy the checkout's crypto address and follow your app's instructions — your plan activates on its own.\n\n` +
+    `💳 Click the button below to find out how to pay with crypto using just the app you already know and love — plan activates right away.\n\n` +
     `⏳ Closes ${EXPIRES_AT_LABEL_EN}. <b>Never returns.</b>`
   );
 }
