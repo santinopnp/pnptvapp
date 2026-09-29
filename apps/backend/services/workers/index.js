@@ -316,6 +316,19 @@ async function cronProcessor(job) {
       return;
     }
 
+    case 'rush-ledger-sweep': {
+      const rushLedger = _safeRequire('../rushLedgerService');
+      if (!rushLedger || typeof rushLedger.sweepPending !== 'function') {
+        logger.warn('[BullMQ] rush-ledger-sweep: service not found');
+        return;
+      }
+      const results = await rushLedger.sweepPending();
+      if (results.settled > 0 || results.failed > 0) {
+        logger.info('[BullMQ] rush-ledger-sweep completed', results);
+      }
+      return;
+    }
+
     case 'monetization-daily-report': {
       const adAnalytics = _safeRequire('../adAnalyticsService');
       const slackOps = _safeRequire('../slackOpsService');

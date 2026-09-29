@@ -402,6 +402,14 @@ export default function PaymentsSettings() {
                 else if (meta?.type === "token_package") typeLabel = p.payHistoryTokens;
                 else if (pay.plan_id?.startsWith("donation")) typeLabel = p.payHistoryDonation;
 
+                // Only USDC-on-Base checkout_intents (crypto_base) qualify for
+                // the refund flow — that's where refundService can dispatch a
+                // treasury USDC leg back to the payer. Fiat / eFiPay refunds
+                // still route through support.
+                const canRefund = providerRaw === "usdc"
+                  && (statusLower === "completed" || statusLower === "paid")
+                  && typeof pay.id === "number";
+
                 return (
                   <div
                     key={pay.id}
@@ -430,6 +438,15 @@ export default function PaymentsSettings() {
                         </div>
                       </div>
                     </div>
+                    {canRefund && (
+                      <button
+                        onClick={() => navigate(`/refund/request?paymentId=${pay.id}`)}
+                        className="mt-2 text-xs font-medium px-2.5 py-1 rounded-full transition-colors"
+                        style={{ background: "rgba(255,255,255,0.06)", color: "var(--pnp-text-secondary)", border: "1px solid rgba(255,255,255,0.1)" }}
+                      >
+                        Request refund
+                      </button>
+                    )}
                   </div>
                 );
               })

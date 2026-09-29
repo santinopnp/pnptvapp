@@ -2755,8 +2755,58 @@ app.post('/api/log-error', limiter, requireSessionAuth, (req, res) => {
   res.json({ ok: true });
 });
 
-// Logout endpoint
-app.post('/api/logout', (req, res) => {
+// Logout endpoint. Logouts are rare — creator embedded wallets are
+// non-custodial so a lost session often means the user cannot pay again
+// from a new device. Every logout gets logged (logout_events) and pinged
+// to #ops-admin-alerts so support can proactively reach out.
+app.post('/api/logout', async (req, res) => {
+  const userId = req.user?.id || req.session?.user?.id || req.session?.userId || null;
+  const reason = typeof req.body?.reason === 'string' ? String(req.body.reason).slice(0, 64) : null;
+
+  if (userId) {
+    try {
+      const { query } = require('../../config/postgres');
+      const { rows: [u] = [] } = await query(
+        `SELECT (wallet_address IS NOT NULL) AS had_wallet,
+                (creator_status = 'active')  AS was_creator
+           FROM users WHERE id = $1 LIMIT 1`,
+        [String(userId)],
+      );
+      await query(
+        `INSERT INTO logout_events (user_id, reason, ip, user_agent, had_wallet, was_creator)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          String(userId), reason,
+          (req.ip || '').slice(0, 64) || null,
+          (req.headers['user-agent'] || '').slice(0, 1024) || null,
+          !!u?.had_wallet, !!u?.was_creator,
+        ],
+      );
+      // Slack ping — creators-with-wallet get louder wording
+      setImmediate(async () => {
+        try {
+          const channel = process.env.SLACK_OPS_ADMIN_CHANNEL || process.env.SLACK_OPS_INCIDENTS_CHANNEL;
+          const token = process.env.SLACK_BOT_TOKEN;
+          if (!channel || !token) return;
+          const emoji = u?.was_creator && u?.had_wallet ? '🚨' : '🔔';
+          const suffix = u?.was_creator && u?.had_wallet
+            ? ' — active creator with linked wallet, follow up on recovery.'
+            : '';
+          await fetch('https://slack.com/api/chat.postMessage', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json; charset=utf-8', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({
+              channel,
+              text: `${emoji} Logout — user \`${userId}\`${reason ? ` (${reason})` : ''}${suffix}`,
+            }),
+          });
+        } catch { /* non-fatal */ }
+      });
+    } catch (err) {
+      logger.warn('[logout] audit write failed (non-fatal)', { userId, err: err.message });
+    }
+  }
+
   req.session.destroy(err => {
     if (err) {
       logger.error('Logout error:', err);
@@ -2769,7 +2819,7 @@ app.post('/api/logout', (req, res) => {
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
     });
-    logger.info('User logged out successfully');
+    logger.info('User logged out', { userId, reason });
     res.json({ success: true });
   });
 });

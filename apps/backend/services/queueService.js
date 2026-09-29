@@ -227,6 +227,15 @@ async function initializeQueues() {
     jobId: 'cron-nowpayments-reconcile',
   });
 
+  // Ru$h creator ledger sweep — every 10 min. Inline settle already fires
+  // when a creator crosses RUSH_MIN_SETTLE_USD; this is the safety net for
+  // failed inline settles (RPC blip, wallet still provisioning, etc).
+  await cronQueue.add('rush-ledger-sweep', {}, {
+    repeat: { pattern: '*/10 * * * *', tz: 'UTC' },
+    attempts: 2, removeOnFail: false,
+    jobId: 'cron-rush-ledger-sweep',
+  });
+
   // Lifetime100 abandoned-cart rescue — 7/22/37/52 of each hour
   await cronQueue.add('lifetime100-rescue', {}, {
     repeat: { pattern: '7,22,37,52 * * * *', tz: 'UTC' },

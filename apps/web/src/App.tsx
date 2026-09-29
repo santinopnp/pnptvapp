@@ -761,9 +761,13 @@ export default function App() {
                       // out of Ethereum → Base without needing to export the key
                       // or install MetaMask. The wallet UI still defaults to Base.
                       supportedChains: [base, mainnet],
+                      // Privy-only auth. External wallet imports (MetaMask, Coinbase,
+                      // WalletConnect / Trust / Rabby, etc.) are intentionally NOT
+                      // offered — every wallet lives inside Privy so we can enforce
+                      // single-wallet-per-user, gas top-ups, and never-log-out flows
+                      // without depending on an external signer the user might lose.
                       loginMethodsAndOrder: {
                         primary: ["email", "google", "telegram", "twitter"],
-                        overflow: ["metamask", "coinbase_wallet"],
                       },
                       // "off" prevents auto-creating a Privy embedded wallet at login for
                       // every user — free tier has a wallet-slot cap and most users never
@@ -771,10 +775,6 @@ export default function App() {
                       // via provisionCreatorWallet(); other users get one the moment they
                       // initiate a crypto payment (Privy SDK creates it inline).
                       embeddedWallets: { ethereum: { createOnLogin: "off" } },
-                      // Own WalletConnect Cloud project id — dedicated rate-limit +
-                      // reliable Trust/Rainbow/etc handshake. Falls back to Privy's
-                      // shared id if unset (works but with silent throttling).
-                      walletConnectCloudProjectId: import.meta.env.VITE_WALLETCONNECT_PROJECT_ID as string | undefined,
                       appearance: { theme: "dark", accentColor: "#D4007A" },
                     }}
                   >

@@ -27,6 +27,16 @@ export default function DangerZoneSettings() {
   const eraseInputRef = useRef<HTMLInputElement>(null);
   const eraseModalRef = useRef<HTMLDivElement>(null);
 
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+
+  const handleSignOut = useCallback(async () => {
+    if (signingOut) return;
+    setSigningOut(true);
+    try { await logout(); } catch { /* ignore */ }
+    navigate("/login");
+  }, [signingOut, logout, navigate]);
+
   useEffect(() => {
     if (showDeleteModal) deleteInputRef.current?.focus();
   }, [showDeleteModal]);
@@ -72,6 +82,29 @@ export default function DangerZoneSettings() {
         <h2 className="text-xs font-semibold text-white/50 uppercase tracking-wider mb-4">
           {p.dangerZoneSection}
         </h2>
+
+        {/* Sign out — intentionally buried here with an explicit warning.
+            Most users' wallets live inside Privy tied to this session; a
+            lost session can strand payment history and wallet access on a
+            device we can't recover. */}
+        <div
+          className="rounded-xl p-4 mb-4"
+          style={{ background: "rgba(255,180,0,0.05)", border: "1px solid rgba(255,180,0,0.15)" }}
+        >
+          <p className="text-sm font-medium text-white mb-1">Sign out</p>
+          <p className="text-xs mb-3" style={{ color: "var(--pnp-text-secondary)" }}>
+            Only sign out if you know how to sign back in with the same login method
+            (Google / email / Telegram / X). Otherwise your wallet balance and
+            payment history may not appear on your next device.
+          </p>
+          <button
+            onClick={() => setShowLogoutModal(true)}
+            className="px-4 py-2 rounded-lg text-xs font-semibold transition-opacity hover:opacity-80"
+            style={{ background: "rgba(255,180,0,0.15)", color: "#FFB400", border: "1px solid rgba(255,180,0,0.3)" }}
+          >
+            Sign out
+          </button>
+        </div>
 
         {/* Delete account */}
         <div
@@ -132,6 +165,51 @@ export default function DangerZoneSettings() {
       >
         {p.back}
       </button>
+
+      {/* ── Sign out Modal ── */}
+      {showLogoutModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="signout-modal-title"
+          onKeyDown={(e) => { if (e.key === "Escape" && !signingOut) setShowLogoutModal(false); }}
+          tabIndex={-1}
+        >
+          <div
+            className="w-full max-w-sm rounded-2xl p-6"
+            style={{ background: "var(--pnp-background)", border: "1px solid rgba(255,180,0,0.25)" }}
+          >
+            <h2 id="signout-modal-title" className="text-base font-bold text-white mb-3">
+              Sign out?
+            </h2>
+            <p className="text-xs leading-relaxed mb-4" style={{ color: "var(--pnp-text-secondary)" }}>
+              You'll need to sign back in with the same login method (Google / email
+              / Telegram / X) to see your wallet balance and payment history. If
+              you're not sure, cancel and reach out to us on the "Report bug" flow
+              instead.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => !signingOut && setShowLogoutModal(false)}
+                disabled={signingOut}
+                className="flex-1 py-2 rounded-lg text-sm font-medium transition-opacity hover:opacity-80 disabled:opacity-40"
+                style={{ background: "rgba(255,255,255,0.08)", color: "#fff", border: "1px solid rgba(255,255,255,0.12)" }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSignOut}
+                disabled={signingOut}
+                className="flex-1 py-2 rounded-lg text-sm font-semibold transition-opacity hover:opacity-80 disabled:opacity-30 disabled:cursor-not-allowed"
+                style={{ background: "rgba(255,180,0,0.2)", color: "#FFB400", border: "1px solid rgba(255,180,0,0.4)" }}
+              >
+                {signingOut ? "Signing out..." : "Sign out"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Delete Account Modal ── */}
       {showDeleteModal && (
