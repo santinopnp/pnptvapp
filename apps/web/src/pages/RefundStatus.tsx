@@ -59,18 +59,29 @@ export default function RefundStatus() {
 
   useEffect(() => {
     fetchRefund();
-    // Poll every 15s while pending so a decision shows up without a manual refresh.
-    const iv = setInterval(() => {
-      if (refund?.status === "pending" || !refund) fetchRefund();
-    }, 15000);
-    return () => clearInterval(iv);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchRefund]);
+
+  // Poll every 15s while pending so a decision shows up without a manual
+  // refresh. Separate effect keyed on refund?.status (not the closure inside
+  // a [fetchRefund]-only effect, which would forever see the initial `null`
+  // and never stop) so polling actually stops once the case is resolved.
+  useEffect(() => {
+    if (refund && refund.status !== "pending") return;
+    const iv = setInterval(fetchRefund, 15000);
+    return () => clearInterval(iv);
+  }, [refund?.status, fetchRefund]);
 
   const handleSign = async () => {
     if (!refund || !denialMessage) return;
     if (!authenticated) { login(); return; }
-    const wallet = wallets[0];
+    // Must be the Privy EMBEDDED wallet — recordRefundDenialSignature verifies
+    // against users.wallet_address, which privyLinkService only ever populates
+    // from the embedded (walletClientType === "privy") account, never an
+    // external one. Signing with wallets[0] would pick an external wallet
+    // first if the user has one connected, and the signature would never
+    // match, permanently blocking the user from closing the case. Same
+    // fallback pattern as Layout.tsx / Onboarding.tsx.
+    const wallet = wallets.find((w) => w.walletClientType === "privy") || wallets[0];
     if (!wallet) {
       setSignError(es ? "No encontramos tu billetera. Recarga la página." : "Couldn't find your wallet. Please reload.");
       return;

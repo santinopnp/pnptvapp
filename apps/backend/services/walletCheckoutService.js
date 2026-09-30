@@ -682,30 +682,27 @@ async function _fulfill(client, { userId, entitlementSpec, surface, provider, in
     fulfillResult = await _fulfillEntitlement(client, { userId, entitlementSpec, surface, provider, intentId, amountUsd });
   }
 
-  // ── Ru$h accumulator — creator's 70% share accrues in rush_creator_ledger ──
-  // Fires only for internal-credit (wallet_rush) spends on surfaces that
-  // credit a creator. Auto-settles on-chain when the creator crosses
-  // RUSH_MIN_SETTLE_USD (default $100). Fire-and-forget.
-  if (provider === 'wallet_rush' && Number(amountUsd) > 0) {
-    const spec = entitlementSpec || {};
-    const creatorId = spec.creator_id || spec.creatorId;
-    if (creatorId) {
-      setImmediate(() => {
-        const { accumulateForCreator } = require('./rushLedgerService');
-        const { CREATOR_REVENUE_RATE } = require('../config/monetizationConfig');
-        const creatorShareUsd = Math.round(Number(amountUsd) * CREATOR_REVENUE_RATE * 100) / 100;
-        accumulateForCreator({
-          creatorId: String(creatorId),
-          amountUsd: creatorShareUsd,
-          settleContext: { rushSpendId: `intent:${intentId}` },
-        }).catch((err) =>
-          logger.warn('[walletCheckout] rushLedger.accumulate failed', {
-            intentId, creatorId, err: err.message,
-          }),
-        );
-      });
-    }
-  }
+  // ── Ru$h accumulator — REMOVED 2026-09-29 (double-payment root cause) ──────
+  // This used to fire rushLedgerService.accumulateForCreator for every
+  // internal-credit (wallet_rush) spend, which auto-settles on-chain via
+  // dispatchRushSplit once a creator crosses RUSH_MIN_SETTLE_USD. But EVERY
+  // surface branch above (_fulfillTip, _fulfillEntitlement's creator_sub
+  // path, _fulfillChannelPass -> channelPassService,
+  // _fulfillCallBooking -> privateCallBookingService) already credits
+  // creator_earnings unconditionally, regardless of `provider`. So a
+  // Ru$h-funded tip/sub/channel-pass/call got paid TWICE: once when the
+  // creator cashes out the creator_earnings row (cashoutService), and again
+  // automatically when rush_creator_ledger crossed the settlement threshold.
+  // creator_earnings is the single, already-correct payout ledger for every
+  // surface regardless of how the fan paid (USDC or Ru$h) — no separate
+  // settlement path is needed. rushLedgerService.js / dispatchRushSplit are
+  // intentionally left in place (their own double-split bug fixed too) but
+  // disconnected, in case Ru$h-specific instant/batched settlement is
+  // reintroduced later — deliberately, and reconciled against
+  // creator_earnings this time (e.g. inserting those rows as non-cashoutable
+  // from the start) rather than as an uncoordinated second payout rail.
+  // rush_creator_ledger was empty in production at the time of this fix — no
+  // pending or settled amounts were stranded by removing this trigger.
 
   // ── PRIME Channel bundle split — post-fulfill on-chain 35/35/20/10 ──────────
   // Fires only for the current PRIME bundle (Santino + Lex co-founder plans);
