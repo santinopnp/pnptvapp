@@ -18769,6 +18769,7 @@ app.post('/api/wallet/client-error', walletStatusLimiter, requireSessionAuth, as
         errorCode: safeStep,
         errorMessage: safeError,
         stackTrace: safeContext,
+        userAgent: (req.get('user-agent') || '').slice(0, 500) || null,
       });
     } catch (persistErr) {
       logger.warn('[wallet/client-error] persist failed', { err: persistErr.message });

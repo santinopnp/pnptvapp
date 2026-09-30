@@ -41,6 +41,10 @@ export default defineConfig({
   },
   build: {
     outDir: "dist",
+    // Default target is native-ESM browsers (~Safari 15+). Widen the floor
+    // so users still on iOS 14 (~1-2% of active devices) don't get a blank
+    // page — Vite transpiles / splits legacy chunks as needed.
+    target: ["chrome87", "safari14", "firefox78", "edge88"],
     sourcemap: false,
     rollupOptions: {
       output: {
