@@ -221,6 +221,8 @@ export function WalletCheckoutHero({ lang = "en", compact = false }: { lang?: "e
 import { useEffect as _useEffect, useState as _useState, useRef as _useRef } from "react";
 import { usePrivy, useWallets, useAddFunds, useConnectWallet, useSendTransaction, useUnlinkWallet, useCreateWallet } from "@privy-io/react-auth";
 import { getLinkedWallet } from "@/lib/api";
+import { OpenInBrowserButton } from "@/components/telegram/OpenInBrowserButton";
+import { isIOSStandalone, popupsUnsupported } from "@/lib/browserEnv";
 import { createWalletClient, custom, encodeFunctionData, parseUnits, parseEther } from "viem";
 import { base, mainnet } from "viem/chains";
 
@@ -304,6 +306,96 @@ export function grossUpForOnramp(targetUsd: number): string {
   const safe = Number.isFinite(targetUsd) && targetUsd > 0 ? targetUsd : 15;
   const grossed = Math.ceil((safe + 0.5) / 0.92);
   return Math.max(15, grossed).toFixed(0);
+}
+
+// How Privy's addFunds (v3.42) actually pays, verified in the SDK bundle:
+//  • Stripe runs EMBEDDED inside Privy's modal (@stripe/crypto) — no popup.
+//    It works in Safari, the installed PWA and Telegram's webview. Its
+//    failures are risk blocks / declines / KYC / Link auth, not popups.
+//  • MoonPay (and Meld/Coinbase) are popup providers: Privy calls
+//    window.open synchronously in its own "Continue" click. When that returns
+//    null Privy throws "Unable to open payment window". A click is present,
+//    so this is not a gesture problem — it happens where window.open is not
+//    supported at all: Telegram/Instagram/TikTok webviews and (per 100%
+//    WebKit stack traces in payment_errors) iOS contexts such as the
+//    home-screen PWA.
+// So: when Stripe fails, suggest MoonPay; when MoonPay can't open, suggest
+// Stripe here or opening the page in Safari, where MoonPay's popup works.
+export type OnrampErrorKind =
+  | "cancel"
+  | "popup_blocked"   // MoonPay/Meld popup could not open
+  | "card_blocked"    // Stripe risk block / decline / 3DS failure
+  | "stripe_failed"   // Stripe KYC / limits / Link / SDK load failures
+  | "provider_region" // provider not offered in the user's country
+  | "status_timeout"  // MoonPay popup flow: status polling gave up
+  | "provider_failed" // MoonPay popup flow: provider reported failure
+  | "other";
+
+export function classifyOnrampError(msg: string): OnrampErrorKind {
+  if (/transaction has been blocked|card (was |has been )?(declined|blocked)|unable to authenticate your payment method/i.test(msg)) return "card_blocked";
+  if (/unable to open payment window|pop-?up.*blocked/i.test(msg)) return "popup_blocked";
+  if (/not available in your region/i.test(msg)) return "provider_region";
+  if (/unable to check payment status|could not confirm payment status/i.test(msg)) return "status_timeout";
+  if (/identity verification|kyc|transaction_limit_reached|link authentication|something went wrong setting up checkout|stripe crypto sdk|failed to fetch/i.test(msg)) return "stripe_failed";
+  if (/user exited|cancel|reject/i.test(msg)) return "cancel";
+  if (/^(error: )?transaction failed/i.test(msg)) return "provider_failed";
+  return "other";
+}
+
+export { isInAppBrowser, isIOS, isIOSStandalone, popupsUnsupported } from "@/lib/browserEnv";
+
+export function onrampErrorMessage(kind: OnrampErrorKind, es: boolean, rawMsg: string): string {
+  const noPopup = popupsUnsupported();
+  const where = isIOSStandalone()
+    ? (es ? "Safari" : "Safari")
+    : (es ? "tu navegador" : "your browser");
+  // Suggesting MoonPay only makes sense where its popup can open.
+  const tryMoonpay = noPopup
+    ? (es
+      ? ` Para usar MoonPay, ábrelo en ${where} con el botón de abajo.`
+      : ` To use MoonPay, open this page in ${where} with the button below.`)
+    : (es
+      ? " Toca Recargar otra vez y elige MoonPay, o usa Apple Pay / Google Pay."
+      : " Tap Top up again and pick MoonPay, or use Apple Pay / Google Pay.");
+  switch (kind) {
+    case "popup_blocked":
+      return noPopup
+        ? (es
+          ? `Aquí no se puede abrir la ventana de MoonPay. Toca Recargar y elige Tarjeta / Apple Pay (Stripe), que sí funciona aquí, o ábrelo en ${where} para usar MoonPay.`
+          : `MoonPay's window can't open here. Tap Top up and pick Card / Apple Pay (Stripe), which works here, or open this page in ${where} to use MoonPay.`)
+        : (es
+          ? "Tu navegador bloqueó la ventana de MoonPay. Permite ventanas emergentes para pnptv.app y reintenta, o elige Tarjeta / Apple Pay (Stripe)."
+          : "Your browser blocked MoonPay's window. Allow pop-ups for pnptv.app and retry, or pick Card / Apple Pay (Stripe).");
+    case "card_blocked":
+      return (es
+        ? "Stripe rechazó este pago por seguridad. No se hizo ningún cargo."
+        : "Stripe declined this payment for security reasons. You were not charged.") + tryMoonpay;
+    case "stripe_failed":
+      return (es
+        ? "Stripe no pudo completar el pago. No se hizo ningún cargo."
+        : "Stripe couldn't complete the payment. You were not charged.") + tryMoonpay;
+    case "provider_region":
+      return es
+        ? "Ese proveedor no está disponible en tu país. Toca Recargar otra vez y elige otra opción (MoonPay o Stripe)."
+        : "That provider isn't available in your country. Tap Top up again and pick another option (MoonPay or Stripe).";
+    case "provider_failed":
+      return es
+        ? "El proveedor no completó el pago. Toca Recargar otra vez y prueba con la otra opción (Tarjeta / Apple Pay con Stripe, o MoonPay)."
+        : "The provider didn't complete the payment. Tap Top up again and try the other option (Card / Apple Pay via Stripe, or MoonPay).";
+    case "status_timeout":
+      // The provider may still settle — warn against paying twice.
+      return es
+        ? "Aún no pudimos confirmar el pago. Si ya te cobraron, el saldo llegará en unos minutos; revisa tu billetera antes de pagar de nuevo."
+        : "We couldn't confirm the payment yet. If you were charged, the balance will arrive in a few minutes; check your wallet before paying again.";
+    default:
+      return es ? `No se pudo abrir el pago: ${rawMsg}` : `Could not open payment: ${rawMsg}`;
+  }
+}
+
+// Whether to show the one-tap "open in browser/Safari" escape for this error.
+export function shouldOfferOpenInBrowser(kind: OnrampErrorKind): boolean {
+  if (!popupsUnsupported()) return false;
+  return kind === "popup_blocked" || kind === "card_blocked" || kind === "stripe_failed";
 }
 
 /**
@@ -445,6 +537,10 @@ export function WalletPayCard({
   // or (b) 60s of polling elapses. Prevents the "Pay with card" button from
   // re-appearing as if nothing happened while Stripe onramp settles.
   const [funding, setFunding] = _useState(false);
+  // Last addFunds failure needs a real browser (MoonPay popup) → offer the
+  // one-tap "Open in browser / Safari" escape.
+  const [offerOpenInBrowser, setOfferOpenInBrowser] = _useState(false);
+  const fundInFlightRef = _useRef(false);
   const [eth, setEth] = _useState<number | null>(null);
   // Tracks whether the onramp poll has been cancelled (component unmounted).
   const pollCancelledRef = _useRef(false);
@@ -633,6 +729,8 @@ export function WalletPayCard({
         } catch { /* keep component-level value if fetch fails */ }
         if (liveUsdc == null || liveUsdc < amountUsd) {
           setPaying(false);
+          // addFunds opens Privy's in-page modal (no popup), so this needs no
+          // user gesture; provider popups are opened by Privy's own click.
           handleFund();
           return;
         }
@@ -759,7 +857,13 @@ export function WalletPayCard({
 
   const handleFund = async () => {
     if (!activeWallet) return;
+    // Privy rejects a second addFunds while one is open ("Existing fiat
+    // onramp flow in progress" — 32 rows in payment_errors), e.g. auto-open
+    // from handlePay racing a manual Top-up tap.
+    if (fundInFlightRef.current) return;
+    fundInFlightRef.current = true;
     setError(null);
+    setOfferOpenInBrowser(false);
     try {
       // useAddFunds (Privy v3) surfaces ALL enabled onramps including Stripe,
       // whereas the legacy useFundWallet excludes Stripe by design. destination
@@ -829,26 +933,21 @@ export function WalletPayCard({
       poll();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (/cancel|closed|reject/i.test(msg)) return;
-      // Privy's Stripe fiat onramp intermittently returns "Unable to check
-      // payment status" / "Unable to open payment window" — the user did NOT
-      // get charged, but the flow is dead. Point them at an alternative path
-      // (Ru$h purchase via our own Stripe wire, then pay the surface in Ru$h)
-      // instead of dumping the raw error message.
-      const isOnrampGlitch =
-        /unable to (check payment status|open payment window)/i.test(msg) ||
-        /something went wrong setting up checkout/i.test(msg);
-      if (isOnrampGlitch) {
-        setError(es
-          ? "El pago con tarjeta está fallando en este momento. Prueba con 🎫 Ru$h 💎 (también con tarjeta, pipeline distinta) o vuelve a intentarlo en unos minutos."
-          : "Card top-up is glitching right now. Try 🎫 Ru$h 💎 instead (also card-based, different pipeline) or retry in a couple of minutes.");
-      } else {
-        setError(es ? `No se pudo abrir el pago: ${msg}` : `Could not open payment: ${msg}`);
-      }
+      // Popup-blocked / Stripe risk declines / onramp glitches all leave the
+      // user uncharged. Show copy specific to each so they know what to do
+      // next (allow pop-ups, open in a real browser, or use Apple Pay /
+      // Google Pay) instead of the raw Privy error.
+      const kind = classifyOnrampError(msg);
+      if (kind === "cancel") return;
+      setError(onrampErrorMessage(kind, es, msg));
+      setOfferOpenInBrowser(shouldOfferOpenInBrowser(kind));
       reportWalletClientError("addFunds", err, {
         surface, amountUsd, address: activeWallet?.address,
         walletType: activeWallet?.walletClientType,
+        onrampErrorKind: kind,
       });
+    } finally {
+      fundInFlightRef.current = false;
     }
   };
 
@@ -1012,6 +1111,7 @@ export function WalletPayCard({
           {error}
         </div>
       )}
+      {error && offerOpenInBrowser && <OpenInBrowserButton es={es} />}
       {connectError && (
         <div className="text-[11px] text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2 py-1.5">
           {connectError}
@@ -1088,6 +1188,7 @@ export function WalletPayCard({
             const leftoverUsd = Math.max(0, topupUsd - amountUsd);
             const showsLeftover = leftoverUsd >= 0.5;
             return (
+              <>
               <button
                 type="button"
                 onClick={handleFund}
@@ -1109,6 +1210,20 @@ export function WalletPayCard({
                       : `This purchase: $${amountUsd.toFixed(2)} (top-up minimum)`}
                 </span>
               </button>
+              {/* MoonPay needs a popup this context can't open (Telegram /
+                  in-app browser / iOS home-screen app). Say so up front so
+                  users pick Stripe here, or move to Safari for MoonPay. */}
+              {popupsUnsupported() && !error && (
+                <div className="space-y-1.5">
+                  <p className="text-[11px] text-pnp-textSecondary leading-snug text-center">
+                    {es
+                      ? `Aquí funciona Tarjeta / Apple Pay (Stripe). MoonPay solo abre en ${isIOSStandalone() ? "Safari" : "tu navegador"}.`
+                      : `Card / Apple Pay (Stripe) works here. MoonPay only opens in ${isIOSStandalone() ? "Safari" : "your browser"}.`}
+                  </p>
+                  <OpenInBrowserButton es={es} />
+                </div>
+              )}
+              </>
             );
           })()}
           {/* External wallet with insufficient USDC → user must top up inside
@@ -1623,9 +1738,12 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
       refresh();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (/cancel|closed|reject/i.test(msg)) return;
-      setError(`Payment provider error: ${msg}`);
-      reportWalletClientError("addFunds", err, { source: "WalletHomeSheet", address });
+      const kind = classifyOnrampError(msg);
+      if (kind === "cancel") return;
+      setError(kind === "other" ? `Payment provider error: ${msg}` : onrampErrorMessage(kind, false, msg));
+      reportWalletClientError("addFunds", err, {
+        source: "WalletHomeSheet", address, onrampErrorKind: kind,
+      });
     }
   };
 
