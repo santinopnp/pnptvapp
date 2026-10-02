@@ -704,18 +704,23 @@ async function _fulfill(client, { userId, entitlementSpec, surface, provider, in
   // rush_creator_ledger was empty in production at the time of this fix — no
   // pending or settled amounts were stranded by removing this trigger.
 
-  // ── PRIME Channel bundle split — post-fulfill on-chain 35/35/20/10 ──────────
-  // Fires only for the current PRIME bundle (Santino + Lex co-founder plans);
-  // channel_pass and other creator surfaces run through the standard creator
-  // earnings ledger. Provider guard: only USDC-on-Base payments (never Ru$h
-  // spends). Fire-and-forget — a chain failure here must never invalidate
-  // the fulfillment we just committed.
-  if (surface === 'prime' && Number(amountUsd) > 0 && provider === 'wallet_usdc') {
-    // Co-founder wallets are read from users.wallet_address inside
-    // distributePrimeChannelSplit (no env vars for those). We only pre-gate on
-    // the operational addresses that live in env: treasury + reinvestment.
-    // If a co-founder wallet is missing the function will throw with a
-    // descriptive PRIME_SPLIT_CONFIG_MISSING and Slack the operator.
+  // ── PRIME Channel bundle split — PAUSED 2026-10-01 ──────────────────────────
+  // The on-chain 35/35/20/10 split signs with GAS_TREASURY_PRIVATE_KEY, but
+  // wallet_usdc revenue lands at CRYPTO_RECEIVING_ADDRESS (Santino's personal
+  // wallet, 0xd74b…cc8). Those are different EOAs, so every split since
+  // 2026-09-29 reverted with "ERC20: transfer amount exceeds balance" and
+  // paged Slack ops. Pausing dispatch until the architecture is reworked
+  // (either sweep from receiving → gas-treasury pre-split, or sign splits
+  // with the receiving wallet's key). Revenue continues to accrue in the
+  // personal wallet; Lex/treasury/reinvestment shares are reconciled off-chain.
+  //
+  // Flip PRIME_SPLIT_ENABLED=true in env to re-enable without a code change.
+  if (
+    surface === 'prime' &&
+    Number(amountUsd) > 0 &&
+    provider === 'wallet_usdc' &&
+    process.env.PRIME_SPLIT_ENABLED === 'true'
+  ) {
     const opsConfigured = Boolean(
       (process.env.PNPTV_TREASURY_WALLET || process.env.SANTINO_PAYOUT_ADDRESS) &&
       process.env.CREATORS_BUDGET_ADDRESS
@@ -738,7 +743,6 @@ async function _fulfill(client, { userId, entitlementSpec, surface, provider, in
         logger.error('[walletCheckout] PRIME channel split failed — needs manual reconciliation', {
           intentId, amountUsd, error: err.message,
         });
-        // Slack ops so a human can retry
         try {
           const channel = process.env.SLACK_OPS_ADMIN_CHANNEL || process.env.SLACK_OPS_INCIDENTS_CHANNEL;
           const token = process.env.SLACK_BOT_TOKEN;
