@@ -517,7 +517,7 @@ export default function Subscribe() {
             className="flex-shrink-0 self-start text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full"
             style={{ background: "rgba(16,185,129,0.18)", color: "#34d399", border: "1px solid rgba(16,185,129,0.40)" }}
           >
-            {t.lang === "es" ? "3 días gratis" : "3-day trial"}
+            {t.lang === "es" ? "24 h gratis" : "24-hour trial"}
           </span>
         </div>
       );
