@@ -14,6 +14,7 @@ import { useViewportHeight } from "@/hooks/useViewportHeight";
 import { useOrientation } from "@/hooks/useOrientation";
 const CristinaWidget = lazy(() => import("@/components/CristinaWidget").then((m) => ({ default: m.CristinaWidget })));
 
+import { LanguageSelector } from "@/components/LanguageSelector";
 import { NotificationBell } from "@/components/NotificationBell";
 import { UserAvatar } from "@/components/UserAvatar";
 import { AdSlot } from "@/components/AdSlot";
@@ -785,6 +786,99 @@ function SidebarDmChat({ userId, myDbId, onBack }: SidebarDmChatProps) {
   );
 }
 
+// ── Native-language nudge ─────────────────────────────────────────────────────
+//
+// Fires once per browser (localStorage flag) when the signed-in user is on
+// `en` but their browser's `navigator.language` matches a supported non-English
+// language. One-shot: tap "Switch" to adopt + persist, or "Keep English" to
+// dismiss. Both paths set the flag so this never shows again on this device.
+const NUDGE_LANG_LABEL: Record<string, string> = {
+  es: "Español", pt: "Português", fr: "Français", de: "Deutsch", it: "Italiano",
+  nl: "Nederlands", ru: "Русский", tr: "Türkçe", th: "ไทย", zh: "中文",
+  zhTW: "中文（繁）", ja: "日本語", vi: "Tiếng Việt", id: "Indonesia", ar: "العربية",
+};
+const NUDGE_LANG_MAP: Record<string, string> = {
+  es: "es", pt: "pt", "pt-br": "pt", fr: "fr", de: "de", it: "it", nl: "nl",
+  ru: "ru", tr: "tr", th: "th", zh: "zh", "zh-hans": "zh", "zh-hant": "zhTW",
+  "zh-tw": "zhTW", ja: "ja", vi: "vi", id: "id", ar: "ar",
+};
+function NativeLangNudge() {
+  const { user, setUserLanguage } = useAuth();
+  const [target, setTarget] = React.useState<string | null>(null);
+  const [busy, setBusy] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!user || user.language !== "en") return;
+    try {
+      if (localStorage.getItem("pnptv_lang_prompted") === "1") return;
+    } catch { /* ignore */ }
+    const nav = (typeof navigator !== "undefined" ? navigator.language : "") || "";
+    const lower = nav.toLowerCase();
+    const mapped = NUDGE_LANG_MAP[lower] || NUDGE_LANG_MAP[lower.split("-")[0]];
+    if (mapped && mapped !== "en") setTarget(mapped);
+  }, [user]);
+
+  const dismiss = (persistEn: boolean) => {
+    try { localStorage.setItem("pnptv_lang_prompted", "1"); } catch { /* ignore */ }
+    setTarget(null);
+    if (persistEn) {
+      // User explicitly chose English — persist so they aren't nudged on other
+      // devices either.
+      import("@/lib/api").then(({ updateLanguage }) => updateLanguage("en").catch(() => {}));
+    }
+  };
+
+  const adopt = async () => {
+    if (!target || busy) return;
+    setBusy(true);
+    setUserLanguage(target);
+    try { localStorage.setItem("pnptv_lang_prompted", "1"); } catch { /* ignore */ }
+    try {
+      const { updateLanguage } = await import("@/lib/api");
+      await updateLanguage(target);
+    } catch { /* non-fatal; UI already switched */ }
+    setBusy(false);
+    setTarget(null);
+  };
+
+  if (!target) return null;
+  const label = NUDGE_LANG_LABEL[target] || target;
+  return (
+    <div
+      className="fixed left-1/2 -translate-x-1/2 top-[max(0.5rem,env(safe-area-inset-top))] z-[70] max-w-[92vw] sm:max-w-md"
+      role="dialog"
+      aria-live="polite"
+    >
+      <div
+        className="flex items-center gap-2 px-3 py-2 rounded-full shadow-lg"
+        style={{
+          background: "rgba(28,28,30,0.95)",
+          border: "1px solid rgba(255,255,255,0.12)",
+          backdropFilter: "blur(10px)",
+        }}
+      >
+        <span className="text-xs text-white/85 truncate">Switch to {label}?</span>
+        <button
+          type="button"
+          onClick={() => { void adopt(); }}
+          disabled={busy}
+          className="text-xs font-semibold px-2.5 py-1 rounded-full text-white active:scale-95 transition-transform disabled:opacity-50"
+          style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+        >
+          Switch
+        </button>
+        <button
+          type="button"
+          onClick={() => dismiss(true)}
+          className="text-xs text-pnp-textSecondary hover:text-white px-2 py-1 rounded-full transition-colors"
+        >
+          Keep EN
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Layout ────────────────────────────────────────────────────────────────────
 
 export function Layout() {
@@ -1523,7 +1617,7 @@ export function Layout() {
                 {user?.displayName || t.nav.user}
               </span>
             </button>
-
+            <LanguageSelector position="sidebar" />
           </div>
         </div>
       </aside>
@@ -1586,6 +1680,11 @@ export function Layout() {
             )}
           </button>
           <NotificationBell />
+
+          {/* Language chip — quick switch from topbar */}
+          <div className="ml-1">
+            <LanguageSelector position="topbar" variant="chip" />
+          </div>
 
           {/* Avatar — opens profile/settings menu */}
           <button
@@ -2335,6 +2434,10 @@ export function Layout() {
 
       {/* Toast notifications */}
       {isAuthenticated && <Toast />}
+
+      {/* One-time native-language nudge for authed users on `en` whose browser
+          locale maps to a supported non-English language. */}
+      {isAuthenticated && <NativeLangNudge />}
 
       {/* One-shot flash messages stashed in sessionStorage by other routes
           (e.g. failed hangout-invite redirect). Shown regardless of auth so the

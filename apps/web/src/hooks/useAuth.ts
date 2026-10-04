@@ -59,6 +59,7 @@ interface AuthState {
   login: () => Promise<void>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
+  setUserLanguage: (lang: string) => void;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -217,6 +218,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  const setUserLanguage = useCallback((lang: string) => {
+    setUser((u) => (u ? { ...u, language: lang } : u));
+  }, []);
+
   const isAdmin = !!user && (user.role === "admin" || user.role === "superadmin");
   const isCreatorAdmin = !!user && user.role === "creator";
   const isSuperGod = !!user && user.isSuperGod === true;
@@ -233,6 +238,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     login: handleLogin,
     logout: handleLogout,
     refreshUser,
+    setUserLanguage,
   };
 
   return React.createElement(AuthContext.Provider, { value }, children);

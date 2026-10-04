@@ -4,32 +4,34 @@ import { useI18n, setGuestLang, type Lang } from "@/lib/i18n";
 import { updateLanguage } from "@/lib/api";
 
 const LANG_OPTIONS: { code: Lang; flag: string; label: string }[] = [
-  { code: "en", flag: "\uD83C\uDDFA\uD83C\uDDF8", label: "English" },
-  { code: "es", flag: "\uD83C\uDDEA\uD83C\uDDF8", label: "Espa\u00f1ol" },
-  { code: "pt", flag: "\uD83C\uDDE7\uD83C\uDDF7", label: "Portugu\u00eas" },
-  { code: "fr", flag: "\uD83C\uDDEB\uD83C\uDDF7", label: "Fran\u00e7ais" },
-  { code: "de", flag: "\uD83C\uDDE9\uD83C\uDDEA", label: "Deutsch" },
-  { code: "it", flag: "\uD83C\uDDEE\uD83C\uDDF9", label: "Italiano" },
-  { code: "nl", flag: "\uD83C\uDDF3\uD83C\uDDF1", label: "Nederlands" },
-  { code: "ru", flag: "\uD83C\uDDF7\uD83C\uDDFA", label: "\u0420\u0443\u0441\u0441\u043A\u0438\u0439" },
-  { code: "tr", flag: "\uD83C\uDDF9\uD83C\uDDF7", label: "T\u00fcrk\u00e7e" },
-  { code: "th", flag: "\uD83C\uDDF9\uD83C\uDDED", label: "\u0E44\u0E17\u0E22" },
-  { code: "zh", flag: "\uD83C\uDDE8\uD83C\uDDF3", label: "\u4E2D\u6587" },
-  { code: "ja", flag: "\uD83C\uDDEF\uD83C\uDDF5", label: "\u65E5\u672C\u8A9E" },
-  { code: "vi", flag: "\uD83C\uDDFB\uD83C\uDDF3", label: "Ti\u1EBFng Vi\u1EC7t" },
-  { code: "id", flag: "\uD83C\uDDEE\uD83C\uDDE9", label: "Indonesia" },
-  { code: "ar", flag: "\uD83C\uDDF8\uD83C\uDDE6", label: "\u0627\u0644\u0639\u0631\u0628\u064A\u0629" },
-  { code: "zhTW", flag: "\uD83C\uDDF9\uD83C\uDDFC", label: "\u4E2D\u6587\uFF08\u7E41\uFF09" },
+  { code: "en", flag: "🇺🇸", label: "English" },
+  { code: "es", flag: "🇪🇸", label: "Español" },
+  { code: "pt", flag: "🇧🇷", label: "Português" },
+  { code: "fr", flag: "🇫🇷", label: "Français" },
+  { code: "de", flag: "🇩🇪", label: "Deutsch" },
+  { code: "it", flag: "🇮🇹", label: "Italiano" },
+  { code: "nl", flag: "🇳🇱", label: "Nederlands" },
+  { code: "ru", flag: "🇷🇺", label: "Русский" },
+  { code: "tr", flag: "🇹🇷", label: "Türkçe" },
+  { code: "th", flag: "🇹🇭", label: "ไทย" },
+  { code: "zh", flag: "🇨🇳", label: "中文" },
+  { code: "ja", flag: "🇯🇵", label: "日本語" },
+  { code: "vi", flag: "🇻🇳", label: "Tiếng Việt" },
+  { code: "id", flag: "🇮🇩", label: "Indonesia" },
+  { code: "ar", flag: "🇸🇦", label: "العربية" },
+  { code: "zhTW", flag: "🇹🇼", label: "中文（繁）" },
 ];
 
 interface LanguageSelectorProps {
   /** "topbar" opens dropdown downward, "sidebar" opens upward */
   position?: "topbar" | "sidebar";
+  /** "chip" renders a smaller flag-only trigger suited for mobile topbar */
+  variant?: "default" | "chip";
 }
 
-export function LanguageSelector({ position = "topbar" }: LanguageSelectorProps) {
+export function LanguageSelector({ position = "topbar", variant = "default" }: LanguageSelectorProps) {
   const [open, setOpen] = useState(false);
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, setUserLanguage } = useAuth();
   const { lang: currentLang } = useI18n();
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -48,24 +50,34 @@ export function LanguageSelector({ position = "topbar" }: LanguageSelectorProps)
   const handleSelect = useCallback(async (code: Lang) => {
     setOpen(false);
     setGuestLang(code);
+    // Remember the user chose explicitly so the one-time native-lang nudge
+    // doesn't fire on a later session.
+    try { localStorage.setItem("pnptv_lang_prompted", "1"); } catch { /* ignore */ }
     if (isAuthenticated) {
+      // Update local user state immediately so the whole app re-renders in the
+      // new language without a page reload. Persist to the backend in the
+      // background — a failed save is non-fatal, the UI already reflects it.
+      setUserLanguage(code);
       try { await updateLanguage(code); } catch { /* silent */ }
     }
-    window.location.reload();
-  }, [isAuthenticated]);
+  }, [isAuthenticated, setUserLanguage]);
 
-  const currentFlag = LANG_OPTIONS.find((l) => l.code === currentLang)?.flag || "\uD83C\uDF10";
+  const currentFlag = LANG_OPTIONS.find((l) => l.code === currentLang)?.flag || "🌐";
+
+  const triggerClasses = variant === "chip"
+    ? "w-7 h-7 rounded-full flex items-center justify-center text-xs transition-colors hover:bg-white/10"
+    : "w-8 h-8 rounded-full flex items-center justify-center text-sm transition-colors hover:bg-white/10";
 
   return (
     <div className="relative" ref={containerRef}>
       <button
         onClick={() => setOpen((v) => !v)}
-        className="w-8 h-8 rounded-full flex items-center justify-center text-sm transition-colors hover:bg-white/10"
+        className={triggerClasses}
         style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.08)" }}
         aria-label="Change language"
         aria-expanded={open}
       >
-        <span className="text-sm leading-none">{currentFlag}</span>
+        <span className={variant === "chip" ? "text-xs leading-none" : "text-sm leading-none"}>{currentFlag}</span>
       </button>
 
       {open && (
