@@ -5331,6 +5331,43 @@ app.get('/api/webapp/admin/revenue-report', adminGuard, asyncHandler(async (req,
   }
 }));
 
+// Live sales feed — reads the unified v_sales view (payments + payment_history
+// + token_ledger wallet subs/Ru$h/calls/content + booking_payments). Zoho Books
+// remains the external source of truth; this is the local DB mirror used by
+// admin dashboards to avoid hitting Zoho's rate limit.
+// Query: ?hours=24 (default 24, max 720) ?limit=200 (default 50, max 500)
+app.get('/api/webapp/admin/sales/recent', adminGuard, asyncHandler(async (req, res) => {
+  const hours = Math.min(Math.max(parseInt(req.query.hours, 10) || 24, 1), 720);
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 500);
+  const { rows: items } = await query(`
+    SELECT v.src_tbl, v.src_pk, v.user_id, v.amount_usd, v.currency,
+           v.provider, v.product, v.at,
+           u.username, u.first_name
+      FROM v_sales v
+      LEFT JOIN users u ON u.id = v.user_id
+     WHERE v.at > NOW() - ($1 || ' hours')::interval
+     ORDER BY v.at DESC
+     LIMIT $2
+  `, [String(hours), limit]);
+  const { rows: totals } = await query(`
+    SELECT COUNT(*)::int AS rows,
+           COALESCE(SUM(amount_usd), 0)::numeric(12,2) AS total_usd,
+           COUNT(DISTINCT user_id)::int AS unique_buyers
+      FROM v_sales
+     WHERE at > NOW() - ($1 || ' hours')::interval
+  `, [String(hours)]);
+  const { rows: byProvider } = await query(`
+    SELECT provider,
+           COUNT(*)::int AS rows,
+           COALESCE(SUM(amount_usd), 0)::numeric(12,2) AS total_usd
+      FROM v_sales
+     WHERE at > NOW() - ($1 || ' hours')::interval
+     GROUP BY provider
+     ORDER BY total_usd DESC NULLS LAST
+  `, [String(hours)]);
+  res.json({ success: true, window_hours: hours, totals: totals[0], by_provider: byProvider, items });
+}));
+
 // Super-god toggle — eligible ops accounts can turn their god-mode off (behave
 // as normal user) or back on. Rejects anyone not on the allowlist so a
 // compromised session can't grant itself a bypass.
