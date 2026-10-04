@@ -332,7 +332,7 @@ export type OnrampErrorKind =
   | "other";
 
 export function classifyOnrampError(msg: string): OnrampErrorKind {
-  if (/transaction has been blocked|card (was |has been )?(declined|blocked)|unable to authenticate your payment method/i.test(msg)) return "card_blocked";
+  if (/transaction has been blocked|card (was |has been )?(declined|blocked)|unable to authenticate your payment method|insufficient funds|discover cards|not supported card/i.test(msg)) return "card_blocked";
   if (/unable to open payment window|pop-?up.*blocked/i.test(msg)) return "popup_blocked";
   if (/not available in your region/i.test(msg)) return "provider_region";
   if (/unable to check payment status|could not confirm payment status/i.test(msg)) return "status_timeout";
@@ -366,10 +366,13 @@ export function onrampErrorMessage(kind: OnrampErrorKind, es: boolean, rawMsg: s
         : (es
           ? "Tu navegador bloqueó la ventana de MoonPay. Permite ventanas emergentes para pnptv.app y reintenta, o elige Tarjeta / Apple Pay (Stripe)."
           : "Your browser blocked MoonPay's window. Allow pop-ups for pnptv.app and retry, or pick Card / Apple Pay (Stripe).");
-    case "card_blocked":
-      return (es
-        ? "Stripe rechazó este pago por seguridad. No se hizo ningún cargo."
-        : "Stripe declined this payment for security reasons. You were not charged.") + tryMoonpay;
+    case "card_blocked": {
+      const isInsufficient = /insufficient funds/i.test(rawMsg);
+      const baseMsg = isInsufficient
+        ? (es ? "Tu tarjeta no tiene fondos suficientes." : "Your card has insufficient funds.")
+        : (es ? "Stripe rechazó este pago. No se hizo ningún cargo." : "Stripe declined this payment. You were not charged.");
+      return baseMsg + tryMoonpay;
+    }
     case "stripe_failed":
       return (es
         ? "Stripe no pudo completar el pago. No se hizo ningún cargo."
