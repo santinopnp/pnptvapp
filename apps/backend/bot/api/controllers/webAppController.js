@@ -759,6 +759,124 @@ const magicLinkConfirm = async (req, res) => {
   }
 };
 
+// ── Telegram → external browser handoff ──────────────────────────────────────
+// Telegram's in-app webview blocks popups (Stripe onramp, OAuth windows) and
+// has partitioned storage. Users who start there get a one-tap "Open in
+// browser" button: the webview (already signed in via initData) mints a
+// short-lived single-use token, Telegram.WebApp.openLink() opens the verify
+// URL in Safari/Chrome, and that request turns the token into a fresh session
+// so the user lands signed in instead of on the login page.
+
+const BROWSER_HANDOFF_PREFIX = 'browser_handoff:';
+// The webview pre-mints a token while the banner is visible (Telegram only
+// honours openLink() inside the tap handler, so there's no time to await a
+// fetch there) and refreshes it before expiry.
+const BROWSER_HANDOFF_TTL = 600; // seconds
+
+// Same-origin relative paths only — never let returnTo become an open redirect.
+function sanitizeHandoffReturnTo(raw) {
+  if (typeof raw !== 'string' || !raw.startsWith('/') || raw.startsWith('//') || raw.startsWith('/\\')) return '/';
+  if (raw.length > 512 || /[\r\n]/.test(raw)) return '/';
+  return raw;
+}
+
+const browserHandoffStart = async (req, res) => {
+  try {
+    const userId = req.session?.user?.id;
+    if (!userId) return res.status(401).json({ success: false, error: 'Not authenticated' });
+    const returnTo = sanitizeHandoffReturnTo(req.body?.returnTo);
+    const token = crypto.randomBytes(32).toString('base64url');
+    await getRedis().set(
+      `${BROWSER_HANDOFF_PREFIX}${token}`,
+      JSON.stringify({ userId, returnTo }),
+      'EX',
+      BROWSER_HANDOFF_TTL
+    );
+    const url = `${APP_ORIGIN()}/api/webapp/auth/handoff?token=${encodeURIComponent(token)}`;
+    return res.json({ success: true, url, expiresIn: BROWSER_HANDOFF_TTL });
+  } catch (error) {
+    logger.error('[browser-handoff] start error', error);
+    return res.status(500).json({ success: false, error: 'Could not prepare browser handoff' });
+  }
+};
+
+// GET renders an auto-submitting form (same reasoning as magicLinkVerify:
+// link previewers must not be able to burn the token); POST consumes it.
+const browserHandoffVerify = async (req, res) => {
+  const APP_URL = APP_ORIGIN();
+  const token = typeof req.query?.token === 'string' ? req.query.token.replace(/[^A-Za-z0-9_\-]/g, '') : '';
+  if (!token) return res.redirect(`${APP_URL}/login`);
+  // The page the user was on when they tapped (the token may predate it).
+  const returnTo = sanitizeHandoffReturnTo(req.query?.returnTo)
+    .replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  res.set('Cache-Control', 'no-store');
+  res.set('X-Robots-Tag', 'noindex, nofollow');
+  res.set('Referrer-Policy', 'no-referrer');
+  return res.send(`<!doctype html>
+<html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>PNPtv!</title>
+<style>
+html,body{margin:0;background:#0a0a14;color:#fff;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;min-height:100vh}
+.wrap{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:24px;text-align:center}
+button{padding:14px 32px;background:linear-gradient(135deg,#D4007A,#E69138);color:#fff;border:0;border-radius:12px;font-weight:700;font-size:14px}
+.spin{width:24px;height:24px;border:3px solid rgba(255,255,255,0.15);border-top-color:#E69138;border-radius:50%;animation:s 1s linear infinite;margin:0 auto 16px}
+@keyframes s{to{transform:rotate(360deg)}}
+</style></head>
+<body><div class="wrap">
+<div class="spin"></div>
+<form id="f" method="POST" action="/api/webapp/auth/handoff">
+<input type="hidden" name="token" value="${token}">
+<input type="hidden" name="returnTo" value="${returnTo}">
+<noscript><button type="submit">Continue / Continuar</button></noscript>
+</form>
+<script>document.getElementById('f').submit();</script>
+</div></body></html>`);
+};
+
+const browserHandoffConfirm = async (req, res) => {
+  const APP_URL = APP_ORIGIN();
+  const fail = () => res.redirect(`${APP_URL}/login?handoff_error=expired`);
+  try {
+    const token = typeof req.body?.token === 'string' ? req.body.token : '';
+    if (!token) return fail();
+    const raw = await getRedis().getdel(`${BROWSER_HANDOFF_PREFIX}${token}`);
+    if (!raw) return fail();
+
+    let payload;
+    try { payload = JSON.parse(raw); } catch { return fail(); }
+    if (!payload?.userId) return fail();
+
+    const result = await query(
+      `SELECT id, pnptv_id, telegram, username, first_name, last_name, subscription_status,
+              tier, terms_accepted, photo_file_id, bio, language, role, email_verified,
+              email, creator_status, content_disclaimer, x_user_id, x_id, twitter
+       FROM users WHERE id = $1 AND is_deleted = false`,
+      [payload.userId]
+    );
+    if (result.rows.length === 0 || result.rows[0].role === 'banned') return fail();
+    const user = result.rows[0];
+
+    const sessionData = buildSession(user, { last_login_method: 'telegram_handoff' });
+    await new Promise((resolve, reject) =>
+      req.session.regenerate((err) => (err ? reject(err) : resolve()))
+    );
+    req.session.user = sessionData;
+    await new Promise((resolve, reject) =>
+      req.session.save((err) => (err ? reject(err) : resolve()))
+    );
+
+    logger.info(`[browser-handoff] sign-in: user ${user.id}`);
+    const bodyReturnTo = sanitizeHandoffReturnTo(req.body?.returnTo);
+    return res.redirect(`${APP_URL}${bodyReturnTo !== '/' ? bodyReturnTo : sanitizeHandoffReturnTo(payload.returnTo)}`);
+  } catch (error) {
+    logger.error('[browser-handoff] confirm error', error);
+    return fail();
+  }
+};
+
 // ── Passkey / WebAuthn inline ceremony ───────────────────────────────────────
 
 const passkeyBegin = async (req, res) => {
@@ -3655,6 +3773,9 @@ module.exports = {
   magicLinkStart,
   magicLinkVerify,
   magicLinkConfirm,
+  browserHandoffStart,
+  browserHandoffVerify,
+  browserHandoffConfirm,
   passkeyBegin,
   passkeyFinish,
   passkeyRegisterBegin,
