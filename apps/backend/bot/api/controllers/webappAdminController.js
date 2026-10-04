@@ -217,14 +217,23 @@ const getUser = async (req, res) => {
 
   try {
     const { id: userId } = req.params;
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId);
     const result = await query(
-      `SELECT id, username, email, first_name, last_name, bio, role, tier,
+      isUuid
+        ? `SELECT id, username, email, first_name, last_name, bio, role, tier,
               subscription_status, plan_id AS subscription_plan, plan_expiry, created_at,
               last_payment_date, last_payment_method, last_payment_amount,
               last_login_at, last_login_method, last_active,
               telegram, twitter, x_username, pnptv_id, language, location_name,
               creator_status, creator_type, creator_price_usd, creator_locked, live_channel
-         FROM users WHERE id = $1`,
+         FROM users WHERE id = $1`
+        : `SELECT id, username, email, first_name, last_name, bio, role, tier,
+              subscription_status, plan_id AS subscription_plan, plan_expiry, created_at,
+              last_payment_date, last_payment_method, last_payment_amount,
+              last_login_at, last_login_method, last_active,
+              telegram, twitter, x_username, pnptv_id, language, location_name,
+              creator_status, creator_type, creator_price_usd, creator_locked, live_channel
+         FROM users WHERE LOWER(username) = LOWER($1)`,
       [userId]
     );
 
