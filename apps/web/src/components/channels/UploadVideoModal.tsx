@@ -525,12 +525,13 @@ export default function UploadVideoModal({
         </div>
       )}
 
-      {/* Drop zone */}
-      <div
+      {/* Drop zone — <label> so tap/click natively activates the file input
+          (programmatic .click() on a hidden input is unreliable in iOS Telegram WebView). */}
+      <label
+        htmlFor="mux-file-input"
         onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
         onDragLeave={() => setDrag(false)}
         onDrop={onDrop}
-        onClick={() => document.getElementById("mux-file-input")?.click()}
         className="cursor-pointer rounded-2xl flex flex-col items-center justify-center gap-3 py-10 px-4 transition-colors"
         style={{
           border: `2px dashed ${drag ? "#D4007A" : "rgba(212,0,122,.3)"}`,
@@ -561,10 +562,9 @@ export default function UploadVideoModal({
           type="file"
           accept="video/*"
           className="sr-only"
-          onClick={(e) => e.stopPropagation()}
           onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileSelect(f); e.target.value = ""; }}
         />
-      </div>
+      </label>
 
       {/* One-liner */}
       {file && (
