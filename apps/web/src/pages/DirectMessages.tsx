@@ -280,6 +280,8 @@ function DmChatView({ userId, myDbId, myUserId, isAdmin, onBack, panelMode }: { 
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [recordingLevel, setRecordingLevel] = useState(0);
+  const [pendingVoice, setPendingVoice] = useState<{ file: File; url: string; duration: number } | null>(null);
   const [isTyping, setIsTyping] = useState(false);
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [partnerName, setPartnerName] = useState("");
@@ -337,6 +339,11 @@ function DmChatView({ userId, myDbId, myUserId, isAdmin, onBack, panelMode }: { 
   const recorderStreamRef = useRef<MediaStream | null>(null);
   const recorderChunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const recorderAudioCtxRef = useRef<AudioContext | null>(null);
+  const recorderAnalyserRef = useRef<AnalyserNode | null>(null);
+  const recorderRafRef = useRef<number | null>(null);
+  const recorderCancelledRef = useRef<boolean>(false);
+  const recordingSecondsRef = useRef<number>(0);
   const lastTypingEmit = useRef(0);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inviteRoomFromQuery = searchParams.get("call");
@@ -835,15 +842,23 @@ function DmChatView({ userId, myDbId, myUserId, isAdmin, onBack, panelMode }: { 
 
   const stopRecordingStream = () => {
     if (recordingTimerRef.current) { clearInterval(recordingTimerRef.current); recordingTimerRef.current = null; }
+    if (recorderRafRef.current != null) { cancelAnimationFrame(recorderRafRef.current); recorderRafRef.current = null; }
+    recorderAnalyserRef.current = null;
+    if (recorderAudioCtxRef.current) {
+      try { recorderAudioCtxRef.current.close(); } catch { /* ignore */ }
+      recorderAudioCtxRef.current = null;
+    }
     recorderStreamRef.current?.getTracks().forEach((t) => t.stop());
     recorderStreamRef.current = null;
     mediaRecorderRef.current = null;
     setIsRecording(false);
     setRecordingSeconds(0);
+    setRecordingLevel(0);
   };
 
   const startRecording = async () => {
-    if (isRecording) return;
+    if (isRecording || pendingVoice) return;
+    recorderCancelledRef.current = false;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       recorderStreamRef.current = stream;
@@ -852,35 +867,72 @@ function DmChatView({ userId, myDbId, myUserId, isAdmin, onBack, panelMode }: { 
       recorderChunksRef.current = [];
       rec.ondataavailable = (e) => { if (e.data && e.data.size > 0) recorderChunksRef.current.push(e.data); };
       rec.onstop = () => {
-        const blob = new Blob(recorderChunksRef.current, { type: rec.mimeType || "audio/webm" });
+        const chunks = recorderChunksRef.current;
         recorderChunksRef.current = [];
-        const ext = (rec.mimeType || "audio/webm").includes("mp4") ? "m4a" : (rec.mimeType || "").includes("ogg") ? "ogg" : "webm";
-        const file = new File([blob], `voice-${Date.now()}.${ext}`, { type: blob.type });
-        setMediaFiles((prev) => [...prev, file]);
-        setMediaPreviews((prev) => [...prev, ""]);
+        const cancelled = recorderCancelledRef.current;
+        const elapsed = recordingSecondsRef.current;
         stopRecordingStream();
+        if (cancelled || chunks.length === 0) return;
+        const blob = new Blob(chunks, { type: rec.mimeType || "audio/webm" });
+        const type = rec.mimeType || "audio/webm";
+        const ext = type.includes("mp4") ? "m4a" : type.includes("ogg") ? "ogg" : "webm";
+        const file = new File([blob], `voice-${Date.now()}.${ext}`, { type: blob.type });
+        const url = URL.createObjectURL(blob);
+        setPendingVoice({ file, url, duration: elapsed });
       };
       mediaRecorderRef.current = rec;
       rec.start();
       setIsRecording(true);
       setRecordingSeconds(0);
+      recordingSecondsRef.current = 0;
+
+      // Level meter via AnalyserNode
+      try {
+        const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+        if (Ctx) {
+          const ctx = new Ctx();
+          const source = ctx.createMediaStreamSource(stream);
+          const analyser = ctx.createAnalyser();
+          analyser.fftSize = 512;
+          source.connect(analyser);
+          recorderAudioCtxRef.current = ctx;
+          recorderAnalyserRef.current = analyser;
+          const data = new Uint8Array(analyser.fftSize);
+          const tick = () => {
+            if (!recorderAnalyserRef.current) return;
+            recorderAnalyserRef.current.getByteTimeDomainData(data);
+            let sum = 0;
+            for (let i = 0; i < data.length; i++) { const v = (data[i] - 128) / 128; sum += v * v; }
+            const rms = Math.sqrt(sum / data.length); // 0..1
+            setRecordingLevel(Math.min(1, rms * 2.4));
+            recorderRafRef.current = requestAnimationFrame(tick);
+          };
+          recorderRafRef.current = requestAnimationFrame(tick);
+        }
+      } catch { /* level meter is optional */ }
+
       recordingTimerRef.current = setInterval(() => {
         setRecordingSeconds((s) => {
-          if (s >= 119) { // 2-minute hard cap
+          const next = s + 1;
+          recordingSecondsRef.current = next;
+          if (next >= 120) { // 2-minute hard cap (inclusive)
             try { rec.state === "recording" && rec.stop(); } catch { /* ignore */ }
-            return s;
+            return 120;
           }
-          return s + 1;
+          return next;
         });
       }, 1000);
     } catch (err) {
-      setChatError(err instanceof Error && err.name === "NotAllowedError" ? "Permiso de micrófono denegado" : "No se pudo iniciar la grabación");
+      setChatError(err instanceof Error && err.name === "NotAllowedError"
+        ? "Microphone permission denied"
+        : "Could not start recording");
       stopRecordingStream();
     }
   };
 
   const stopRecording = () => {
     const rec = mediaRecorderRef.current;
+    recorderCancelledRef.current = false;
     if (rec && rec.state === "recording") {
       rec.stop();
     } else {
@@ -890,17 +942,48 @@ function DmChatView({ userId, myDbId, myUserId, isAdmin, onBack, panelMode }: { 
 
   const cancelRecording = () => {
     const rec = mediaRecorderRef.current;
+    recorderCancelledRef.current = true;
     if (rec && rec.state === "recording") {
-      rec.ondataavailable = null;
-      rec.onstop = null;
       try { rec.stop(); } catch { /* ignore */ }
+    } else {
+      stopRecordingStream();
     }
     recorderChunksRef.current = [];
-    stopRecordingStream();
+  };
+
+  const discardPendingVoice = () => {
+    if (pendingVoice) URL.revokeObjectURL(pendingVoice.url);
+    setPendingVoice(null);
+  };
+
+  const sendPendingVoice = async () => {
+    if (!pendingVoice || sendingMessage) return;
+    const voice = pendingVoice;
+    setSendingMessage(true);
+    setChatError(null);
+    setUploadProgress(0);
+    try {
+      const data = await uploadMediaWithProgress(voice.file, "");
+      if (data.message) setMessages((prev) => prev.some((m) => m.id === data.message!.id) ? prev : [...prev, data.message!]);
+      URL.revokeObjectURL(voice.url);
+      setPendingVoice(null);
+      setReplyTo(null);
+      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+    } catch (err) {
+      setChatError(err instanceof Error ? err.message : "Failed to send voice note");
+    } finally {
+      setSendingMessage(false);
+    }
   };
 
   // Clean up on unmount
-  useEffect(() => () => { cancelRecording(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => {
+    const rec = mediaRecorderRef.current;
+    recorderCancelledRef.current = true;
+    if (rec && rec.state === "recording") { try { rec.stop(); } catch { /* ignore */ } }
+    stopRecordingStream();
+    if (pendingVoice) URL.revokeObjectURL(pendingVoice.url);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadMoreMessages = async () => {
     if (loadingMore || !hasMore || messages.length === 0) return;
@@ -1986,14 +2069,22 @@ function DmChatView({ userId, myDbId, myUserId, isAdmin, onBack, panelMode }: { 
             type="button"
             onClick={cancelRecording}
             className="p-2 rounded-full text-pnp-textSecondary hover:text-white hover:bg-white/10 active:scale-90 transition-all flex-shrink-0"
-            aria-label="Cancelar grabación"
+            aria-label="Cancel recording"
+            title="Cancel recording"
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
           </button>
           <div className="flex-1 flex items-center gap-2 px-3 py-2 rounded-2xl bg-red-500/10 border border-red-500/30">
-            <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-            <span className="text-sm text-white font-medium">Grabando…</span>
-            <span className="ml-auto text-sm text-white font-mono tabular-nums">
+            <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse flex-shrink-0" />
+            <div className="flex-1 flex items-end gap-[2px] h-5 overflow-hidden" aria-hidden="true">
+              {Array.from({ length: 24 }).map((_, i) => {
+                // Phase the level across bars so middle bars respond strongest
+                const dist = Math.abs(i - 11.5) / 11.5;
+                const h = Math.max(0.08, recordingLevel * (1 - dist * 0.6));
+                return <span key={i} className="w-[2px] rounded-full bg-red-400" style={{ height: `${Math.min(1, h) * 100}%` }} />;
+              })}
+            </div>
+            <span className="text-xs text-white/90 font-mono tabular-nums flex-shrink-0">
               {Math.floor(recordingSeconds / 60)}:{String(recordingSeconds % 60).padStart(2, "0")}
             </span>
           </div>
@@ -2002,9 +2093,41 @@ function DmChatView({ userId, myDbId, myUserId, isAdmin, onBack, panelMode }: { 
             onClick={stopRecording}
             className="p-2.5 rounded-full text-white active:scale-90 transition-all flex-shrink-0"
             style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
-            aria-label="Enviar nota de voz"
+            aria-label="Stop recording"
+            title="Stop recording"
           >
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" /></svg>
+            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><rect x="5" y="5" width="10" height="10" rx="1.5" /></svg>
+          </button>
+        </div>
+      ) : pendingVoice ? (
+        <div className={`flex items-center gap-2 px-3 py-2.5 border-t border-pnp-border flex-shrink-0 bg-pnp-background${panelMode ? "" : " pb-safe"}`}>
+          <button
+            type="button"
+            onClick={discardPendingVoice}
+            disabled={sendingMessage}
+            className="p-2 rounded-full text-pnp-textSecondary hover:text-white hover:bg-white/10 active:scale-90 transition-all flex-shrink-0 disabled:opacity-50"
+            aria-label="Discard voice note"
+            title="Discard voice note"
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M1 7h22M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2" /></svg>
+          </button>
+          <div className="flex-1 min-w-0 px-2 py-1 rounded-2xl bg-white/5 border border-white/10">
+            <VoiceBubble src={pendingVoice.url} id={-1} isMe />
+          </div>
+          <button
+            type="button"
+            onClick={() => { void sendPendingVoice(); }}
+            disabled={sendingMessage}
+            className="p-2.5 rounded-full text-white active:scale-90 transition-all flex-shrink-0 disabled:opacity-50"
+            style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+            aria-label="Send voice note"
+            title="Send voice note"
+          >
+            {sendingMessage ? (
+              <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeOpacity="0.3" /><path d="M12 2a10 10 0 0110 10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" /></svg>
+            ) : (
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" /></svg>
+            )}
           </button>
         </div>
       ) : (
@@ -2042,7 +2165,8 @@ function DmChatView({ userId, myDbId, myUserId, isAdmin, onBack, panelMode }: { 
             onClick={startRecording}
             className="p-2.5 rounded-full text-white active:scale-90 transition-all flex-shrink-0"
             style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
-            aria-label="Grabar nota de voz"
+            aria-label="Record voice note"
+            title="Record voice note"
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" />
@@ -2206,11 +2330,16 @@ function DmChatView({ userId, myDbId, myUserId, isAdmin, onBack, panelMode }: { 
 
 // ─── Voice note bubble (waveform + play/pause + scrubber) ────────────────────
 
+const SPEEDS = [1, 1.5, 2] as const;
+
 function VoiceBubble({ src, id, isMe }: { src: string; id: number; isMe: boolean }) {
   const audioRef = useRef<HTMLAudioElement>(null);
+  const trackRef = useRef<HTMLDivElement>(null);
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [speedIdx, setSpeedIdx] = useState(0);
+  const [scrubbing, setScrubbing] = useState(false);
 
   // Stable per-message bar pattern
   const bars = React.useMemo(() => {
@@ -2228,10 +2357,37 @@ function VoiceBubble({ src, id, isMe }: { src: string; id: number; isMe: boolean
     if (playing) { a.pause(); } else { a.play().catch(() => {}); }
   };
 
+  // webm/opus blobs from MediaRecorder report duration=Infinity until a
+  // seek-to-end forces the browser to parse the full stream. We do this
+  // silently on load so the timer is accurate from the first play.
+  const resolveWebmDuration = (a: HTMLAudioElement) => {
+    if (Number.isFinite(a.duration) && a.duration > 0) {
+      setDuration(a.duration);
+      return;
+    }
+    const onSeeked = () => {
+      a.removeEventListener("timeupdate", onProbe);
+      a.removeEventListener("seeked", onSeeked);
+      if (Number.isFinite(a.duration) && a.duration > 0) setDuration(a.duration);
+      try { a.currentTime = 0; } catch { /* ignore */ }
+    };
+    const onProbe = () => {
+      if (Number.isFinite(a.duration) && a.duration > 0) {
+        a.removeEventListener("timeupdate", onProbe);
+        a.removeEventListener("seeked", onSeeked);
+        setDuration(a.duration);
+        try { a.currentTime = 0; } catch { /* ignore */ }
+      }
+    };
+    a.addEventListener("timeupdate", onProbe);
+    a.addEventListener("seeked", onSeeked);
+    try { a.currentTime = Number.MAX_SAFE_INTEGER; } catch { /* ignore */ }
+  };
+
   useEffect(() => {
     const a = audioRef.current; if (!a) return;
-    const onTime = () => setCurrentTime(a.currentTime);
-    const onLoaded = () => setDuration(Number.isFinite(a.duration) ? a.duration : 0);
+    const onTime = () => { if (!scrubbing) setCurrentTime(a.currentTime); };
+    const onLoaded = () => resolveWebmDuration(a);
     const onPlay = () => setPlaying(true);
     const onPause = () => setPlaying(false);
     const onEnded = () => { setPlaying(false); setCurrentTime(0); };
@@ -2247,7 +2403,38 @@ function VoiceBubble({ src, id, isMe }: { src: string; id: number; isMe: boolean
       a.removeEventListener("pause", onPause);
       a.removeEventListener("ended", onEnded);
     };
-  }, []);
+  }, [scrubbing]);
+
+  useEffect(() => {
+    const a = audioRef.current; if (!a) return;
+    a.playbackRate = SPEEDS[speedIdx];
+  }, [speedIdx]);
+
+  const seekFromEvent = (clientX: number) => {
+    const a = audioRef.current; const track = trackRef.current;
+    if (!a || !track || !(duration > 0)) return;
+    const rect = track.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    const t = ratio * duration;
+    setCurrentTime(t);
+    try { a.currentTime = t; } catch { /* ignore */ }
+  };
+
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!(duration > 0)) return;
+    (e.target as Element).setPointerCapture?.(e.pointerId);
+    setScrubbing(true);
+    seekFromEvent(e.clientX);
+  };
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!scrubbing) return;
+    seekFromEvent(e.clientX);
+  };
+  const onPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!scrubbing) return;
+    (e.target as Element).releasePointerCapture?.(e.pointerId);
+    setScrubbing(false);
+  };
 
   const progress = duration > 0 ? Math.min(1, currentTime / duration) : 0;
   const progressColor = isMe ? "rgba(255,255,255,0.95)" : "#D4007A";
@@ -2260,8 +2447,12 @@ function VoiceBubble({ src, id, isMe }: { src: string; id: number; isMe: boolean
     return `${m}:${String(r).padStart(2, "0")}`;
   };
 
+  const speed = SPEEDS[speedIdx];
+  const cycleSpeed = () => setSpeedIdx((i) => (i + 1) % SPEEDS.length);
+  const timeLabel = playing || currentTime > 0 ? currentTime : duration;
+
   return (
-    <div className="flex items-center gap-2 mb-1 min-w-[160px] max-w-full">
+    <div className="flex items-center gap-2 mb-1 min-w-[180px] max-w-full">
       <button
         type="button"
         onClick={toggle}
@@ -2276,14 +2467,36 @@ function VoiceBubble({ src, id, isMe }: { src: string; id: number; isMe: boolean
         )}
       </button>
       <div className="flex-1 flex flex-col gap-0.5">
-        <div className="flex items-end gap-[2px] h-7">
+        <div
+          ref={trackRef}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={onPointerUp}
+          className="flex items-end gap-[2px] h-7 touch-none cursor-pointer select-none"
+          role="slider"
+          aria-label="Seek voice message"
+          aria-valuemin={0}
+          aria-valuemax={duration > 0 ? Math.round(duration) : 0}
+          aria-valuenow={Math.round(currentTime)}
+        >
           {bars.map((h, i) => {
             const filled = i / bars.length < progress;
-            return <span key={i} className="w-[2px] rounded-full" style={{ height: `${h * 100}%`, background: filled ? progressColor : restColor }} />;
+            return <span key={i} className="w-[2px] rounded-full pointer-events-none" style={{ height: `${h * 100}%`, background: filled ? progressColor : restColor }} />;
           })}
         </div>
-        <span className={`text-[10px] tabular-nums ${isMe ? "text-white/70" : "text-pnp-textSecondary"}`}>{fmt(playing || currentTime > 0 ? currentTime : duration)}</span>
+        <span className={`text-[10px] tabular-nums ${isMe ? "text-white/70" : "text-pnp-textSecondary"}`}>{fmt(timeLabel)}</span>
       </div>
+      {(playing || currentTime > 0) && (
+        <button
+          type="button"
+          onClick={cycleSpeed}
+          className={`text-[10px] font-semibold tabular-nums px-1.5 py-0.5 rounded-full flex-shrink-0 active:scale-90 transition-all ${isMe ? "bg-white/20 text-white" : "bg-white/10 text-pnp-textSecondary hover:text-white"}`}
+          aria-label={`Playback speed ${speed}x`}
+        >
+          {speed}×
+        </button>
+      )}
       <audio ref={audioRef} src={src} preload="metadata" />
     </div>
   );

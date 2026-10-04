@@ -2129,7 +2129,9 @@ const chatMediaUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 100 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    const m = (file.mimetype || '').toLowerCase();
+    // Strip codec params so MediaRecorder blobs like "audio/webm;codecs=opus"
+    // and "video/webm;codecs=vp9,opus" pass the allow-list.
+    const m = (file.mimetype || '').toLowerCase().split(';')[0].trim();
     const isImage = /^image\/(jpeg|jpg|png|webp|gif|heic|heif)$/.test(m);
     const isVideo = /^video\/(mp4|webm|quicktime|x-m4v)$/.test(m);
     const isAudio = /^audio\/(webm|ogg|mp4|mpeg|mp3|m4a|x-m4a|wav)$/.test(m);
