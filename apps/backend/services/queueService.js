@@ -22,6 +22,7 @@
 const { Queue } = require('bullmq');
 const Redis = require('ioredis');
 const logger = require('../utils/logger');
+const { query } = require('../config/postgres');
 
 // ─── Redis connection factory ────────────────────────────────────────────────
 /**
