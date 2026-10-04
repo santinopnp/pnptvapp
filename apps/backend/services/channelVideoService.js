@@ -1372,7 +1372,10 @@ function shapeForApi(row, channel, extra = {}) {
 async function createMuxUpload(userId, channelId, isAdmin = false) {
   const muxService = require('./muxService');
   await loadOwnedChannel(String(channelId), String(userId), isAdmin);
-  const { uploadId, uploadUrl } = await muxService.createDirectUpload();
+  const { uploadId, uploadUrl } = await muxService.createDirectUpload(
+    'https://pnptv.app',
+    { watermark: true }
+  );
   const { rows: [video] } = await query(
     `INSERT INTO channel_videos
        (uploader_id, channel_id, title, status, mux_upload_id, mux_status)
