@@ -1,3 +1,4 @@
+import { isInAppBrowser, isIOSStandalone } from "@/lib/browserEnv";
 const API_BASE = import.meta.env.VITE_API_URL || "";
 
 // Feature flag: hides all Crystal Creator promotion/discovery UI (services
@@ -568,6 +569,12 @@ export function telegramCheckLoginToken(token: string): Promise<{ authenticated:
 
 export function magicLinkStart(email: string): Promise<{ success: boolean; error?: string }> {
   return request("/api/webapp/auth/magic/start", { method: "POST", body: { email } });
+}
+
+// Telegram webview → external browser: mints a single-use token that signs
+// the user in when the returned URL is opened in Safari/Chrome.
+export function browserHandoffStart(): Promise<{ success: boolean; url?: string; expiresIn?: number }> {
+  return request("/api/webapp/auth/handoff/start", { method: "POST", body: {} });
 }
 
 export function addRecoveryEmail(email: string): Promise<{ success: boolean; error?: string }> {
@@ -1953,6 +1960,19 @@ export async function executeRelayBridge(
 // Fire-and-forget: report a frontend wallet error (Privy login/addFunds/tx)
 // so we can see it in Slack #testing-team without waiting for the user to
 // screenshot. Never throws — swallows fetch failures to avoid infinite loops.
+// Which browser context an error came from — payment_errors had no UA, so
+// "Unable to open payment window" couldn't be tied to PWA vs Telegram vs Safari.
+function clientDeviceContext(): Record<string, unknown> {
+  try {
+    return {
+      ua: navigator.userAgent.slice(0, 200),
+      iosStandalone: isIOSStandalone(),
+      inAppBrowser: isInAppBrowser(),
+      telegram: !!window.Telegram?.WebApp?.initData,
+    };
+  } catch { return {}; }
+}
+
 export function reportWalletClientError(step: string, error: unknown, context?: Record<string, unknown>): void {
   try {
     // Capture BOTH message and stack (and .cause when present) — earlier revisions
@@ -1983,7 +2003,7 @@ export function reportWalletClientError(step: string, error: unknown, context?: 
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ step, error: payloadError, errorName: name, errorMessage: message, errorCause: cause, context: context || null }),
+      body: JSON.stringify({ step, error: payloadError, errorName: name, errorMessage: message, errorCause: cause, context: { ...(context || {}), device: clientDeviceContext() } }),
     }).catch(() => { /* swallow — telemetry must never break UX */ });
   } catch { /* swallow */ }
 }

@@ -7,6 +7,7 @@ import { PREFERRED_WALLET_KEY } from "@/components/payments/PayInWalletChips";
 import * as Sentry from "@sentry/react";
 import { base, mainnet } from "viem/chains";
 import { AuthProvider } from "@/hooks/useAuth";
+import { TelegramOpenInBrowserBanner } from "@/components/telegram/TelegramOpenInBrowserBanner";
 import { NotificationProvider } from "@/hooks/useNotifications";
 import { MusicPlayerProvider } from "@/hooks/useMusicPlayer";
 import { MainStageProvider } from "@/components/mainstage/MainStageProvider";
@@ -544,6 +545,7 @@ function AppOverlays() {
       <PermissionOnboarding isAuthenticated={isAuthenticated} />
       <NotificationPermissionPrompt isAuthenticated={isAuthenticated} />
       <InstallPill />
+      <TelegramOpenInBrowserBanner />
       <PushNotificationPill />
       <UpdateAvailableModal />
       <FloatingCallOverlay />
