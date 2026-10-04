@@ -562,7 +562,11 @@ export default function UploadVideoModal({
         <input
           id="mux-file-input"
           type="file"
-          accept="video/*"
+          // MIME + explicit extensions. On Android SAF, folder-browse views
+          // gray out files whose MIME isn't properly registered (common for
+          // sideloaded videos); extensions let those through. validateFile()
+          // still enforces the actual MIME/size client-side.
+          accept="video/*,.mp4,.mov,.m4v,.webm,.mkv,.avi,.3gp,.3gpp,.ts,.mts"
           aria-label="Elegir video"
           className="absolute inset-0 w-full h-full cursor-pointer opacity-0"
           onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileSelect(f); e.target.value = ""; }}
