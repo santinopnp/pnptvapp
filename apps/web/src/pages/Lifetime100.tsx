@@ -897,11 +897,12 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
   const [searchParams, setSearchParams] = useSearchParams();
 
   // Telegram inline auth state
-  const [tgState, setTgState] = useState<"idle" | "waiting" | "error">("idle");
+  const [tgState, setTgState] = useState<"idle" | "waiting" | "success" | "error">("idle");
   const [tgFallbackUrl, setTgFallbackUrl] = useState<string | null>(null);
   const [tgError, setTgError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pendingTokenRef = useRef<string | null>(null);
+  const walletOpenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const isSoldOut = available === 0;
   const isClosed = !availabilityLoading && isSoldOut;
@@ -914,9 +915,12 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
     }
   }, [isAuthenticated, searchParams, walletModalOpen, isClosed, setSearchParams]);
 
-  // Cleanup polling on unmount
+  // Cleanup polling and deferred wallet-open timer on unmount
   useEffect(() => {
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+      if (walletOpenTimerRef.current) clearTimeout(walletOpenTimerRef.current);
+    };
   }, []);
 
   // iOS Safari: fire immediate poll when tab regains focus
@@ -931,7 +935,15 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
           if (result.authenticated) {
             if (pollRef.current) clearInterval(pollRef.current);
             pendingTokenRef.current = null;
-            refreshUser().then(() => { setSignupPanelOpen(false); setWalletModalOpen(true); }).catch(() => {});
+            refreshUser().then(() => {
+              setTgState("success");
+              // Delay opening wallet so PrivyAutoLogin (1800ms) has time to fire
+              // before WalletPayCard mounts — prevents the confusing "needs_login" state
+              walletOpenTimerRef.current = setTimeout(() => {
+                setSignupPanelOpen(false);
+                setWalletModalOpen(true);
+              }, 2400);
+            }).catch(() => {});
           }
         })
         .catch(() => {});
@@ -1004,7 +1016,13 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
             if (pollRef.current) clearInterval(pollRef.current);
             pendingTokenRef.current = null;
             try { localStorage.setItem("pnptv_last_auth", "telegram"); } catch {}
-            refreshUser().then(() => { setSignupPanelOpen(false); setWalletModalOpen(true); }).catch(() => {});
+            refreshUser().then(() => {
+              setTgState("success");
+              walletOpenTimerRef.current = setTimeout(() => {
+                setSignupPanelOpen(false);
+                setWalletModalOpen(true);
+              }, 2400);
+            }).catch(() => {});
           }
         } catch { /* keep polling */ }
       }, 3000);
@@ -1563,6 +1581,18 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
               >×</button>
             </div>
 
+            {tgState === "success" ? (
+              <div style={{ textAlign: "center", padding: "24px 0 16px", display: "flex", flexDirection: "column", alignItems: "center", gap: 14 }}>
+                <div style={{ fontSize: 40 }}>✅</div>
+                <p style={{ margin: 0, fontSize: 17, fontWeight: 800, color: "#ffffff" }}>Account created!</p>
+                <p style={{ margin: 0, fontSize: 13, color: "rgba(255,255,255,0.55)" }}>Setting up your checkout…</p>
+                <svg className="animate-spin" style={{ width: 24, height: 24, color: "#10b981" }} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeOpacity="0.25" />
+                  <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+              </div>
+            ) : (
+              <>
             <div>
               <p style={{ margin: 0, fontSize: 17, fontWeight: 800, color: "#ffffff" }}>
                 Create your account to pay with card
@@ -1649,6 +1679,8 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
                 Sign in
               </a>
             </p>
+              </>
+            )}
           </div>
         </div>
       )}
