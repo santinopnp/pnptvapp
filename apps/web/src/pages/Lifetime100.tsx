@@ -892,9 +892,16 @@ interface HeroViewProps {
 function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpenSheet }: HeroViewProps) {
   const [modalOpen, setModalOpen] = useState(false);
   const [walletModalOpen, setWalletModalOpen] = useState(false);
-  const { isAuthenticated } = useAuth();
+  const [signupPanelOpen, setSignupPanelOpen] = useState(false);
+  const { isAuthenticated, refreshUser } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
-  const navigate = useNavigate();
+
+  // Telegram inline auth state
+  const [tgState, setTgState] = useState<"idle" | "waiting" | "error">("idle");
+  const [tgFallbackUrl, setTgFallbackUrl] = useState<string | null>(null);
+  const [tgError, setTgError] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pendingTokenRef = useRef<string | null>(null);
 
   const isSoldOut = available === 0;
   const isClosed = !availabilityLoading && isSoldOut;
@@ -907,6 +914,32 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
     }
   }, [isAuthenticated, searchParams, walletModalOpen, isClosed, setSearchParams]);
 
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, []);
+
+  // iOS Safari: fire immediate poll when tab regains focus
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      const token = pendingTokenRef.current;
+      if (!token) return;
+      fetch(`${API_BASE}/api/webapp/auth/telegram/check?token=${token}`, { credentials: "include" })
+        .then(r => r.json())
+        .then(result => {
+          if (result.authenticated) {
+            if (pollRef.current) clearInterval(pollRef.current);
+            pendingTokenRef.current = null;
+            refreshUser().then(() => { setSignupPanelOpen(false); setWalletModalOpen(true); }).catch(() => {});
+          }
+        })
+        .catch(() => {});
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [refreshUser]);
+
   const handleCtaClick = () => {
     if (isClosed) return;
     setModalOpen(true);
@@ -917,11 +950,76 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
     setWalletModalOpen(true);
   };
 
+  // Unauth path: show inline signup panel (no redirect to home)
   const handleSignupToPay = () => {
     if (isClosed) return;
-    try { sessionStorage.setItem("pnptv:postSignupIntent", "/lifetime100?autopay=1"); } catch {}
-    navigate("/landing?intent=lifetime100");
+    setSignupPanelOpen(true);
   };
+
+  // Telegram inline auth — runs entirely on /lifetime100, no navigation
+  const handleTelegramInlineAuth = useCallback(async () => {
+    if (tgState === "waiting") return;
+    setTgError(null);
+    setTgFallbackUrl(null);
+    setTgState("waiting");
+    try {
+      const res = await fetch(`${API_BASE}/api/webapp/auth/telegram/token`, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+      });
+      const data = await res.json();
+      if (!data.success || !data.token || !data.deepLink) {
+        setTgState("error");
+        setTgError("Couldn't start Telegram sign-in. Try again.");
+        return;
+      }
+      if (!data.deepLink.startsWith("https://t.me/")) {
+        setTgState("error");
+        setTgError("Invalid Telegram link received.");
+        return;
+      }
+      setTgFallbackUrl(data.deepLink);
+      try { window.open(data.deepLink, "_blank", "noopener,noreferrer"); } catch {}
+      pendingTokenRef.current = data.token;
+      let attempts = 0;
+      pollRef.current = setInterval(async () => {
+        if (++attempts > 60) {
+          if (pollRef.current) clearInterval(pollRef.current);
+          pendingTokenRef.current = null;
+          setTgState("error");
+          setTgError("Timed out. If you confirmed in Telegram, tap the button again.");
+          return;
+        }
+        try {
+          const check = await fetch(`${API_BASE}/api/webapp/auth/telegram/check?token=${data.token}`, { credentials: "include" });
+          const result = await check.json();
+          if (!check.ok) {
+            if (check.status === 429) return;
+            if (pollRef.current) clearInterval(pollRef.current);
+            setTgState("error");
+            setTgError("Telegram sign-in failed. Try again.");
+            return;
+          }
+          if (result.authenticated) {
+            if (pollRef.current) clearInterval(pollRef.current);
+            pendingTokenRef.current = null;
+            try { localStorage.setItem("pnptv_last_auth", "telegram"); } catch {}
+            refreshUser().then(() => { setSignupPanelOpen(false); setWalletModalOpen(true); }).catch(() => {});
+          }
+        } catch { /* keep polling */ }
+      }, 3000);
+    } catch {
+      setTgState("error");
+      setTgError("Connection error. Try again.");
+    }
+  }, [tgState, refreshUser]);
+
+  // X OAuth — must leave the page; intent preserved in sessionStorage so
+  // Layout.tsx redirect hook brings them back to /lifetime100?autopay=1
+  const handleXSignup = useCallback(() => {
+    try { sessionStorage.setItem("pnptv:postSignupIntent", "/lifetime100?autopay=1"); } catch {}
+    window.location.href = `${API_BASE}/api/webapp/auth/x/start?redirect=true`;
+  }, []);
 
   const activateHref = `/lifetime100/activate`;
 
@@ -1433,6 +1531,126 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
           lang={lang}
           onClose={() => setWalletModalOpen(false)}
         />
+      )}
+
+      {/* Inline signup panel — shown to unauth users who tap "Pay with card".
+          Telegram runs entirely on this page (no navigation). X uses OAuth
+          redirect but sessionStorage intent brings them back here. */}
+      {signupPanelOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={(e) => { if (e.target === e.currentTarget) { setSignupPanelOpen(false); setTgState("idle"); setTgFallbackUrl(null); setTgError(null); } }}
+          style={{
+            position: "fixed", inset: 0, zIndex: 1000,
+            background: "rgba(0,0,0,0.75)", backdropFilter: "blur(8px)",
+            display: "flex", alignItems: "flex-end", justifyContent: "center",
+            padding: "0 0 env(safe-area-inset-bottom,0)",
+          }}
+        >
+          <div style={{
+            width: "100%", maxWidth: 480,
+            background: "#1a1220", borderRadius: "20px 20px 0 0",
+            padding: "28px 24px 32px", display: "flex", flexDirection: "column", gap: 16,
+          }}>
+            {/* Handle + close */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+              <div style={{ width: 36, height: 4, borderRadius: 2, background: "rgba(255,255,255,0.2)", margin: "0 auto" }} />
+              <button
+                onClick={() => { setSignupPanelOpen(false); setTgState("idle"); setTgFallbackUrl(null); setTgError(null); }}
+                style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 22, cursor: "pointer", padding: "0 4px", lineHeight: 1 }}
+                aria-label="Close"
+              >×</button>
+            </div>
+
+            <div>
+              <p style={{ margin: 0, fontSize: 17, fontWeight: 800, color: "#ffffff" }}>
+                Create your account to pay with card
+              </p>
+              <p style={{ margin: "6px 0 0", fontSize: 13, color: "rgba(255,255,255,0.55)" }}>
+                After signup you'll go directly to checkout — $100 one-time.
+              </p>
+            </div>
+
+            {/* Telegram — inline, stays on this page */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <button
+                onClick={handleTelegramInlineAuth}
+                disabled={tgState === "waiting"}
+                style={{
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+                  width: "100%", padding: "15px 20px", borderRadius: 14,
+                  border: "1px solid rgba(0,136,204,0.4)",
+                  background: tgState === "waiting" ? "rgba(0,136,204,0.3)" : "rgba(0,136,204,0.15)",
+                  color: "#ffffff", fontSize: 15, fontWeight: 700, cursor: tgState === "waiting" ? "default" : "pointer",
+                  minHeight: 52, transition: "opacity 0.15s",
+                }}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="#29B6F6" aria-hidden="true">
+                  <path d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2zm4.93 7.27-1.67 7.87c-.12.56-.44.7-.9.43l-2.49-1.84-1.2 1.16c-.13.13-.25.25-.51.25l.18-2.54 4.61-4.16c.2-.18-.04-.28-.31-.1L8.3 14.93 5.85 14.2c-.55-.17-.56-.55.12-.81l9.43-3.64c.46-.17.86.11.53.72z"/>
+                </svg>
+                {tgState === "waiting" ? "Waiting for Telegram…" : "Continue with Telegram"}
+              </button>
+              {tgState === "waiting" && tgFallbackUrl && (
+                <a
+                  href={tgFallbackUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ textAlign: "center", fontSize: 12, color: "#29B6F6", textDecoration: "underline" }}
+                >
+                  Telegram didn't open? Tap here
+                </a>
+              )}
+              {tgError && (
+                <p style={{ margin: 0, fontSize: 12, color: "#FF453A", textAlign: "center" }}>{tgError}</p>
+              )}
+            </div>
+
+            {/* X */}
+            <button
+              onClick={handleXSignup}
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+                width: "100%", padding: "15px 20px", borderRadius: 14, border: "1px solid rgba(255,255,255,0.18)",
+                background: "rgba(255,255,255,0.06)",
+                color: "#ffffff", fontSize: 15, fontWeight: 700, cursor: "pointer",
+                minHeight: 52,
+              }}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.746l7.73-8.835L1.254 2.25H8.08l4.26 5.632zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+              </svg>
+              Continue with X
+            </button>
+
+            {/* Email register */}
+            <button
+              onClick={() => {
+                try { sessionStorage.setItem("pnptv:postSignupIntent", "/lifetime100?autopay=1"); } catch {}
+                window.location.href = "/landing?signup=1";
+              }}
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+                width: "100%", padding: "15px 20px", borderRadius: 14, border: "1px solid rgba(255,255,255,0.12)",
+                background: "transparent",
+                color: "rgba(255,255,255,0.7)", fontSize: 14, fontWeight: 600, cursor: "pointer",
+                minHeight: 52,
+              }}
+            >
+              📧 Sign up with email
+            </button>
+
+            <p style={{ margin: "4px 0 0", fontSize: 11, color: "rgba(255,255,255,0.3)", textAlign: "center" }}>
+              Already have an account?{" "}
+              <a
+                href="/landing"
+                style={{ color: "rgba(255,255,255,0.5)", textDecoration: "underline" }}
+              >
+                Sign in
+              </a>
+            </p>
+          </div>
+        </div>
       )}
 
     </div>

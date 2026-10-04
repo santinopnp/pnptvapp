@@ -992,6 +992,22 @@ export function Layout() {
     if (isAuthenticated && user?.ageVerified) setShowAgeGate(false);
   }, [isAuthenticated, user?.ageVerified]);
 
+  // Consume a post-signup intent (e.g. /lifetime100?autopay=1) stored by an
+  // unauth page before redirecting to signup. Fires once when auth is gained —
+  // handles X OAuth return and magic-link return paths that land on home.
+  const intentConsumedRef = useRef(false);
+  useEffect(() => {
+    if (!isAuthenticated || intentConsumedRef.current) return;
+    intentConsumedRef.current = true;
+    try {
+      const intent = sessionStorage.getItem("pnptv:postSignupIntent");
+      if (intent) {
+        sessionStorage.removeItem("pnptv:postSignupIntent");
+        navigate(intent, { replace: true });
+      }
+    } catch { /* ignore */ }
+  }, [isAuthenticated]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const sidebarSections = [
     {
       label: "DISCOVER",
