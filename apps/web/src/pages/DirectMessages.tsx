@@ -1268,7 +1268,7 @@ function DmChatView({ userId, myDbId, myUserId, isAdmin, onBack, panelMode }: { 
 
     return (
       <>
-        <p>{renderTextWithLinks(displayText)}</p>
+        <p className="whitespace-pre-wrap break-words">{renderTextWithLinks(displayText)}</p>
         {showChip && (
           <div className="mt-1 flex items-center gap-2">
             <button

@@ -4673,6 +4673,40 @@ app.post('/api/webapp/settings/change-email', requireSessionAuth, changeEmailLim
   }
 
   logger.info('[change-email] Email changed', { userId: user.id, newEmail: rawEmail });
+
+  // Email-collection campaign (2026-10-03) attribution — if this user was in
+  // the campaign DM audience AND is adding an email for the first time, grant
+  // +20 Ru$h. Dedup set is written by broadcast-email-collect-2026-10-03.js;
+  // awarded set guards against double-grant if user changes email twice.
+  if (!currentEmail || !currentEmail.trim()) {
+    try {
+      const r = getRedis();
+      const CAMPAIGN = 'email-collect-2026-10-03';
+      const DEDUP_KEY   = `pnpapp:broadcast:dedup:${CAMPAIGN}`;
+      const AWARDED_KEY = `pnpapp:broadcast:awarded:${CAMPAIGN}`;
+      const inAudience = await r.sismember(DEDUP_KEY, String(user.id));
+      if (inAudience) {
+        const added = await r.sadd(AWARDED_KEY, String(user.id));
+        if (added === 1) {
+          const tokenLedger = require('../../services/tokenLedgerService');
+          await tokenLedger.credit({
+            userId: user.id,
+            balanceDelta: 20,
+            reason: 'admin_grant',
+            sourceType: 'campaign',
+            sourceId: CAMPAIGN,
+            actorId: 'system',
+            metadata: { campaign: CAMPAIGN, bonus: 20, trigger: 'change-email' },
+          });
+          await r.expire(AWARDED_KEY, 30 * 86400);
+          logger.info('[change-email] +20 Ru$h bonus granted', { userId: user.id, campaign: CAMPAIGN });
+        }
+      }
+    } catch (bonusErr) {
+      logger.warn('[change-email] campaign bonus skipped', { userId: user.id, error: bonusErr.message });
+    }
+  }
+
   res.json({ success: true, email: rawEmail });
 }));
 
@@ -8678,8 +8712,27 @@ app.get('/api/hangouts/most-active', (req, res) => res.json({ success: true, dat
 app.get('/api/livestream/active', asyncHandler(async (req, res) => {
   const LiveStreamModel = require('../../models/liveStreamModel');
   try {
-    const streams = await LiveStreamModel.getActiveStreams(1);
-    const stream = streams.length > 0 ? streams[0] : null;
+    const streams = await LiveStreamModel.getActiveStreams(5);
+    let stream = streams.length > 0 ? streams[0] : null;
+    // Geo-hide: if the top stream's host has region-hid the viewer, skip to the next.
+    const r = String(req.user?.role || '').toLowerCase();
+    const bypass = r === 'admin' || r === 'superadmin';
+    const gTags = bypass ? [] : (Array.isArray(req.viewerGeoTags) ? req.viewerGeoTags : []);
+    if (gTags.length && streams.length) {
+      const hostIds = streams.map(s => String(s?.hostId || s?.host_id || s?.userId || s?.user_id || '')).filter(Boolean);
+      if (hostIds.length) {
+        const { rows: hidden } = await getPool().query(
+          `SELECT id::text FROM users WHERE id = ANY($1::text[]) AND (COALESCE(hide_from_regions, '{}') && $2::text[])`,
+          [hostIds, gTags]
+        );
+        const hiddenSet = new Set(hidden.map(h => h.id));
+        const firstVisible = streams.find(s => {
+          const hid = String(s?.hostId || s?.host_id || s?.userId || s?.user_id || '');
+          return hid && !hiddenSet.has(hid);
+        });
+        stream = firstVisible || null;
+      }
+    }
     res.json({ success: true, data: stream });
   } catch (error) {
     logger.error('getActiveLiveStream error:', error);
@@ -10144,6 +10197,9 @@ app.get('/api/webapp/search', requireSessionAuth, asyncHandler(async (req, res) 
   if (q.length < 2) return res.json({ success: true, users: [], creators: [], channels: [], hangouts: [], posts: [] });
   const { query } = require('../../config/postgres');
   const viewerId = req.session.user.id;
+  const viewerRole = String(req.session.user.role || '').toLowerCase();
+  const bypassGeo = viewerRole === 'admin' || viewerRole === 'superadmin';
+  const gTags = bypassGeo ? [] : (Array.isArray(req.viewerGeoTags) ? req.viewerGeoTags : []);
   const like = `%${q.replace(/[%_\\]/g, '\\$&')}%`;
 
   const [usersRes, creatorsRes, channelsRes, hangoutsRes, postsRes] = await Promise.all([
@@ -10152,10 +10208,11 @@ app.get('/api/webapp/search', requireSessionAuth, asyncHandler(async (req, res) 
          FROM users
         WHERE id::text != $1
           AND is_deleted = false
+          AND NOT (COALESCE(hide_from_regions, '{}') && $4::text[])
           AND (username ILIKE $2 ESCAPE '\\' OR first_name ILIKE $2 ESCAPE '\\' OR last_name ILIKE $2 ESCAPE '\\')
         ORDER BY first_name ASC
         LIMIT $3`,
-      [String(viewerId), like, limit],
+      [String(viewerId), like, limit, gTags],
     ),
     query(
       `SELECT id, id AS user_id, first_name AS display_name, username,
@@ -10164,10 +10221,11 @@ app.get('/api/webapp/search', requireSessionAuth, asyncHandler(async (req, res) 
          FROM users
         WHERE is_deleted = false
           AND creator_status = 'active'
+          AND NOT (COALESCE(hide_from_regions, '{}') && $3::text[])
           AND (username ILIKE $1 ESCAPE '\\' OR first_name ILIKE $1 ESCAPE '\\' OR last_name ILIKE $1 ESCAPE '\\')
         ORDER BY first_name ASC
         LIMIT $2`,
-      [like, limit],
+      [like, limit, gTags],
     ),
     query(
       `SELECT id, name, description, access_type, slug, cover_image_url,
@@ -10841,21 +10899,28 @@ app.get('/api/performers/featured', softAuth, asyncHandler(async (req, res) => {
         },
         timeout: 10000,
       }),
-      getPool().query(
-        `SELECT id, username, first_name, last_name, photo_file_id, bio,
-                city, country,
-                creator_type, creator_status, creator_price_usd, live_channel, tier
-         FROM users
-         WHERE creator_status = 'active'
-           AND creator_locked = FALSE
-           AND is_deleted = FALSE
-           AND (
-             identity_verified = TRUE
-             OR (identity_verification_required_by IS NOT NULL AND identity_verification_required_by > NOW())
-           )
-         ORDER BY creator_subscriber_count DESC NULLS LAST
-         LIMIT 50`
-      ),
+      (() => {
+        const r = String(req.user?.role || '').toLowerCase();
+        const bypass = r === 'admin' || r === 'superadmin';
+        const gTags = bypass ? [] : (Array.isArray(req.viewerGeoTags) ? req.viewerGeoTags : []);
+        return getPool().query(
+          `SELECT id, username, first_name, last_name, photo_file_id, bio,
+                  city, country,
+                  creator_type, creator_status, creator_price_usd, live_channel, tier
+           FROM users
+           WHERE creator_status = 'active'
+             AND creator_locked = FALSE
+             AND is_deleted = FALSE
+             AND (
+               identity_verified = TRUE
+               OR (identity_verification_required_by IS NOT NULL AND identity_verification_required_by > NOW())
+             )
+             AND NOT (COALESCE(hide_from_regions, '{}') && $1::text[])
+           ORDER BY creator_subscriber_count DESC NULLS LAST
+           LIMIT 50`,
+          [gTags]
+        );
+      })(),
     ]);
 
     const directusPerformers = directusResult.status === 'fulfilled'
@@ -10869,20 +10934,26 @@ app.get('/api/performers/featured', softAuth, asyncHandler(async (req, res) => {
     let mapped = directusPerformers.map(p => mapDirectusPerformer(p, photoMap));
 
     // Post-filter: exclude Directus performers whose pnptv_id maps to a deleted DB user
+    // OR whose linked DB user has region-hid the current viewer.
     try {
       const directusLinkedIds = mapped.filter(p => p.userId).map(p => String(p.userId));
       if (directusLinkedIds.length > 0) {
-        const { rows: deletedRows } = await getPool().query(
-          `SELECT id::text FROM users WHERE id = ANY($1::text[]) AND is_deleted = TRUE`,
-          [directusLinkedIds]
+        const r = String(req.user?.role || '').toLowerCase();
+        const bypass = r === 'admin' || r === 'superadmin';
+        const gTags = bypass ? [] : (Array.isArray(req.viewerGeoTags) ? req.viewerGeoTags : []);
+        const { rows: filterRows } = await getPool().query(
+          `SELECT id::text, is_deleted,
+                  (COALESCE(hide_from_regions, '{}') && $2::text[]) AS geo_hidden
+             FROM users WHERE id = ANY($1::text[])`,
+          [directusLinkedIds, gTags]
         );
-        if (deletedRows.length > 0) {
-          const deletedIds = new Set(deletedRows.map(r => r.id));
-          mapped = mapped.filter(p => !p.userId || !deletedIds.has(String(p.userId)));
+        const hiddenIds = new Set(filterRows.filter(r => r.is_deleted || r.geo_hidden).map(r => r.id));
+        if (hiddenIds.size > 0) {
+          mapped = mapped.filter(p => !p.userId || !hiddenIds.has(String(p.userId)));
         }
       }
     } catch (filterErr) {
-      logger.warn(`featured: deleted-user filter failed (non-fatal): ${filterErr.message}`);
+      logger.warn(`featured: deleted/geo filter failed (non-fatal): ${filterErr.message}`);
     }
 
     const coveredUserIds = new Set(
@@ -11669,6 +11740,24 @@ app.get('/api/webapp/channels/:channelId/videos/:videoId/stream', softAuth, asyn
     const isAdmin = viewerRole === 'admin' || viewerRole === 'superadmin';
     const isAuthor = viewerId && String(viewerId) === String(video.creator_id);
 
+    // Geo-hide: if viewer's region tags overlap the creator's hide_from_regions,
+    // return a plain 404 (hide absolutely, even for paid viewers).
+    if (!isAdmin && !isAuthor && video.creator_id) {
+      const gTags = Array.isArray(req.viewerGeoTags) ? req.viewerGeoTags : [];
+      if (gTags.length) {
+        try {
+          const { rows: hr } = await getPool().query(
+            `SELECT 1 FROM users WHERE id = $1 AND (COALESCE(hide_from_regions, '{}') && $2::text[]) LIMIT 1`,
+            [video.creator_id, gTags]
+          );
+          if (hr.length) {
+            res.setHeader('X-Geo-Blocked', '1');
+            return res.status(404).json({ error: 'Video not found' });
+          }
+        } catch { /* fail-open */ }
+      }
+    }
+
     if (!isAdmin && !isAuthor) {
       if (!viewerId) return res.status(401).json({ error: 'Authentication required' });
       const decision = await EntitlementAccessService.hasResourceAccess(viewerId, 'channel', channelId);
@@ -11878,20 +11967,27 @@ app.get('/api/performers', softAuth, asyncHandler(async (req, res) => {
         },
         timeout: 10000,
       }),
-      getPool().query(
-        `SELECT id, username, first_name, last_name, photo_file_id, bio,
-                creator_type, creator_status, creator_price_usd
-         FROM users
-         WHERE creator_status = 'active'
-           AND creator_locked = FALSE
-           AND is_deleted = FALSE
-           AND (
-             identity_verified = TRUE
-             OR (identity_verification_required_by IS NOT NULL AND identity_verification_required_by > NOW())
-           )
-         ORDER BY first_name ASC
-         LIMIT 100`
-      ),
+      (() => {
+        const r = String(req.user?.role || '').toLowerCase();
+        const bypass = r === 'admin' || r === 'superadmin';
+        const gTags = bypass ? [] : (Array.isArray(req.viewerGeoTags) ? req.viewerGeoTags : []);
+        return getPool().query(
+          `SELECT id, username, first_name, last_name, photo_file_id, bio,
+                  creator_type, creator_status, creator_price_usd
+           FROM users
+           WHERE creator_status = 'active'
+             AND creator_locked = FALSE
+             AND is_deleted = FALSE
+             AND (
+               identity_verified = TRUE
+               OR (identity_verification_required_by IS NOT NULL AND identity_verification_required_by > NOW())
+             )
+             AND NOT (COALESCE(hide_from_regions, '{}') && $1::text[])
+           ORDER BY first_name ASC
+           LIMIT 100`,
+          [gTags]
+        );
+      })(),
     ]);
 
     const rawDirectusPerformers = directusResult.status === 'fulfilled'
@@ -11911,13 +12007,17 @@ app.get('/api/performers', softAuth, asyncHandler(async (req, res) => {
     try {
       const rawIds = [...new Set(rawDirectusPerformers.map(p => String(p.pnptv_id || '')).filter(Boolean))];
       const rawSlugs = [...new Set(rawDirectusPerformers.map(p => String(p.slug || '').toLowerCase()).filter(Boolean))];
+      const _r = String(req.user?.role || '').toLowerCase();
+      const _bypass = _r === 'admin' || _r === 'superadmin';
+      const _gTags = _bypass ? [] : (Array.isArray(req.viewerGeoTags) ? req.viewerGeoTags : []);
       const resolveRows = (rawIds.length || rawSlugs.length)
         ? (await getPool().query(
             `SELECT id::text AS canonical_id, lower(username) AS slug_lower
              FROM users
              WHERE is_deleted = FALSE
+               AND NOT (COALESCE(hide_from_regions, '{}') && $3::text[])
                AND (id = ANY($1::text[]) OR lower(username) = ANY($2::text[]))`,
-            [rawIds, rawSlugs]
+            [rawIds, rawSlugs, _gTags]
           )).rows
         : [];
       const canonicalById = new Map(resolveRows.map(r => [r.canonical_id, r.canonical_id]));
@@ -23303,7 +23403,14 @@ app.get('/api/public/creator/:username',
 
     const pool = getPool();
 
-    // 1. Fetch creator by username (case-insensitive)
+    // 1. Fetch creator by username (case-insensitive).
+    // Geo-hide: when the viewer's resolved region tags (country + country-state)
+    // overlap the creator's hide_from_regions set, return no rows → 404 below.
+    // Admins bypass with empty tags; self-view is preserved via $3 (viewer id).
+    const viewerRole = String(req.user?.role || '').toLowerCase();
+    const bypassGeo = viewerRole === 'admin' || viewerRole === 'superadmin';
+    const geoTags = bypassGeo ? [] : (Array.isArray(req.viewerGeoTags) ? req.viewerGeoTags : []);
+    const selfId = req.user?.id ? String(req.user.id) : '';
     const { rows: creatorRows } = await pool.query(
       `SELECT id, username, first_name,
               photo_file_id AS photo_url,
@@ -23323,8 +23430,9 @@ app.get('/api/public/creator/:username',
               partner_badge_color
        FROM users
        WHERE LOWER(username) = LOWER($1) AND creator_status = 'active'
+         AND (id::text = $3 OR NOT (COALESCE(hide_from_regions, '{}') && $2::text[]))
        LIMIT 1`,
-      [username]
+      [username, geoTags, selfId]
     );
     if (!creatorRows.length) {
       // Check if this was a former username — permanent redirect

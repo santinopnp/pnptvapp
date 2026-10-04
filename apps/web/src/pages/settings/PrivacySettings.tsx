@@ -19,6 +19,7 @@ const COUNTRY_OPTIONS: { code: string; label: string }[] = [
   { code: "US", label: "United States (all)" },
   { code: "CA", label: "Canada" },
   { code: "MX", label: "Mexico" },
+  { code: "CR", label: "Costa Rica" },
   { code: "CO", label: "Colombia" },
   { code: "VE", label: "Venezuela" },
   { code: "BR", label: "Brazil" },
@@ -186,23 +187,23 @@ export default function PrivacySettings() {
       <div className="glass-card-sm p-5">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xs font-semibold text-white/50 uppercase tracking-wider">
-            Hide me from these regions
+            {p.hideFromRegionsTitle}
           </h2>
           {regionSaving && (
-            <span className="text-[10px] text-white/40">Saving…</span>
+            <span className="text-[10px] text-white/40">{p.hideFromRegionsSaving}</span>
           )}
           {!regionSaving && regionSavedAt > 0 && Date.now() - regionSavedAt < 3000 && (
-            <span className="text-[10px]" style={{ color: "#4ADE80" }}>Saved</span>
+            <span className="text-[10px]" style={{ color: "#4ADE80" }}>{p.hideFromRegionsSaved}</span>
           )}
         </div>
         <p className="text-xs leading-relaxed mb-4" style={{ color: "rgba(255,255,255,0.6)" }}>
-          People browsing from any region you list here won't see your profile, posts, channels, or find you in Nearby. Add a country (e.g. Colombia) to hide from that whole country, or a US state (e.g. US Florida) to hide from just one state. You'll still be visible everywhere else.
+          {p.hideFromRegionsBody}
         </p>
 
         {/* Current chips */}
         {hiddenRegions.length === 0 ? (
           <p className="text-xs italic mb-4" style={{ color: "var(--pnp-text-secondary)" }}>
-            No regions hidden — you're visible worldwide.
+            {p.hideFromRegionsEmpty}
           </p>
         ) : (
           <div className="flex flex-wrap gap-2 mb-4">
@@ -241,7 +242,7 @@ export default function PrivacySettings() {
               color: "#fff",
             }}
           >
-            <option value="">+ Add country</option>
+            <option value="">{p.hideFromRegionsAddCountry}</option>
             {COUNTRY_OPTIONS.filter((c) => !hiddenRegions.includes(c.code)).map((c) => (
               <option key={c.code} value={c.code}>{c.label}</option>
             ))}
@@ -259,7 +260,7 @@ export default function PrivacySettings() {
               color: "#fff",
             }}
           >
-            <option value="">+ Add US state</option>
+            <option value="">{p.hideFromRegionsAddState}</option>
             {US_STATE_OPTIONS.filter((s) => !hiddenRegions.includes(s.code)).map((s) => (
               <option key={s.code} value={s.code}>{s.label}</option>
             ))}

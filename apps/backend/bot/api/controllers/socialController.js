@@ -1818,6 +1818,25 @@ const getPublicProfile = async (req, res) => {
   const viewerRole = req.session?.user?.role || '';
   const isAdmin = viewerRole === 'admin' || viewerRole === 'superadmin';
 
+  // Geo-hide: if the viewer's resolved region tags overlap the creator's
+  // hide_from_regions set, return a plain 404 (does not reveal why).
+  if (!isAdmin && String(viewerId) !== String(userId)) {
+    const geoTags = Array.isArray(req.viewerGeoTags) ? req.viewerGeoTags : [];
+    if (geoTags.length) {
+      try {
+        const { query } = require('../../../config/postgres');
+        const { rows: hr } = await query(
+          `SELECT 1 FROM users WHERE id = $1 AND (COALESCE(hide_from_regions, '{}') && $2::text[]) LIMIT 1`,
+          [userId, geoTags]
+        );
+        if (hr.length) {
+          res.setHeader('X-Geo-Blocked', '1');
+          return res.status(404).json({ error: 'User not found' });
+        }
+      } catch { /* fail-open */ }
+    }
+  }
+
   try {
     const viewerTier = viewerId
       ? await validateTierFresh(viewerId, req.session?.user?.tier || 'free')

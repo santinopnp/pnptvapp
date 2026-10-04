@@ -501,6 +501,15 @@ const strings = {
     dataPrivacySection: "Data & Privacy",
     dangerZoneSection: "Danger Zone",
 
+    // Geo-visibility section
+    hideFromRegionsTitle: "Hide me from these regions",
+    hideFromRegionsBody: "Viewers from any country or US state you add here won't see your profile, posts, videos, live shows, calls booking, or find you in Nearby or Search. Posts you're tagged in by others will also hide for them. You'll stay visible everywhere else.",
+    hideFromRegionsEmpty: "No regions hidden — you're visible worldwide.",
+    hideFromRegionsSaving: "Saving…",
+    hideFromRegionsSaved: "Saved",
+    hideFromRegionsAddCountry: "+ Add country",
+    hideFromRegionsAddState: "+ Add US state",
+
     // ── Settings 2-level navigation ───────────────────────────────────────────
     settingsMenuSubtitle: "Choose a category to manage.",
     catAccountTitle: "Account",
@@ -1117,6 +1126,15 @@ const strings = {
     notificationsSection: "Notificaciones",
     dataPrivacySection: "Datos y Privacidad",
     dangerZoneSection: "Zona de Peligro",
+
+    // Geo-visibility section
+    hideFromRegionsTitle: "Oculta mi perfil en estas regiones",
+    hideFromRegionsBody: "Las personas que naveguen desde los países o estados de EE. UU. que agregues no verán tu perfil, publicaciones, videos, shows en vivo, reserva de llamadas, ni te encontrarán en Cerca o Buscar. Las publicaciones donde otros te etiqueten también quedarán ocultas para ellos. Seguirás siendo visible en todos los demás lugares.",
+    hideFromRegionsEmpty: "Sin regiones ocultas — eres visible en todo el mundo.",
+    hideFromRegionsSaving: "Guardando…",
+    hideFromRegionsSaved: "Guardado",
+    hideFromRegionsAddCountry: "+ Agregar país",
+    hideFromRegionsAddState: "+ Agregar estado de EE. UU.",
 
     // ── Settings 2-level navigation ───────────────────────────────────────────
     settingsMenuSubtitle: "Elige una categoría para administrarla.",
