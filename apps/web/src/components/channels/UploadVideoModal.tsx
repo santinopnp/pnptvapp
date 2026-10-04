@@ -102,7 +102,6 @@ export default function UploadVideoModal({
   const xhrRef = useRef<XMLHttpRequest | null>(null);
   const abortedRef = useRef(false);
   const videoIdRef = useRef<number | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const uploadStartRef = useRef<number>(0);
   const lastProgressRef = useRef<{ time: number; bytes: number }>({ time: 0, bytes: 0 });
 
@@ -156,6 +155,25 @@ export default function UploadVideoModal({
     if (err) { setError(err); return; }
     setError(null);
     setFile(f);
+  };
+
+  // Detached-input pattern: creates a fresh <input type="file"> outside React's
+  // VDOM and appends it to <body> so Android Chrome can properly return the file
+  // result. sr-only clips the input to rect(0,0,0,0) which breaks onChange on
+  // Android Chrome — a detached element with fixed off-screen positioning avoids
+  // both the clipping bug and React's synthetic event layer.
+  const openFilePicker = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.style.cssText = 'position:fixed;top:-9999px;opacity:0;pointer-events:none';
+    document.body.appendChild(input);
+    input.addEventListener('change', () => {
+      const f = input.files?.[0];
+      if (f) handleFileSelect(f);
+      else setError('No se recibió el archivo. Intenta de nuevo o abre desde otra carpeta.');
+      try { document.body.removeChild(input); } catch { /**/ }
+    }, { once: true });
+    input.click();
   };
 
   const fetchThumbnails = async (videoId: number) => {
@@ -526,29 +544,19 @@ export default function UploadVideoModal({
         </div>
       )}
 
-      {/* Drop zone — canonical Mux-Uploader pattern: label is the big visible
-          hit target bound via htmlFor to a sr-only <input> SIBLING (not nested).
-          Overlay-opacity approach swallows the change event on Android Chrome
-          after the picker returns; sibling-sr-only lets the input dispatch
-          cleanly. No accept attribute → Android opens full SAF file browser. */}
-      <input
-        ref={fileInputRef}
-        id="mux-file-input"
-        type="file"
-        aria-label="Elegir video"
-        className="sr-only"
-        onChange={(e) => {
-          const f = e.target.files?.[0];
-          if (f) handleFileSelect(f);
-          else setError("No se recibió el archivo. Intenta de nuevo o abre desde otra carpeta.");
-          e.target.value = "";
-        }}
-      />
-      <label
-        htmlFor="mux-file-input"
+      {/* Drop zone — onClick calls openFilePicker which creates a detached
+          <input type="file">, appends it to <body> at a fixed off-screen
+          position (not clipped), and clicks it. This avoids the Android Chrome
+          sr-only/clip bug where onChange never fires after picker return. */}
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={openFilePicker}
+        onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && openFilePicker()}
         onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
         onDragLeave={() => setDrag(false)}
         onDrop={onDrop}
+        aria-label="Elegir video"
         className="cursor-pointer rounded-2xl flex flex-col items-center justify-center gap-3 py-10 px-4 transition-colors"
         style={{
           border: `2px dashed ${drag ? "#D4007A" : "rgba(212,0,122,.3)"}`,
@@ -574,14 +582,11 @@ export default function UploadVideoModal({
             <p className="text-xs text-white/40 mt-0.5">o toca para elegir · MP4, MOV, WebM · máx 50 GB</p>
           </div>
         )}
-      </label>
+      </div>
 
-      {/* Fallback button — different code path from the label<->input binding.
-          Some mobile browsers fail label activation; a direct programmatic
-          .click() from a visible <button> always works. */}
       <button
         type="button"
-        onClick={() => fileInputRef.current?.click()}
+        onClick={openFilePicker}
         className="w-full py-3 rounded-xl text-sm font-bold text-white transition-opacity active:opacity-80"
         style={{ background: "linear-gradient(90deg,#D4007A,#7B61FF)" }}
       >
