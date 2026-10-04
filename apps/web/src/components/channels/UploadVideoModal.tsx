@@ -102,6 +102,7 @@ export default function UploadVideoModal({
   const xhrRef = useRef<XMLHttpRequest | null>(null);
   const abortedRef = useRef(false);
   const videoIdRef = useRef<number | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const uploadStartRef = useRef<number>(0);
   const lastProgressRef = useRef<{ time: number; bytes: number }>({ time: 0, bytes: 0 });
 
@@ -531,6 +532,7 @@ export default function UploadVideoModal({
           after the picker returns; sibling-sr-only lets the input dispatch
           cleanly. No accept attribute → Android opens full SAF file browser. */}
       <input
+        ref={fileInputRef}
         id="mux-file-input"
         type="file"
         aria-label="Elegir video"
@@ -573,6 +575,18 @@ export default function UploadVideoModal({
           </div>
         )}
       </label>
+
+      {/* Fallback button — different code path from the label<->input binding.
+          Some mobile browsers fail label activation; a direct programmatic
+          .click() from a visible <button> always works. */}
+      <button
+        type="button"
+        onClick={() => fileInputRef.current?.click()}
+        className="w-full py-3 rounded-xl text-sm font-bold text-white transition-opacity active:opacity-80"
+        style={{ background: "linear-gradient(90deg,#D4007A,#7B61FF)" }}
+      >
+        📁 Elegir desde archivos
+      </button>
 
       {/* One-liner */}
       {file && (
