@@ -14488,7 +14488,9 @@ app.get('/api/public/lifetime100/availability', asyncHandler(async (req, res) =>
   try {
     const TOTAL_SLOTS = 100;
     const { rows } = await getPool().query(
-      `SELECT COUNT(*) AS sold FROM dash_subscription_orders WHERE plan_id = 'lifetime100' AND status = 'completed'`
+      `SELECT COUNT(*) AS sold FROM dash_subscription_orders
+       WHERE plan_id = 'lifetime-pass' AND status = 'completed'
+         AND metadata->>'flow' = 'lifetime100-public'`
     );
     const sold = parseInt(rows[0]?.sold || 0, 10);
     return res.json({ success: true, available: Math.max(0, TOTAL_SLOTS - sold), sold, total: TOTAL_SLOTS });
@@ -14542,7 +14544,7 @@ app.post('/api/public/lifetime100/np-invoice', lifetime100NpInvoiceLimiter, asyn
 
   // Confirm the plan exists + read the amount from the DB (source of truth).
   const planRes = await dbQuery(
-    `SELECT id, display_name, name, price FROM plans WHERE id = 'lifetime100' AND active = true LIMIT 1`
+    `SELECT id, display_name, name, price FROM plans WHERE id = 'lifetime-pass' AND active = true LIMIT 1`
   );
   if (planRes.rows.length === 0) {
     return res.status(503).json({ success: false, error: 'Lifetime plan not available.' });
@@ -14554,7 +14556,7 @@ app.post('/api/public/lifetime100/np-invoice', lifetime100NpInvoiceLimiter, asyn
   // Reuse a live pending invoice for the same user + currency (avoids duplicate NP fees on retry).
   const resumeRes = await dbQuery(
     `SELECT id, btcpay_invoice_id, metadata FROM dash_subscription_orders
-     WHERE user_id = $1 AND plan_id = 'lifetime100' AND status = 'pending'
+     WHERE user_id = $1 AND plan_id = 'lifetime-pass' AND status = 'pending'
        AND metadata->>'flow' = 'lifetime100-public'
        AND metadata->>'payCurrency' = $2
        AND created_at > NOW() - INTERVAL '23 hours'
@@ -14610,7 +14612,7 @@ app.post('/api/public/lifetime100/np-invoice', lifetime100NpInvoiceLimiter, asyn
   await dbQuery(
     `INSERT INTO dash_subscription_orders
        (user_id, plan_id, email, usd_amount, btcpay_invoice_id, status, metadata)
-     VALUES ($1, 'lifetime100', $2, $3, $4, 'pending', $5)
+     VALUES ($1, 'lifetime-pass', $2, $3, $4, 'pending', $5)
      ON CONFLICT (btcpay_invoice_id) DO NOTHING`,
     [String(userId), email, usdAmount, orderId, JSON.stringify({
       provider: 'nowpayments',

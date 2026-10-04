@@ -2851,6 +2851,7 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
   const [selectedHomePlan, setSelectedHomePlan] = useState<SubscriptionPlan | null>(null);
   const [homeNpOpen, setHomeNpOpen] = useState(false);
   const [homeCallOpen, setHomeCallOpen] = useState(false);
+  const [homeCallLexOpen, setHomeCallLexOpen] = useState(false);
   const formatLocalPrice = useLocalPrice();
 
   // Founders aggressive promo — active for 60 min after onboarding completion.
@@ -2908,7 +2909,7 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
         : Promise.resolve(null),
       getWalletBalance().catch(() => null),
     ]).then(([plansRes, balRes, rushRes]) => {
-      const HIDDEN_IDS = new Set(["prime-trial-3d", "lifetime-pass"]);
+      const HIDDEN_IDS = new Set(["prime-trial-3d", "lifetime-pass", "mondays_spundays_promo_20"]);
       setHomePlans((plansRes.plans || []).filter((p) => p.active && !HIDDEN_IDS.has(p.id)));
       setHomeUsdcBalance(balRes && balRes.hasWallet ? balRes.usdc : null);
       if (rushRes?.success) setHomeRushBalance((rushRes.regularBalance ?? 0) + (rushRes.giftedBalance ?? 0));
@@ -3380,7 +3381,7 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
                               </button>
                             );
                           })}
-                          <div className="mt-1 pt-1.5 border-t border-white/[0.06]">
+                          <div className="mt-1 pt-1.5 border-t border-white/[0.06] space-y-1.5">
                             <button
                               type="button"
                               onClick={() => { setHomePanelOpen(false); setHomeCallOpen(true); }}
@@ -3390,6 +3391,27 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
                               <div className="flex-1 min-w-0">
                                 <p className="text-xs font-bold text-white truncate">
                                   📞 {lang === "es" ? "Reserva una llamada con Santino" : "Book a call with Santino"}
+                                </p>
+                                <p className="text-[10px] text-white/50">
+                                  {lang === "es" ? "30 o 60 min · privado" : "30 or 60 min · private"}
+                                </p>
+                              </div>
+                              <div className="text-right flex-shrink-0">
+                                <p className="text-sm font-black" style={{ color: "#D4007A" }}>from $60</p>
+                                {formatLocalPrice(60) && (
+                                  <p className="text-[9px] text-white/30 leading-none mt-0.5">{formatLocalPrice(60)}</p>
+                                )}
+                              </div>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => { setHomePanelOpen(false); setHomeCallLexOpen(true); }}
+                              className="w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl border text-left transition active:scale-[0.98] hover:bg-white/[0.06]"
+                              style={{ borderColor: "rgba(255,255,255,0.1)", background: "rgba(255,255,255,0.03)" }}
+                            >
+                              <div className="flex-1 min-w-0">
+                                <p className="text-xs font-bold text-white truncate">
+                                  📞 {lang === "es" ? "Reserva una llamada con Lex" : "Book a call with Lex"}
                                 </p>
                                 <p className="text-[10px] text-white/50">
                                   {lang === "es" ? "30 o 60 min · privado" : "30 or 60 min · private"}
@@ -3491,6 +3513,24 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
               creator={{
                 id: "8599671840",
                 username: "SantinoFurioso",
+                photo_url: null,
+                creator_type: "full_time",
+                creator_price_usd: 0,
+              }}
+              isOnline={true}
+            />
+          </Suspense>
+        )}
+
+        {/* Book a call with Lex — triggered from the home panel */}
+        {homeCallLexOpen && (
+          <Suspense fallback={null}>
+            <LazyBookCallModal
+              open={homeCallLexOpen}
+              onClose={() => setHomeCallLexOpen(false)}
+              creator={{
+                id: "8f5f4dd1-7bdb-4571-b026-e09d91113c91",
+                username: "PNPLATINOBOY",
                 photo_url: null,
                 creator_type: "full_time",
                 creator_price_usd: 0,

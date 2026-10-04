@@ -97,7 +97,8 @@ class Plan {
       'prime-trial-3d',
       'monthly-pass-promo-15',
       'yearly50',       // legacy annual; promo section retired — no longer surfaced
-      // 'lifetime-pass' — re-listed for Founders last-call campaign 2026-09-26
+      'mondays_spundays_promo_20',  // redeemable only via /redeem/mondays-spundays
+      'lifetime-pass',  // Founders — sold only via /lifetime100 landing
     ]);
     // custom-prime-* are one-time operator-issued plans — never surface publicly
     const isCustomPlan = (plan) => plan.id.startsWith('custom-prime-');
