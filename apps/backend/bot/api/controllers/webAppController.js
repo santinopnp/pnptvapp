@@ -3682,10 +3682,48 @@ const addRecoveryEmail = async (req, res) => {
       return res.status(409).json({ error: 'That email is already in use by another account.' });
     }
 
+    // Snapshot previous email before overwriting — email-collection campaign
+    // attribution needs to know whether this user was going from empty → set.
+    const beforeRow = await query('SELECT email FROM users WHERE id = $1', [sessionUser.id]);
+    const previousEmail = beforeRow.rows[0]?.email || '';
+
     await query(
       `UPDATE users SET email = $1, email_verified = false, updated_at = NOW() WHERE id = $2`,
       [raw, sessionUser.id]
     );
+
+    // Email-collection campaign (2026-10-03) attribution — mirror of the hook
+    // in POST /api/webapp/settings/change-email. Only fires when previous email
+    // was empty AND user is in the campaign DM audience.
+    if (!previousEmail.trim()) {
+      try {
+        const { getRedis } = require('../../../config/redis');
+        const r = getRedis();
+        const CAMPAIGN = 'email-collect-2026-10-03';
+        const DEDUP_KEY   = `pnpapp:broadcast:dedup:${CAMPAIGN}`;
+        const AWARDED_KEY = `pnpapp:broadcast:awarded:${CAMPAIGN}`;
+        const inAudience = await r.sismember(DEDUP_KEY, String(sessionUser.id));
+        if (inAudience) {
+          const added = await r.sadd(AWARDED_KEY, String(sessionUser.id));
+          if (added === 1) {
+            const tokenLedger = require('../../../services/tokenLedgerService');
+            await tokenLedger.credit({
+              userId: sessionUser.id,
+              balanceDelta: 20,
+              reason: 'admin_grant',
+              sourceType: 'campaign',
+              sourceId: CAMPAIGN,
+              actorId: 'system',
+              metadata: { campaign: CAMPAIGN, bonus: 20, trigger: 'add-recovery-email' },
+            });
+            await r.expire(AWARDED_KEY, 30 * 86400);
+            logger.info('[addRecoveryEmail] +20 Ru$h bonus granted', { userId: sessionUser.id, campaign: CAMPAIGN });
+          }
+        }
+      } catch (bonusErr) {
+        logger.warn('[addRecoveryEmail] campaign bonus skipped', { userId: sessionUser.id, error: bonusErr.message });
+      }
+    }
 
     await query(`
       CREATE TABLE IF NOT EXISTS email_verification_tokens (

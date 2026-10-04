@@ -1256,7 +1256,15 @@ export default function Onboarding() {
 
   // Founders upsell shown after follow step
   if (showFoundersUpsell) {
-    const dest = "/c/santinofurioso?action=subscribe&onboarding=1";
+    const defaultDest = "/c/santinofurioso?action=subscribe&onboarding=1";
+    const consumeIntent = () => {
+      try {
+        const intent = sessionStorage.getItem("pnptv:postSignupIntent");
+        if (intent) { sessionStorage.removeItem("pnptv:postSignupIntent"); return intent; }
+      } catch {}
+      return null;
+    };
+    const dest = consumeIntent() ?? defaultDest;
     return (
       <FoundersUpsellScreen
         foundersOfferExpiresAt={user?.foundersOfferExpiresAt ?? null}

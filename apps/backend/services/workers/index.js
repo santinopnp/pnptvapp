@@ -157,6 +157,19 @@ async function notificationsProcessor(job) {
       return;
     }
 
+    case 'year50_funnel_promo': {
+      // Two Workers are attached to 'notifications' (this one + queueService's);
+      // BullMQ picks one at random per job. Without this case, ~50% of year50
+      // follow-up DMs were silently dropped as "unhandled".
+      const qs = _safeRequire('../queueService');
+      if (!qs || typeof qs._handleYear50FunnelPromo !== 'function') {
+        logger.warn('[BullMQ] notificationsProcessor: _handleYear50FunnelPromo not available');
+        return;
+      }
+      await qs._handleYear50FunnelPromo(job.data || {});
+      return;
+    }
+
     default: {
       // Legacy type-based dispatch (old addJob callers that set data.type)
       if (type) {
@@ -1327,7 +1340,12 @@ async function subscribeRetargetProcessor(job) {
     logger.warn(`[BullMQ] subscribeRetargetProcessor: unhandled job name "${job.name}"`);
     return;
   }
-
+  // Disabled 2026-10-04 — flow was creating USDT-BSC yearly50 invoices that
+  // converted at ~0% and polluted the pending NP pool. Drain any already-
+  // scheduled delayed jobs; keep this early-return so late-firing jobs no-op.
+  logger.info('[BullMQ] subscribeRetargetProcessor: disabled, skipping', { userId: job.data?.userId });
+  return;
+  // eslint-disable-next-line no-unreachable
   const { userId, visitedAt } = job.data;
   if (!userId) return;
 
@@ -1339,6 +1357,12 @@ async function subscribeRetargetProcessor(job) {
   const user = rows[0];
   if (!user) return;
   if (user.tier === 'prime') return;
+  // Skip early for unreachable users — creating a NowPayments invoice we'll
+  // never DM out is wasted quota + an orphan DSO row.
+  if (!user.telegram) {
+    logger.info('[BullMQ] subscribeRetargetProcessor: no telegram, skipped', { userId });
+    return;
+  }
 
   const visitKey = `pnpapp:subscribe-visit:${userId}`;
   const stillPending = await getRedis().exists(visitKey);
@@ -1388,7 +1412,10 @@ async function subscribeRetargetProcessor(job) {
       { headers: { 'x-api-key': process.env.NOWPAYMENTS_API_KEY }, timeout: 10000 }
     );
     if (npRes.data?.invoice_url) {
-      invoiceUrl = npRes.data.invoice_url;
+      // NowPayments returns the URL with a trailing slash before `?` (e.g.
+      // `/payment/?iid=…`), which 301-redirects to HTTP. Some Telegram in-app
+      // browsers refuse the HTTPS→HTTP downgrade silently. Strip the slash.
+      invoiceUrl = String(npRes.data.invoice_url).replace('/payment/?', '/payment?');
       // Backfill the invoice URL into metadata so it can be resumed on retry.
       const nowpaymentsInvoiceId = npRes.data?.id ? String(npRes.data.id) : null;
       await pgQuery(
@@ -1410,27 +1437,29 @@ async function subscribeRetargetProcessor(job) {
     logger.warn('[BullMQ] subscribeRetargetProcessor: NowPayments invoice failed — DM will use /subscribe fallback', { userId, orderId, error: err.message });
   }
 
-  if (user.telegram) {
-    try {
-      const botModule = _safeRequire('../../bot/core/bot');
-      const bot = botModule && typeof botModule.getBotInstance === 'function' ? botModule.getBotInstance() : null;
-      if (!bot) { logger.warn('[BullMQ] subscribeRetargetProcessor: bot not available'); return; }
-      const text =
-        `🔥 <b>Hey!</b> Viste los planes PRIME en PNPtv — te dejé el link listo:\n\n` +
-        `💎 <b>$50/año</b> — acceso total, sin límites\n` +
-        `<a href="${invoiceUrl}">👉 Pagar ahora con crypto</a>\n\n` +
-        `🌐 <a href="https://pnptv.app/subscribe">Ver todas las opciones</a>`;
-      await bot.telegram.sendMessage(user.telegram, text, {
-        parse_mode: 'HTML',
-        disable_web_page_preview: false,
-      });
-    } catch (err) {
-      logger.warn('[BullMQ] subscribeRetargetProcessor: Telegram DM failed', { userId, error: err.message });
-    }
+  let dmSent = false;
+  try {
+    const botModule = _safeRequire('../../bot/core/bot');
+    const bot = botModule && typeof botModule.getBotInstance === 'function' ? botModule.getBotInstance() : null;
+    if (!bot) throw new Error('bot not available');
+    const text =
+      `🔥 <b>Hey!</b> Viste los planes PRIME en PNPtv — te dejé el link listo:\n\n` +
+      `💎 <b>$50/año</b> — acceso total, sin límites\n` +
+      `<a href="${invoiceUrl}">👉 Pagar ahora con crypto</a>\n\n` +
+      `🌐 <a href="https://pnptv.app/subscribe">Ver todas las opciones</a>`;
+    await bot.telegram.sendMessage(user.telegram, text, {
+      parse_mode: 'HTML',
+      disable_web_page_preview: false,
+    });
+    dmSent = true;
+  } catch (err) {
+    logger.warn('[BullMQ] subscribeRetargetProcessor: telegram dm failed', { userId, error: err.message });
   }
 
+  // Always clear the visit key — retrying on failure would spawn duplicate
+  // DSOs and NowPayments invoices on every subsequent job tick.
   await getRedis().del(visitKey);
-  logger.info('[BullMQ] subscribeRetargetProcessor: retarget sent', { userId, visitedAt });
+  if (dmSent) logger.info('[BullMQ] subscribeRetargetProcessor: dm sent', { userId, visitedAt });
 }
 
 // ─── startAllWorkers ──────────────────────────────────────────────────────────

@@ -458,13 +458,19 @@ export interface WalletPayCardProps {
       caller can navigate or toast as needed. */
   onSuccess?: (result: { intentId: number; rushCredited?: number; entitlementId?: number | null; bookingId?: string | null }) => void;
   onError?: (err: unknown) => void;
+  /** When defined, called INSTEAD of showing the generic "card glitched" error
+   *  when Privy's Stripe fiat onramp fails (addFunds returns
+   *  "Unable to open payment window" / "Something went wrong setting up checkout").
+   *  Callers wire this to opening their NowPayments picker so a dead onramp
+   *  turns into a one-tap crypto fallback instead of a dead-end error. */
+  onCryptoFallback?: () => void;
   lang?: "es" | "en";
   compact?: boolean;
 }
 
 export function WalletPayCard({
   surface, amountUsd: amountUsdRaw, entitlementSpec, metadata,
-  label, onSuccess, onError, lang = "en", compact = false,
+  label, onSuccess, onError, onCryptoFallback, lang = "en", compact = false,
 }: WalletPayCardProps) {
   const es = lang === "es";
   // Caller can pass NaN if plans haven't loaded yet or price parse fails
@@ -474,7 +480,7 @@ export function WalletPayCard({
   // disabled below if amountUsd <= 0.
   const amountUsd = Number.isFinite(amountUsdRaw) && amountUsdRaw > 0 ? amountUsdRaw : 0;
   const priceReady = amountUsd > 0;
-  const { authenticated, login, getAccessToken } = usePrivy();
+  const { authenticated, login, logout, getAccessToken } = usePrivy();
   const { createWallet } = useCreateWallet();
   const { wallets } = useWallets();
   const recovery = usePrivyRecovery();
@@ -584,13 +590,25 @@ export function WalletPayCard({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authenticated, activeWallet?.address]);
 
-  // Auto-reload after 30s if still stuck in no_wallet state (Privy SDK
-  // sometimes needs a fresh page to hydrate the embedded wallet).
+  // Auto-reload after 30s if stuck in no_wallet state (Privy SDK sometimes
+  // needs a fresh page to hydrate the embedded wallet). Cap at 1 reload per
+  // SESSION so a persistently-stuck SDK can't trap the user in an infinite
+  // reload loop. After the first reload fails, the no_wallet UI below pivots
+  // to an explicit log-out / re-auth affordance instead of auto-retrying.
+  const NO_WALLET_RELOAD_KEY = "pnpapp:privy:no_wallet_reload_count";
+  const [noWalletReloadCount, setNoWalletReloadCount] = _useState<number>(() => {
+    try { return parseInt(sessionStorage.getItem(NO_WALLET_RELOAD_KEY) || "0", 10) || 0; } catch { return 0; }
+  });
   _useEffect(() => {
     if (recovery.status !== "no_wallet") return;
-    const t = setTimeout(() => window.location.reload(), 30_000);
+    if (noWalletReloadCount >= 1) return;
+    const t = setTimeout(() => {
+      try { sessionStorage.setItem(NO_WALLET_RELOAD_KEY, String(noWalletReloadCount + 1)); } catch { /* iOS Safari partition */ }
+      setNoWalletReloadCount(noWalletReloadCount + 1);
+      window.location.reload();
+    }, 30_000);
     return () => clearTimeout(t);
-  }, [recovery.status]);
+  }, [recovery.status, noWalletReloadCount]);
 
   // Not signed into Privy yet — frame as card-primary so a card-only user
   // doesn't bail thinking this is a new-account onboarding step. The Privy
@@ -758,35 +776,42 @@ export function WalletPayCard({
       if (isEmbedded) {
         // Privy embedded wallets are pure EOAs — the wallet itself has to pay
         // gas out of its own ETH. requestGasTopup seeds ~$0.20 in Base ETH
-        // from a platform treasury when the wallet is empty; best-effort so
-        // we proceed with the tx attempt either way (a 503 falls back to the
-        // pre-existing "insufficient funds for gas" error, no regression).
-        // Instrumented (2026-09-06): report topup failures so we can debug
-        // silent drop-offs where a doomed tx UI opens with insufficient gas.
-        let topupResult: Awaited<ReturnType<typeof requestGasTopup>>;
+        // from a platform treasury when the wallet is empty.
+        //
+        // Previously this was best-effort (we proceeded on failure and let the
+        // tx revert with "insufficient funds for gas"), which meant a doomed
+        // signing UI opened whenever the treasury was depleted or rate-limited.
+        // Now we HARD-BLOCK on real top-up failure for embedded wallets,
+        // falling back to the ETH balance snapshot when the top-up endpoint
+        // itself is unreachable (transport error).
+        let gasReady = false;
         try {
-          topupResult = await requestGasTopup(activeWallet.address);
-          if (!topupResult.ok && !topupResult.skipped) {
+          const topupResult = await requestGasTopup(activeWallet.address);
+          if (topupResult.ok || topupResult.skipped) {
+            gasReady = true;
+          } else {
             reportWalletClientError("gasTopup", new Error(topupResult.reason || "topup_failed"), {
               surface, amountUsd, address: activeWallet.address, walletType: activeWallet.walletClientType,
             });
-            const reason = topupResult.reason || "";
-            if (!/already_funded|sufficient/i.test(reason)) {
-              setError(es
-                ? "No se pudo preparar el gas. Si el pago falla, intentá de nuevo."
-                : "Gas setup failed. If payment fails, please retry.");
-            }
+            // Some code paths return ok=false with reason=already_funded /
+            // sufficient when Alchemy already shows a non-zero ETH balance;
+            // honor those as a successful outcome.
+            if (/already_funded|sufficient/i.test(topupResult.reason || "")) gasReady = true;
           }
         } catch (gasErr: unknown) {
-          const gasMsg = gasErr instanceof Error ? gasErr.message : String(gasErr);
           reportWalletClientError("gasTopup", gasErr, {
             surface, amountUsd, address: activeWallet.address, walletType: activeWallet.walletClientType,
           });
-          if (!/already_funded|sufficient/i.test(gasMsg)) {
-            setError(es
-              ? "No se pudo preparar el gas. Si el pago falla, intentá de nuevo."
-              : "Gas setup failed. If payment fails, please retry.");
-          }
+          // Transport error — fall back to the component-level ETH balance
+          // snapshot. If it's > 0 we assume the wallet already has some gas
+          // and a tx attempt may still succeed. If it's 0 or null, abort.
+          if ((eth ?? 0) > 0) gasReady = true;
+        }
+        if (!gasReady) {
+          setError(es
+            ? "No pudimos cargar el gas de tu billetera. Reintentá en un minuto o escribí a soporte si persiste."
+            : "Could not prepare wallet gas. Retry in a minute, or contact support if it persists.");
+          return; // finally{} resets `paying`
         }
         const res = await privySendTransaction(
           { chainId: 8453, to: _USDC_BASE as `0x${string}`, data, value: "0" },
@@ -933,12 +958,17 @@ export function WalletPayCard({
       poll();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      // Popup-blocked / Stripe risk declines / onramp glitches all leave the
-      // user uncharged. Show copy specific to each so they know what to do
-      // next (allow pop-ups, open in a real browser, or use Apple Pay /
-      // Google Pay) instead of the raw Privy error.
       const kind = classifyOnrampError(msg);
       if (kind === "cancel") return;
+      // For glitch/failed cases, route to crypto fallback if the caller provided one
+      if ((kind === "stripe_failed" || kind === "status_timeout") && onCryptoFallback) {
+        reportWalletClientError("addFunds_fallback_to_crypto", err, {
+          surface, amountUsd, address: activeWallet?.address,
+          walletType: activeWallet?.walletClientType,
+        });
+        onCryptoFallback();
+        return;
+      }
       setError(onrampErrorMessage(kind, es, msg));
       setOfferOpenInBrowser(shouldOfferOpenInBrowser(kind));
       reportWalletClientError("addFunds", err, {
@@ -1022,27 +1052,70 @@ export function WalletPayCard({
     );
   }
   if (recovery.status === "no_wallet") {
+    const exhausted = noWalletReloadCount >= 1;
+    const addrShort = recovery.serverWalletAddr
+      ? `${recovery.serverWalletAddr.slice(0, 6)}…${recovery.serverWalletAddr.slice(-4)}`
+      : null;
     return (
       <div className="rounded-xl border border-amber-400/40 bg-amber-500/[0.06] p-3 space-y-2">
         <div className="flex items-center gap-2">
-          <span className="text-lg">💫</span>
+          <span className="text-lg">{exhausted ? "⚠️" : "💫"}</span>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-bold text-white">{es ? "Sincronizando billetera…" : "Syncing wallet…"}</p>
+            <p className="text-sm font-bold text-white">
+              {exhausted
+                ? (es ? "Tu billetera no cargó" : "Wallet didn't load")
+                : (es ? "Sincronizando billetera…" : "Syncing wallet…")}
+            </p>
             <p className="text-[11px] text-white/60 leading-snug">
-              {es
-                ? `Vinculando ${recovery.serverWalletAddr ? "tu wallet " + recovery.serverWalletAddr.slice(0, 6) + "…" : "tu wallet"}. Reintentando en 30s…`
-                : `Linking ${recovery.serverWalletAddr ? "wallet " + recovery.serverWalletAddr.slice(0, 6) + "…" : "your wallet"}. Auto-retrying in 30s…`}
+              {exhausted
+                ? (es
+                  ? `Tu PNPtv Wallet existe${addrShort ? ` (${addrShort})` : ""} pero no cargó en este dispositivo. Salí y volvé a entrar.`
+                  : `Your PNPtv Wallet exists${addrShort ? ` (${addrShort})` : ""} but didn't hydrate on this device. Log out and sign back in.`)
+                : (es
+                  ? `Vinculando ${addrShort ? "wallet " + addrShort : "tu wallet"}. Reintentando en 30s…`
+                  : `Linking ${addrShort ? "wallet " + addrShort : "your wallet"}. Auto-retrying in 30s…`)}
             </p>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={() => window.location.reload()}
-          className="w-full py-2.5 rounded-xl text-xs font-semibold text-white/90 transition"
-          style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)" }}
-        >
-          {es ? "Recargar página" : "Refresh page"}
-        </button>
+        {exhausted ? (
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  try { sessionStorage.removeItem(NO_WALLET_RELOAD_KEY); } catch { /* ignore */ }
+                  await logout();
+                } catch (err) {
+                  reportWalletClientError("logoutFromNoWalletRecovery", err, { surface });
+                }
+              }}
+              className="flex-1 py-2.5 rounded-xl text-xs font-bold text-white transition active:scale-[0.97]"
+              style={{ background: "linear-gradient(135deg,#f59e0b,#d97706)" }}
+            >
+              {es ? "Cerrar sesión" : "Log out"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                try { sessionStorage.removeItem(NO_WALLET_RELOAD_KEY); } catch { /* ignore */ }
+                window.location.reload();
+              }}
+              className="flex-1 py-2.5 rounded-xl text-xs font-semibold text-white/90 transition"
+              style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)" }}
+            >
+              {es ? "Reintentar" : "Try again"}
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="w-full py-2.5 rounded-xl text-xs font-semibold text-white/90 transition"
+            style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)" }}
+          >
+            {es ? "Recargar página" : "Refresh page"}
+          </button>
+        )}
       </div>
     );
   }
@@ -1431,7 +1504,7 @@ export function WalletLoginGate({ children, lang = "en" }: { children: React.Rea
 }
 
 export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
-  const { authenticated, login, exportWallet, getAccessToken } = usePrivy();
+  const { authenticated, login, logout, exportWallet, getAccessToken } = usePrivy();
   const { wallets } = useWallets();
   const recovery = usePrivyRecovery();
   const { addFunds } = useAddFunds();
@@ -1631,7 +1704,7 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
   const [dustError, setDustError] = _useState<string | null>(null);
   const [dustSuccess, setDustSuccess] = _useState<{ tokens: number; usd: number } | null>(null);
   const [dustCooldown, setDustCooldown] = _useState(false);
-  const [dustCfg, setDustCfg] = _useState<{ threshold_usd: number; min_usd: number; bonus_pct: number; eth_gas_reserve: number } | null>(null);
+  const [dustCfg, setDustCfg] = _useState<{ threshold_usd: number; min_usd: number; bonus_pct: number; eth_gas_reserve: number; cooldown_active?: boolean } | null>(null);
   const [ethUsdPrice, setEthUsdPrice] = _useState<number | null>(null);
 
   // Fetch dust config once per sheet open; failure falls back to prior
@@ -1640,7 +1713,14 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
   _useEffect(() => {
     let cancelled = false;
     _getDustConfig()
-      .then((c) => { if (!cancelled) setDustCfg({ threshold_usd: c.threshold_usd, min_usd: c.min_usd, bonus_pct: c.bonus_pct, eth_gas_reserve: c.eth_gas_reserve }); })
+      .then((c) => {
+        if (cancelled) return;
+        setDustCfg({ threshold_usd: c.threshold_usd, min_usd: c.min_usd, bonus_pct: c.bonus_pct, eth_gas_reserve: c.eth_gas_reserve, cooldown_active: !!c.cooldown_active });
+        // Mirror server-side cooldown into local state so the card stays
+        // suppressed even if dustCfg is re-fetched (prevents the ETH-after-USDC
+        // loop reported 2026-10-04).
+        if (c.cooldown_active) setDustCooldown(true);
+      })
       .catch(() => { /* fallback to defaults */ });
     // ETH spot price (public endpoint, no auth) — used to preview the ETH
     // sweep USD value when USDC is zero but ETH has dust.
@@ -2285,12 +2365,24 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
             ? "WalletConnect"
             : activeWallet.walletClientType || "External";
 
-  // Auto-reload after 30s if still stuck in no_wallet state inside the sheet.
+  // Auto-reload after 30s if stuck in no_wallet state inside the sheet.
+  // Capped at 1 reload per session (sessionStorage counter shared with the
+  // WalletPayCard's identical guard — so no_wallet users don't get caught in
+  // a reload loop between the sheet and the pay card).
+  const SHEET_NO_WALLET_RELOAD_KEY = "pnpapp:privy:no_wallet_reload_count";
+  const [sheetNoWalletReloadCount, setSheetNoWalletReloadCount] = _useState<number>(() => {
+    try { return parseInt(sessionStorage.getItem(SHEET_NO_WALLET_RELOAD_KEY) || "0", 10) || 0; } catch { return 0; }
+  });
   _useEffect(() => {
     if (recovery.status !== "no_wallet") return;
-    const t = setTimeout(() => window.location.reload(), 30_000);
+    if (sheetNoWalletReloadCount >= 1) return;
+    const t = setTimeout(() => {
+      try { sessionStorage.setItem(SHEET_NO_WALLET_RELOAD_KEY, String(sheetNoWalletReloadCount + 1)); } catch { /* ignore */ }
+      setSheetNoWalletReloadCount(sheetNoWalletReloadCount + 1);
+      window.location.reload();
+    }, 30_000);
     return () => clearTimeout(t);
-  }, [recovery.status]);
+  }, [recovery.status, sheetNoWalletReloadCount]);
 
   // Recovery UI — same 3-state coverage as WalletPayCard. Presented as a
   // compact panel INSIDE the sheet (not a full-screen replacement) so users
@@ -2356,23 +2448,58 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
       );
     }
     if (recovery.status === "no_wallet") {
+      const sheetExhausted = sheetNoWalletReloadCount >= 1;
+      const sheetAddrShort = recovery.serverWalletAddr
+        ? `${recovery.serverWalletAddr.slice(0, 6)}…${recovery.serverWalletAddr.slice(-4)}`
+        : null;
       return (
         <div className="p-6 space-y-3">
           <div className="text-center space-y-1">
-            <div className="text-3xl">💫</div>
-            <p className="text-base font-bold text-white">Sincronizando billetera…</p>
+            <div className="text-3xl">{sheetExhausted ? "⚠️" : "💫"}</div>
+            <p className="text-base font-bold text-white">
+              {sheetExhausted ? "Tu billetera no cargó" : "Sincronizando billetera…"}
+            </p>
             <p className="text-xs text-white/60 max-w-xs mx-auto leading-relaxed">
-              {recovery.serverWalletAddr
-                ? `Vinculando ${recovery.serverWalletAddr.slice(0, 6)}…${recovery.serverWalletAddr.slice(-4)}. Reintentando en 30s…`
-                : "Vinculando tu wallet. Reintentando en 30s…"}
+              {sheetExhausted
+                ? `Tu PNPtv Wallet existe${sheetAddrShort ? ` (${sheetAddrShort})` : ""} pero no cargó en este dispositivo. Salí y volvé a entrar.`
+                : (sheetAddrShort
+                  ? `Vinculando ${sheetAddrShort}. Reintentando en 30s…`
+                  : "Vinculando tu wallet. Reintentando en 30s…")}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => window.location.reload()}
-            className="w-full py-2.5 rounded-xl text-sm font-semibold text-white/90 transition"
-            style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)" }}
-          >Recargar página</button>
+          {sheetExhausted ? (
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    try { sessionStorage.removeItem(SHEET_NO_WALLET_RELOAD_KEY); } catch { /* ignore */ }
+                    await logout();
+                  } catch (err) {
+                    reportWalletClientError("logoutFromSheetNoWalletRecovery", err, {});
+                  }
+                }}
+                className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white transition active:scale-[0.97]"
+                style={{ background: "linear-gradient(135deg,#f59e0b,#d97706)" }}
+              >Cerrar sesión</button>
+              <button
+                type="button"
+                onClick={() => {
+                  try { sessionStorage.removeItem(SHEET_NO_WALLET_RELOAD_KEY); } catch { /* ignore */ }
+                  window.location.reload();
+                }}
+                className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white/90 transition"
+                style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)" }}
+              >Reintentar</button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="w-full py-2.5 rounded-xl text-sm font-semibold text-white/90 transition"
+              style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)" }}
+            >Recargar página</button>
+          )}
         </div>
       );
     }
@@ -2887,6 +3014,10 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
                   ? Math.max(0, eth - _ethReserve) * ethUsdPrice
                   : 0;
                 const _ethEligible = !_usdcEligible && _ethSpendable >= _min && _ethSpendable < _threshold;
+                // Suppress the whole card during the 24h cooldown — unless
+                // the user *just* converted (dustSuccess) in which case we
+                // keep showing the success state until they close the sheet.
+                if ((dustCfg?.cooldown_active || dustCooldown) && !dustSuccess) return null;
                 if (!_usdcEligible && !_ethEligible && !dustSuccess) return null;
                 const _asset: "usdc" | "eth" = _usdcEligible ? "usdc" : "eth";
                 const _sweepUsd = _asset === "usdc" ? Number(usdc) : _ethSpendable;

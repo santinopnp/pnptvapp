@@ -501,6 +501,15 @@ const strings = {
     dataPrivacySection: "Data & Privacy",
     dangerZoneSection: "Danger Zone",
 
+    // Geo-visibility section
+    hideFromRegionsTitle: "Hide my content in these regions",
+    hideFromRegionsBody: "Viewers browsing from any country or US state you add here won't see your profile, posts, videos, live shows, bookable services, or find you in Nearby or Search — and posts where other users tag you will also hide for them. Add Colombia to hide from Colombia, or US Florida to hide from just one US state. You stay fully visible everywhere else.",
+    hideFromRegionsEmpty: "No regions hidden — your content is visible worldwide.",
+    hideFromRegionsSaving: "Saving…",
+    hideFromRegionsSaved: "Saved",
+    hideFromRegionsAddCountry: "+ Add country",
+    hideFromRegionsAddState: "+ Add US state",
+
     // ── Settings 2-level navigation ───────────────────────────────────────────
     settingsMenuSubtitle: "Choose a category to manage.",
     catAccountTitle: "Account",
@@ -1117,6 +1126,15 @@ const strings = {
     notificationsSection: "Notificaciones",
     dataPrivacySection: "Datos y Privacidad",
     dangerZoneSection: "Zona de Peligro",
+
+    // Geo-visibility section
+    hideFromRegionsTitle: "Oculta mi contenido en estas regiones",
+    hideFromRegionsBody: "Las personas que naveguen desde los países o estados de EE. UU. que agregues no verán tu perfil, publicaciones, videos, shows en vivo, servicios reservables, ni te encontrarán en Cerca o Buscar — y las publicaciones donde otras personas te etiqueten también quedarán ocultas para ellos. Agrega Colombia para ocultar de Colombia entera, o US Florida para ocultar sólo de un estado. Sigues siendo visible en todos los demás lugares.",
+    hideFromRegionsEmpty: "Sin regiones ocultas — tu contenido es visible en todo el mundo.",
+    hideFromRegionsSaving: "Guardando…",
+    hideFromRegionsSaved: "Guardado",
+    hideFromRegionsAddCountry: "+ Agregar país",
+    hideFromRegionsAddState: "+ Agregar estado de EE. UU.",
 
     // ── Settings 2-level navigation ───────────────────────────────────────────
     settingsMenuSubtitle: "Elige una categoría para administrarla.",

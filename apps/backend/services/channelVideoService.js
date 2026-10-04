@@ -650,18 +650,21 @@ function escapeHtml(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-async function broadcastNewVideo({ videoId, channelId, creatorId, title, description, thumbnailUrl, gifUrl }) {
+async function broadcastNewVideo({ videoId, channelId, channelSlug, creatorId, title, description, thumbnailUrl, gifUrl }) {
   const redis = getRedis();
   const dedupKey = `pnp:video:notified:${videoId}`;
   const alreadySent = await redis.set(dedupKey, '1', 'EX', 86400, 'NX');
   if (alreadySent === null) return; // already broadcast
 
   const appUrl = (process.env.APP_PUBLIC_URL || 'https://pnptv.app').replace(/\/$/, '');
-  const watchUrl = `${appUrl}/channels`;
+  // Deep-link to the specific channel so free/non-entitled viewers land on
+  // the "Unlock everything, go PRIME" paywall instead of the generic hub.
+  const watchUrl = channelSlug ? `${appUrl}/channels?channel=${encodeURIComponent(channelSlug)}` : `${appUrl}/channels`;
   const previewUrl = gifUrl || thumbnailUrl;
   const descSnippet = description ? description.slice(0, 100) + (description.length > 100 ? '…' : '') : '';
 
-  // Load followers of this creator (non-free, non-banned)
+  // Load followers of this creator — includes free tier so they get the
+  // upgrade-CTA push; the paywall at /channels?channel=<slug> blocks playback.
   let followers = [];
   try {
     const { rows } = await query(
@@ -670,7 +673,7 @@ async function broadcastNewVideo({ videoId, channelId, creatorId, title, descrip
          FROM user_follows uf
          JOIN users u ON u.id = uf.follower_id
         WHERE uf.following_id = $1
-          AND u.tier NOT IN ('free', 'banned')
+          AND u.tier != 'banned'
         LIMIT 3000`,
       [String(creatorId)]
     );
@@ -1096,6 +1099,7 @@ async function publishVideo({ videoId, userId, isAdmin }) {
     void broadcastNewVideo({
       videoId,
       channelId: final.channel_id,
+      channelSlug: ch.slug || null,
       creatorId: ch.creator_id,
       title: final.title,
       description: final.description || '',
@@ -1238,7 +1242,10 @@ async function listChannelVideos({ channelId, viewerId, includeDrafts = false })
           ? `https://stream.mux.com/${row.mux_playback_id}.m3u8`
           : directusFileUrl(row.directus_file_id))
       : null,
-    mux_playback_id: row.mux_playback_id || null,
+    // Null out mux_playback_id for non-entitled viewers too — frontends
+    // reconstruct the HLS URL directly from this id (muxUsable check in
+    // Channels.tsx), bypassing the video_url gate above if it leaks.
+    mux_playback_id: viewerHasAccess ? (row.mux_playback_id || null) : null,
     mux_status: row.mux_status || null,
     status: row.status,
     created_at: row.created_at,
@@ -1372,7 +1379,10 @@ function shapeForApi(row, channel, extra = {}) {
 async function createMuxUpload(userId, channelId, isAdmin = false) {
   const muxService = require('./muxService');
   await loadOwnedChannel(String(channelId), String(userId), isAdmin);
-  const { uploadId, uploadUrl } = await muxService.createDirectUpload();
+  const { uploadId, uploadUrl } = await muxService.createDirectUpload(
+    'https://pnptv.app',
+    { watermark: true }
+  );
   const { rows: [video] } = await query(
     `INSERT INTO channel_videos
        (uploader_id, channel_id, title, status, mux_upload_id, mux_status)

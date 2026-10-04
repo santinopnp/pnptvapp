@@ -157,6 +157,25 @@ export default function UploadVideoModal({
     setFile(f);
   };
 
+  // Detached-input pattern: creates a fresh <input type="file"> outside React's
+  // VDOM and appends it to <body> so Android Chrome can properly return the file
+  // result. sr-only clips the input to rect(0,0,0,0) which breaks onChange on
+  // Android Chrome — a detached element with fixed off-screen positioning avoids
+  // both the clipping bug and React's synthetic event layer.
+  const openFilePicker = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.style.cssText = 'position:fixed;top:-9999px;opacity:0;pointer-events:none';
+    document.body.appendChild(input);
+    input.addEventListener('change', () => {
+      const f = input.files?.[0];
+      if (f) handleFileSelect(f);
+      else setError('No se recibió el archivo. Intenta de nuevo o abre desde otra carpeta.');
+      try { document.body.removeChild(input); } catch { /**/ }
+    }, { once: true });
+    input.click();
+  };
+
   const fetchThumbnails = async (videoId: number) => {
     setThumbsLoading(true);
     try {
@@ -525,12 +544,19 @@ export default function UploadVideoModal({
         </div>
       )}
 
-      {/* Drop zone */}
+      {/* Drop zone — onClick calls openFilePicker which creates a detached
+          <input type="file">, appends it to <body> at a fixed off-screen
+          position (not clipped), and clicks it. This avoids the Android Chrome
+          sr-only/clip bug where onChange never fires after picker return. */}
       <div
+        role="button"
+        tabIndex={0}
+        onClick={openFilePicker}
+        onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && openFilePicker()}
         onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
         onDragLeave={() => setDrag(false)}
         onDrop={onDrop}
-        onClick={() => document.getElementById("mux-file-input")?.click()}
+        aria-label="Elegir video"
         className="cursor-pointer rounded-2xl flex flex-col items-center justify-center gap-3 py-10 px-4 transition-colors"
         style={{
           border: `2px dashed ${drag ? "#D4007A" : "rgba(212,0,122,.3)"}`,
@@ -556,15 +582,16 @@ export default function UploadVideoModal({
             <p className="text-xs text-white/40 mt-0.5">o toca para elegir · MP4, MOV, WebM · máx 50 GB</p>
           </div>
         )}
-        <input
-          id="mux-file-input"
-          type="file"
-          accept="video/*"
-          className="sr-only"
-          onClick={(e) => e.stopPropagation()}
-          onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileSelect(f); e.target.value = ""; }}
-        />
       </div>
+
+      <button
+        type="button"
+        onClick={openFilePicker}
+        className="w-full py-3 rounded-xl text-sm font-bold text-white transition-opacity active:opacity-80"
+        style={{ background: "linear-gradient(90deg,#D4007A,#7B61FF)" }}
+      >
+        📁 Elegir desde archivos
+      </button>
 
       {/* One-liner */}
       {file && (

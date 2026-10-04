@@ -66,7 +66,6 @@ export const strings = {
     ctaPayWithCrypto: "₿ Apps & wallets — $100",
     ctaPayWithCard: "💳 PAY WITH CARD — $100",
     ctaPayWithWallet: "💳 Card · Apple Pay · Wallet — $100",
-    ctaPayWithDash: "🐎 PAY WITH DASH — $100",
     ctaLoading: "Checking availability...",
     ctaSoldOut: "Sold Out",
 
@@ -79,13 +78,6 @@ export const strings = {
     walletModalTitle: "Pay with Card — USDC on Base",
     walletModalSubtitle: "Pay with your credit/debit card, Apple Pay, Google Pay, or connect Trust / MetaMask. Settles instantly as USDC on Base — PRIME activates the moment the payment confirms.",
     walletPayLabel: "Pay $100 · PNPtv Founders",
-
-    // ── Dash Direct modal ─────────────────────────────────────────────────────
-    dashModalTitle: "🐎 Dash Direct",
-    dashModalBody: "Send ≈ $100 USD worth of Dash to this address:",
-    dashCurrentPrice: "Current price:",
-    dashAfterPay: "📧 After paying, email your tx hash + your email to support@pnptv.app — we activate within 2h (24h max).",
-    dashCopyAddress: "📋 Copy address",
 
     // ── Email capture modal ────────────────────────────────────────────────────
     modalTitle: "Get Your Payment Link",
@@ -246,7 +238,6 @@ export const strings = {
     ctaPayWithCrypto: "₿ Apps y wallets — $100",
     ctaPayWithCard: "💳 PAGAR CON TARJETA — $100",
     ctaPayWithWallet: "💳 Tarjeta · Apple Pay · Wallet — $100",
-    ctaPayWithDash: "🐎 PAGAR CON DASH — $100",
     ctaLoading: "Verificando disponibilidad...",
     ctaSoldOut: "Agotado",
 
@@ -259,13 +250,6 @@ export const strings = {
     walletModalTitle: "Pagar con Tarjeta — USDC en Base",
     walletModalSubtitle: "Paga con tu tarjeta de crédito/débito, Apple Pay, Google Pay, o conecta Trust / MetaMask. Se acredita al instante como USDC en Base — PRIME se activa apenas confirme el pago.",
     walletPayLabel: "Pagar $100 · PNPtv Founders",
-
-    // ── Dash Direct modal ─────────────────────────────────────────────────────
-    dashModalTitle: "🐎 Dash Directo",
-    dashModalBody: "Envía ≈ $100 USD en Dash a esta dirección:",
-    dashCurrentPrice: "Precio actual:",
-    dashAfterPay: "📧 Después de pagar, envía el tx hash + tu correo a support@pnptv.app — activamos en menos de 2h (máx 24h).",
-    dashCopyAddress: "📋 Copiar dirección",
 
     // ── Email capture modal ────────────────────────────────────────────────────
     modalTitle: "Obtén Tu Link de Pago",

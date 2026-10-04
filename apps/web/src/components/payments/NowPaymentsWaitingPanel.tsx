@@ -131,6 +131,32 @@ function AppGuidePanel({ es }: { es: boolean }) {
   );
 }
 
+// ── Asset picker — the 4 coins we invoice for. Users abandon ~99% of invoices
+// when the only option is BTC (we were hardcoding 'btc'); surfacing the asset
+// they actually hold cuts that drop-off dramatically.
+// `wire` values must appear in ALLOWED_PAY_CURRENCIES_PREPARE on the backend
+// (routes.js:14810). `appGuides` toggles whether the per-wallet-app step list
+// (Revolut/CashApp/Venmo/…) is shown — those apps only support BTC send-out,
+// so we skip the guide block for the other assets and show a generic hint.
+export const NP_ASSETS = [
+  { wire: 'btc',        label: 'Bitcoin',   ticker: 'BTC',  emoji: '₿', color: '#f7931a', appGuides: true  },
+  { wire: 'usdttrc20',  label: 'USDT',      ticker: 'USDT (TRC-20)', emoji: '₮', color: '#26a17b', appGuides: false },
+  { wire: 'eth',        label: 'Ethereum',  ticker: 'ETH',  emoji: 'Ξ', color: '#627eea', appGuides: false },
+  { wire: 'ltc',        label: 'Litecoin',  ticker: 'LTC',  emoji: 'Ł', color: '#345d9d', appGuides: false },
+] as const;
+type NpAssetWire = typeof NP_ASSETS[number]['wire'];
+
+const LAST_ASSET_KEY = 'pnpapp:np:lastAsset';
+function readLastAsset(): NpAssetWire | null {
+  try {
+    const v = localStorage.getItem(LAST_ASSET_KEY);
+    return NP_ASSETS.some(a => a.wire === v) ? (v as NpAssetWire) : null;
+  } catch { return null; }
+}
+function writeLastAsset(wire: NpAssetWire) {
+  try { localStorage.setItem(LAST_ASSET_KEY, wire); } catch { /* storage partitioned on iOS Safari */ }
+}
+
 // ── App picker sheet — creates a NowPayments invoice then opens window.open() popup.
 // NowPayments blocks iframe embedding, so we must use popup (feedback_nowpayments_iframe_blocked).
 // onLaunch / launching props kept for backward compat but are ignored.
@@ -163,14 +189,16 @@ export function NpAppPickerSheet({
 }) {
   const es = (lang || 'es').startsWith('es');
 
-  type Phase = 'idle' | 'loading' | 'ready' | 'success' | 'error';
-  const [phase, setPhase] = useState<Phase>('idle');
+  type Phase = 'picking' | 'loading' | 'ready' | 'success' | 'error';
+  const [phase, setPhase] = useState<Phase>('picking');
+  const [chosenAsset, setChosenAsset] = useState<NpAssetWire | null>(null);
   const [invoiceError, setInvoiceError] = useState<string | null>(null);
   const [payAddress, setPayAddress] = useState<string | null>(null);
   const [payAmount, setPayAmount] = useState<string | null>(null);
   const [orderId, setOrderId] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [selectedApp, setSelectedApp] = useState<string | null>(null);
+  const chosenMeta = chosenAsset ? NP_ASSETS.find(a => a.wire === chosenAsset) : null;
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -180,7 +208,8 @@ export function NpAppPickerSheet({
 
   useEffect(() => {
     if (!isOpen) {
-      setPhase('idle');
+      setPhase('picking');
+      setChosenAsset(null);
       setInvoiceError(null);
       setPayAddress(null);
       setPayAmount(null);
@@ -191,14 +220,16 @@ export function NpAppPickerSheet({
     }
   }, [isOpen]);
 
-  const createInvoice = useCallback(async () => {
+  const createInvoice = useCallback(async (asset: NpAssetWire) => {
     if (!planId) return;
+    setChosenAsset(asset);
+    writeLastAsset(asset);
     setPhase('loading');
     setInvoiceError(null);
     setPayAddress(null);
     setPayAmount(null);
     try {
-      const res = await prepareOnchainSubscription(planId, 'btc');
+      const res = await prepareOnchainSubscription(planId, asset);
       if (!res.success || !res.payAddress || !res.orderId) {
         throw new Error(res.error || (es ? 'No se pudo crear el pago.' : 'Could not create payment.'));
       }
@@ -229,9 +260,12 @@ export function NpAppPickerSheet({
     }
   }, [planId, es, onSuccess, onClose]);
 
-  useEffect(() => {
-    if (isOpen && planId && phase === 'idle') createInvoice();
-  }, [isOpen, planId, phase, createInvoice]);
+  // Auto-select on open if user has a remembered asset preference. We STILL
+  // force a tap on the picker tile (don't call createInvoice() silently) so a
+  // mistaken-click doesn't burn an invoice — just highlight their preferred
+  // tile and show a 1-tap "Confirm" button next to it. See the picker UI
+  // below for how `rememberedAsset` is consumed.
+  const rememberedAsset = isOpen ? readLastAsset() : null;
 
   const handleCopy = useCallback(() => {
     if (!payAddress) return;
@@ -257,7 +291,9 @@ export function NpAppPickerSheet({
 
         <div className="flex items-center justify-between">
           <p className="text-base font-black text-white">
-            {es ? '₿ Pagar con Bitcoin' : '₿ Pay with Bitcoin'}
+            {chosenMeta
+              ? (es ? `${chosenMeta.emoji} Pagar con ${chosenMeta.label}` : `${chosenMeta.emoji} Pay with ${chosenMeta.label}`)
+              : (es ? '🪙 Pagar con cripto' : '🪙 Pay with crypto')}
           </p>
           <button
             type="button"
@@ -272,6 +308,47 @@ export function NpAppPickerSheet({
         </div>
         {planLabel && <p className="text-xs text-white/40 -mt-2">{planLabel}</p>}
 
+        {phase === 'picking' && (
+          <>
+            <p className="text-[12px] text-white/55 leading-snug">
+              {es
+                ? 'Elegí la cripto que ya tenés en tu billetera o exchange:'
+                : 'Pick the crypto you already hold in your wallet or exchange:'}
+            </p>
+            <div className="grid grid-cols-2 gap-2.5">
+              {NP_ASSETS.map(a => {
+                const isRemembered = rememberedAsset === a.wire;
+                return (
+                  <button
+                    key={a.wire}
+                    type="button"
+                    onClick={() => createInvoice(a.wire)}
+                    className="relative flex flex-col items-center gap-1 py-4 rounded-xl border transition active:scale-[0.97]"
+                    style={{
+                      background: `${a.color}14`,
+                      borderColor: isRemembered ? a.color : `${a.color}55`,
+                    }}
+                  >
+                    {isRemembered && (
+                      <span className="absolute top-1.5 right-2 text-[9px] font-bold uppercase tracking-wider text-white/60">
+                        {es ? 'último' : 'last'}
+                      </span>
+                    )}
+                    <span className="text-2xl leading-none" style={{ color: a.color }}>{a.emoji}</span>
+                    <span className="text-sm font-bold text-white">{a.label}</span>
+                    <span className="text-[10px] text-white/45">{a.ticker}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-[10px] text-white/30 text-center leading-snug">
+              {es
+                ? 'No vemos tu billetera ni tus apps — generamos una dirección fresca por pago.'
+                : "We never see your wallet or apps — a fresh address is generated per payment."}
+            </p>
+          </>
+        )}
+
         {phase === 'loading' && (
           <div className="flex flex-col items-center gap-3 py-8">
             <div className="w-8 h-8 border-2 border-white/20 border-t-white/70 rounded-full animate-spin" />
@@ -284,14 +361,25 @@ export function NpAppPickerSheet({
         {phase === 'error' && (
           <div className="rounded-2xl border border-red-500/30 bg-red-500/8 p-4 text-center space-y-3">
             <p className="text-sm text-red-400">{invoiceError}</p>
-            <button
-              type="button"
-              onClick={() => { setPhase('idle'); createInvoice(); }}
-              className="px-4 py-2 rounded-xl font-semibold text-sm text-white transition-all active:scale-[0.97]"
-              style={{ background: 'linear-gradient(90deg, #ff3377, #ff9933)' }}
-            >
-              {es ? 'Reintentar' : 'Try again'}
-            </button>
+            <div className="flex gap-2 justify-center flex-wrap">
+              {chosenAsset && (
+                <button
+                  type="button"
+                  onClick={() => { if (chosenAsset) createInvoice(chosenAsset); }}
+                  className="px-4 py-2 rounded-xl font-semibold text-sm text-white transition-all active:scale-[0.97]"
+                  style={{ background: 'linear-gradient(90deg, #ff3377, #ff9933)' }}
+                >
+                  {es ? 'Reintentar' : 'Try again'}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => { setPhase('picking'); setChosenAsset(null); setInvoiceError(null); }}
+                className="px-4 py-2 rounded-xl font-semibold text-sm text-white/80 border border-white/15 bg-white/[0.04] transition-all active:scale-[0.97]"
+              >
+                {es ? 'Elegir otra cripto' : 'Pick different crypto'}
+              </button>
+            </div>
           </div>
         )}
 
@@ -321,7 +409,7 @@ export function NpAppPickerSheet({
                     {es ? 'Monto exacto a enviar' : 'Exact amount to send'}
                   </p>
                   <p className="text-2xl font-black text-white">
-                    {payAmount} <span style={{ color: '#f7931a' }}>BTC</span>
+                    {payAmount} <span style={{ color: chosenMeta?.color ?? '#f7931a' }}>{chosenMeta?.ticker ?? 'BTC'}</span>
                   </p>
                 </div>
               )}
@@ -352,7 +440,10 @@ export function NpAppPickerSheet({
                 : '⚡ Plan activates automatically once the network confirms.'}
             </p>
 
-            {/* App picker — names only as links */}
+            {/* App picker — only shown for BTC since the apps below (Revolut,
+                Cash App, Venmo, N26, PayPal) only support Bitcoin send-out.
+                For USDT/ETH/LTC we show a generic 2-line hint instead. */}
+            {chosenMeta?.appGuides ? (
             <div>
               <p className="text-[11px] text-white/45 mb-2.5">
                 {es ? 'Toca tu app para ver los pasos:' : 'Tap your app to see the steps:'}
@@ -396,6 +487,22 @@ export function NpAppPickerSheet({
                 </div>
               )}
             </div>
+            ) : (
+              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 space-y-1.5">
+                <p className="text-[11px] text-white/55 leading-relaxed">
+                  {es
+                    ? `En tu billetera o exchange (ej. Binance, Coinbase, Trust), elegí "Enviar", pegá la dirección de arriba e ingresá el monto exacto en ${chosenMeta?.ticker}.`
+                    : `In your wallet or exchange (e.g. Binance, Coinbase, Trust), tap "Send", paste the address above, and enter the exact amount in ${chosenMeta?.ticker}.`}
+                </p>
+                {chosenAsset === 'usdttrc20' && (
+                  <p className="text-[11px] text-amber-300/80 leading-relaxed">
+                    {es
+                      ? '⚠️ Elegí la red TRC-20 (TRON). Enviar USDT por ERC-20 o BEP-20 llega a otra dirección y se pierde.'
+                      : '⚠️ Pick the TRC-20 (TRON) network. Sending USDT over ERC-20 or BEP-20 goes to a different address and is lost.'}
+                  </p>
+                )}
+              </div>
+            )}
           </>
         )}
 

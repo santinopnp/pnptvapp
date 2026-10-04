@@ -682,43 +682,45 @@ async function _fulfill(client, { userId, entitlementSpec, surface, provider, in
     fulfillResult = await _fulfillEntitlement(client, { userId, entitlementSpec, surface, provider, intentId, amountUsd });
   }
 
-  // ── Ru$h accumulator — creator's 70% share accrues in rush_creator_ledger ──
-  // Fires only for internal-credit (wallet_rush) spends on surfaces that
-  // credit a creator. Auto-settles on-chain when the creator crosses
-  // RUSH_MIN_SETTLE_USD (default $100). Fire-and-forget.
-  if (provider === 'wallet_rush' && Number(amountUsd) > 0) {
-    const spec = entitlementSpec || {};
-    const creatorId = spec.creator_id || spec.creatorId;
-    if (creatorId) {
-      setImmediate(() => {
-        const { accumulateForCreator } = require('./rushLedgerService');
-        const { CREATOR_REVENUE_RATE } = require('../config/monetizationConfig');
-        const creatorShareUsd = Math.round(Number(amountUsd) * CREATOR_REVENUE_RATE * 100) / 100;
-        accumulateForCreator({
-          creatorId: String(creatorId),
-          amountUsd: creatorShareUsd,
-          settleContext: { rushSpendId: `intent:${intentId}` },
-        }).catch((err) =>
-          logger.warn('[walletCheckout] rushLedger.accumulate failed', {
-            intentId, creatorId, err: err.message,
-          }),
-        );
-      });
-    }
-  }
+  // ── Ru$h accumulator — REMOVED 2026-09-29 (double-payment root cause) ──────
+  // This used to fire rushLedgerService.accumulateForCreator for every
+  // internal-credit (wallet_rush) spend, which auto-settles on-chain via
+  // dispatchRushSplit once a creator crosses RUSH_MIN_SETTLE_USD. But EVERY
+  // surface branch above (_fulfillTip, _fulfillEntitlement's creator_sub
+  // path, _fulfillChannelPass -> channelPassService,
+  // _fulfillCallBooking -> privateCallBookingService) already credits
+  // creator_earnings unconditionally, regardless of `provider`. So a
+  // Ru$h-funded tip/sub/channel-pass/call got paid TWICE: once when the
+  // creator cashes out the creator_earnings row (cashoutService), and again
+  // automatically when rush_creator_ledger crossed the settlement threshold.
+  // creator_earnings is the single, already-correct payout ledger for every
+  // surface regardless of how the fan paid (USDC or Ru$h) — no separate
+  // settlement path is needed. rushLedgerService.js / dispatchRushSplit are
+  // intentionally left in place (their own double-split bug fixed too) but
+  // disconnected, in case Ru$h-specific instant/batched settlement is
+  // reintroduced later — deliberately, and reconciled against
+  // creator_earnings this time (e.g. inserting those rows as non-cashoutable
+  // from the start) rather than as an uncoordinated second payout rail.
+  // rush_creator_ledger was empty in production at the time of this fix — no
+  // pending or settled amounts were stranded by removing this trigger.
 
-  // ── PRIME Channel bundle split — post-fulfill on-chain 35/35/20/10 ──────────
-  // Fires only for the current PRIME bundle (Santino + Lex co-founder plans);
-  // channel_pass and other creator surfaces run through the standard creator
-  // earnings ledger. Provider guard: only USDC-on-Base payments (never Ru$h
-  // spends). Fire-and-forget — a chain failure here must never invalidate
-  // the fulfillment we just committed.
-  if (surface === 'prime' && Number(amountUsd) > 0 && provider === 'wallet_usdc') {
-    // Co-founder wallets are read from users.wallet_address inside
-    // distributePrimeChannelSplit (no env vars for those). We only pre-gate on
-    // the operational addresses that live in env: treasury + reinvestment.
-    // If a co-founder wallet is missing the function will throw with a
-    // descriptive PRIME_SPLIT_CONFIG_MISSING and Slack the operator.
+  // ── PRIME Channel bundle split — PAUSED 2026-10-01 ──────────────────────────
+  // The on-chain 35/35/20/10 split signs with GAS_TREASURY_PRIVATE_KEY, but
+  // wallet_usdc revenue lands at CRYPTO_RECEIVING_ADDRESS (Santino's personal
+  // wallet, 0xd74b…cc8). Those are different EOAs, so every split since
+  // 2026-09-29 reverted with "ERC20: transfer amount exceeds balance" and
+  // paged Slack ops. Pausing dispatch until the architecture is reworked
+  // (either sweep from receiving → gas-treasury pre-split, or sign splits
+  // with the receiving wallet's key). Revenue continues to accrue in the
+  // personal wallet; Lex/treasury/reinvestment shares are reconciled off-chain.
+  //
+  // Flip PRIME_SPLIT_ENABLED=true in env to re-enable without a code change.
+  if (
+    surface === 'prime' &&
+    Number(amountUsd) > 0 &&
+    provider === 'wallet_usdc' &&
+    process.env.PRIME_SPLIT_ENABLED === 'true'
+  ) {
     const opsConfigured = Boolean(
       (process.env.PNPTV_TREASURY_WALLET || process.env.SANTINO_PAYOUT_ADDRESS) &&
       process.env.CREATORS_BUDGET_ADDRESS
@@ -741,7 +743,6 @@ async function _fulfill(client, { userId, entitlementSpec, surface, provider, in
         logger.error('[walletCheckout] PRIME channel split failed — needs manual reconciliation', {
           intentId, amountUsd, error: err.message,
         });
-        // Slack ops so a human can retry
         try {
           const channel = process.env.SLACK_OPS_ADMIN_CHANNEL || process.env.SLACK_OPS_INCIDENTS_CHANNEL;
           const token = process.env.SLACK_BOT_TOKEN;

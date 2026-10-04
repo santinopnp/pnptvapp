@@ -2129,7 +2129,9 @@ const chatMediaUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 100 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    const m = (file.mimetype || '').toLowerCase();
+    // Strip codec params so MediaRecorder blobs like "audio/webm;codecs=opus"
+    // and "video/webm;codecs=vp9,opus" pass the allow-list.
+    const m = (file.mimetype || '').toLowerCase().split(';')[0].trim();
     const isImage = /^image\/(jpeg|jpg|png|webp|gif|heic|heif)$/.test(m);
     const isVideo = /^video\/(mp4|webm|quicktime|x-m4v)$/.test(m);
     const isAudio = /^audio\/(webm|ogg|mp4|mpeg|mp3|m4a|x-m4a|wav)$/.test(m);
@@ -4678,6 +4680,40 @@ app.post('/api/webapp/settings/change-email', requireSessionAuth, changeEmailLim
   }
 
   logger.info('[change-email] Email changed', { userId: user.id, newEmail: rawEmail });
+
+  // Email-collection campaign (2026-10-03) attribution — if this user was in
+  // the campaign DM audience AND is adding an email for the first time, grant
+  // +20 Ru$h. Dedup set is written by broadcast-email-collect-2026-10-03.js;
+  // awarded set guards against double-grant if user changes email twice.
+  if (!currentEmail || !currentEmail.trim()) {
+    try {
+      const r = getRedis();
+      const CAMPAIGN = 'email-collect-2026-10-03';
+      const DEDUP_KEY   = `pnpapp:broadcast:dedup:${CAMPAIGN}`;
+      const AWARDED_KEY = `pnpapp:broadcast:awarded:${CAMPAIGN}`;
+      const inAudience = await r.sismember(DEDUP_KEY, String(user.id));
+      if (inAudience) {
+        const added = await r.sadd(AWARDED_KEY, String(user.id));
+        if (added === 1) {
+          const tokenLedger = require('../../services/tokenLedgerService');
+          await tokenLedger.credit({
+            userId: user.id,
+            balanceDelta: 20,
+            reason: 'admin_grant',
+            sourceType: 'campaign',
+            sourceId: CAMPAIGN,
+            actorId: 'system',
+            metadata: { campaign: CAMPAIGN, bonus: 20, trigger: 'change-email' },
+          });
+          await r.expire(AWARDED_KEY, 30 * 86400);
+          logger.info('[change-email] +20 Ru$h bonus granted', { userId: user.id, campaign: CAMPAIGN });
+        }
+      }
+    } catch (bonusErr) {
+      logger.warn('[change-email] campaign bonus skipped', { userId: user.id, error: bonusErr.message });
+    }
+  }
+
   res.json({ success: true, email: rawEmail });
 }));
 
@@ -5300,6 +5336,43 @@ app.get('/api/webapp/admin/revenue-report', adminGuard, asyncHandler(async (req,
   } catch (err) {
     return res.status(400).json({ success: false, error: err.message });
   }
+}));
+
+// Live sales feed — reads the unified v_sales view (payments + payment_history
+// + token_ledger wallet subs/Ru$h/calls/content + booking_payments). Zoho Books
+// remains the external source of truth; this is the local DB mirror used by
+// admin dashboards to avoid hitting Zoho's rate limit.
+// Query: ?hours=24 (default 24, max 720) ?limit=200 (default 50, max 500)
+app.get('/api/webapp/admin/sales/recent', adminGuard, asyncHandler(async (req, res) => {
+  const hours = Math.min(Math.max(parseInt(req.query.hours, 10) || 24, 1), 720);
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 500);
+  const { rows: items } = await query(`
+    SELECT v.src_tbl, v.src_pk, v.user_id, v.amount_usd, v.currency,
+           v.provider, v.product, v.at,
+           u.username, u.first_name
+      FROM v_sales v
+      LEFT JOIN users u ON u.id = v.user_id
+     WHERE v.at > NOW() - ($1 || ' hours')::interval
+     ORDER BY v.at DESC
+     LIMIT $2
+  `, [String(hours), limit]);
+  const { rows: totals } = await query(`
+    SELECT COUNT(*)::int AS rows,
+           COALESCE(SUM(amount_usd), 0)::numeric(12,2) AS total_usd,
+           COUNT(DISTINCT user_id)::int AS unique_buyers
+      FROM v_sales
+     WHERE at > NOW() - ($1 || ' hours')::interval
+  `, [String(hours)]);
+  const { rows: byProvider } = await query(`
+    SELECT provider,
+           COUNT(*)::int AS rows,
+           COALESCE(SUM(amount_usd), 0)::numeric(12,2) AS total_usd
+      FROM v_sales
+     WHERE at > NOW() - ($1 || ' hours')::interval
+     GROUP BY provider
+     ORDER BY total_usd DESC NULLS LAST
+  `, [String(hours)]);
+  res.json({ success: true, window_hours: hours, totals: totals[0], by_provider: byProvider, items });
 }));
 
 // Super-god toggle — eligible ops accounts can turn their god-mode off (behave
@@ -8683,8 +8756,27 @@ app.get('/api/hangouts/most-active', (req, res) => res.json({ success: true, dat
 app.get('/api/livestream/active', asyncHandler(async (req, res) => {
   const LiveStreamModel = require('../../models/liveStreamModel');
   try {
-    const streams = await LiveStreamModel.getActiveStreams(1);
-    const stream = streams.length > 0 ? streams[0] : null;
+    const streams = await LiveStreamModel.getActiveStreams(5);
+    let stream = streams.length > 0 ? streams[0] : null;
+    // Geo-hide: if the top stream's host has region-hid the viewer, skip to the next.
+    const r = String(req.user?.role || '').toLowerCase();
+    const bypass = r === 'admin' || r === 'superadmin';
+    const gTags = bypass ? [] : (Array.isArray(req.viewerGeoTags) ? req.viewerGeoTags : []);
+    if (gTags.length && streams.length) {
+      const hostIds = streams.map(s => String(s?.hostId || s?.host_id || s?.userId || s?.user_id || '')).filter(Boolean);
+      if (hostIds.length) {
+        const { rows: hidden } = await getPool().query(
+          `SELECT id::text FROM users WHERE id = ANY($1::text[]) AND (COALESCE(hide_from_regions, '{}') && $2::text[])`,
+          [hostIds, gTags]
+        );
+        const hiddenSet = new Set(hidden.map(h => h.id));
+        const firstVisible = streams.find(s => {
+          const hid = String(s?.hostId || s?.host_id || s?.userId || s?.user_id || '');
+          return hid && !hiddenSet.has(hid);
+        });
+        stream = firstVisible || null;
+      }
+    }
     res.json({ success: true, data: stream });
   } catch (error) {
     logger.error('getActiveLiveStream error:', error);
@@ -9233,13 +9325,9 @@ app.post('/api/webapp/subscribe-visit', requireSessionAuth, asyncHandler(async (
   if (req.session?.user?.tier === 'prime') return res.json({ ok: true });
   const userId = req.session.user.id;
   await getRedis().set('pnpapp:subscribe-visit:' + userId, Date.now(), 'EX', 172800);
-
-  const { subscribeRetargetQueue, DEFAULT_JOB_OPTIONS } = require('../../services/queueService');
-  await subscribeRetargetQueue.add('subscribe-retarget', { userId, visitedAt: Date.now() }, {
-    ...DEFAULT_JOB_OPTIONS,
-    delay: 86400000,
-  });
-
+  // Retarget enqueue disabled 2026-10-04 — the 24h-delayed USDT-BSC yearly50
+  // DM was polluting the NP funnel with high-friction cross-chain intents
+  // and converting ~0%. Visit flag still set for other analytics.
   return res.json({ ok: true });
 }));
 
@@ -10149,6 +10237,9 @@ app.get('/api/webapp/search', requireSessionAuth, asyncHandler(async (req, res) 
   if (q.length < 2) return res.json({ success: true, users: [], creators: [], channels: [], hangouts: [], posts: [] });
   const { query } = require('../../config/postgres');
   const viewerId = req.session.user.id;
+  const viewerRole = String(req.session.user.role || '').toLowerCase();
+  const bypassGeo = viewerRole === 'admin' || viewerRole === 'superadmin';
+  const gTags = bypassGeo ? [] : (Array.isArray(req.viewerGeoTags) ? req.viewerGeoTags : []);
   const like = `%${q.replace(/[%_\\]/g, '\\$&')}%`;
 
   const [usersRes, creatorsRes, channelsRes, hangoutsRes, postsRes] = await Promise.all([
@@ -10157,10 +10248,11 @@ app.get('/api/webapp/search', requireSessionAuth, asyncHandler(async (req, res) 
          FROM users
         WHERE id::text != $1
           AND is_deleted = false
+          AND NOT (COALESCE(hide_from_regions, '{}') && $4::text[])
           AND (username ILIKE $2 ESCAPE '\\' OR first_name ILIKE $2 ESCAPE '\\' OR last_name ILIKE $2 ESCAPE '\\')
         ORDER BY first_name ASC
         LIMIT $3`,
-      [String(viewerId), like, limit],
+      [String(viewerId), like, limit, gTags],
     ),
     query(
       `SELECT id, id AS user_id, first_name AS display_name, username,
@@ -10169,10 +10261,11 @@ app.get('/api/webapp/search', requireSessionAuth, asyncHandler(async (req, res) 
          FROM users
         WHERE is_deleted = false
           AND creator_status = 'active'
+          AND NOT (COALESCE(hide_from_regions, '{}') && $3::text[])
           AND (username ILIKE $1 ESCAPE '\\' OR first_name ILIKE $1 ESCAPE '\\' OR last_name ILIKE $1 ESCAPE '\\')
         ORDER BY first_name ASC
         LIMIT $2`,
-      [like, limit],
+      [like, limit, gTags],
     ),
     query(
       `SELECT id, name, description, access_type, slug, cover_image_url,
@@ -10846,21 +10939,28 @@ app.get('/api/performers/featured', softAuth, asyncHandler(async (req, res) => {
         },
         timeout: 10000,
       }),
-      getPool().query(
-        `SELECT id, username, first_name, last_name, photo_file_id, bio,
-                city, country,
-                creator_type, creator_status, creator_price_usd, live_channel, tier
-         FROM users
-         WHERE creator_status = 'active'
-           AND creator_locked = FALSE
-           AND is_deleted = FALSE
-           AND (
-             identity_verified = TRUE
-             OR (identity_verification_required_by IS NOT NULL AND identity_verification_required_by > NOW())
-           )
-         ORDER BY creator_subscriber_count DESC NULLS LAST
-         LIMIT 50`
-      ),
+      (() => {
+        const r = String(req.user?.role || '').toLowerCase();
+        const bypass = r === 'admin' || r === 'superadmin';
+        const gTags = bypass ? [] : (Array.isArray(req.viewerGeoTags) ? req.viewerGeoTags : []);
+        return getPool().query(
+          `SELECT id, username, first_name, last_name, photo_file_id, bio,
+                  city, country,
+                  creator_type, creator_status, creator_price_usd, live_channel, tier
+           FROM users
+           WHERE creator_status = 'active'
+             AND creator_locked = FALSE
+             AND is_deleted = FALSE
+             AND (
+               identity_verified = TRUE
+               OR (identity_verification_required_by IS NOT NULL AND identity_verification_required_by > NOW())
+             )
+             AND NOT (COALESCE(hide_from_regions, '{}') && $1::text[])
+           ORDER BY creator_subscriber_count DESC NULLS LAST
+           LIMIT 50`,
+          [gTags]
+        );
+      })(),
     ]);
 
     const directusPerformers = directusResult.status === 'fulfilled'
@@ -10874,20 +10974,26 @@ app.get('/api/performers/featured', softAuth, asyncHandler(async (req, res) => {
     let mapped = directusPerformers.map(p => mapDirectusPerformer(p, photoMap));
 
     // Post-filter: exclude Directus performers whose pnptv_id maps to a deleted DB user
+    // OR whose linked DB user has region-hid the current viewer.
     try {
       const directusLinkedIds = mapped.filter(p => p.userId).map(p => String(p.userId));
       if (directusLinkedIds.length > 0) {
-        const { rows: deletedRows } = await getPool().query(
-          `SELECT id::text FROM users WHERE id = ANY($1::text[]) AND is_deleted = TRUE`,
-          [directusLinkedIds]
+        const r = String(req.user?.role || '').toLowerCase();
+        const bypass = r === 'admin' || r === 'superadmin';
+        const gTags = bypass ? [] : (Array.isArray(req.viewerGeoTags) ? req.viewerGeoTags : []);
+        const { rows: filterRows } = await getPool().query(
+          `SELECT id::text, is_deleted,
+                  (COALESCE(hide_from_regions, '{}') && $2::text[]) AS geo_hidden
+             FROM users WHERE id = ANY($1::text[])`,
+          [directusLinkedIds, gTags]
         );
-        if (deletedRows.length > 0) {
-          const deletedIds = new Set(deletedRows.map(r => r.id));
-          mapped = mapped.filter(p => !p.userId || !deletedIds.has(String(p.userId)));
+        const hiddenIds = new Set(filterRows.filter(r => r.is_deleted || r.geo_hidden).map(r => r.id));
+        if (hiddenIds.size > 0) {
+          mapped = mapped.filter(p => !p.userId || !hiddenIds.has(String(p.userId)));
         }
       }
     } catch (filterErr) {
-      logger.warn(`featured: deleted-user filter failed (non-fatal): ${filterErr.message}`);
+      logger.warn(`featured: deleted/geo filter failed (non-fatal): ${filterErr.message}`);
     }
 
     const coveredUserIds = new Set(
@@ -11674,6 +11780,24 @@ app.get('/api/webapp/channels/:channelId/videos/:videoId/stream', softAuth, asyn
     const isAdmin = viewerRole === 'admin' || viewerRole === 'superadmin';
     const isAuthor = viewerId && String(viewerId) === String(video.creator_id);
 
+    // Geo-hide: if viewer's region tags overlap the creator's hide_from_regions,
+    // return a plain 404 (hide absolutely, even for paid viewers).
+    if (!isAdmin && !isAuthor && video.creator_id) {
+      const gTags = Array.isArray(req.viewerGeoTags) ? req.viewerGeoTags : [];
+      if (gTags.length) {
+        try {
+          const { rows: hr } = await getPool().query(
+            `SELECT 1 FROM users WHERE id = $1 AND (COALESCE(hide_from_regions, '{}') && $2::text[]) LIMIT 1`,
+            [video.creator_id, gTags]
+          );
+          if (hr.length) {
+            res.setHeader('X-Geo-Blocked', '1');
+            return res.status(404).json({ error: 'Video not found' });
+          }
+        } catch { /* fail-open */ }
+      }
+    }
+
     if (!isAdmin && !isAuthor) {
       if (!viewerId) return res.status(401).json({ error: 'Authentication required' });
       const decision = await EntitlementAccessService.hasResourceAccess(viewerId, 'channel', channelId);
@@ -11883,20 +12007,27 @@ app.get('/api/performers', softAuth, asyncHandler(async (req, res) => {
         },
         timeout: 10000,
       }),
-      getPool().query(
-        `SELECT id, username, first_name, last_name, photo_file_id, bio,
-                creator_type, creator_status, creator_price_usd
-         FROM users
-         WHERE creator_status = 'active'
-           AND creator_locked = FALSE
-           AND is_deleted = FALSE
-           AND (
-             identity_verified = TRUE
-             OR (identity_verification_required_by IS NOT NULL AND identity_verification_required_by > NOW())
-           )
-         ORDER BY first_name ASC
-         LIMIT 100`
-      ),
+      (() => {
+        const r = String(req.user?.role || '').toLowerCase();
+        const bypass = r === 'admin' || r === 'superadmin';
+        const gTags = bypass ? [] : (Array.isArray(req.viewerGeoTags) ? req.viewerGeoTags : []);
+        return getPool().query(
+          `SELECT id, username, first_name, last_name, photo_file_id, bio,
+                  creator_type, creator_status, creator_price_usd
+           FROM users
+           WHERE creator_status = 'active'
+             AND creator_locked = FALSE
+             AND is_deleted = FALSE
+             AND (
+               identity_verified = TRUE
+               OR (identity_verification_required_by IS NOT NULL AND identity_verification_required_by > NOW())
+             )
+             AND NOT (COALESCE(hide_from_regions, '{}') && $1::text[])
+           ORDER BY first_name ASC
+           LIMIT 100`,
+          [gTags]
+        );
+      })(),
     ]);
 
     const rawDirectusPerformers = directusResult.status === 'fulfilled'
@@ -11916,13 +12047,17 @@ app.get('/api/performers', softAuth, asyncHandler(async (req, res) => {
     try {
       const rawIds = [...new Set(rawDirectusPerformers.map(p => String(p.pnptv_id || '')).filter(Boolean))];
       const rawSlugs = [...new Set(rawDirectusPerformers.map(p => String(p.slug || '').toLowerCase()).filter(Boolean))];
+      const _r = String(req.user?.role || '').toLowerCase();
+      const _bypass = _r === 'admin' || _r === 'superadmin';
+      const _gTags = _bypass ? [] : (Array.isArray(req.viewerGeoTags) ? req.viewerGeoTags : []);
       const resolveRows = (rawIds.length || rawSlugs.length)
         ? (await getPool().query(
             `SELECT id::text AS canonical_id, lower(username) AS slug_lower
              FROM users
              WHERE is_deleted = FALSE
+               AND NOT (COALESCE(hide_from_regions, '{}') && $3::text[])
                AND (id = ANY($1::text[]) OR lower(username) = ANY($2::text[]))`,
-            [rawIds, rawSlugs]
+            [rawIds, rawSlugs, _gTags]
           )).rows
         : [];
       const canonicalById = new Map(resolveRows.map(r => [r.canonical_id, r.canonical_id]));
@@ -13067,14 +13202,36 @@ app.get('/api/wallet/packages', requireSessionAuth, (req, res) => {
 // GET /api/wallet/dust-config — current dust-convert threshold + min. Read by
 // WalletHomeSheet to decide when to render the sweep CTA. Threshold is server-
 // controlled so ops can adjust it without a frontend deploy.
-app.get('/api/wallet/dust-config', requireSessionAuth, asyncHandler(async (_req, res) => {
+// Also returns the viewer's current cooldown status so the UI can suppress the
+// convert button when they've already swept today (prevents the "see button →
+// click → 429 → button re-appears" loop reported 2026-10-04).
+app.get('/api/wallet/dust-config', requireSessionAuth, asyncHandler(async (req, res) => {
   const thresholdUsd = await _getDustThresholdUsd();
+  let cooldownActive = false;
+  let cooldownSecondsRemaining = 0;
+  try {
+    const userId = req.session?.user?.id;
+    if (userId) {
+      const redis = getRedis();
+      const key = `dust:convert:${userId}`;
+      const [val, ttl] = await Promise.all([
+        redis.get(key).catch(() => null),
+        redis.ttl(key).catch(() => -2),
+      ]);
+      if (val != null && Number(ttl) > 0) {
+        cooldownActive = true;
+        cooldownSecondsRemaining = Number(ttl);
+      }
+    }
+  } catch { /* non-fatal — default to no cooldown */ }
   res.json({
     ok: true,
     threshold_usd: thresholdUsd,
     min_usd: 0.17,
     bonus_pct: 10,
     eth_gas_reserve: DUST_ETH_GAS_RESERVE,
+    cooldown_active: cooldownActive,
+    cooldown_seconds_remaining: cooldownSecondsRemaining,
   });
 }));
 
@@ -14332,7 +14489,9 @@ app.get('/api/public/lifetime100/availability', asyncHandler(async (req, res) =>
   try {
     const TOTAL_SLOTS = 100;
     const { rows } = await getPool().query(
-      `SELECT COUNT(*) AS sold FROM dash_subscription_orders WHERE plan_id = 'lifetime100' AND status = 'completed'`
+      `SELECT COUNT(*) AS sold FROM dash_subscription_orders
+       WHERE plan_id = 'lifetime-pass' AND status = 'completed'
+         AND metadata->>'flow' = 'lifetime100-public'`
     );
     const sold = parseInt(rows[0]?.sold || 0, 10);
     return res.json({ success: true, available: Math.max(0, TOTAL_SLOTS - sold), sold, total: TOTAL_SLOTS });
@@ -14386,7 +14545,7 @@ app.post('/api/public/lifetime100/np-invoice', lifetime100NpInvoiceLimiter, asyn
 
   // Confirm the plan exists + read the amount from the DB (source of truth).
   const planRes = await dbQuery(
-    `SELECT id, display_name, name, price FROM plans WHERE id = 'lifetime100' AND active = true LIMIT 1`
+    `SELECT id, display_name, name, price FROM plans WHERE id = 'lifetime-pass' AND active = true LIMIT 1`
   );
   if (planRes.rows.length === 0) {
     return res.status(503).json({ success: false, error: 'Lifetime plan not available.' });
@@ -14398,7 +14557,7 @@ app.post('/api/public/lifetime100/np-invoice', lifetime100NpInvoiceLimiter, asyn
   // Reuse a live pending invoice for the same user + currency (avoids duplicate NP fees on retry).
   const resumeRes = await dbQuery(
     `SELECT id, btcpay_invoice_id, metadata FROM dash_subscription_orders
-     WHERE user_id = $1 AND plan_id = 'lifetime100' AND status = 'pending'
+     WHERE user_id = $1 AND plan_id = 'lifetime-pass' AND status = 'pending'
        AND metadata->>'flow' = 'lifetime100-public'
        AND metadata->>'payCurrency' = $2
        AND created_at > NOW() - INTERVAL '23 hours'
@@ -14454,7 +14613,7 @@ app.post('/api/public/lifetime100/np-invoice', lifetime100NpInvoiceLimiter, asyn
   await dbQuery(
     `INSERT INTO dash_subscription_orders
        (user_id, plan_id, email, usd_amount, btcpay_invoice_id, status, metadata)
-     VALUES ($1, 'lifetime100', $2, $3, $4, 'pending', $5)
+     VALUES ($1, 'lifetime-pass', $2, $3, $4, 'pending', $5)
      ON CONFLICT (btcpay_invoice_id) DO NOTHING`,
     [String(userId), email, usdAmount, orderId, JSON.stringify({
       provider: 'nowpayments',
@@ -14763,6 +14922,22 @@ app.post('/api/webapp/payments/usdc/prepare', requireSessionAuth, usdcPrepareLim
       usdAmount = basePrice;
     }
     planDisplayName = plan.display_name || plan.name;
+  }
+
+  // NowPayments raised their effective minimum (post-fee) around 2026-09-20.
+  // Invoices below ~$18.95 are accepted by their API but the pay_amount they
+  // return is often rejected by the user's wallet (fee > principal) or lands
+  // below NP's own confirm threshold, so 99%+ expire. Hard-block server-side
+  // so no sub-floor invoices get created regardless of which flow calls this
+  // (subscribe, hangouts, channels, creator_monthly all route through here).
+  if (usdAmount < 18.95) {
+    logger.warn('[NOWPayments] Rejected sub-floor invoice', { userId, planId, usdAmount });
+    return res.status(400).json({
+      success: false,
+      error: 'This plan is below the crypto rail minimum. Pay with your card or wallet instead.',
+      code: 'BELOW_NP_MINIMUM',
+      minimumUsd: 18.95,
+    });
   }
 
   const orderId = `pnptv-nowp-${userId}-${Date.now()}`;
@@ -17690,10 +17865,26 @@ async function _resolveCanonicalPurchase(userId, surface, spec, dbQuery) {
     if (tierLower !== expectedTier) throwErr(`plan tier mismatch (expected ${expectedTier}, got ${tierLower || 'unknown'})`, 400);
     const priceNum = Number(p.price);
     if (!(priceNum > 0)) throwErr('plan has no price', 400);
+
+    // Reject payment if the viewer already holds an active lifetime grant for
+    // this tier — otherwise the fulfillment code just re-points to the existing
+    // entitlement and the user pays for nothing (Spunhoe hit this 2026-10-04 /
+    // intent 378 = $9.99 USDC into a lifetime pnp-member). Non-lifetime renewal
+    // plans still pass through (they extend expires_at via the entitlement
+    // layer); only lifetime holders of the same add_on_id are blocked here.
+    const addOnId = surface === 'membership' ? 'pnp-member' : 'prime';
+    const { rows: existing } = await dbQuery(
+      `SELECT 1 FROM user_entitlements
+        WHERE user_id = $1 AND add_on_id = $2 AND is_lifetime = TRUE AND is_consumed = FALSE
+        LIMIT 1`,
+      [String(userId), addOnId]
+    );
+    if (existing.length > 0) throwErr('already_lifetime_member', 400);
+
     return {
       amountUsd: priceNum,
       resolvedSpec: {
-        add_on_id: surface === 'membership' ? 'pnp-member' : 'prime',
+        add_on_id: addOnId,
         duration_days: Number.isInteger(Number(p.duration)) ? Math.max(1, Math.min(36600, Number(p.duration))) : 30,
         is_lifetime: !!p.is_lifetime,
         auto_renew: !p.is_lifetime,
@@ -18774,6 +18965,7 @@ app.post('/api/wallet/client-error', walletStatusLimiter, requireSessionAuth, as
         errorCode: safeStep,
         errorMessage: safeError,
         stackTrace: safeContext,
+        userAgent: (req.get('user-agent') || '').slice(0, 500) || null,
       });
     } catch (persistErr) {
       logger.warn('[wallet/client-error] persist failed', { err: persistErr.message });
@@ -23307,7 +23499,14 @@ app.get('/api/public/creator/:username',
 
     const pool = getPool();
 
-    // 1. Fetch creator by username (case-insensitive)
+    // 1. Fetch creator by username (case-insensitive).
+    // Geo-hide: when the viewer's resolved region tags (country + country-state)
+    // overlap the creator's hide_from_regions set, return no rows → 404 below.
+    // Admins bypass with empty tags; self-view is preserved via $3 (viewer id).
+    const viewerRole = String(req.user?.role || '').toLowerCase();
+    const bypassGeo = viewerRole === 'admin' || viewerRole === 'superadmin';
+    const geoTags = bypassGeo ? [] : (Array.isArray(req.viewerGeoTags) ? req.viewerGeoTags : []);
+    const selfId = req.user?.id ? String(req.user.id) : '';
     const { rows: creatorRows } = await pool.query(
       `SELECT id, username, first_name,
               photo_file_id AS photo_url,
@@ -23327,8 +23526,9 @@ app.get('/api/public/creator/:username',
               partner_badge_color
        FROM users
        WHERE LOWER(username) = LOWER($1) AND creator_status = 'active'
+         AND (id::text = $3 OR NOT (COALESCE(hide_from_regions, '{}') && $2::text[]))
        LIMIT 1`,
-      [username]
+      [username, geoTags, selfId]
     );
     if (!creatorRows.length) {
       // Check if this was a former username — permanent redirect

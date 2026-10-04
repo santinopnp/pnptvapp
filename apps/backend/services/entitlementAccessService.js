@@ -1168,18 +1168,18 @@ class EntitlementAccessService {
         // Paid or lifetime prime rows (different source_plan_id or expires_at IS NULL) are never overwritten.
         const primeResult = await client.query(`
           INSERT INTO user_entitlements (user_id, add_on_id, expires_at, source_plan_id, auto_renew)
-          VALUES ($1, 'prime', NOW() + INTERVAL '3 days', 'prime-trial-3d', false)
+          VALUES ($1, 'prime', NOW() + INTERVAL '24 hours', 'prime-trial-3d', false)
           ON CONFLICT (user_id, add_on_id, creator_id) DO UPDATE
-            SET expires_at = NOW() + INTERVAL '3 days', source_plan_id = 'prime-trial-3d'
+            SET expires_at = NOW() + INTERVAL '24 hours', source_plan_id = 'prime-trial-3d'
             WHERE user_entitlements.source_plan_id = 'prime-trial-3d'
               AND user_entitlements.expires_at < NOW()
           RETURNING xmax
         `, [String(userId)]);
         const memberResult = await client.query(`
           INSERT INTO user_entitlements (user_id, add_on_id, expires_at, source_plan_id, auto_renew)
-          VALUES ($1, 'pnp-member', NOW() + INTERVAL '3 days', 'prime-trial-3d', false)
+          VALUES ($1, 'pnp-member', NOW() + INTERVAL '24 hours', 'prime-trial-3d', false)
           ON CONFLICT (user_id, add_on_id, creator_id) DO UPDATE
-            SET expires_at = NOW() + INTERVAL '3 days', source_plan_id = 'prime-trial-3d'
+            SET expires_at = NOW() + INTERVAL '24 hours', source_plan_id = 'prime-trial-3d'
             WHERE user_entitlements.source_plan_id = 'prime-trial-3d'
               AND user_entitlements.expires_at < NOW()
           RETURNING xmax

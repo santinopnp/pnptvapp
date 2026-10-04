@@ -30,7 +30,7 @@ import { connectSocket } from "@/lib/socket";
 const MEMBER_PLAN_IDS = new Set(["member_monthly"]);
 // These are filtered at the backend too (planModel.getPublicPlans HIDDEN_LEGACY_IDS).
 // Frontend set is kept as a second safety net for any plan that slips through.
-const HIDDEN_PLAN_IDS = new Set(["prime-trial-3d", "lifetime80", "monthly-pass-promo-15", "yearly50", "lifetime100"]);
+const HIDDEN_PLAN_IDS = new Set(["prime-trial-3d", "lifetime80", "monthly-pass-promo-15", "yearly50", "lifetime100", "lifetime-pass", "mondays_spundays_promo_20"]);
 
 const RECURRING_PLANS = new Set(["prime-week-pass-7d", "monthly-pass", "prime-diamond-pass-365d"]);
 
@@ -517,7 +517,7 @@ export default function Subscribe() {
             className="flex-shrink-0 self-start text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full"
             style={{ background: "rgba(16,185,129,0.18)", color: "#34d399", border: "1px solid rgba(16,185,129,0.40)" }}
           >
-            {t.lang === "es" ? "3 días gratis" : "3-day trial"}
+            {t.lang === "es" ? "24 h gratis" : "24-hour trial"}
           </span>
         </div>
       );
@@ -809,6 +809,9 @@ export default function Subscribe() {
                           setWalletPanelPlanId(null);
                           setTimeout(() => { window.location.href = "/"; }, 1200);
                         }}
+                        onCryptoFallback={parseFloat(String(plan.price)) >= NOWPAYMENTS_MINIMUM_USD
+                          ? () => openAppSheet(plan.id, `${plan.name || plan.id} · $${parseFloat(String(plan.price)).toFixed(2)}`)
+                          : undefined}
                         compact
                       />
                     </div>
@@ -1047,6 +1050,9 @@ export default function Subscribe() {
                         // Reload to reflect the new entitlement everywhere.
                         setTimeout(() => { window.location.href = "/"; }, 1200);
                       }}
+                      onCryptoFallback={parseFloat(String(plan.price)) >= NOWPAYMENTS_MINIMUM_USD
+                        ? () => openAppSheet(plan.id, `${plan.name || plan.id} · $${parseFloat(String(plan.price)).toFixed(2)}`)
+                        : undefined}
                       compact
                     />
                   </div>
@@ -1236,6 +1242,9 @@ export default function Subscribe() {
                         // Reload to reflect the new entitlement everywhere.
                         setTimeout(() => { window.location.href = "/"; }, 1200);
                       }}
+                      onCryptoFallback={parseFloat(String(plan.price)) >= NOWPAYMENTS_MINIMUM_USD
+                        ? () => openAppSheet(plan.id, `${plan.name || plan.id} · $${parseFloat(String(plan.price)).toFixed(2)}`)
+                        : undefined}
                       compact
                     />
                   </div>

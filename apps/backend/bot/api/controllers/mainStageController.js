@@ -247,65 +247,12 @@ const token = asyncHandler(async (req, res) => {
   const hasPrime = hasMembership && userRow.tier === 'PRIME';
   const participantTier = adminUser ? 'admin' : hasPrime ? 'prime' : hasMembership ? 'member' : 'newcomer';
 
-  // Newcomers: cam on, no mic, 60-min session then 40-min cooldown.
-  // Members: cam + mic, 4-hour sessions.
-  // Prime / Admin: cam + mic, 12-hour tokens (no session cap).
-  const canScreenShare    = participantTier !== 'newcomer';
-  const canPublishAudio   = true; // all participants can mute/unmute themselves
+  // All tiers: cam + mic. Newcomers: no screenshare. Members / Prime / Admin: + screenshare.
+  // No session cap for any tier — MAX_CAMMERS (100) is the only backstop.
+  const canScreenShare  = participantTier !== 'newcomer';
+  const canPublishAudio = true; // all participants can mute/unmute themselves
 
-  const NEWCOMER_SESSION_S  = 3 * 3600;           // 3 hour cam window
-  const NEWCOMER_COOLDOWN_S = 24 * 3600;          // 24 hour cooldown
-  const NEWCOMER_WINDOW_S   = NEWCOMER_SESSION_S + NEWCOMER_COOLDOWN_S; // 27 h Redis TTL
-
-  // Paid tiers (member + prime + admin) get 24h tokens — effectively unlimited
-  // within a sitting. Any session longer than a day can reconnect. Newcomer
-  // stays hard-capped by the backend session-tracker regardless of token TTL.
-  let tokenTtlSeconds = participantTier === 'newcomer'
-    ? NEWCOMER_SESSION_S
-    : 24 * 3600; // member / prime / admin
-
-  let sessionStartedAt   = null;
-  let sessionLimitSeconds = null;
-
-  if (participantTier === 'newcomer') {
-    try {
-      const SESSION_KEY = `mainstage:session:start:${String(userId)}`;
-      const redis = getRedis();
-      const startRaw = await redis.get(SESSION_KEY);
-
-      if (startRaw === null) {
-        const nowMs = Date.now();
-        await redis.set(SESSION_KEY, String(nowMs), 'EX', NEWCOMER_WINDOW_S);
-        sessionStartedAt    = nowMs;
-        sessionLimitSeconds = NEWCOMER_SESSION_S;
-        tokenTtlSeconds     = NEWCOMER_SESSION_S;
-      } else {
-        const startMs  = parseInt(startRaw, 10);
-        const elapsedS = Math.floor((Date.now() - startMs) / 1000);
-
-        if (elapsedS < NEWCOMER_SESSION_S) {
-          sessionStartedAt    = startMs;
-          sessionLimitSeconds = NEWCOMER_SESSION_S;
-          tokenTtlSeconds     = Math.max(60, NEWCOMER_SESSION_S - elapsedS);
-        } else {
-          const cooldownRemainingS = Math.max(0, NEWCOMER_WINDOW_S - elapsedS);
-          return res.status(429).json({
-            success: false,
-            error: 'Your 3-hour preview has ended. Come back in 24 hours, or become a Member to stay on cam.',
-            code: 'FREE_USER_COOLDOWN',
-            cooldownSeconds: cooldownRemainingS,
-          });
-        }
-      }
-    } catch (redisErr) {
-      logger.error('[MainStage] token: Redis unavailable (session tracking)', { error: redisErr.message });
-      return res.status(503).json({
-        success: false,
-        error: 'Service temporarily unavailable.',
-        code: 'SESSION_BACKEND_UNAVAILABLE',
-      });
-    }
-  }
+  const tokenTtlSeconds = 24 * 3600; // 24h for all tiers
 
   // Admins bypass the cap (addCammerForce skips cap but still deduplicates).
   let addResult;
@@ -362,11 +309,6 @@ const token = asyncHandler(async (req, res) => {
     canScreenShare,
     participantTier,
   };
-
-  if (sessionStartedAt !== null) {
-    responseBody.sessionStartedAt    = sessionStartedAt;
-    responseBody.sessionLimitSeconds = sessionLimitSeconds;
-  }
 
   return res.json(responseBody);
 });
@@ -684,20 +626,17 @@ const viewerToken = asyncHandler(async (req, res) => {
 
 /**
  * GET /api/main-stage/free-viewer-token
- * Session-auth only. Issues a short-TTL Main Stage viewer token to free-tier
- * users. Two paths:
+ * Session-auth only. Issues a Main Stage viewer-only token (no publish) to
+ * free-tier users. Two paths:
  *
  * 1. Ad-unlock bypass (checked first): user has an active rewarded-ad unlock
  *    for 'mainstage_extend'. Token TTL is clamped to the unlock expiry so it
  *    can't outlive the 30-min ad grant. Returns { viaAdUnlock: true,
  *    unlockExpiresAt }.
  *
- * 2. Gate window: falls through to the existing mainStageGateService check.
- *    Returns 403 MAIN_STAGE_GATED when the gate is disabled or outside a
- *    window so the frontend can render a countdown + upgrade CTA.
- *
- * If an ad-unlock is < 5 min from expiry we still issue the token — a short
- * session is better than an abrupt 403 mid-watch.
+ * 2. Open access: free viewers can watch anytime. Returns a 3h token.
+ *    (The old time-gated windows via mainStageGateService were removed; the
+ *    service file is still in-tree but no longer invoked here.)
  */
 const freeViewerToken = asyncHandler(async (req, res) => {
   const userId = req.user?.id;
@@ -735,14 +674,14 @@ const freeViewerToken = asyncHandler(async (req, res) => {
       });
     }
   } catch (adErr) {
-    // Non-fatal — if adUnlockService is down, fall through to gate check so
-    // the gate window still works normally.
+    // Non-fatal — if adUnlockService is down, fall through to the open-access
+    // path so free viewers still get their standard 3h token.
     logger.warn('[MainStage] free-viewer-token: adUnlockService check failed', {
       error: adErr.message, userId,
     });
   }
 
-  // ── Path 2: always open — gate windows removed, free users can watch anytime ──
+  // ── Path 2: open access — free users can watch anytime ──
   const ttlSeconds = 3 * 60 * 60; // 3h token for free viewers
   const viewerId   = `free_${crypto.randomBytes(6).toString('hex')}`;
   const lkToken    = await livekitService.generateToken(

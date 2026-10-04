@@ -14,14 +14,37 @@ function getMux() {
   return _mux;
 }
 
-async function createDirectUpload(corsOrigin = 'https://pnptv.app') {
+async function createDirectUpload(corsOrigin = 'https://pnptv.app', opts = {}) {
   const mux = getMux();
+  const settings = {
+    playback_policy: ['public'],
+    encoding_tier: 'smart',
+  };
+
+  // Baked-in PNPtv watermark (channel uploads opt in via opts.watermark).
+  // Mux fetches the overlay URL once at transcode time and burns it into
+  // every rendition — survives download, screen-recording, direct HLS pull.
+  if (opts.watermark) {
+    settings.input = [
+      {
+        // Dedicated transparent-background watermark (logo-final.png has baked-in
+        // black fill — looked like a black tile over the video).
+        url: 'https://pnptv.app/logo-watermark.png',
+        overlay_settings: {
+          vertical_align: 'bottom',
+          vertical_margin: '4%',
+          horizontal_align: 'right',
+          horizontal_margin: '4%',
+          width: '8%',
+          opacity: '35%',
+        },
+      },
+    ];
+  }
+
   const upload = await mux.video.uploads.create({
     cors_origin: corsOrigin,
-    new_asset_settings: {
-      playback_policy: ['public'],
-      encoding_tier: 'smart',
-    },
+    new_asset_settings: settings,
   });
   return { uploadId: upload.id, uploadUrl: upload.url };
 }

@@ -1791,6 +1791,8 @@ export async function getDustConfig(): Promise<{
   min_usd: number;
   bonus_pct: number;
   eth_gas_reserve: number;
+  cooldown_active?: boolean;
+  cooldown_seconds_remaining?: number;
 }> {
   const res = await fetch(`${API_BASE}/api/wallet/dust-config`, { credentials: "include" });
   if (!res.ok) throw new Error(`dust-config ${res.status}`);

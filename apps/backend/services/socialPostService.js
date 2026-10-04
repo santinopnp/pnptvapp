@@ -440,6 +440,16 @@ class SocialPostService {
          ${cursorClause}
          AND sp.user_id != ALL($${blockedParamIdx}::text[])
          AND NOT (COALESCE(u.hide_from_regions, '{}') && $${geoParamIdx}::text[])
+         -- Also hide the post if ANY tagged user (post_mentions.mention_type='tag')
+         -- has region-hid the viewer. Keeps non-author users in control of
+         -- where their likeness appears.
+         AND NOT EXISTS (
+           SELECT 1 FROM post_mentions pm
+             JOIN users ut ON ut.id = pm.mentioned_user_id
+            WHERE pm.post_id = sp.id
+              AND pm.mention_type = 'tag'
+              AND (COALESCE(ut.hide_from_regions, '{}') && $${geoParamIdx}::text[])
+         )
          AND (
            u.role NOT IN ('model', 'creator')
            OR (u.creator_status = 'active' AND u.creator_locked = FALSE)
@@ -2280,6 +2290,13 @@ class SocialPostService {
          ${extraWhere}
          AND sp.user_id != ALL($${blockedParamIdx}::text[])
          AND NOT (COALESCE(u.hide_from_regions, '{}') && $${geoParamIdx}::text[])
+         AND NOT EXISTS (
+           SELECT 1 FROM post_mentions pm
+             JOIN users ut ON ut.id = pm.mentioned_user_id
+            WHERE pm.post_id = sp.id
+              AND pm.mention_type = 'tag'
+              AND (COALESCE(ut.hide_from_regions, '{}') && $${geoParamIdx}::text[])
+         )
        ${orderBy}
        LIMIT $2`;
 
