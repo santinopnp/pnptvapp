@@ -793,6 +793,13 @@ async function publishVideo({ videoId, userId, isAdmin }) {
     throw e;
   }
 
+  if (v.mux_upload_id && v.mux_status !== 'ready') {
+    const e = new Error('Video is still processing. Please wait a moment and try again.');
+    e.code = 'MUX_NOT_READY';
+    e.status = 409;
+    throw e;
+  }
+
   const ch = (await query(
     `SELECT cc.*, u.username AS creator_username, u.first_name AS creator_first_name
        FROM creator_channels cc

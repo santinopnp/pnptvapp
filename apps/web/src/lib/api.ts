@@ -10267,6 +10267,12 @@ export async function getMuxThumbnails(
 ): Promise<{ success: boolean; thumbnails: Array<{ label: string; url: string }> }> {
   return request(`/api/webapp/channels/${channelId}/videos/${videoId}/mux-thumbnails`);
 }
+export async function getChannelVideoMuxStatus(
+  channelId: number,
+  videoId: number,
+): Promise<{ success: boolean; muxStatus: string; status: string; ready: boolean }> {
+  return request(`/api/webapp/channels/${channelId}/videos/${videoId}/mux-status`);
+}
 export async function recordChannelVideoView(channelId: number, videoId: number) {
   return request<{ success: boolean; view_count?: number; deduped?: boolean }>(
     `/api/webapp/channels/${channelId}/videos/${videoId}/view`,

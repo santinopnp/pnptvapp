@@ -139,6 +139,7 @@ class UserModel {
       contentDisclaimerAcceptedIp: row.content_disclaimer_accepted_ip || null,
       creatorStatus: row.creator_status || null,
       liveChannel: row.live_channel || null,
+      isPnptvFam: !!row.is_pnptv_fam,
     };
   }
 

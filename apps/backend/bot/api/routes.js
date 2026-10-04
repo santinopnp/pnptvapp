@@ -21376,6 +21376,26 @@ app.post('/api/creators/:id/services/:serviceId/book',
     })
   );
 
+  // GET /api/webapp/channels/:channelId/videos/:videoId/mux-status
+  // Lightweight poll endpoint — returns mux_status + ready flag so the frontend
+  // can gate the Publish button until Mux finishes transcoding.
+  app.get(
+    '/api/webapp/channels/:channelId/videos/:videoId/mux-status',
+    requireSessionAuth,
+    asyncHandler(async (req, res) => {
+      const videoId = parseInt(req.params.videoId, 10);
+      if (!Number.isFinite(videoId)) return res.status(400).json({ success: false, error: 'Invalid video id' });
+      try {
+        const { rows: [v] } = await query(
+          `SELECT id, status, mux_status, mux_playback_id FROM channel_videos WHERE id = $1`,
+          [videoId]
+        );
+        if (!v) return res.status(404).json({ success: false, error: 'Video not found' });
+        res.json({ success: true, muxStatus: v.mux_status, status: v.status, ready: v.mux_status === 'ready' });
+      } catch (err) { handleSvcError(res, err); }
+    })
+  );
+
   // GET /api/webapp/channels/:channelId/videos/:videoId/mux-thumbnails
   app.get(
     '/api/webapp/channels/:channelId/videos/:videoId/mux-thumbnails',

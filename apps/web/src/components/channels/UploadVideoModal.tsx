@@ -20,6 +20,7 @@ import {
   getMuxUploadUrl,
   aiAllChannelVideo,
   getMuxThumbnails,
+  getChannelVideoMuxStatus,
   updateChannelVideo,
   publishChannelVideo,
   getChannelTagTaxonomy,
@@ -118,6 +119,7 @@ export default function UploadVideoModal({
   // Publish
   const [announce, setAnnounce] = useState(true);
   const [publishing, setPublishing] = useState(false);
+  const [muxReady, setMuxReady] = useState<boolean | null>(null);
 
   // Resume
   const [resume, setResume] = useState<ResumeState | null>(null);
@@ -143,6 +145,29 @@ export default function UploadVideoModal({
 
   // Abort upload on unmount
   useEffect(() => () => { abortedRef.current = true; xhrRef.current?.abort(); }, []);
+
+  // Poll mux-status while on the publish step until Mux finishes processing
+  useEffect(() => {
+    if (step !== "publish") return;
+    const vid = videoIdRef.current;
+    if (!vid) { setMuxReady(true); return; }
+    let timer: ReturnType<typeof setTimeout>;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const r = await getChannelVideoMuxStatus(channelId, vid);
+        if (cancelled) return;
+        if (r.ready) { setMuxReady(true); return; }
+        setMuxReady(false);
+        timer = setTimeout(poll, 5_000);
+      } catch {
+        if (!cancelled) timer = setTimeout(poll, 8_000);
+      }
+    };
+    setMuxReady(null);
+    poll();
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [step, channelId]);
 
   const validateFile = (f: File): string | null => {
     if (f.type && !f.type.startsWith("video/")) return "Solo se permiten archivos de video.";
@@ -250,18 +275,25 @@ export default function UploadVideoModal({
         if (abortedRef.current) return;
 
         if (xhr.status >= 200 && xhr.status < 300) {
-          // Upload complete (200/201/204)
-          clearResume();
-          setUploadPct(100);
-          setUploadSpeed(0);
-          setUploadEta(null);
-          setRetryCount(0);
-          setStep("metadata");
-          setTimeout(() => fetchThumbnails(videoId), 8_000);
+          if (isLastChunk) {
+            // Entire file uploaded — move on
+            clearResume();
+            setUploadPct(100);
+            setUploadSpeed(0);
+            setUploadEta(null);
+            setRetryCount(0);
+            setStep("metadata");
+            setTimeout(() => fetchThumbnails(videoId), 8_000);
+          } else {
+            // Chunk accepted — advance offset and continue
+            offset = chunkEnd;
+            chunkAttempt = 0;
+            sendChunk();
+          }
         } else if (xhr.status === 308) {
-          // GCS-style "Resume Incomplete" — advance offset from Range header
+          // GCS/OCI-style resume — use server-confirmed end byte
           const rangeHeader = xhr.getResponseHeader("Range");
-          const match = rangeHeader?.match(/bytes=0-(\d+)/);
+          const match = rangeHeader?.match(/bytes=\d+-(\d+)/);
           offset = match ? parseInt(match[1]) + 1 : chunkEnd;
           chunkAttempt = 0;
           sendChunk();
@@ -893,11 +925,11 @@ export default function UploadVideoModal({
         </button>
         <button
           onClick={handlePublish}
-          disabled={publishing || !title.trim()}
+          disabled={publishing || !title.trim() || muxReady === false}
           className="flex-[2] py-3 rounded-xl text-sm font-bold transition-opacity disabled:opacity-40"
           style={{ background: "linear-gradient(90deg,#D4007A,#7B61FF)", color: "#fff" }}
         >
-          {publishing ? "Publicando…" : "Publicar"}
+          {publishing ? "Publicando…" : muxReady === false ? "Procesando video…" : "Publicar"}
         </button>
       </div>
     </div>
