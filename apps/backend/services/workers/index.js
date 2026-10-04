@@ -1340,7 +1340,12 @@ async function subscribeRetargetProcessor(job) {
     logger.warn(`[BullMQ] subscribeRetargetProcessor: unhandled job name "${job.name}"`);
     return;
   }
-
+  // Disabled 2026-10-04 — flow was creating USDT-BSC yearly50 invoices that
+  // converted at ~0% and polluted the pending NP pool. Drain any already-
+  // scheduled delayed jobs; keep this early-return so late-firing jobs no-op.
+  logger.info('[BullMQ] subscribeRetargetProcessor: disabled, skipping', { userId: job.data?.userId });
+  return;
+  // eslint-disable-next-line no-unreachable
   const { userId, visitedAt } = job.data;
   if (!userId) return;
 

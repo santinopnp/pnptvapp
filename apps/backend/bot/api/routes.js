@@ -9320,13 +9320,9 @@ app.post('/api/webapp/subscribe-visit', requireSessionAuth, asyncHandler(async (
   if (req.session?.user?.tier === 'prime') return res.json({ ok: true });
   const userId = req.session.user.id;
   await getRedis().set('pnpapp:subscribe-visit:' + userId, Date.now(), 'EX', 172800);
-
-  const { subscribeRetargetQueue, DEFAULT_JOB_OPTIONS } = require('../../services/queueService');
-  await subscribeRetargetQueue.add('subscribe-retarget', { userId, visitedAt: Date.now() }, {
-    ...DEFAULT_JOB_OPTIONS,
-    delay: 86400000,
-  });
-
+  // Retarget enqueue disabled 2026-10-04 — the 24h-delayed USDT-BSC yearly50
+  // DM was polluting the NP funnel with high-friction cross-chain intents
+  // and converting ~0%. Visit flag still set for other analytics.
   return res.json({ ok: true });
 }));
 
