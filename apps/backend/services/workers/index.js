@@ -747,6 +747,21 @@ async function cronProcessor(job) {
         RETURNING id, creator_id, amount_creator
       `);
       if (rows.length > 0) logger.info('creator earnings matured', { count: rows.length });
+
+      // Immediately try to push newly (and previously) matured balances out
+      // to each creator's Privy wallet — see cashoutService.runAutoPayoutSweep
+      // docstring. Isolated from the maturation UPDATE above: a sweep failure
+      // must never stop earnings from maturing on schedule.
+      const CashoutService = _safeRequire('../cashoutService');
+      if (CashoutService) {
+        const sweepResult = await CashoutService.runAutoPayoutSweep().catch((err) => {
+          logger.error('[BullMQ] earnings-maturation: auto payout sweep failed', { error: err.message });
+          return null;
+        });
+        if (sweepResult) logger.info('creator auto payout sweep completed', sweepResult);
+      } else {
+        logger.warn('[BullMQ] earnings-maturation: cashoutService not found — skipping auto payout sweep');
+      }
       return;
     }
 

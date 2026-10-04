@@ -31,6 +31,13 @@ const { dispatchSplit } = require('./payoutSplitService');
 const MAX_CASHOUT_USD_PER_REQUEST = parseFloat(process.env.MAX_CASHOUT_USD_PER_REQUEST || '5000');
 const MAX_CASHOUT_USD_PER_DAY = parseFloat(process.env.MAX_CASHOUT_USD_PER_DAY || '10000');
 
+// Auto-payout sweep (runAutoPayoutSweep, below): the floor below which a
+// creator's matured balance is left in 'available' rather than spending a gas
+// leg to move a few cents. Unlike MIN_CASHOUT_USD_PER_REQUEST ($50, a
+// creator-facing UX floor for the manual "cash out" button) this only exists
+// to avoid dust transfers — small balances simply roll into the next sweep.
+const AUTO_PAYOUT_MIN_USD = parseFloat(process.env.AUTO_PAYOUT_MIN_USD || '1');
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
@@ -89,6 +96,54 @@ async function getCreatorBalance(creatorId) {
     available_count: parseInt(row.available_count, 10) || 0,
     earliest_available_at: row.earliest_available_at || null,
   };
+}
+
+/**
+ * Dispatch an already-reserved (status='in_payout') order's earnings on-chain
+ * and finalize the order + earnings rows on success, or roll both back to
+ * 'available'/'failed' on failure. Shared by requestCashout (creator-clicked)
+ * and runAutoPayoutSweep (48h auto-payout) so both paths finalize identically.
+ *
+ * @param {object} order — a fiat_cashout_orders row (id, creator_id)
+ * @param {string[]} earningIds
+ * @param {string} walletAddress
+ * @returns {Promise<object>} dispatchResult from payoutSplitService.dispatchSplit
+ */
+async function _dispatchAndFinalize(order, earningIds, walletAddress) {
+  try {
+    const dispatchResult = await dispatchSplit({
+      orderId: order.id,
+      creatorId: order.creator_id,
+      amountUsd: parseFloat(order.amount_usd),
+      creatorAddress: walletAddress,
+    });
+
+    const meta = JSON.stringify({ split: dispatchResult, lane: order.lane });
+    await query(
+      `UPDATE fiat_cashout_orders
+          SET status = 'settled',
+              provider_ref = $2,
+              provider_meta = $3::jsonb,
+              processed_at = NOW(),
+              settled_at = NOW(),
+              updated_at = NOW()
+        WHERE id = $1`,
+      [order.id, dispatchResult.txCreator, meta]
+    );
+    await query(
+      `UPDATE creator_earnings
+          SET status = 'paid_out', updated_at = NOW()
+        WHERE id = ANY($1::uuid[])`,
+      [earningIds]
+    );
+    return dispatchResult;
+  } catch (dispatchErr) {
+    logger.error('[cashoutService] dispatch failed — rolling back order', {
+      orderId: order.id, lane: order.lane, error: dispatchErr.message,
+    });
+    await failCashoutOrder(order.id, dispatchErr.message);
+    throw err('DISPATCH_FAILED', `Payment dispatch failed: ${dispatchErr.message}`, 502);
+  }
 }
 
 /**
@@ -274,46 +329,12 @@ async function requestCashout({ creatorId, amountUsd, lane, destination }) {
     // ── Dispatch — 100% of the net cashout amount, on-chain, to the creator ──
     // (payoutSplitService.dispatchSplit — fixed 2026-09-29, see its docstring:
     // amountUsd here is already the creator's net share, not a gross figure)
-    // MUST use `accumulated`, not the originally-requested `amountUsd` — the
-    // earnings rows actually locked/marked paid_out below total `accumulated`.
-    let dispatchResult;
-    try {
-      dispatchResult = await dispatchSplit({
-        orderId: order.id,
-        creatorId,
-        amountUsd: accumulated,
-        creatorAddress: destination.address,
-      });
-
-      // Auto-settle: split sent atomically, mark order settled immediately
-      const meta = JSON.stringify({ split: dispatchResult, lane });
-      await query(
-        `UPDATE fiat_cashout_orders
-            SET status = 'settled',
-                provider_ref = $2,
-                provider_meta = $3::jsonb,
-                processed_at = NOW(),
-                settled_at = NOW(),
-                updated_at = NOW()
-          WHERE id = $1`,
-        [order.id, dispatchResult.txCreator, meta]
-      );
-      await query(
-        `UPDATE creator_earnings
-            SET status = 'paid_out', updated_at = NOW()
-          WHERE id = ANY($1::uuid[])`,
-        [earningIds]
-      );
-      order.status = 'settled';
-      order.provider_ref = dispatchResult.txCreator;
-    } catch (dispatchErr) {
-      // On dispatch failure, roll the order to 'failed' and restore earnings to 'available'.
-      logger.error('[cashoutService] dispatch failed — rolling back order', {
-        orderId: order.id, lane, error: dispatchErr.message,
-      });
-      await failCashoutOrder(order.id, dispatchErr.message);
-      throw err('DISPATCH_FAILED', `Payment dispatch failed: ${dispatchErr.message}`, 502);
-    }
+    // order.amount_usd = accumulated (set in the INSERT above), so
+    // _dispatchAndFinalize dispatches the correct locked amount, not the
+    // originally-requested amountUsd.
+    const dispatchResult = await _dispatchAndFinalize(order, earningIds, destination.address);
+    order.status = 'settled';
+    order.provider_ref = dispatchResult.txCreator;
 
     return { order, dispatch: dispatchResult };
   } catch (e) {
@@ -327,6 +348,135 @@ async function requestCashout({ creatorId, amountUsd, lane, destination }) {
   } finally {
     client.release();
   }
+}
+
+/**
+ * Auto-payout sweep — pays matured (status='available') earnings straight to
+ * the creator's Privy wallet without waiting for them to click "cash out".
+ * Run hourly from services/workers/index.js's 'earnings-maturation' job, right
+ * after that job flips holding -> available on EARNINGS_HOLD_HOURS (48h)
+ * maturity, so a creator's balance reaches their wallet within ~1h of
+ * maturing (i.e. within ~49h of being earned).
+ *
+ * Idempotent and safe to run concurrently with a manual cashout or with
+ * itself: it uses the exact same reservation pattern as requestCashout
+ * (OPEN_ORDER_EXISTS guard + FOR UPDATE SKIP LOCKED + status='available' ->
+ * 'in_payout' inside one transaction), so a creator can never be double-paid
+ * or have a manual cashout race an auto sweep for the same earnings rows.
+ * Creators without a valid wallet address are left untouched — their balance
+ * simply stays 'available' for a future sweep (once they finish Privy wallet
+ * setup) or a manual cashout once one exists.
+ *
+ * @returns {Promise<{ success: boolean, candidates: number, paid: number, skipped: number, failed: number }>}
+ */
+async function runAutoPayoutSweep() {
+  const { rows: candidates } = await query(
+    `SELECT ce.creator_id,
+            COALESCE(NULLIF(u.preferred_wallet_address, ''), NULLIF(u.wallet_address, '')) AS wallet_address
+       FROM creator_earnings ce
+       JOIN users u ON u.id = ce.creator_id
+      WHERE ce.status = 'available'
+      GROUP BY ce.creator_id, wallet_address
+     HAVING COALESCE(SUM(ce.amount_creator), 0) >= $1`,
+    [AUTO_PAYOUT_MIN_USD]
+  );
+
+  let paid = 0;
+  let skipped = 0;
+  let failed = 0;
+
+  for (const candidate of candidates) {
+    const { creator_id: creatorId, wallet_address: walletAddress } = candidate;
+
+    if (!isValidEvmAddress(walletAddress)) {
+      skipped++;
+      continue;
+    }
+
+    const { rows: openOrders } = await query(
+      `SELECT id FROM fiat_cashout_orders
+         WHERE creator_id = $1
+           AND status IN ('pending', 'processing')
+         LIMIT 1`,
+      [creatorId]
+    );
+    if (openOrders.length > 0) {
+      // A manual cashout (or a previous sweep tick) is already in flight for
+      // this creator — never race it.
+      skipped++;
+      continue;
+    }
+
+    const client = await getClient();
+    let order = null;
+    try {
+      await client.query('BEGIN');
+
+      const { rows: earnRows } = await client.query(
+        `SELECT id, amount_creator
+           FROM creator_earnings
+          WHERE creator_id = $1
+            AND status = 'available'
+          FOR UPDATE SKIP LOCKED`,
+        [creatorId]
+      );
+      const amountUsd = Math.round(
+        earnRows.reduce((sum, row) => sum + parseFloat(row.amount_creator), 0) * 100
+      ) / 100;
+
+      if (amountUsd < AUTO_PAYOUT_MIN_USD) {
+        // Rows were claimed by a concurrent transaction between the
+        // aggregate query above and this lock — nothing left to pay here.
+        await client.query('ROLLBACK');
+        skipped++;
+        continue;
+      }
+
+      const earningIds = earnRows.map((row) => row.id);
+      const destination = { address: walletAddress, chain: 'base', token: 'USDC' };
+
+      const { rows: orderRows } = await client.query(
+        `INSERT INTO fiat_cashout_orders
+           (creator_id, amount_usd, lane, status, destination, earning_ids, is_automatic)
+         VALUES ($1, $2, 'privy_wallet', 'pending', $3::jsonb, $4::uuid[], true)
+         RETURNING *`,
+        [creatorId, amountUsd, JSON.stringify(destination), earningIds]
+      );
+      order = orderRows[0];
+
+      await client.query(
+        `UPDATE creator_earnings
+            SET status = 'in_payout', updated_at = NOW()
+          WHERE id = ANY($1::uuid[])`,
+        [earningIds]
+      );
+      await client.query('COMMIT');
+
+      logger.info('[cashoutService] auto payout order reserved', {
+        orderId: order.id, creatorId, amountUsd, earningCount: earningIds.length,
+      });
+
+      await _dispatchAndFinalize(order, earningIds, walletAddress);
+      logger.info('[cashoutService] auto payout settled', { orderId: order.id, creatorId, amountUsd });
+      paid++;
+    } catch (e) {
+      if (!order) {
+        try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
+      }
+      // _dispatchAndFinalize already moved a reserved order to 'failed' and
+      // its earnings back to 'available' on dispatch failure — nothing more
+      // to unwind here for that case.
+      failed++;
+      logger.error('[cashoutService] auto payout sweep entry failed', { creatorId, error: e.message });
+    } finally {
+      client.release();
+    }
+  }
+
+  logger.info('[cashoutService] auto payout sweep complete', {
+    candidates: candidates.length, paid, skipped, failed,
+  });
+  return { success: true, candidates: candidates.length, paid, skipped, failed };
 }
 
 /**
@@ -460,6 +610,7 @@ async function failCashoutOrder(orderId, reason) {
 module.exports = {
   getCreatorBalance,
   requestCashout,
+  runAutoPayoutSweep,
   settleCashoutOrder,
   failCashoutOrder,
   // Lane handlers exported for unit testing
