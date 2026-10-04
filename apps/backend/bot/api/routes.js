@@ -14919,6 +14919,22 @@ app.post('/api/webapp/payments/usdc/prepare', requireSessionAuth, usdcPrepareLim
     planDisplayName = plan.display_name || plan.name;
   }
 
+  // NowPayments raised their effective minimum (post-fee) around 2026-09-20.
+  // Invoices below ~$18.95 are accepted by their API but the pay_amount they
+  // return is often rejected by the user's wallet (fee > principal) or lands
+  // below NP's own confirm threshold, so 99%+ expire. Hard-block server-side
+  // so no sub-floor invoices get created regardless of which flow calls this
+  // (subscribe, hangouts, channels, creator_monthly all route through here).
+  if (usdAmount < 18.95) {
+    logger.warn('[NOWPayments] Rejected sub-floor invoice', { userId, planId, usdAmount });
+    return res.status(400).json({
+      success: false,
+      error: 'This plan is below the crypto rail minimum. Pay with your card or wallet instead.',
+      code: 'BELOW_NP_MINIMUM',
+      minimumUsd: 18.95,
+    });
+  }
+
   const orderId = `pnptv-nowp-${userId}-${Date.now()}`;
   const ipnCallbackUrl = `${webappUrl}/api/webhooks/nowpayments`;
 

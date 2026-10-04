@@ -809,6 +809,9 @@ export default function Subscribe() {
                           setWalletPanelPlanId(null);
                           setTimeout(() => { window.location.href = "/"; }, 1200);
                         }}
+                        onCryptoFallback={parseFloat(String(plan.price)) >= NOWPAYMENTS_MINIMUM_USD
+                          ? () => openAppSheet(plan.id, `${plan.name || plan.id} · $${parseFloat(String(plan.price)).toFixed(2)}`)
+                          : undefined}
                         compact
                       />
                     </div>
@@ -1047,6 +1050,9 @@ export default function Subscribe() {
                         // Reload to reflect the new entitlement everywhere.
                         setTimeout(() => { window.location.href = "/"; }, 1200);
                       }}
+                      onCryptoFallback={parseFloat(String(plan.price)) >= NOWPAYMENTS_MINIMUM_USD
+                        ? () => openAppSheet(plan.id, `${plan.name || plan.id} · $${parseFloat(String(plan.price)).toFixed(2)}`)
+                        : undefined}
                       compact
                     />
                   </div>
@@ -1236,6 +1242,9 @@ export default function Subscribe() {
                         // Reload to reflect the new entitlement everywhere.
                         setTimeout(() => { window.location.href = "/"; }, 1200);
                       }}
+                      onCryptoFallback={parseFloat(String(plan.price)) >= NOWPAYMENTS_MINIMUM_USD
+                        ? () => openAppSheet(plan.id, `${plan.name || plan.id} · $${parseFloat(String(plan.price)).toFixed(2)}`)
+                        : undefined}
                       compact
                     />
                   </div>
