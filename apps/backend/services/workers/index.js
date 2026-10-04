@@ -157,6 +157,19 @@ async function notificationsProcessor(job) {
       return;
     }
 
+    case 'year50_funnel_promo': {
+      // Two Workers are attached to 'notifications' (this one + queueService's);
+      // BullMQ picks one at random per job. Without this case, ~50% of year50
+      // follow-up DMs were silently dropped as "unhandled".
+      const qs = _safeRequire('../queueService');
+      if (!qs || typeof qs._handleYear50FunnelPromo !== 'function') {
+        logger.warn('[BullMQ] notificationsProcessor: _handleYear50FunnelPromo not available');
+        return;
+      }
+      await qs._handleYear50FunnelPromo(job.data || {});
+      return;
+    }
+
     default: {
       // Legacy type-based dispatch (old addJob callers that set data.type)
       if (type) {

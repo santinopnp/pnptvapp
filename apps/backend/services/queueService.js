@@ -945,4 +945,8 @@ module.exports = {
   enqueueEmail,
   _makeSlackShim,
   DEFAULT_JOB_OPTS,
+
+  // Shared handlers (also wired into workers/index.js so either Worker on the
+  // 'notifications' queue can process the job — BullMQ fans out at random).
+  _handleYear50FunnelPromo,
 };
