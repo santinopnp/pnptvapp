@@ -525,16 +525,29 @@ export default function UploadVideoModal({
         </div>
       )}
 
-      {/* Drop zone — <label> wraps a full-size invisible <input> overlay.
-          Android TG WebView refuses to open the picker on sr-only (1x1) inputs
-          even via htmlFor; a full-area opacity:0 input makes the dropzone tap
-          literally land on the input element — works everywhere. */}
+      {/* Drop zone — canonical Mux-Uploader pattern: label is the big visible
+          hit target bound via htmlFor to a sr-only <input> SIBLING (not nested).
+          Overlay-opacity approach swallows the change event on Android Chrome
+          after the picker returns; sibling-sr-only lets the input dispatch
+          cleanly. No accept attribute → Android opens full SAF file browser. */}
+      <input
+        id="mux-file-input"
+        type="file"
+        aria-label="Elegir video"
+        className="sr-only"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) handleFileSelect(f);
+          else setError("No se recibió el archivo. Intenta de nuevo o abre desde otra carpeta.");
+          e.target.value = "";
+        }}
+      />
       <label
         htmlFor="mux-file-input"
         onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
         onDragLeave={() => setDrag(false)}
         onDrop={onDrop}
-        className="relative cursor-pointer rounded-2xl flex flex-col items-center justify-center gap-3 py-10 px-4 transition-colors"
+        className="cursor-pointer rounded-2xl flex flex-col items-center justify-center gap-3 py-10 px-4 transition-colors"
         style={{
           border: `2px dashed ${drag ? "#D4007A" : "rgba(212,0,122,.3)"}`,
           background: drag ? "rgba(212,0,122,.06)" : "rgba(255,255,255,.02)",
@@ -559,18 +572,6 @@ export default function UploadVideoModal({
             <p className="text-xs text-white/40 mt-0.5">o toca para elegir · MP4, MOV, WebM · máx 50 GB</p>
           </div>
         )}
-        <input
-          id="mux-file-input"
-          type="file"
-          // No accept attribute on purpose. On Android, Chrome WebView (which
-          // Telegram WebApp uses) dispatches accept="video/*" to the photo
-          // picker intent (ACTION_GET_CONTENT), which on Android 13+ shows
-          // only the gallery and hides folder browsing. No MIME = Documents
-          // UI (SAF) with full folder access. validateFile() rejects non-videos.
-          aria-label="Elegir video"
-          className="absolute inset-0 w-full h-full cursor-pointer opacity-0"
-          onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileSelect(f); e.target.value = ""; }}
-        />
       </label>
 
       {/* One-liner */}
