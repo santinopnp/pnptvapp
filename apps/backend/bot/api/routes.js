@@ -13199,14 +13199,36 @@ app.get('/api/wallet/packages', requireSessionAuth, (req, res) => {
 // GET /api/wallet/dust-config — current dust-convert threshold + min. Read by
 // WalletHomeSheet to decide when to render the sweep CTA. Threshold is server-
 // controlled so ops can adjust it without a frontend deploy.
-app.get('/api/wallet/dust-config', requireSessionAuth, asyncHandler(async (_req, res) => {
+// Also returns the viewer's current cooldown status so the UI can suppress the
+// convert button when they've already swept today (prevents the "see button →
+// click → 429 → button re-appears" loop reported 2026-10-04).
+app.get('/api/wallet/dust-config', requireSessionAuth, asyncHandler(async (req, res) => {
   const thresholdUsd = await _getDustThresholdUsd();
+  let cooldownActive = false;
+  let cooldownSecondsRemaining = 0;
+  try {
+    const userId = req.session?.user?.id;
+    if (userId) {
+      const redis = getRedis();
+      const key = `dust:convert:${userId}`;
+      const [val, ttl] = await Promise.all([
+        redis.get(key).catch(() => null),
+        redis.ttl(key).catch(() => -2),
+      ]);
+      if (val != null && Number(ttl) > 0) {
+        cooldownActive = true;
+        cooldownSecondsRemaining = Number(ttl);
+      }
+    }
+  } catch { /* non-fatal — default to no cooldown */ }
   res.json({
     ok: true,
     threshold_usd: thresholdUsd,
     min_usd: 0.17,
     bonus_pct: 10,
     eth_gas_reserve: DUST_ETH_GAS_RESERVE,
+    cooldown_active: cooldownActive,
+    cooldown_seconds_remaining: cooldownSecondsRemaining,
   });
 }));
 
@@ -17822,10 +17844,26 @@ async function _resolveCanonicalPurchase(userId, surface, spec, dbQuery) {
     if (tierLower !== expectedTier) throwErr(`plan tier mismatch (expected ${expectedTier}, got ${tierLower || 'unknown'})`, 400);
     const priceNum = Number(p.price);
     if (!(priceNum > 0)) throwErr('plan has no price', 400);
+
+    // Reject payment if the viewer already holds an active lifetime grant for
+    // this tier — otherwise the fulfillment code just re-points to the existing
+    // entitlement and the user pays for nothing (Spunhoe hit this 2026-10-04 /
+    // intent 378 = $9.99 USDC into a lifetime pnp-member). Non-lifetime renewal
+    // plans still pass through (they extend expires_at via the entitlement
+    // layer); only lifetime holders of the same add_on_id are blocked here.
+    const addOnId = surface === 'membership' ? 'pnp-member' : 'prime';
+    const { rows: existing } = await dbQuery(
+      `SELECT 1 FROM user_entitlements
+        WHERE user_id = $1 AND add_on_id = $2 AND is_lifetime = TRUE AND is_consumed = FALSE
+        LIMIT 1`,
+      [String(userId), addOnId]
+    );
+    if (existing.length > 0) throwErr('already_lifetime_member', 400);
+
     return {
       amountUsd: priceNum,
       resolvedSpec: {
-        add_on_id: surface === 'membership' ? 'pnp-member' : 'prime',
+        add_on_id: addOnId,
         duration_days: Number.isInteger(Number(p.duration)) ? Math.max(1, Math.min(36600, Number(p.duration))) : 30,
         is_lifetime: !!p.is_lifetime,
         auto_renew: !p.is_lifetime,

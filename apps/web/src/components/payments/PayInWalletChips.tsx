@@ -1516,7 +1516,7 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
   const [dustError, setDustError] = _useState<string | null>(null);
   const [dustSuccess, setDustSuccess] = _useState<{ tokens: number; usd: number } | null>(null);
   const [dustCooldown, setDustCooldown] = _useState(false);
-  const [dustCfg, setDustCfg] = _useState<{ threshold_usd: number; min_usd: number; bonus_pct: number; eth_gas_reserve: number } | null>(null);
+  const [dustCfg, setDustCfg] = _useState<{ threshold_usd: number; min_usd: number; bonus_pct: number; eth_gas_reserve: number; cooldown_active?: boolean } | null>(null);
   const [ethUsdPrice, setEthUsdPrice] = _useState<number | null>(null);
 
   // Fetch dust config once per sheet open; failure falls back to prior
@@ -1525,7 +1525,14 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
   _useEffect(() => {
     let cancelled = false;
     _getDustConfig()
-      .then((c) => { if (!cancelled) setDustCfg({ threshold_usd: c.threshold_usd, min_usd: c.min_usd, bonus_pct: c.bonus_pct, eth_gas_reserve: c.eth_gas_reserve }); })
+      .then((c) => {
+        if (cancelled) return;
+        setDustCfg({ threshold_usd: c.threshold_usd, min_usd: c.min_usd, bonus_pct: c.bonus_pct, eth_gas_reserve: c.eth_gas_reserve, cooldown_active: !!c.cooldown_active });
+        // Mirror server-side cooldown into local state so the card stays
+        // suppressed even if dustCfg is re-fetched (prevents the ETH-after-USDC
+        // loop reported 2026-10-04).
+        if (c.cooldown_active) setDustCooldown(true);
+      })
       .catch(() => { /* fallback to defaults */ });
     // ETH spot price (public endpoint, no auth) — used to preview the ETH
     // sweep USD value when USDC is zero but ETH has dust.
@@ -2769,6 +2776,10 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
                   ? Math.max(0, eth - _ethReserve) * ethUsdPrice
                   : 0;
                 const _ethEligible = !_usdcEligible && _ethSpendable >= _min && _ethSpendable < _threshold;
+                // Suppress the whole card during the 24h cooldown — unless
+                // the user *just* converted (dustSuccess) in which case we
+                // keep showing the success state until they close the sheet.
+                if ((dustCfg?.cooldown_active || dustCooldown) && !dustSuccess) return null;
                 if (!_usdcEligible && !_ethEligible && !dustSuccess) return null;
                 const _asset: "usdc" | "eth" = _usdcEligible ? "usdc" : "eth";
                 const _sweepUsd = _asset === "usdc" ? Number(usdc) : _ethSpendable;
