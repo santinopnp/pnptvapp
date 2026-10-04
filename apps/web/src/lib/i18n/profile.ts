@@ -502,9 +502,9 @@ const strings = {
     dangerZoneSection: "Danger Zone",
 
     // Geo-visibility section
-    hideFromRegionsTitle: "Hide me from these regions",
-    hideFromRegionsBody: "Viewers from any country or US state you add here won't see your profile, posts, videos, live shows, calls booking, or find you in Nearby or Search. Posts you're tagged in by others will also hide for them. You'll stay visible everywhere else.",
-    hideFromRegionsEmpty: "No regions hidden — you're visible worldwide.",
+    hideFromRegionsTitle: "Hide my content in these regions",
+    hideFromRegionsBody: "Viewers browsing from any country or US state you add here won't see your profile, posts, videos, live shows, bookable services, or find you in Nearby or Search — and posts where other users tag you will also hide for them. Add Colombia to hide from Colombia, or US Florida to hide from just one US state. You stay fully visible everywhere else.",
+    hideFromRegionsEmpty: "No regions hidden — your content is visible worldwide.",
     hideFromRegionsSaving: "Saving…",
     hideFromRegionsSaved: "Saved",
     hideFromRegionsAddCountry: "+ Add country",
@@ -1128,9 +1128,9 @@ const strings = {
     dangerZoneSection: "Zona de Peligro",
 
     // Geo-visibility section
-    hideFromRegionsTitle: "Oculta mi perfil en estas regiones",
-    hideFromRegionsBody: "Las personas que naveguen desde los países o estados de EE. UU. que agregues no verán tu perfil, publicaciones, videos, shows en vivo, reserva de llamadas, ni te encontrarán en Cerca o Buscar. Las publicaciones donde otros te etiqueten también quedarán ocultas para ellos. Seguirás siendo visible en todos los demás lugares.",
-    hideFromRegionsEmpty: "Sin regiones ocultas — eres visible en todo el mundo.",
+    hideFromRegionsTitle: "Oculta mi contenido en estas regiones",
+    hideFromRegionsBody: "Las personas que naveguen desde los países o estados de EE. UU. que agregues no verán tu perfil, publicaciones, videos, shows en vivo, servicios reservables, ni te encontrarán en Cerca o Buscar — y las publicaciones donde otras personas te etiqueten también quedarán ocultas para ellos. Agrega Colombia para ocultar de Colombia entera, o US Florida para ocultar sólo de un estado. Sigues siendo visible en todos los demás lugares.",
+    hideFromRegionsEmpty: "Sin regiones ocultas — tu contenido es visible en todo el mundo.",
     hideFromRegionsSaving: "Guardando…",
     hideFromRegionsSaved: "Guardado",
     hideFromRegionsAddCountry: "+ Agregar país",

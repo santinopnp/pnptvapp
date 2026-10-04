@@ -90,9 +90,15 @@ WITH raw AS (
       END,
       'wallet'
     ),
-    -- absorbed: grant_result points at an entitlement whose source is NOT
-    -- this intent. For rush/call surfaces entitlement_id is null → not
-    -- absorbed. Membership + prime are the surfaces where absorption matters.
+    -- absorbed: the user got NO new value for this payment. Two patterns:
+    --   (a) grant_result points at an entitlement whose granted_at is strictly
+    --       before this intent — different payment created it, this one just
+    --       re-pointed at it. Lifetime grants absorb trivially.
+    --   (b) non-lifetime: user already had an active lifetime grant for the
+    --       same add_on_id, so time-bound renewal is moot.
+    -- Gemineye-style stacked renewals (two $24.99 → one 60-day ent) are NOT
+    -- absorbed: granted_at is updated to the latest payment and both payments
+    -- contribute time via expires_at bump.
     (
       ci.surface IN ('membership','prime','creator_sub')
       AND (ci.grant_result->>'entitlement_id') IS NOT NULL
@@ -100,8 +106,14 @@ WITH raw AS (
         SELECT 1 FROM user_entitlements ue
          WHERE ue.id::text = (ci.grant_result->>'entitlement_id')
            AND (
-             ue.source_payment_id IS DISTINCT FROM ('checkout_intent:' || ci.id::text)
-             OR ue.granted_at < ci.confirmed_at - INTERVAL '1 minute'
+             -- Pattern (a): entitlement predates this payment by > 1 min.
+             ue.granted_at < ci.confirmed_at - INTERVAL '1 minute'
+             -- Pattern (b): active lifetime grant for same add_on_id already
+             -- held when the user paid for a non-lifetime renewal.
+             OR (
+               ue.is_lifetime = TRUE
+               AND ue.granted_at < ci.confirmed_at
+             )
            )
       )
     ) AS absorbed,
