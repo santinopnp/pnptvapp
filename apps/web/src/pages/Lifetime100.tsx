@@ -893,9 +893,19 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
   const [modalOpen, setModalOpen] = useState(false);
   const [walletModalOpen, setWalletModalOpen] = useState(false);
   const { isAuthenticated } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
 
   const isSoldOut = available === 0;
   const isClosed = !availabilityLoading && isSoldOut;
+
+  // After signup flow: auto-open wallet modal when ?autopay=1 lands
+  useEffect(() => {
+    if (isAuthenticated && searchParams.get("autopay") === "1" && !walletModalOpen && !isClosed) {
+      setWalletModalOpen(true);
+      setSearchParams((p) => { p.delete("autopay"); return p; }, { replace: true });
+    }
+  }, [isAuthenticated, searchParams, walletModalOpen, isClosed, setSearchParams]);
 
   const handleCtaClick = () => {
     if (isClosed) return;
@@ -905,6 +915,12 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
   const handleWalletClick = () => {
     if (isClosed) return;
     setWalletModalOpen(true);
+  };
+
+  const handleSignupToPay = () => {
+    if (isClosed) return;
+    try { sessionStorage.setItem("pnptv:postSignupIntent", "/lifetime100?autopay=1"); } catch {}
+    navigate("/landing?intent=lifetime100");
   };
 
   const activateHref = `/lifetime100/activate`;
@@ -1296,9 +1312,42 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
               : <><span>{s.ctaPayWithCrypto}</span><span style={{ fontSize: 10, fontWeight: 400, opacity: 0.55, letterSpacing: "0.02em", textTransform: "none" }}>BTC · ETH · USDC · USDT · etc.</span></>}
           </button>
 
-          {/* Wallet / USDC on Base — requires a pnptv session because
-              /api/wallet/checkout/initiate is session-authed. Anonymous
-              visitors fall back to Crypto (NP). */}
+          {/* Wallet / USDC on Base (card or crypto wallet).
+              Auth users: open the modal directly.
+              Unauth users: persist intent in sessionStorage, go to signup → onboarding
+              auto-redirects back here with ?autopay=1 on completion. */}
+          {!isAuthenticated && !isClosed && (
+            <button
+              onClick={handleSignupToPay}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 8,
+                width: "100%",
+                padding: "18px 24px",
+                borderRadius: 16,
+                border: "none",
+                background: "linear-gradient(90deg, #10b981, #059669)",
+                color: "#ffffff",
+                fontSize: 15,
+                fontWeight: 800,
+                textTransform: "uppercase",
+                letterSpacing: "0.08em",
+                cursor: "pointer",
+                minHeight: 56,
+                boxShadow: "0 8px 32px rgba(16,185,129,0.4)",
+                transition: "opacity 0.15s, transform 0.1s",
+              }}
+              onMouseDown={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = "scale(0.98)"; }}
+              onMouseUp={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = "scale(1)"; }}
+              onTouchStart={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = "scale(0.98)"; }}
+              onTouchEnd={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = "scale(1)"; }}
+            >
+              💳 {s.ctaPayWithWallet}
+            </button>
+          )}
+
           {isAuthenticated && (
             <button
               onClick={handleWalletClick}
