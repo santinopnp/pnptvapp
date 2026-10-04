@@ -27,7 +27,9 @@ async function createDirectUpload(corsOrigin = 'https://pnptv.app', opts = {}) {
   if (opts.watermark) {
     settings.input = [
       {
-        url: 'https://pnptv.app/logo-final.png',
+        // Dedicated transparent-background watermark (logo-final.png has baked-in
+        // black fill — looked like a black tile over the video).
+        url: 'https://pnptv.app/logo-watermark.png',
         overlay_settings: {
           vertical_align: 'bottom',
           vertical_margin: '4%',
