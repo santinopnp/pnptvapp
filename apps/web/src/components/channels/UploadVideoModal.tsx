@@ -525,14 +525,16 @@ export default function UploadVideoModal({
         </div>
       )}
 
-      {/* Drop zone — <label> so tap/click natively activates the file input
-          (programmatic .click() on a hidden input is unreliable in iOS Telegram WebView). */}
+      {/* Drop zone — <label> wraps a full-size invisible <input> overlay.
+          Android TG WebView refuses to open the picker on sr-only (1x1) inputs
+          even via htmlFor; a full-area opacity:0 input makes the dropzone tap
+          literally land on the input element — works everywhere. */}
       <label
         htmlFor="mux-file-input"
         onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
         onDragLeave={() => setDrag(false)}
         onDrop={onDrop}
-        className="cursor-pointer rounded-2xl flex flex-col items-center justify-center gap-3 py-10 px-4 transition-colors"
+        className="relative cursor-pointer rounded-2xl flex flex-col items-center justify-center gap-3 py-10 px-4 transition-colors"
         style={{
           border: `2px dashed ${drag ? "#D4007A" : "rgba(212,0,122,.3)"}`,
           background: drag ? "rgba(212,0,122,.06)" : "rgba(255,255,255,.02)",
@@ -561,7 +563,8 @@ export default function UploadVideoModal({
           id="mux-file-input"
           type="file"
           accept="video/*"
-          className="sr-only"
+          aria-label="Elegir video"
+          className="absolute inset-0 w-full h-full cursor-pointer opacity-0"
           onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileSelect(f); e.target.value = ""; }}
         />
       </label>
