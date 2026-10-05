@@ -12,6 +12,7 @@ import {
   WalletPayCard,
 } from "@/components/payments/PayInWalletChips";
 import { useAuth } from "@/hooks/useAuth";
+import { magicLinkStart } from "@/lib/api";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -904,6 +905,13 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
   const pendingTokenRef = useRef<string | null>(null);
   const walletOpenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Email / magic-link inline state
+  const [emailStep, setEmailStep] = useState<"hidden" | "form" | "sent">("hidden");
+  const [emailValue, setEmailValue] = useState("");
+  const [emailSubmitting, setEmailSubmitting] = useState(false);
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const emailInputRef = useRef<HTMLInputElement>(null);
+
   const isSoldOut = available === 0;
   const isClosed = !availabilityLoading && isSoldOut;
 
@@ -952,6 +960,35 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, [refreshUser]);
+
+  // Auto-focus email input when the form step opens
+  useEffect(() => {
+    if (emailStep === "form") {
+      const id = setTimeout(() => emailInputRef.current?.focus(), 80);
+      return () => clearTimeout(id);
+    }
+  }, [emailStep]);
+
+  const handleEmailSend = useCallback(async () => {
+    const trimmed = emailValue.trim().toLowerCase();
+    if (!isValidEmail(trimmed)) {
+      setEmailError("Enter a valid email address.");
+      return;
+    }
+    setEmailSubmitting(true);
+    setEmailError(null);
+    try {
+      await magicLinkStart(trimmed);
+      // localStorage persists across tabs — needed because the magic-link click
+      // opens in a new tab from the email client (sessionStorage is tab-scoped).
+      try { localStorage.setItem("pnptv:postSignupIntent", "/lifetime100?autopay=1"); } catch {}
+      setEmailStep("sent");
+    } catch {
+      setEmailError("Couldn't send the link. Please try again.");
+    } finally {
+      setEmailSubmitting(false);
+    }
+  }, [emailValue]);
 
   const handleCtaClick = () => {
     if (isClosed) return;
@@ -1559,7 +1596,7 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
         <div
           role="dialog"
           aria-modal="true"
-          onClick={(e) => { if (e.target === e.currentTarget) { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } if (walletOpenTimerRef.current) { clearTimeout(walletOpenTimerRef.current); walletOpenTimerRef.current = null; } setSignupPanelOpen(false); setTgState("idle"); setTgFallbackUrl(null); setTgError(null); } }}
+          onClick={(e) => { if (e.target === e.currentTarget) { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } if (walletOpenTimerRef.current) { clearTimeout(walletOpenTimerRef.current); walletOpenTimerRef.current = null; } setSignupPanelOpen(false); setTgState("idle"); setTgFallbackUrl(null); setTgError(null); setEmailStep("hidden"); setEmailValue(""); setEmailError(null); } }}
           style={{
             position: "fixed", inset: 0, zIndex: 1000,
             background: "rgba(0,0,0,0.75)", backdropFilter: "blur(8px)",
@@ -1576,7 +1613,7 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
               <div style={{ width: 36, height: 4, borderRadius: 2, background: "rgba(255,255,255,0.2)", margin: "0 auto" }} />
               <button
-                onClick={() => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } if (walletOpenTimerRef.current) { clearTimeout(walletOpenTimerRef.current); walletOpenTimerRef.current = null; } setSignupPanelOpen(false); setTgState("idle"); setTgFallbackUrl(null); setTgError(null); }}
+                onClick={() => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } if (walletOpenTimerRef.current) { clearTimeout(walletOpenTimerRef.current); walletOpenTimerRef.current = null; } setSignupPanelOpen(false); setTgState("idle"); setTgFallbackUrl(null); setTgError(null); setEmailStep("hidden"); setEmailValue(""); setEmailError(null); }}
                 style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 22, cursor: "pointer", padding: "0 4px", lineHeight: 1 }}
                 aria-label="Close"
               >×</button>
@@ -1654,22 +1691,84 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
               Continue with X
             </button>
 
-            {/* Email register */}
-            <button
-              onClick={() => {
-                try { sessionStorage.setItem("pnptv:postSignupIntent", "/lifetime100?autopay=1"); } catch {}
-                window.location.href = "/landing?signup=1";
-              }}
-              style={{
-                display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
-                width: "100%", padding: "15px 20px", borderRadius: 14, border: "1px solid rgba(255,255,255,0.12)",
-                background: "transparent",
-                color: "rgba(255,255,255,0.7)", fontSize: 14, fontWeight: 600, cursor: "pointer",
-                minHeight: 52,
-              }}
-            >
-              📧 Sign up with email
-            </button>
+            {/* Email / magic-link — inline, no navigation */}
+            {emailStep === "hidden" && (
+              <button
+                onClick={() => setEmailStep("form")}
+                style={{
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+                  width: "100%", padding: "15px 20px", borderRadius: 14, border: "1px solid rgba(255,255,255,0.12)",
+                  background: "transparent",
+                  color: "rgba(255,255,255,0.7)", fontSize: 14, fontWeight: 600, cursor: "pointer",
+                  minHeight: 52,
+                }}
+              >
+                📧 Continue with email
+              </button>
+            )}
+            {emailStep === "form" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <input
+                  ref={emailInputRef}
+                  type="email"
+                  inputMode="email"
+                  autoComplete="email"
+                  value={emailValue}
+                  onChange={(e) => { setEmailValue(e.target.value); setEmailError(null); }}
+                  onKeyDown={(e) => { if (e.key === "Enter" && !emailSubmitting) handleEmailSend(); }}
+                  placeholder="your@email.com"
+                  disabled={emailSubmitting}
+                  style={{
+                    display: "block", width: "100%", boxSizing: "border-box",
+                    padding: "12px 14px", borderRadius: 12,
+                    border: "1px solid rgba(255,255,255,0.2)",
+                    background: "rgba(0,0,0,0.35)", color: "#ffffff",
+                    fontSize: 16, outline: "none",
+                    opacity: emailSubmitting ? 0.6 : 1,
+                  }}
+                />
+                {emailError && (
+                  <p style={{ margin: 0, fontSize: 12, color: "#FF453A" }}>{emailError}</p>
+                )}
+                <button
+                  onClick={handleEmailSend}
+                  disabled={emailSubmitting || !emailValue.trim()}
+                  style={{
+                    display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                    width: "100%", padding: "13px 20px", borderRadius: 12, border: "none",
+                    background: emailSubmitting || !emailValue.trim()
+                      ? "rgba(255,255,255,0.1)"
+                      : "rgba(255,255,255,0.15)",
+                    color: emailSubmitting || !emailValue.trim() ? "rgba(255,255,255,0.3)" : "rgba(255,255,255,0.8)",
+                    fontSize: 14, fontWeight: 700, cursor: emailSubmitting || !emailValue.trim() ? "not-allowed" : "pointer",
+                    minHeight: 48,
+                  }}
+                >
+                  {emailSubmitting && <Spinner size={14} />}
+                  {emailSubmitting ? "Sending…" : "Send sign-in link →"}
+                </button>
+                <button
+                  onClick={() => { setEmailStep("hidden"); setEmailValue(""); setEmailError(null); }}
+                  style={{ background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: 12, cursor: "pointer", padding: "4px 0" }}
+                >
+                  ← Back
+                </button>
+              </div>
+            )}
+            {emailStep === "sent" && (
+              <div style={{
+                padding: "16px 14px", borderRadius: 12,
+                border: "1px solid rgba(255,255,255,0.12)",
+                background: "rgba(255,255,255,0.04)",
+                textAlign: "center",
+              }}>
+                <p style={{ margin: "0 0 6px", fontSize: 20 }}>📬</p>
+                <p style={{ margin: "0 0 4px", fontSize: 14, fontWeight: 700, color: "#ffffff" }}>Check your inbox</p>
+                <p style={{ margin: 0, fontSize: 12, color: "rgba(255,255,255,0.5)", lineHeight: 1.4 }}>
+                  Tap the link in your email and you'll go straight to checkout.
+                </p>
+              </div>
+            )}
 
             <p style={{ margin: "4px 0 0", fontSize: 11, color: "rgba(255,255,255,0.3)", textAlign: "center" }}>
               Already have an account?{" "}

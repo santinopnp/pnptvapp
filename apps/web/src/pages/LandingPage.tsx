@@ -520,12 +520,16 @@ export function LandingPage() {
     window.history.replaceState(null, "", clean);
 
     const returnTo = params.get("returnTo");
-    // sessionStorage intent (set by /lifetime100 or other pre-auth pages) takes
-    // priority over the generic ?returnTo — consumed and removed on first read.
+    // Intent set by /lifetime100 or other pre-auth pages — sessionStorage for same-tab
+    // flows (Telegram, X OAuth), localStorage for cross-tab flows (magic-link email click).
     let intentOverride: string | null = null;
     try {
-      const raw = sessionStorage.getItem("pnptv:postSignupIntent");
-      if (raw) { sessionStorage.removeItem("pnptv:postSignupIntent"); intentOverride = sanitizeReturnTo(raw); }
+      const ss = sessionStorage.getItem("pnptv:postSignupIntent");
+      const ls = !ss ? localStorage.getItem("pnptv:postSignupIntent") : null;
+      const raw = ss || ls;
+      if (ss) sessionStorage.removeItem("pnptv:postSignupIntent");
+      if (ls) localStorage.removeItem("pnptv:postSignupIntent");
+      intentOverride = raw ? sanitizeReturnTo(raw) : null;
     } catch { /* ignore */ }
     pendingRedirectRef.current = intentOverride ?? sanitizeReturnTo(returnTo) ?? "/";
 
