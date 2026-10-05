@@ -219,12 +219,25 @@ export function WalletCheckoutHero({ lang = "en", compact = false }: { lang?: "e
 // balance fetch, gas-sponsored USDC transfer via Privy, and backend verify.
 
 import { useEffect as _useEffect, useState as _useState, useRef as _useRef } from "react";
-import { usePrivy, useWallets, useAddFunds, useConnectWallet, useSendTransaction, useUnlinkWallet, useCreateWallet } from "@privy-io/react-auth";
+import { usePrivy, useWallets, useAddFunds, useConnectWallet, useSendTransaction, useUnlinkWallet, useCreateWallet, type WalletListEntry } from "@privy-io/react-auth";
 import { getLinkedWallet } from "@/lib/api";
 import { OpenInBrowserButton } from "@/components/telegram/OpenInBrowserButton";
 import { isIOSStandalone, popupsUnsupported } from "@/lib/browserEnv";
 import { createWalletClient, custom, encodeFunctionData, parseUnits, parseEther } from "viem";
 import { base, mainnet } from "viem/chains";
+
+// Full wallet connector list — mirrors PrivyProvider appearance.walletList in App.tsx.
+// Passed directly to connectWallet({ walletList }) so the modal always shows all options,
+// not just Trust/MetaMask (the Privy SDK default when walletList is omitted).
+const CONNECT_WALLET_LIST: WalletListEntry[] = [
+  "detected_wallets", "wallet_connect", "metamask", "coinbase_wallet",
+  "rainbow", "phantom", "zerion", "okx_wallet", "bybit_wallet",
+  "rabby_wallet", "cryptocom", "uniswap", "binance", "bitget_wallet",
+  "kraken_wallet", "robinhood_wallet", "safe", "base_account",
+  "ronin_wallet", "haha_wallet", "solflare", "backpack", "jupiter",
+  "binanceus", "detected_solana_wallets", "detected_ethereum_wallets",
+  "wallet_connect_qr", "wallet_connect_qr_solana", "universal_profile",
+];
 
 // CAIP-2 chain id for Base mainnet — required by Privy's useAddFunds destination
 const _BASE_CAIP2 = "eip155:8453" as const;
@@ -645,7 +658,7 @@ export function WalletPayCard({
           type="button"
           onClick={() => {
             setConnectError(null);
-            try { connectWallet(); }
+            try { connectWallet({ walletList: CONNECT_WALLET_LIST }); }
             catch (err) {
               reportWalletClientError("connectWallet", err, { surface });
               setConnectError(err instanceof Error ? err.message : String(err));
@@ -653,7 +666,7 @@ export function WalletPayCard({
           }}
           className="w-full mt-2 py-2 rounded-xl text-[11px] font-semibold text-white/70 border border-white/10 hover:bg-white/[0.04] transition"
         >
-          {es ? "o conecta Trust / MetaMask" : "or connect Trust / MetaMask"}
+          {es ? "o conecta otra wallet" : "or connect another wallet"}
         </button>
         {connectError && (
           <p className="text-[10px] text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2 py-1.5 mt-2">
@@ -718,7 +731,7 @@ export function WalletPayCard({
   const handleConnectExternal = () => {
     setConnectError(null);
     try {
-      connectWallet();
+      connectWallet({ walletList: CONNECT_WALLET_LIST });
     } catch (err: unknown) {
       reportWalletClientError("connectWallet", err, { surface });
       setConnectError(err instanceof Error ? err.message : String(err));
@@ -1045,7 +1058,7 @@ export function WalletPayCard({
         </button>
         <button
           type="button"
-          onClick={() => { try { connectWallet(); } catch (e) { reportWalletClientError("connectWallet", e, { surface }); } }}
+          onClick={() => { try { connectWallet({ walletList: CONNECT_WALLET_LIST }); } catch (e) { reportWalletClientError("connectWallet", e, { surface }); } }}
           className="w-full py-2 rounded-xl text-xs font-semibold transition active:scale-[0.98]"
           style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.55)" }}
         >
@@ -1493,7 +1506,7 @@ export function WalletLoginGate({ children, lang = "en" }: { children: React.Rea
         </button>
         <button
           type="button"
-          onClick={() => { try { connectWallet(); } catch (e) { reportWalletClientError("connectWalletFromGate", e, {}); } }}
+          onClick={() => { try { connectWallet({ walletList: CONNECT_WALLET_LIST }); } catch (e) { reportWalletClientError("connectWalletFromGate", e, {}); } }}
           className="w-full py-2 rounded-xl text-xs font-semibold transition active:scale-[0.98]"
           style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.55)" }}
         >
@@ -1900,7 +1913,7 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
     setError(null);
     setConnectError(null);
     try {
-      connectWallet();
+      connectWallet({ walletList: CONNECT_WALLET_LIST });
     } catch (err: unknown) {
       reportWalletClientError("connectWallet", err, { source: "WalletHomeSheet" });
       setConnectError(err instanceof Error ? err.message : String(err));
@@ -2441,7 +2454,7 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
           </button>
           <button
             type="button"
-            onClick={() => { try { connectWallet(); } catch (e) { reportWalletClientError("connectWallet", e, { source: "WalletHomeSheet" }); } }}
+            onClick={() => { try { connectWallet({ walletList: CONNECT_WALLET_LIST }); } catch (e) { reportWalletClientError("connectWallet", e, { source: "WalletHomeSheet" }); } }}
             className="w-full py-2 rounded-xl text-xs font-semibold transition active:scale-[0.98]"
             style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.55)" }}
           >
