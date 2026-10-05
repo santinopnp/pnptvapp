@@ -1689,8 +1689,25 @@ async function advanceVideo() {
   candidates.sort((a, b) => a.score - b.score);
   const pick = candidates[0];
 
-  const publicSrc   = `${DIRECTUS_PUBLIC_URL}/assets/${pick.fileId}`;
+  // Prefer Mux HLS — Directus file storage (R2) can become unavailable due to
+  // billing issues while the Mux account remains active.
+  let publicSrc = `${DIRECTUS_PUBLIC_URL}/assets/${pick.fileId}`;
   const internalSrc = `${DIRECTUS_INTERNAL_URL}/assets/${pick.fileId}`;
+  try {
+    const { rows } = await getPool().query(
+      `SELECT mux_playback_id FROM channel_videos
+        WHERE directus_file_id = $1
+          AND mux_status = 'ready'
+          AND status = 'published'
+        LIMIT 1`,
+      [pick.fileId]
+    );
+    if (rows.length && rows[0].mux_playback_id) {
+      publicSrc = `https://stream.mux.com/${rows[0].mux_playback_id}.m3u8`;
+    }
+  } catch (muxLookupErr) {
+    logger.warn('[MainStage] advanceVideo: Mux lookup failed, using Directus fallback', { error: muxLookupErr.message });
+  }
 
   // Mark as just-played so it goes to the back of the queue
   await redis.zadd(PLAYLIST_KEY, Date.now(), pick.fileId);
@@ -1707,7 +1724,7 @@ async function advanceVideo() {
   }
 
   await setMedia({ kind: 'video', src: publicSrc, title: pick.title, playing: true, _fromAutoRotate: true });
-  logger.info('[MainStage] advanceVideo', { fileId: pick.fileId, title: pick.title });
+  logger.info('[MainStage] advanceVideo', { fileId: pick.fileId, title: pick.title, src: publicSrc });
 
   try {
     const broadcaster = require('../workers/mainStageMediaBroadcaster');
