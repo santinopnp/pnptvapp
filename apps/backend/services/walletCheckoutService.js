@@ -84,12 +84,19 @@ function _validateEntitlementSpecForIntent(surface, spec) {
  * @param {object} opts.entitlementSpec  { add_on_id, expires_at?, creator_id?, ... }
  * @param {boolean} [opts.allowGifted=false]  Drain gifted first when true.
  * @param {object} [opts.metadata={}]
+ * @param {string} [opts.idempotencyKey]  Optional client-chosen key, stable
+ *   across retries of the SAME user action (e.g. generated once when the
+ *   buy button is pressed, reused if that request is retried/double-clicked).
+ *   When supplied, a reused key returns the original result instead of
+ *   debiting again — atomically claimed via a unique index, so concurrent
+ *   retries can't both miss and double-debit. Callers that don't pass one
+ *   get no dedup protection (same as before this param existed).
  * @returns {Promise<{ok:true, intentId:number, spentBalance:number, spentGifted:number, entitlementId:number}>}
  */
 async function initiateRushPurchase(opts) {
   const {
     userId, surface, amountUsd, entitlementSpec = {},
-    allowGifted = false, metadata = {},
+    allowGifted = false, metadata = {}, idempotencyKey = null,
   } = opts || {};
 
   if (!userId) throw new Error('walletCheckout: userId required');
@@ -97,39 +104,40 @@ async function initiateRushPurchase(opts) {
   if (!Number.isFinite(amountUsd) || amountUsd <= 0) throw new Error('walletCheckout: amountUsd must be > 0');
   _validateEntitlementSpecForIntent(surface, entitlementSpec);
 
-  // Dedup guard: unlike the USDC rail (where the charge happens on-chain and
-  // is reconciled later by tx_hash), the Ru$h rail debits the wallet
-  // synchronously the moment this function runs — no client idempotency key
-  // is accepted today, so a network retry or a frontend double-click sends
-  // two identical requests and debits the user twice. Rather than plumb an
-  // idempotency key through every caller, catch the common case here: if
-  // this exact purchase (same user, surface, amount, entitlement spec)
-  // already confirmed in the last few seconds, return that result instead of
-  // debiting again.
-  const RUSH_DEDUP_WINDOW_SECONDS = 15;
-  const { rows: recentRows } = await query(
-    `SELECT id, grant_result FROM checkout_intents
-       WHERE user_id = $1 AND surface = $2 AND provider = 'wallet_rush'
-         AND amount_usd = $3 AND entitlement_spec = $4::jsonb
-         AND status = 'confirmed'
-         AND fulfilled_at >= NOW() - ($5 || ' seconds')::interval
-       ORDER BY fulfilled_at DESC LIMIT 1`,
-    [String(userId), surface, amountUsd, JSON.stringify(entitlementSpec), RUSH_DEDUP_WINDOW_SECONDS]
-  );
-  if (recentRows.length > 0) {
-    const existing = recentRows[0];
-    const grantResult = existing.grant_result || {};
-    logger.warn('[walletCheckout] duplicate Ru$h purchase request within dedup window — returning prior result instead of debiting again', {
-      userId, surface, amountUsd, intentId: existing.id,
-    });
-    return {
-      ok: true,
-      intentId: Number(existing.id),
-      spentBalance: grantResult.spent_balance,
-      spentGifted: grantResult.spent_gifted,
-      entitlementId: grantResult.entitlement_id,
-      deduped: true,
-    };
+  // Idempotency fast path: a prior request with this exact key already
+  // debited — hand back its result rather than debiting again. A previous
+  // version of this guard matched on business fields (user/surface/amount/
+  // spec) instead of a client-chosen key: that was unsound two ways — a
+  // plain SELECT before the debit transaction didn't close the actual
+  // concurrent-request race (two requests could both miss this check before
+  // either committed), and matching on business fields alone risked
+  // silently merging two genuinely separate purchases a user made on
+  // purpose seconds apart (returning a fake "success" for the second one
+  // without ever charging or granting it). A client-supplied key, claimed
+  // atomically via idx_rush_intent_idempotency_key below, has neither
+  // problem.
+  if (idempotencyKey) {
+    const { rows: existingByKey } = await query(
+      `SELECT id, grant_result, status FROM checkout_intents
+         WHERE user_id = $1 AND idempotency_key = $2 AND provider = 'wallet_rush'
+         LIMIT 1`,
+      [String(userId), String(idempotencyKey)]
+    );
+    if (existingByKey.length > 0 && existingByKey[0].status === 'confirmed') {
+      const existing = existingByKey[0];
+      const grantResult = existing.grant_result || {};
+      logger.warn('[walletCheckout] duplicate Ru$h purchase request (idempotency key reused) — returning prior result instead of debiting again', {
+        userId, surface, amountUsd, intentId: existing.id, idempotencyKey,
+      });
+      return {
+        ok: true,
+        intentId: Number(existing.id),
+        spentBalance: grantResult.spent_balance,
+        spentGifted: grantResult.spent_gifted,
+        entitlementId: grantResult.entitlement_id,
+        deduped: true,
+      };
+    }
   }
 
   const tokenCost = Math.round(amountUsd * TOKENS_PER_USD);
@@ -139,13 +147,53 @@ async function initiateRushPurchase(opts) {
     await client.query('BEGIN');
 
     // Insert the intent row FIRST so we have a stable ID for logs/rollback.
-    const { rows: intentRows } = await client.query(
-      `INSERT INTO checkout_intents
-         (user_id, surface, provider, amount_usd, status, entitlement_spec, metadata, receiving_address, chain, token, expires_at)
-       VALUES ($1, $2, 'wallet_rush', $3, 'pending', $4::jsonb, $5::jsonb, '', 'off_chain', 'RUSH', NOW() + ($6 || ' minutes')::interval)
-       RETURNING id`,
-      [String(userId), surface, amountUsd, JSON.stringify(entitlementSpec), JSON.stringify(metadata), INTENT_EXPIRY_MINUTES]
-    );
+    let intentRows;
+    try {
+      ({ rows: intentRows } = await client.query(
+        `INSERT INTO checkout_intents
+           (user_id, surface, provider, amount_usd, status, entitlement_spec, metadata, receiving_address, chain, token, expires_at, idempotency_key)
+         VALUES ($1, $2, 'wallet_rush', $3, 'pending', $4::jsonb, $5::jsonb, '', 'off_chain', 'RUSH', NOW() + ($6 || ' minutes')::interval, $7)
+         RETURNING id`,
+        [String(userId), surface, amountUsd, JSON.stringify(entitlementSpec), JSON.stringify(metadata), INTENT_EXPIRY_MINUTES, idempotencyKey ? String(idempotencyKey) : null]
+      ));
+    } catch (insertErr) {
+      // 23505 = unique_violation on idx_rush_intent_idempotency_key — we lost
+      // a race against a concurrent request using the same key. Wait for the
+      // winner to finish (typically sub-second: debit + grant in one
+      // transaction) and return its result instead of debiting ourselves.
+      if (insertErr.code === '23505' && idempotencyKey) {
+        await client.query('ROLLBACK').catch(() => {});
+        let winner = null;
+        for (let attempt = 0; attempt < 5 && !winner; attempt++) {
+          if (attempt > 0) await new Promise((res) => setTimeout(res, 150));
+          const { rows: winnerRows } = await query(
+            `SELECT id, grant_result, status FROM checkout_intents
+               WHERE user_id = $1 AND idempotency_key = $2 AND provider = 'wallet_rush' LIMIT 1`,
+            [String(userId), String(idempotencyKey)]
+          );
+          if (winnerRows.length > 0 && winnerRows[0].status === 'confirmed') winner = winnerRows[0];
+        }
+        if (!winner) {
+          throw Object.assign(
+            new Error('Duplicate purchase request (same idempotency key) is still being processed — try again shortly'),
+            { code: 'DUPLICATE_REQUEST_IN_PROGRESS', status: 409 }
+          );
+        }
+        const grantResult = winner.grant_result || {};
+        logger.warn('[walletCheckout] lost idempotency-key race — returning the winning request\'s result', {
+          userId, surface, amountUsd, intentId: winner.id, idempotencyKey,
+        });
+        return {
+          ok: true,
+          intentId: Number(winner.id),
+          spentBalance: grantResult.spent_balance,
+          spentGifted: grantResult.spent_gifted,
+          entitlementId: grantResult.entitlement_id,
+          deduped: true,
+        };
+      }
+      throw insertErr;
+    }
     const intentId = Number(intentRows[0].id);
 
     // Debit through tokenLedgerService for the ledger + wallet write.
@@ -792,12 +840,14 @@ async function _fulfill(client, { userId, entitlementSpec, surface, provider, in
         try {
           const channel = process.env.SLACK_OPS_ADMIN_CHANNEL || process.env.SLACK_OPS_INCIDENTS_CHANNEL;
           const token = process.env.SLACK_BOT_TOKEN;
-          if (channel && token) {
+          if (!channel || !token) {
+            logger.error('[walletCheckout] PRIME split alert NOT sent — Slack not configured (SLACK_OPS_ADMIN_CHANNEL/SLACK_OPS_INCIDENTS_CHANNEL/SLACK_BOT_TOKEN)', { intentId, amountUsd });
+          } else {
             const succeededText = succeeded.length
               ? `\nAlready sent (do NOT resend): ${succeeded.join('; ')}`
               : '';
             const failedText = stillFailed.length ? `\nStill failed: ${stillFailed.join('; ')}` : '';
-            await fetch('https://slack.com/api/chat.postMessage', {
+            const res = await fetch('https://slack.com/api/chat.postMessage', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json; charset=utf-8', Authorization: `Bearer ${token}` },
               body: JSON.stringify({
@@ -805,8 +855,18 @@ async function _fulfill(client, { userId, entitlementSpec, surface, provider, in
                 text: `🚨 PRIME split failed for intent \`${intentId}\` ($${amountUsd}): ${err.message}\nNeeds manual on-chain dispatch of only the failed leg(s) of the 35/35/20/10 split.${succeededText}${failedText}`,
               }),
             });
+            const body = await res.json().catch(() => null);
+            if (!res.ok || !body?.ok) {
+              logger.error('[walletCheckout] PRIME split alert NOT delivered — Slack rejected it', { intentId, amountUsd, httpStatus: res.status, slackError: body?.error });
+            }
           }
-        } catch { /* non-fatal */ }
+        } catch (notifyErr) {
+          // Non-fatal to the caller (this whole block already runs inside
+          // _fulfill's fire-and-forget setImmediate), but must not be silent:
+          // this Slack message is the only thing that tells ops which PRIME
+          // split legs still need a manual on-chain resend.
+          logger.error('[walletCheckout] PRIME split alert NOT delivered — Slack request failed', { intentId, amountUsd, error: notifyErr.message });
+        }
       }
     });
   }

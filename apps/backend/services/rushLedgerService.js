@@ -204,17 +204,34 @@ async function settleIfEligible(creatorId, context = {}) {
 }
 
 async function _notifyOpsPaidButUnrecorded({ creatorId, settleAmount, dispatch }) {
+  // This is the only alert ops gets for a PAID_BUT_UNRECORDED incident — the
+  // caller fire-and-forgets this (`.catch(...)`), so swallowing a failure
+  // here silently (missing config, a non-2xx response, or Slack's own
+  // `ok: false`) would mean the incident never reaches a human. Log loudly
+  // on every failure mode instead of just returning.
   const channel = process.env.SLACK_OPS_ADMIN_CHANNEL || process.env.SLACK_OPS_INCIDENTS_CHANNEL;
   const token = process.env.SLACK_BOT_TOKEN;
-  if (!channel || !token) return;
-  await fetch('https://slack.com/api/chat.postMessage', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json; charset=utf-8', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({
-      channel,
-      text: `🚨 RUSH settlement for creator \`${creatorId}\` — USDC SENT ($${settleAmount}, tx \`${dispatch?.txCreator}\`) but the ledger update failed 3x. Needs manual reconciliation: add $${settleAmount} to total_settled_usd by hand once verified — do NOT let pending_usd be re-settled.`,
-    }),
-  });
+  const context = { creatorId, settleAmount, txs: dispatch };
+  if (!channel || !token) {
+    logger.error('[rushLedger] PAID_BUT_UNRECORDED alert NOT sent — Slack not configured (SLACK_OPS_ADMIN_CHANNEL/SLACK_OPS_INCIDENTS_CHANNEL/SLACK_BOT_TOKEN)', context);
+    return;
+  }
+  try {
+    const res = await fetch('https://slack.com/api/chat.postMessage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json; charset=utf-8', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        channel,
+        text: `🚨 RUSH settlement for creator \`${creatorId}\` — USDC SENT ($${settleAmount}, tx \`${dispatch?.txCreator}\`) but the ledger update failed 3x. Needs manual reconciliation: add $${settleAmount} to total_settled_usd by hand once verified — do NOT let pending_usd be re-settled.`,
+      }),
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok || !body?.ok) {
+      logger.error('[rushLedger] PAID_BUT_UNRECORDED alert NOT delivered — Slack rejected it', { ...context, httpStatus: res.status, slackError: body?.error });
+    }
+  } catch (fetchErr) {
+    logger.error('[rushLedger] PAID_BUT_UNRECORDED alert NOT delivered — Slack request failed', { ...context, error: fetchErr.message });
+  }
 }
 
 /**

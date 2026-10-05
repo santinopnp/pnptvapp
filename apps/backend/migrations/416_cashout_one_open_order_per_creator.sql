@@ -34,6 +34,11 @@ BEGIN
   END IF;
 END $$;
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_one_open_cashout_per_creator
+-- CONCURRENTLY so the build doesn't hold a lock against inserts/updates on
+-- fiat_cashout_orders while it scans the existing rows. Cannot run inside a
+-- transaction block — fine here since this file has no surrounding BEGIN and
+-- each statement in it (including the DO block above) runs as its own
+-- implicit transaction.
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_one_open_cashout_per_creator
   ON fiat_cashout_orders (creator_id)
   WHERE status IN ('pending', 'processing');

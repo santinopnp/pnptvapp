@@ -32,8 +32,13 @@ BEGIN
   END IF;
 END $$;
 
-DROP INDEX IF EXISTS idx_checkout_intents_tx_hash;
+DROP INDEX CONCURRENTLY IF EXISTS idx_checkout_intents_tx_hash;
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_checkout_intents_tx_hash_unique
+-- CONCURRENTLY so the build doesn't hold a lock against inserts/updates on
+-- checkout_intents (a hot table) while it scans existing rows. Cannot run
+-- inside a transaction block — fine here since this file has no surrounding
+-- BEGIN and each statement (including the DO block above) runs as its own
+-- implicit transaction.
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_checkout_intents_tx_hash_unique
   ON checkout_intents (lower(tx_hash))
   WHERE tx_hash IS NOT NULL;

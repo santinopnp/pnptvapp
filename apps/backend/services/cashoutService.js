@@ -673,17 +673,34 @@ async function failCashoutOrder(orderId, reason) {
 // ── Notifications ────────────────────────────────────────────────────────────
 
 async function _notifyOpsPaidButUnrecorded({ orderId, creatorId, txHash, walletAddress, amountUsd }) {
+  // This is the only alert ops gets for a PAID_BUT_UNRECORDED incident — the
+  // caller fire-and-forgets this (`.catch(...)`), so swallowing a failure
+  // here silently (missing config, a non-2xx response, or Slack's own
+  // `ok: false`) would mean the incident never reaches a human. Log loudly
+  // on every failure mode instead of just returning.
   const channel = process.env.SLACK_OPS_ADMIN_CHANNEL || process.env.SLACK_OPS_INCIDENTS_CHANNEL;
   const token = process.env.SLACK_BOT_TOKEN;
-  if (!channel || !token) return;
-  await fetch('https://slack.com/api/chat.postMessage', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json; charset=utf-8', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({
-      channel,
-      text: `🚨 Cashout order \`${orderId}\` (creator \`${creatorId}\`) — USDC SENT ($${amountUsd} → \`${walletAddress}\`, tx \`${txHash}\`) but the DB update failed 3x. Needs manual reconciliation: mark the order 'settled' and the earnings 'paid_out' by hand once verified.`,
-    }),
-  });
+  const context = { orderId, creatorId, txHash, walletAddress, amountUsd };
+  if (!channel || !token) {
+    logger.error('[cashoutService] PAID_BUT_UNRECORDED alert NOT sent — Slack not configured (SLACK_OPS_ADMIN_CHANNEL/SLACK_OPS_INCIDENTS_CHANNEL/SLACK_BOT_TOKEN)', context);
+    return;
+  }
+  try {
+    const res = await fetch('https://slack.com/api/chat.postMessage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json; charset=utf-8', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        channel,
+        text: `🚨 Cashout order \`${orderId}\` (creator \`${creatorId}\`) — USDC SENT ($${amountUsd} → \`${walletAddress}\`, tx \`${txHash}\`) but the DB update failed 3x. Needs manual reconciliation: mark the order 'settled' and the earnings 'paid_out' by hand once verified.`,
+      }),
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok || !body?.ok) {
+      logger.error('[cashoutService] PAID_BUT_UNRECORDED alert NOT delivered — Slack rejected it', { ...context, httpStatus: res.status, slackError: body?.error });
+    }
+  } catch (fetchErr) {
+    logger.error('[cashoutService] PAID_BUT_UNRECORDED alert NOT delivered — Slack request failed', { ...context, error: fetchErr.message });
+  }
 }
 
 module.exports = {
