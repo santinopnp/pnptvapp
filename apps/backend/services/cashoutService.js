@@ -239,7 +239,13 @@ async function requestCashout({ creatorId, amountUsd, lane, destination }) {
   // Block concurrent / overlapping cashout orders. The DB-level SKIP LOCKED on
   // earnings rows prevents double-spend at the row level, but a creator with
   // a large balance can still spin up multiple orders in sequence — bad for
-  // every lane, since each one settles manually by an operator.
+  // every lane, since each one settles manually by an operator. This check
+  // is a fast-path only: it runs outside any transaction, so two concurrent
+  // requests can both pass it before either INSERTs. The real guarantee is
+  // the partial unique index from migration (see idx_one_open_cashout_per_creator)
+  // on (creator_id) WHERE status IN ('pending','processing') — the INSERT
+  // below will violate it for the loser of a race, and we translate that into
+  // this same OPEN_ORDER_EXISTS error.
   const { rows: openOrders } = await query(
     `SELECT id FROM fiat_cashout_orders
        WHERE creator_id = $1
@@ -256,7 +262,13 @@ async function requestCashout({ creatorId, amountUsd, lane, destination }) {
   }
 
   // Per-day cap (rolling 24h). Counts pending/processing/settled — anything
-  // that already committed earnings to a payout.
+  // that already committed earnings to a payout. Same fast-path caveat as
+  // above: this is re-checked against `accumulated` inside the transaction
+  // below, but a concurrent request racing this read can still slip a few
+  // dollars past the cap before the unique index above forces one of two
+  // racing requests to lose — acceptable since, per the audit, no funds can
+  // be double-spent (SKIP LOCKED) and this is a soft operational cap, not a
+  // security boundary.
   const { rows: dayRows } = await query(
     `SELECT COALESCE(SUM(amount_usd), 0)::numeric AS total
        FROM fiat_cashout_orders
@@ -333,13 +345,32 @@ async function requestCashout({ creatorId, amountUsd, lane, destination }) {
     // originally-requested `amountUsd`. Dispatching only `amountUsd` while
     // marking the full `accumulated` total as paid_out silently lost the
     // overshoot (the difference) with no record of where it went.
-    const { rows: orderRows } = await client.query(
-      `INSERT INTO fiat_cashout_orders
-         (creator_id, amount_usd, lane, status, destination, earning_ids)
-       VALUES ($1, $2, $3, 'pending', $4::jsonb, $5::uuid[])
-       RETURNING *`,
-      [String(creatorId), accumulated, lane, JSON.stringify(destination), earningIds]
-    );
+    let orderRows;
+    try {
+      ({ rows: orderRows } = await client.query(
+        `INSERT INTO fiat_cashout_orders
+           (creator_id, amount_usd, lane, status, destination, earning_ids)
+         VALUES ($1, $2, $3, 'pending', $4::jsonb, $5::uuid[])
+         RETURNING *`,
+        [String(creatorId), accumulated, lane, JSON.stringify(destination), earningIds]
+      ));
+    } catch (insertErr) {
+      // 23505 = unique_violation. The pre-check above is a fast path only
+      // (it runs outside this transaction) — idx_one_open_cashout_per_creator
+      // (partial unique index on creator_id WHERE status IN
+      // ('pending','processing')) is the actual guard against two concurrent
+      // requests both passing that check and racing to insert an order for
+      // the same creator. The loser lands here; report it the same way the
+      // fast-path check does.
+      if (insertErr.code === '23505') {
+        throw err(
+          'OPEN_ORDER_EXISTS',
+          'You already have a cashout order in flight. Wait for it to settle before requesting another.',
+          409
+        );
+      }
+      throw insertErr;
+    }
     const order = orderRows[0];
 
     // ── Flip selected earnings to in_payout ───────────────────────────────

@@ -97,6 +97,41 @@ async function initiateRushPurchase(opts) {
   if (!Number.isFinite(amountUsd) || amountUsd <= 0) throw new Error('walletCheckout: amountUsd must be > 0');
   _validateEntitlementSpecForIntent(surface, entitlementSpec);
 
+  // Dedup guard: unlike the USDC rail (where the charge happens on-chain and
+  // is reconciled later by tx_hash), the Ru$h rail debits the wallet
+  // synchronously the moment this function runs — no client idempotency key
+  // is accepted today, so a network retry or a frontend double-click sends
+  // two identical requests and debits the user twice. Rather than plumb an
+  // idempotency key through every caller, catch the common case here: if
+  // this exact purchase (same user, surface, amount, entitlement spec)
+  // already confirmed in the last few seconds, return that result instead of
+  // debiting again.
+  const RUSH_DEDUP_WINDOW_SECONDS = 15;
+  const { rows: recentRows } = await query(
+    `SELECT id, grant_result FROM checkout_intents
+       WHERE user_id = $1 AND surface = $2 AND provider = 'wallet_rush'
+         AND amount_usd = $3 AND entitlement_spec = $4::jsonb
+         AND status = 'confirmed'
+         AND fulfilled_at >= NOW() - ($5 || ' seconds')::interval
+       ORDER BY fulfilled_at DESC LIMIT 1`,
+    [String(userId), surface, amountUsd, JSON.stringify(entitlementSpec), RUSH_DEDUP_WINDOW_SECONDS]
+  );
+  if (recentRows.length > 0) {
+    const existing = recentRows[0];
+    const grantResult = existing.grant_result || {};
+    logger.warn('[walletCheckout] duplicate Ru$h purchase request within dedup window — returning prior result instead of debiting again', {
+      userId, surface, amountUsd, intentId: existing.id,
+    });
+    return {
+      ok: true,
+      intentId: Number(existing.id),
+      spentBalance: grantResult.spent_balance,
+      spentGifted: grantResult.spent_gifted,
+      entitlementId: grantResult.entitlement_id,
+      deduped: true,
+    };
+  }
+
   const tokenCost = Math.round(amountUsd * TOKENS_PER_USD);
   const pool = getPool();
   const client = await pool.connect();
