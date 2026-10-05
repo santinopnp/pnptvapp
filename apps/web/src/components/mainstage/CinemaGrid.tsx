@@ -151,7 +151,10 @@ export function UrlMediaPlayer({ src, kind, playing, volume, startedAt }: UrlMed
     }
   }, [src, isHls, kind]);
 
-  // Play/pause & volume — only play if user opted in AND admin says playing
+  // Play/pause & volume.
+  // Video: browsers allow muted autoplay — play immediately when admin says so, no
+  // user gesture needed. The overlay ("tap for sound") just gates unmuting.
+  // Music: always require explicit user opt-in (audio-only autoplay is blocked).
   useEffect(() => {
     const el: HTMLMediaElement | null = kind === "music" ? audioRef.current : videoRef.current;
     if (!el) return;
@@ -162,7 +165,7 @@ export function UrlMediaPlayer({ src, kind, playing, volume, startedAt }: UrlMed
 
     if (!canPlay) return;
 
-    const shouldPlay = playing && userOptedIn;
+    const shouldPlay = kind === "music" ? (playing && userOptedIn) : playing;
 
     if (shouldPlay) {
       if (startedAt && el instanceof HTMLVideoElement && el.duration > 0) {
@@ -195,7 +198,11 @@ export function UrlMediaPlayer({ src, kind, playing, volume, startedAt }: UrlMed
     }
   };
 
-  const handlePause = () => setUserOptedIn(false);
+  const handlePause = () => {
+    setUserOptedIn(false);
+    // For video, re-mute so the "tap for sound" overlay is meaningful again.
+    if (kind !== "music") setMuted(true);
+  };
 
   const handleToggleMute = () => {
     const el: HTMLMediaElement | null = kind === "music" ? audioRef.current : videoRef.current;
