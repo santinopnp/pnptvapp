@@ -187,10 +187,12 @@ export default function UploadVideoModal({
   // result. sr-only clips the input to rect(0,0,0,0) which breaks onChange on
   // Android Chrome — a detached element with fixed off-screen positioning avoids
   // both the clipping bug and React's synthetic event layer.
+  // Note: pointer-events:none is intentionally omitted — iOS Safari silently
+  // blocks .click() on file inputs that carry that property.
   const openFilePicker = () => {
     const input = document.createElement('input');
     input.type = 'file';
-    input.style.cssText = 'position:fixed;top:-9999px;opacity:0;pointer-events:none';
+    input.style.cssText = 'position:fixed;top:-9999px;opacity:0;';
     document.body.appendChild(input);
     input.addEventListener('change', () => {
       const f = input.files?.[0];
