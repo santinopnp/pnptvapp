@@ -520,7 +520,14 @@ export function LandingPage() {
     window.history.replaceState(null, "", clean);
 
     const returnTo = params.get("returnTo");
-    pendingRedirectRef.current = sanitizeReturnTo(returnTo) ?? "/";
+    // sessionStorage intent (set by /lifetime100 or other pre-auth pages) takes
+    // priority over the generic ?returnTo — consumed and removed on first read.
+    let intentOverride: string | null = null;
+    try {
+      const raw = sessionStorage.getItem("pnptv:postSignupIntent");
+      if (raw) { sessionStorage.removeItem("pnptv:postSignupIntent"); intentOverride = sanitizeReturnTo(raw); }
+    } catch { /* ignore */ }
+    pendingRedirectRef.current = intentOverride ?? sanitizeReturnTo(returnTo) ?? "/";
 
     // Magic link: go straight to the app — passkey prompt is below the fold here
     // and users mistake the marketing page for "nothing happened".
@@ -854,7 +861,13 @@ export function LandingPage() {
       setRecoveryState("hidden");
       // Clean the URL and hand off to the passkey prompt.
       try { window.history.replaceState(null, "", window.location.pathname); } catch { /* ignore */ }
-      offerPasskeyOrRedirect("/");
+      // Honor a pre-auth intent (e.g. /lifetime100?autopay=1) if one was set before X OAuth
+      let postIntentDest = "/";
+      try {
+        const raw = sessionStorage.getItem("pnptv:postSignupIntent");
+        if (raw) { sessionStorage.removeItem("pnptv:postSignupIntent"); postIntentDest = sanitizeReturnTo(raw) ?? "/"; }
+      } catch { /* ignore */ }
+      offerPasskeyOrRedirect(postIntentDest);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "";
       setRecoveryError(message || "Couldn't save your email. Please try again.");
@@ -865,7 +878,12 @@ export function LandingPage() {
   const skipRecoveryEmail = () => {
     setRecoveryState("hidden");
     try { window.history.replaceState(null, "", window.location.pathname); } catch { /* ignore */ }
-    offerPasskeyOrRedirect("/");
+    let postIntentDest = "/";
+    try {
+      const raw = sessionStorage.getItem("pnptv:postSignupIntent");
+      if (raw) { sessionStorage.removeItem("pnptv:postSignupIntent"); postIntentDest = sanitizeReturnTo(raw) ?? "/"; }
+    } catch { /* ignore */ }
+    offerPasskeyOrRedirect(postIntentDest);
   };
 
   // ── Telegram deep-link ──────────────────────────────────────────────────

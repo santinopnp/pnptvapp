@@ -907,13 +907,14 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
   const isSoldOut = available === 0;
   const isClosed = !availabilityLoading && isSoldOut;
 
-  // After signup flow: auto-open wallet modal when ?autopay=1 lands
+  // After signup flow: auto-open wallet modal when ?autopay=1 lands.
+  // Delay matches Telegram path so PrivyAutoLogin (1800ms) fires before WalletPayCard mounts.
   useEffect(() => {
-    if (isAuthenticated && searchParams.get("autopay") === "1" && !walletModalOpen && !isClosed) {
-      setWalletModalOpen(true);
+    if (isAuthenticated && searchParams.get("autopay") === "1" && !isClosed) {
       setSearchParams((p) => { p.delete("autopay"); return p; }, { replace: true });
+      walletOpenTimerRef.current = setTimeout(() => setWalletModalOpen(true), 2400);
     }
-  }, [isAuthenticated, searchParams, walletModalOpen, isClosed, setSearchParams]);
+  }, [isAuthenticated, searchParams, isClosed, setSearchParams]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Cleanup polling and deferred wallet-open timer on unmount
   useEffect(() => {
@@ -1558,7 +1559,7 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
         <div
           role="dialog"
           aria-modal="true"
-          onClick={(e) => { if (e.target === e.currentTarget) { setSignupPanelOpen(false); setTgState("idle"); setTgFallbackUrl(null); setTgError(null); } }}
+          onClick={(e) => { if (e.target === e.currentTarget) { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } if (walletOpenTimerRef.current) { clearTimeout(walletOpenTimerRef.current); walletOpenTimerRef.current = null; } setSignupPanelOpen(false); setTgState("idle"); setTgFallbackUrl(null); setTgError(null); } }}
           style={{
             position: "fixed", inset: 0, zIndex: 1000,
             background: "rgba(0,0,0,0.75)", backdropFilter: "blur(8px)",
@@ -1575,7 +1576,7 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
               <div style={{ width: 36, height: 4, borderRadius: 2, background: "rgba(255,255,255,0.2)", margin: "0 auto" }} />
               <button
-                onClick={() => { setSignupPanelOpen(false); setTgState("idle"); setTgFallbackUrl(null); setTgError(null); }}
+                onClick={() => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } if (walletOpenTimerRef.current) { clearTimeout(walletOpenTimerRef.current); walletOpenTimerRef.current = null; } setSignupPanelOpen(false); setTgState("idle"); setTgFallbackUrl(null); setTgError(null); }}
                 style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 22, cursor: "pointer", padding: "0 4px", lineHeight: 1 }}
                 aria-label="Close"
               >×</button>
