@@ -13,6 +13,7 @@ export interface TierState {
 }
 
 const GEO_CACHE_KEY = "pnptv_geo_latam";
+const GEO_LANG_KEY = "pnptv_geo_lang";
 
 export interface LatamState {
   isLatam: boolean;
@@ -36,6 +37,9 @@ export function useLatam(): LatamState {
       .then((data) => {
         const latam = data.isLatam;
         sessionStorage.setItem(GEO_CACHE_KEY, latam ? "1" : "0");
+        if (data.suggestedLang && data.suggestedLang !== "en") {
+          sessionStorage.setItem(GEO_LANG_KEY, data.suggestedLang);
+        }
         setIsLatam(latam);
       })
       .catch(() => {

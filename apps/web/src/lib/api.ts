@@ -500,7 +500,7 @@ export function checkAuthStatus(): Promise<AuthStatusResponse> {
   return request("/api/auth-status");
 }
 
-export function getGeoCountry(): Promise<{ country: string | null; isLatam: boolean }> {
+export function getGeoCountry(): Promise<{ country: string | null; isLatam: boolean; suggestedLang?: string }> {
   return request("/api/webapp/geo");
 }
 

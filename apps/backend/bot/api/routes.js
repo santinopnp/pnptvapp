@@ -854,6 +854,45 @@ app.use(async (req, res, next) => {
 
 // express-session handles Set-Cookie automatically — no custom middleware needed
 
+// ISO 3166-1 alpha-2 → preferred UI language. Only non-English entries are listed;
+// everything else falls back to "en". Spanish-speaking LatAm + Spain is the
+// primary use-case (the platform's core audience), but common EU/APAC locales
+// are included so the site is natural for all visitors.
+const COUNTRY_LANG = {
+  // Spanish
+  MX:'es',CO:'es',AR:'es',CL:'es',PE:'es',VE:'es',EC:'es',GT:'es',CU:'es',
+  BO:'es',DO:'es',HN:'es',PY:'es',SV:'es',NI:'es',CR:'es',PA:'es',UY:'es',
+  ES:'es',GQ:'es',PR:'es',
+  // Portuguese
+  BR:'pt',PT:'pt',AO:'pt',MZ:'pt',CV:'pt',ST:'pt',GW:'pt',TL:'pt',
+  // French
+  FR:'fr',HT:'fr',SN:'fr',ML:'fr',BF:'fr',NE:'fr',CI:'fr',CG:'fr',
+  // German
+  DE:'de',AT:'de',
+  // Italian
+  IT:'it',
+  // Dutch
+  NL:'nl',BE:'nl',
+  // Russian
+  RU:'ru',BY:'ru',KZ:'ru',
+  // Turkish
+  TR:'tr',
+  // Japanese
+  JP:'ja',
+  // Thai
+  TH:'th',
+  // Chinese (Simplified)
+  CN:'zh',SG:'zh',
+  // Chinese (Traditional)
+  TW:'zhTW',HK:'zhTW',MO:'zhTW',
+  // Vietnamese
+  VN:'vi',
+  // Indonesian
+  ID:'id',
+  // Arabic
+  SA:'ar',AE:'ar',EG:'ar',MA:'ar',DZ:'ar',TN:'ar',IQ:'ar',LY:'ar',SD:'ar',SY:'ar',
+};
+
 // Geo country detection endpoint retained for compatibility.
 // Country-based access restrictions are disabled, so access flags always fail open.
 app.get('/api/webapp/geo', asyncHandler(async (req, res) => {
@@ -861,6 +900,7 @@ app.get('/api/webapp/geo', asyncHandler(async (req, res) => {
   const geo = geoip.lookup(ip);
   const country = geo?.country || null;
   const isColombia = country === 'CO';
+  const suggestedLang = (country && COUNTRY_LANG[country]) || 'en';
   let hasPnpCol = false;
   const userId = req.session?.user?.id;
   if (isColombia && userId) {
@@ -872,6 +912,7 @@ app.get('/api/webapp/geo', asyncHandler(async (req, res) => {
   }
   return res.json({
     country,
+    suggestedLang,
     isLatam: false,
     landingMode: false,
     isColombia,
