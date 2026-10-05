@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense, Component } from "react";
+import { useTutorial } from "@/hooks/useTutorial";
+import { TutorialOverlay } from "@/components/tutorial/TutorialOverlay";
 import type { ErrorInfo, ReactNode } from "react";
 
 // ── Feature flag — set to false to re-enable live streaming ──────────────────
@@ -927,6 +929,7 @@ export function Layout() {
   const navigate = useNavigate();
   const location = useLocation();
   const t = useI18n();
+  const { showTutorial: showWelcomeVideo, dismissTutorial: dismissWelcomeVideo, dismissForever: dismissWelcomeVideoForever, openTutorial: openWelcomeVideo } = useTutorial("welcome-video");
   // Latches to true on first render at /main-stage with a valid guest session
   // in sessionStorage. Stays true for the life of the Layout instance so
   // subsequent re-renders don't bounce the guest to /login after MainStage
@@ -1114,6 +1117,11 @@ export function Layout() {
       label: t.nav.help || "Help",
       icon: <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9 5.25h.008v.008H12v-.008z" /></svg>,
     },
+    {
+      onClick: openWelcomeVideo,
+      label: t.lang === "es" ? "Tutorial" : "Tutorial",
+      icon: <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 010 1.972l-11.54 6.347a1.125 1.125 0 01-1.667-.986V5.653z" /></svg>,
+    },
   ];
 
   const mobileSecondaryLinks = [
@@ -1121,6 +1129,7 @@ export function Layout() {
     { to: "/settings", label: t.nav.settings || "Settings" },
     { to: "/about", label: "About" },
     { to: "/community-resources", label: "Community" },
+    { onClick: openWelcomeVideo, label: t.lang === "es" ? "▶ Tutorial" : "▶ Tutorial" },
   ];
 
   // Close mobile menu on route change and reset inline DM
@@ -1549,23 +1558,34 @@ export function Layout() {
           {/* Divider */}
           <div className="my-4 h-px bg-pnp-border" />
 
-          {/* Secondary links — Settings & Help */}
+          {/* Secondary links — Settings, Help & Tutorial */}
           <div className="space-y-0.5">
             {secondaryLinks.map((link) => (
-              <NavLink
-                key={link.to}
-                to={link.to}
-                className={({ isActive }: { isActive: boolean }) =>
-                  `flex items-center gap-3 px-2.5 py-1.5 rounded-lg text-xs transition-colors ${
-                    isActive
-                      ? "text-pnp-textPrimary bg-pnp-surface"
-                      : "text-pnp-textSecondary/60 hover:text-pnp-textSecondary hover:bg-pnp-surface"
-                  }`
-                }
-              >
-                {link.icon}
-                <span>{link.label}</span>
-              </NavLink>
+              (link as any).onClick ? (
+                <button
+                  key={link.label}
+                  onClick={(link as any).onClick}
+                  className="w-full flex items-center gap-3 px-2.5 py-1.5 rounded-lg text-xs transition-colors text-pnp-textSecondary/60 hover:text-pnp-textSecondary hover:bg-pnp-surface"
+                >
+                  {link.icon}
+                  <span>{link.label}</span>
+                </button>
+              ) : (
+                <NavLink
+                  key={(link as any).to}
+                  to={(link as any).to}
+                  className={({ isActive }: { isActive: boolean }) =>
+                    `flex items-center gap-3 px-2.5 py-1.5 rounded-lg text-xs transition-colors ${
+                      isActive
+                        ? "text-pnp-textPrimary bg-pnp-surface"
+                        : "text-pnp-textSecondary/60 hover:text-pnp-textSecondary hover:bg-pnp-surface"
+                    }`
+                  }
+                >
+                  {link.icon}
+                  <span>{link.label}</span>
+                </NavLink>
+              )
             ))}
           </div>
 
@@ -1923,6 +1943,12 @@ export function Layout() {
                         {link.label}
                       </NavLink>
                     ))}
+                    <button
+                      onClick={() => { setMobileMenuOpen(false); openWelcomeVideo(); }}
+                      className="w-full text-left block px-3 py-2 rounded-lg text-sm font-medium transition-colors text-pnp-textSecondary hover:text-pnp-textPrimary hover:bg-pnp-surface"
+                    >
+                      ▶ {t.lang === "es" ? "Tutorial" : "Tutorial"}
+                    </button>
                   </div>
                 </details>
 
@@ -2454,6 +2480,11 @@ export function Layout() {
       {/* One-time native-language nudge for authed users on `en` whose browser
           locale maps to a supported non-English language. */}
       {isAuthenticated && <NativeLangNudge />}
+
+      {/* Welcome video tutorial — auto-shown once to new members, re-openable from the menu. */}
+      {isAuthenticated && showWelcomeVideo && (
+        <TutorialOverlay section="welcome-video" onDismiss={dismissWelcomeVideo} onDismissForever={dismissWelcomeVideoForever} />
+      )}
 
       {/* One-shot flash messages stashed in sessionStorage by other routes
           (e.g. failed hangout-invite redirect). Shown regardless of auth so the
