@@ -3,17 +3,38 @@
 /**
  * rushLedgerService.js
  *
- * Accumulates the USD value of Ru$h (internal credit) spend per creator and
- * settles it as on-chain USDC (70/20/10 split via
- * payoutSplitService.dispatchRushSplit) once the creator's pending balance
- * crosses RUSH_MIN_SETTLE_USD (default $100).
+ * DISCONNECTED 2026-09-29 — do not re-wire accumulateForCreator without
+ * reconciling against creator_earnings first (see below). No code currently
+ * calls into this file.
  *
- * Why not dispatch instantly on every Ru$h tip?
+ * Accumulates the USD value of Ru$h (internal credit) spend per creator and
+ * settles it as on-chain USDC (via payoutSplitService.dispatchRushSplit)
+ * once the creator's pending balance crosses RUSH_MIN_SETTLE_USD (default
+ * $100).
+ *
+ * Why it got disconnected:
+ *   walletCheckoutService._fulfill used to call accumulateForCreator for
+ *   every Ru$h-funded (provider='wallet_rush') spend on a creator-scoped
+ *   surface. But _fulfillTip, _fulfillEntitlement's creator_sub branch,
+ *   channelPassService, and privateCallBookingService ALL already credit
+ *   creator_earnings for that same spend, regardless of `provider` — that
+ *   ledger is the single correct, already-cashoutable record whether the
+ *   fan paid in USDC or Ru$h. Settling this ledger too paid the creator a
+ *   second time for the same revenue the moment rush_creator_ledger crossed
+ *   the threshold. rush_creator_ledger was empty in production when this
+ *   was caught, so no real money was double-paid — but the trigger was live.
+ *
+ * Why not dispatch instantly on every Ru$h tip? (kept for future reference)
  *   A $0.83 tip triggering three 6-cent gas legs (creator + treasury +
  *   reinvest) is antieconomical. Batching per creator until $100 keeps the
- *   gas overhead under ~0.2%. The creator earnings ledger + 7-day hold
- *   still holds the funds (this ledger is additive), so nothing is lost —
- *   just deferred.
+ *   gas overhead under ~0.2%.
+ *
+ * To reintroduce this safely: either (a) have the creator_earnings insert
+ * for Ru$h-funded surfaces mark those rows as non-cashoutable from the
+ * start (e.g. a distinct status this settlement path alone can clear), or
+ * (b) make Ru$h-funded surfaces skip the creator_earnings insert entirely
+ * and rely solely on this ledger. Don't reconnect the old way — a second,
+ * uncoordinated payout rail for revenue creator_earnings already owns.
  *
  * Rate:
  *   1 USD = 6 Ru$h base (see feedback_token_rate memory). Package bonuses

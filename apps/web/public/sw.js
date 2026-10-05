@@ -3,10 +3,10 @@
 // CACHE_NAME is auto-bumped on every build by scripts/build-web.sh — never
 // edit by hand. Contains a git short SHA so each deploy invalidates every
 // previously-cached asset (image, font, app shell).
-const CACHE_NAME = 'pnptv-49060919';
+const CACHE_NAME = 'pnptv-49060921';
 const APP_SHELL = [
   '/Logo2-50.png',
-  '/badge-diamond.png',
+  '/badge-diamond-v2.png',
   '/logo-login.png',
   '/logo-header.png',
   '/logo-nav.png',
@@ -100,7 +100,7 @@ self.addEventListener('push', (event) => {
   const options = {
     body: data.body || '',
     icon: data.icon || '/app-icon-192.png',
-    badge: '/badge-diamond.png',
+    badge: '/badge-diamond-v2.png',
     tag: data.tag || undefined,
     renotify: !!data.tag,
     vibrate: [200, 100, 200],

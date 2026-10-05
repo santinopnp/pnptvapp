@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense, Component } from "react";
+import { useTutorial } from "@/hooks/useTutorial";
+import { TutorialOverlay } from "@/components/tutorial/TutorialOverlay";
 import type { ErrorInfo, ReactNode } from "react";
 
 // ── Feature flag — set to false to re-enable live streaming ──────────────────
@@ -14,6 +16,7 @@ import { useViewportHeight } from "@/hooks/useViewportHeight";
 import { useOrientation } from "@/hooks/useOrientation";
 const CristinaWidget = lazy(() => import("@/components/CristinaWidget").then((m) => ({ default: m.CristinaWidget })));
 
+import { LanguageSelector } from "@/components/LanguageSelector";
 import { NotificationBell } from "@/components/NotificationBell";
 import { UserAvatar } from "@/components/UserAvatar";
 import { AdSlot } from "@/components/AdSlot";
@@ -785,6 +788,99 @@ function SidebarDmChat({ userId, myDbId, onBack }: SidebarDmChatProps) {
   );
 }
 
+// ── Native-language nudge ─────────────────────────────────────────────────────
+//
+// Fires once per browser (localStorage flag) when the signed-in user is on
+// `en` but their browser's `navigator.language` matches a supported non-English
+// language. One-shot: tap "Switch" to adopt + persist, or "Keep English" to
+// dismiss. Both paths set the flag so this never shows again on this device.
+const NUDGE_LANG_LABEL: Record<string, string> = {
+  es: "Español", pt: "Português", fr: "Français", de: "Deutsch", it: "Italiano",
+  nl: "Nederlands", ru: "Русский", tr: "Türkçe", th: "ไทย", zh: "中文",
+  zhTW: "中文（繁）", ja: "日本語", vi: "Tiếng Việt", id: "Indonesia", ar: "العربية",
+};
+const NUDGE_LANG_MAP: Record<string, string> = {
+  es: "es", pt: "pt", "pt-br": "pt", fr: "fr", de: "de", it: "it", nl: "nl",
+  ru: "ru", tr: "tr", th: "th", zh: "zh", "zh-hans": "zh", "zh-hant": "zhTW",
+  "zh-tw": "zhTW", ja: "ja", vi: "vi", id: "id", ar: "ar",
+};
+function NativeLangNudge() {
+  const { user, setUserLanguage } = useAuth();
+  const [target, setTarget] = React.useState<string | null>(null);
+  const [busy, setBusy] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!user || user.language !== "en") return;
+    try {
+      if (localStorage.getItem("pnptv_lang_prompted") === "1") return;
+    } catch { /* ignore */ }
+    const nav = (typeof navigator !== "undefined" ? navigator.language : "") || "";
+    const lower = nav.toLowerCase();
+    const mapped = NUDGE_LANG_MAP[lower] || NUDGE_LANG_MAP[lower.split("-")[0]];
+    if (mapped && mapped !== "en") setTarget(mapped);
+  }, [user]);
+
+  const dismiss = (persistEn: boolean) => {
+    try { localStorage.setItem("pnptv_lang_prompted", "1"); } catch { /* ignore */ }
+    setTarget(null);
+    if (persistEn) {
+      // User explicitly chose English — persist so they aren't nudged on other
+      // devices either.
+      import("@/lib/api").then(({ updateLanguage }) => updateLanguage("en").catch(() => {}));
+    }
+  };
+
+  const adopt = async () => {
+    if (!target || busy) return;
+    setBusy(true);
+    setUserLanguage(target);
+    try { localStorage.setItem("pnptv_lang_prompted", "1"); } catch { /* ignore */ }
+    try {
+      const { updateLanguage } = await import("@/lib/api");
+      await updateLanguage(target);
+    } catch { /* non-fatal; UI already switched */ }
+    setBusy(false);
+    setTarget(null);
+  };
+
+  if (!target) return null;
+  const label = NUDGE_LANG_LABEL[target] || target;
+  return (
+    <div
+      className="fixed left-1/2 -translate-x-1/2 top-[max(0.5rem,env(safe-area-inset-top))] z-[70] max-w-[92vw] sm:max-w-md"
+      role="dialog"
+      aria-live="polite"
+    >
+      <div
+        className="flex items-center gap-2 px-3 py-2 rounded-full shadow-lg"
+        style={{
+          background: "rgba(28,28,30,0.95)",
+          border: "1px solid rgba(255,255,255,0.12)",
+          backdropFilter: "blur(10px)",
+        }}
+      >
+        <span className="text-xs text-white/85 truncate">Switch to {label}?</span>
+        <button
+          type="button"
+          onClick={() => { void adopt(); }}
+          disabled={busy}
+          className="text-xs font-semibold px-2.5 py-1 rounded-full text-white active:scale-95 transition-transform disabled:opacity-50"
+          style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+        >
+          Switch
+        </button>
+        <button
+          type="button"
+          onClick={() => dismiss(true)}
+          className="text-xs text-pnp-textSecondary hover:text-white px-2 py-1 rounded-full transition-colors"
+        >
+          Keep EN
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Layout ────────────────────────────────────────────────────────────────────
 
 export function Layout() {
@@ -833,6 +929,7 @@ export function Layout() {
   const navigate = useNavigate();
   const location = useLocation();
   const t = useI18n();
+  const { showTutorial: showWelcomeVideo, dismissTutorial: dismissWelcomeVideo, dismissForever: dismissWelcomeVideoForever, openTutorial: openWelcomeVideo } = useTutorial("welcome-video");
   // Latches to true on first render at /main-stage with a valid guest session
   // in sessionStorage. Stays true for the life of the Layout instance so
   // subsequent re-renders don't bounce the guest to /login after MainStage
@@ -868,7 +965,13 @@ export function Layout() {
   const isLandscape = useOrientation();
   const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" ? window.innerWidth < 1024 : false);
   const [showAgeGate, setShowAgeGate] = useState(() => {
-    try { return !sessionStorage.getItem("pnptv:age_confirmed"); } catch { return false; }
+    try {
+      const raw = localStorage.getItem("pnptv:age_confirmed_at");
+      if (!raw) return true;
+      const at = parseInt(raw, 10);
+      if (!Number.isFinite(at)) return true;
+      return (Date.now() - at) > 90 * 24 * 60 * 60 * 1000;
+    } catch { return false; }
   });
 
   // Username picker — Telegram users without a @username get a TG_<id> placeholder.
@@ -887,12 +990,26 @@ export function Layout() {
     return () => window.removeEventListener("pnp-cruise-mode", handler);
   }, []);
 
-  // Age gate fires on every new session for every route — no route exceptions
+  // Age-verified users (real KYC/DOB server-side) skip the cosmetic disclaimer.
   useEffect(() => {
-    if (!sessionStorage.getItem("pnptv:age_confirmed")) {
-      setShowAgeGate(true);
-    }
-  }, []);
+    if (isAuthenticated && user?.ageVerified) setShowAgeGate(false);
+  }, [isAuthenticated, user?.ageVerified]);
+
+  // Consume a post-signup intent (e.g. /lifetime100?autopay=1) stored by an
+  // unauth page before redirecting to signup. Fires once when auth is gained —
+  // handles X OAuth return and magic-link return paths that land on home.
+  const intentConsumedRef = useRef(false);
+  useEffect(() => {
+    if (!isAuthenticated || intentConsumedRef.current) return;
+    intentConsumedRef.current = true;
+    try {
+      const intent = sessionStorage.getItem("pnptv:postSignupIntent");
+      if (intent) {
+        sessionStorage.removeItem("pnptv:postSignupIntent");
+        navigate(intent, { replace: true });
+      }
+    } catch { /* ignore */ }
+  }, [isAuthenticated]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const sidebarSections = [
     {
@@ -1000,6 +1117,11 @@ export function Layout() {
       label: t.nav.help || "Help",
       icon: <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9 5.25h.008v.008H12v-.008z" /></svg>,
     },
+    {
+      onClick: openWelcomeVideo,
+      label: t.lang === "es" ? "Tutorial" : "Tutorial",
+      icon: <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 010 1.972l-11.54 6.347a1.125 1.125 0 01-1.667-.986V5.653z" /></svg>,
+    },
   ];
 
   const mobileSecondaryLinks = [
@@ -1007,6 +1129,7 @@ export function Layout() {
     { to: "/settings", label: t.nav.settings || "Settings" },
     { to: "/about", label: "About" },
     { to: "/community-resources", label: "Community" },
+    { onClick: openWelcomeVideo, label: t.lang === "es" ? "▶ Tutorial" : "▶ Tutorial" },
   ];
 
   // Close mobile menu on route change and reset inline DM
@@ -1435,23 +1558,34 @@ export function Layout() {
           {/* Divider */}
           <div className="my-4 h-px bg-pnp-border" />
 
-          {/* Secondary links — Settings & Help */}
+          {/* Secondary links — Settings, Help & Tutorial */}
           <div className="space-y-0.5">
             {secondaryLinks.map((link) => (
-              <NavLink
-                key={link.to}
-                to={link.to}
-                className={({ isActive }: { isActive: boolean }) =>
-                  `flex items-center gap-3 px-2.5 py-1.5 rounded-lg text-xs transition-colors ${
-                    isActive
-                      ? "text-pnp-textPrimary bg-pnp-surface"
-                      : "text-pnp-textSecondary/60 hover:text-pnp-textSecondary hover:bg-pnp-surface"
-                  }`
-                }
-              >
-                {link.icon}
-                <span>{link.label}</span>
-              </NavLink>
+              (link as any).onClick ? (
+                <button
+                  key={link.label}
+                  onClick={(link as any).onClick}
+                  className="w-full flex items-center gap-3 px-2.5 py-1.5 rounded-lg text-xs transition-colors text-pnp-textSecondary/60 hover:text-pnp-textSecondary hover:bg-pnp-surface"
+                >
+                  {link.icon}
+                  <span>{link.label}</span>
+                </button>
+              ) : (
+                <NavLink
+                  key={(link as any).to}
+                  to={(link as any).to}
+                  className={({ isActive }: { isActive: boolean }) =>
+                    `flex items-center gap-3 px-2.5 py-1.5 rounded-lg text-xs transition-colors ${
+                      isActive
+                        ? "text-pnp-textPrimary bg-pnp-surface"
+                        : "text-pnp-textSecondary/60 hover:text-pnp-textSecondary hover:bg-pnp-surface"
+                    }`
+                  }
+                >
+                  {link.icon}
+                  <span>{link.label}</span>
+                </NavLink>
+              )
             ))}
           </div>
 
@@ -1519,7 +1653,7 @@ export function Layout() {
                 {user?.displayName || t.nav.user}
               </span>
             </button>
-
+            <LanguageSelector position="sidebar" />
           </div>
         </div>
       </aside>
@@ -1582,6 +1716,11 @@ export function Layout() {
             )}
           </button>
           <NotificationBell />
+
+          {/* Language chip — quick switch from topbar */}
+          <div className="ml-1">
+            <LanguageSelector position="topbar" variant="chip" />
+          </div>
 
           {/* Avatar — opens profile/settings menu */}
           <button
@@ -1804,6 +1943,12 @@ export function Layout() {
                         {link.label}
                       </NavLink>
                     ))}
+                    <button
+                      onClick={() => { setMobileMenuOpen(false); openWelcomeVideo(); }}
+                      className="w-full text-left block px-3 py-2 rounded-lg text-sm font-medium transition-colors text-pnp-textSecondary hover:text-pnp-textPrimary hover:bg-pnp-surface"
+                    >
+                      ▶ {t.lang === "es" ? "Tutorial" : "Tutorial"}
+                    </button>
                   </div>
                 </details>
 
@@ -2332,12 +2477,22 @@ export function Layout() {
       {/* Toast notifications */}
       {isAuthenticated && <Toast />}
 
+      {/* One-time native-language nudge for authed users on `en` whose browser
+          locale maps to a supported non-English language. */}
+      {isAuthenticated && <NativeLangNudge />}
+
+      {/* Welcome video tutorial — auto-shown once to new members, re-openable from the menu. */}
+      {isAuthenticated && showWelcomeVideo && (
+        <TutorialOverlay section="welcome-video" onDismiss={dismissWelcomeVideo} onDismissForever={dismissWelcomeVideoForever} />
+      )}
+
       {/* One-shot flash messages stashed in sessionStorage by other routes
           (e.g. failed hangout-invite redirect). Shown regardless of auth so the
           message survives the redirect to /login. */}
       <FlashBanner />
 
-      {/* Age & content warning — required by law, shown once per browser session on every route.
+      {/* Age & content warning — required by law, shown at most once per 90 days per browser
+          (persistent via localStorage). Auto-skipped for users already age-verified server-side.
           Covers: USA 18 U.S.C. §2257 / COPPA; EU AVD / GDPR Art.8; LATAM & Asia adult-content laws. */}
       {showAgeGate && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.92)", backdropFilter: "blur(12px)" }}>
@@ -2376,7 +2531,7 @@ export function Layout() {
             <div className="px-6 pb-6 space-y-2.5">
               <button
                 onClick={() => {
-                  try { sessionStorage.setItem("pnptv:age_confirmed", "1"); } catch {}
+                  try { localStorage.setItem("pnptv:age_confirmed_at", String(Date.now())); } catch {}
                   setShowAgeGate(false);
                 }}
                 className="w-full py-3 rounded-xl font-bold text-white text-sm transition-opacity hover:opacity-90"
@@ -2743,6 +2898,7 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
   const [selectedHomePlan, setSelectedHomePlan] = useState<SubscriptionPlan | null>(null);
   const [homeNpOpen, setHomeNpOpen] = useState(false);
   const [homeCallOpen, setHomeCallOpen] = useState(false);
+  const [homeCallLexOpen, setHomeCallLexOpen] = useState(false);
   const formatLocalPrice = useLocalPrice();
 
   // Founders aggressive promo — active for 60 min after onboarding completion.
@@ -2800,7 +2956,7 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
         : Promise.resolve(null),
       getWalletBalance().catch(() => null),
     ]).then(([plansRes, balRes, rushRes]) => {
-      const HIDDEN_IDS = new Set(["prime-trial-3d", "lifetime-pass"]);
+      const HIDDEN_IDS = new Set(["prime-trial-3d", "lifetime-pass", "mondays_spundays_promo_20"]);
       setHomePlans((plansRes.plans || []).filter((p) => p.active && !HIDDEN_IDS.has(p.id)));
       setHomeUsdcBalance(balRes && balRes.hasWallet ? balRes.usdc : null);
       if (rushRes?.success) setHomeRushBalance((rushRes.regularBalance ?? 0) + (rushRes.giftedBalance ?? 0));
@@ -3272,7 +3428,7 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
                               </button>
                             );
                           })}
-                          <div className="mt-1 pt-1.5 border-t border-white/[0.06]">
+                          <div className="mt-1 pt-1.5 border-t border-white/[0.06] space-y-1.5">
                             <button
                               type="button"
                               onClick={() => { setHomePanelOpen(false); setHomeCallOpen(true); }}
@@ -3282,6 +3438,27 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
                               <div className="flex-1 min-w-0">
                                 <p className="text-xs font-bold text-white truncate">
                                   📞 {lang === "es" ? "Reserva una llamada con Santino" : "Book a call with Santino"}
+                                </p>
+                                <p className="text-[10px] text-white/50">
+                                  {lang === "es" ? "30 o 60 min · privado" : "30 or 60 min · private"}
+                                </p>
+                              </div>
+                              <div className="text-right flex-shrink-0">
+                                <p className="text-sm font-black" style={{ color: "#D4007A" }}>from $60</p>
+                                {formatLocalPrice(60) && (
+                                  <p className="text-[9px] text-white/30 leading-none mt-0.5">{formatLocalPrice(60)}</p>
+                                )}
+                              </div>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => { setHomePanelOpen(false); setHomeCallLexOpen(true); }}
+                              className="w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl border text-left transition active:scale-[0.98] hover:bg-white/[0.06]"
+                              style={{ borderColor: "rgba(255,255,255,0.1)", background: "rgba(255,255,255,0.03)" }}
+                            >
+                              <div className="flex-1 min-w-0">
+                                <p className="text-xs font-bold text-white truncate">
+                                  📞 {lang === "es" ? "Reserva una llamada con Lex" : "Book a call with Lex"}
                                 </p>
                                 <p className="text-[10px] text-white/50">
                                   {lang === "es" ? "30 o 60 min · privado" : "30 or 60 min · private"}
@@ -3383,6 +3560,24 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
               creator={{
                 id: "8599671840",
                 username: "SantinoFurioso",
+                photo_url: null,
+                creator_type: "full_time",
+                creator_price_usd: 0,
+              }}
+              isOnline={true}
+            />
+          </Suspense>
+        )}
+
+        {/* Book a call with Lex — triggered from the home panel */}
+        {homeCallLexOpen && (
+          <Suspense fallback={null}>
+            <LazyBookCallModal
+              open={homeCallLexOpen}
+              onClose={() => setHomeCallLexOpen(false)}
+              creator={{
+                id: "8f5f4dd1-7bdb-4571-b026-e09d91113c91",
+                username: "PNPLATINOBOY",
                 photo_url: null,
                 creator_type: "full_time",
                 creator_price_usd: 0,

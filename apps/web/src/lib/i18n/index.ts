@@ -3,7 +3,7 @@
  * Usage:  const t = useI18n();  →  t.nav.home, t.common.save, t.login.title, etc.
  */
 
-import { useMemo } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { common, type CommonStrings } from "./common";
 import { nav, type NavStrings } from "./nav";
@@ -133,7 +133,9 @@ const LANG_MAP: Record<string, Lang> = {
 
 const SUPPORTED_LANGS = new Set<Lang>(["en","es","pt","zh","zhTW","fr","de","th","it","tr","ru","nl","vi","ja","id","ar"]);
 
-/** Get the current language from user profile, localStorage, or browser. */
+const GEO_LANG_KEY = "pnptv_geo_lang";
+
+/** Get the current language from user profile, localStorage, browser, or IP-geo cache. */
 export function getLang(userLang?: string | null): Lang {
   if (userLang) {
     const lower = userLang.toLowerCase();
@@ -143,21 +145,64 @@ export function getLang(userLang?: string | null): Lang {
     const base = lower.split("-")[0];
     if (LANG_MAP[base]) return LANG_MAP[base];
   }
-  // localStorage fallback (for unauthenticated visitors)
+  // localStorage fallback (for unauthenticated visitors who explicitly picked a lang)
   if (typeof localStorage !== "undefined") {
     try {
       const stored = localStorage.getItem("pnptv_lang");
       if (stored && LANG_MAP[stored]) return LANG_MAP[stored];
     } catch { /* private browsing */ }
   }
-  // Browser detection fallback
+  // Browser locale detection
   if (typeof navigator !== "undefined" && navigator.language) {
     const browserLang = navigator.language.toLowerCase();
-    if (LANG_MAP[browserLang]) return LANG_MAP[browserLang];
-    const base = browserLang.split("-")[0];
-    if (LANG_MAP[base]) return LANG_MAP[base];
+    const browserMapped = LANG_MAP[browserLang] || LANG_MAP[browserLang.split("-")[0]];
+    if (browserMapped) return browserMapped;
+  }
+  // IP geo-detected language (cached in sessionStorage by useLatam after the first
+  // /api/webapp/geo response; only available after the async fetch resolves).
+  if (typeof sessionStorage !== "undefined") {
+    try {
+      const geo = sessionStorage.getItem(GEO_LANG_KEY);
+      if (geo && LANG_MAP[geo]) return LANG_MAP[geo];
+    } catch { /* private browsing */ }
   }
   return "en";
+}
+
+// Module-level singleton: fires one geo-lang fetch per page session for users
+// whose browser says "en" but whose IP suggests a different language. When
+// resolved, it notifies all active useI18n() subscribers to re-render.
+let _geoLangResolved: Lang | null = null;
+let _geoListeners: Set<(l: Lang) => void> = new Set();
+let _geoFired = false;
+
+function _fireGeoLangDetection() {
+  if (_geoFired) return;
+  _geoFired = true;
+  // Check sessionStorage synchronously first (set by useLatam on previous renders)
+  if (typeof sessionStorage !== "undefined") {
+    try {
+      const cached = sessionStorage.getItem(GEO_LANG_KEY);
+      if (cached && SUPPORTED_LANGS.has(cached as Lang)) {
+        _geoLangResolved = cached as Lang;
+        _geoListeners.forEach((cb) => cb(_geoLangResolved!));
+        return;
+      }
+    } catch { /* ignore */ }
+  }
+  // Async fetch — will land in sessionStorage and trigger re-render
+  fetch("/api/webapp/geo")
+    .then((r) => r.json())
+    .then((data) => {
+      const lang = (data.suggestedLang as string | undefined)?.toLowerCase();
+      if (!lang || lang === "en") return;
+      const mapped = LANG_MAP[lang] || LANG_MAP[lang.split("-")[0]];
+      if (!mapped || mapped === "en") return;
+      try { sessionStorage.setItem(GEO_LANG_KEY, mapped); } catch { /* ignore */ }
+      _geoLangResolved = mapped;
+      _geoListeners.forEach((cb) => cb(mapped));
+    })
+    .catch(() => { /* fail silently — never block on geo */ });
 }
 
 /** Save language preference to localStorage (for unauthenticated visitors). */
@@ -168,7 +213,29 @@ export function setGuestLang(lang: Lang): void {
 /** Hook: returns all i18n strings for the user's language. */
 export function useI18n(): I18n {
   const { user } = useAuth();
-  const lang = getLang(user?.language);
+  const baseLang = getLang(user?.language);
+  const [geoLang, setGeoLang] = useState<Lang | null>(
+    // Initialise from already-resolved singleton to avoid a flash on hot re-mount
+    () => (_geoLangResolved && !user?.language ? _geoLangResolved : null)
+  );
+
+  useEffect(() => {
+    // Only fire geo detection when the browser/user lang is English — no point
+    // in overriding a non-English preference that's already been detected.
+    if (user?.language) return;
+    if (baseLang !== "en") return;
+
+    // If already resolved, apply immediately
+    if (_geoLangResolved) { setGeoLang(_geoLangResolved); return; }
+
+    // Subscribe to future resolution
+    const cb = (l: Lang) => setGeoLang(l);
+    _geoListeners.add(cb);
+    _fireGeoLangDetection();
+    return () => { _geoListeners.delete(cb); };
+  }, [user?.language, baseLang]);
+
+  const lang = (!user?.language && geoLang) ? geoLang : baseLang;
   return useMemo(() => resolve(lang), [lang]);
 }
 

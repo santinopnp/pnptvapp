@@ -7,6 +7,7 @@ import { PREFERRED_WALLET_KEY } from "@/components/payments/PayInWalletChips";
 import * as Sentry from "@sentry/react";
 import { base, mainnet } from "viem/chains";
 import { AuthProvider } from "@/hooks/useAuth";
+import { TelegramOpenInBrowserBanner } from "@/components/telegram/TelegramOpenInBrowserBanner";
 import { NotificationProvider } from "@/hooks/useNotifications";
 import { MusicPlayerProvider } from "@/hooks/useMusicPlayer";
 import { MainStageProvider } from "@/components/mainstage/MainStageProvider";
@@ -544,6 +545,7 @@ function AppOverlays() {
       <PermissionOnboarding isAuthenticated={isAuthenticated} />
       <NotificationPermissionPrompt isAuthenticated={isAuthenticated} />
       <InstallPill />
+      <TelegramOpenInBrowserBanner />
       <PushNotificationPill />
       <UpdateAvailableModal />
       <FloatingCallOverlay />
@@ -758,7 +760,41 @@ export default function App() {
                       // reliable Trust/Rainbow/etc handshake. Falls back to Privy's
                       // shared id if unset (works but with silent throttling).
                       walletConnectCloudProjectId: import.meta.env.VITE_WALLETCONNECT_PROJECT_ID as string | undefined,
-                      appearance: { theme: "dark", accentColor: "#D4007A" },
+                      appearance: {
+                        theme: "dark",
+                        accentColor: "#D4007A",
+                        walletList: [
+                          "detected_wallets",
+                          "wallet_connect",
+                          "metamask",
+                          "coinbase_wallet",
+                          "rainbow",
+                          "phantom",
+                          "zerion",
+                          "okx_wallet",
+                          "bybit_wallet",
+                          "rabby_wallet",
+                          "cryptocom",
+                          "uniswap",
+                          "binance",
+                          "bitget_wallet",
+                          "kraken_wallet",
+                          "robinhood_wallet",
+                          "safe",
+                          "base_account",
+                          "ronin_wallet",
+                          "haha_wallet",
+                          "solflare",
+                          "backpack",
+                          "jupiter",
+                          "binanceus",
+                          "detected_solana_wallets",
+                          "detected_ethereum_wallets",
+                          "wallet_connect_qr",
+                          "wallet_connect_qr_solana",
+                          "universal_profile",
+                        ],
+                      },
                     }}
                   >
                     <PrivyReadinessBreadcrumb />

@@ -48,7 +48,7 @@ class RevenueReportService {
           COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed_count,
           COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed_count,
           COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_count
-        FROM payment_history
+        FROM v_sales
         WHERE status = 'completed'
           AND payment_date >= $1
           AND payment_date <= $2
@@ -66,7 +66,7 @@ class RevenueReportService {
           MAX(amount) as max_transaction,
           COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed_count,
           COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed_count
-        FROM payment_history
+        FROM v_sales
         WHERE status = 'completed'
           AND payment_date >= $1
           AND payment_date <= $2
@@ -107,7 +107,7 @@ class RevenueReportService {
           COUNT(CASE WHEN status = 'completed' THEN 1 END) as successful,
           COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed,
           ROUND(100.0 * COUNT(CASE WHEN status = 'completed' THEN 1 END) / NULLIF(COUNT(*), 0), 2) as success_rate
-        FROM payment_history
+        FROM v_sales
         WHERE payment_date >= $1
           AND payment_date <= $2
         GROUP BY payment_method
@@ -139,7 +139,7 @@ class RevenueReportService {
           AVG(amount) as avg_price,
           MIN(amount) as min_price,
           MAX(amount) as max_price
-        FROM payment_history
+        FROM v_sales
         WHERE status = 'completed'
           AND payment_date >= $1
           AND payment_date <= $2
@@ -171,7 +171,7 @@ class RevenueReportService {
           COUNT(*) as transactions,
           COUNT(DISTINCT user_id) as unique_payers,
           AVG(amount) as avg_transaction
-        FROM payment_history
+        FROM v_sales
         WHERE status = 'completed'
           AND payment_date >= $1
           AND payment_date < $2
@@ -183,7 +183,7 @@ class RevenueReportService {
           COUNT(*) as transactions,
           COUNT(DISTINCT user_id) as unique_payers,
           AVG(amount) as avg_transaction
-        FROM payment_history
+        FROM v_sales
         WHERE status = 'completed'
           AND payment_date >= $1
           AND payment_date < $2
@@ -239,7 +239,7 @@ class RevenueReportService {
           MAX(payment_date) as last_payment_date,
           MIN(payment_date) as first_payment_date,
           STRING_AGG(DISTINCT payment_method, ', ') as payment_methods
-        FROM payment_history
+        FROM v_sales
         WHERE status = 'completed' ${dateClause}
         GROUP BY user_id
         ORDER BY total_spent DESC
@@ -270,7 +270,7 @@ class RevenueReportService {
           AVG(amount) as avg_amount,
           MIN(amount) as min_amount,
           MAX(amount) as max_amount
-        FROM payment_history
+        FROM v_sales
         WHERE status = 'completed'
           AND payment_date >= $1
           AND payment_date <= $2
@@ -304,7 +304,7 @@ class RevenueReportService {
           SELECT
             user_id,
             SUM(amount) as total_spent
-          FROM payment_history
+          FROM v_sales
           WHERE status = 'completed'
           GROUP BY user_id
         ) user_spending
@@ -334,7 +334,7 @@ class RevenueReportService {
           AVG(CASE WHEN status = 'completed' THEN amount ELSE NULL END) as avg_successful_amount,
           COUNT(DISTINCT CASE WHEN status = 'completed' THEN user_id END) as unique_successful_users,
           ROUND(100.0 * COUNT(DISTINCT CASE WHEN status = 'completed' THEN user_id END) / COUNT(DISTINCT user_id), 2) as user_adoption_rate
-        FROM payment_history
+        FROM v_sales
         GROUP BY payment_method
         ORDER BY successful DESC
       `);

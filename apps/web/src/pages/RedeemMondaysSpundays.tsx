@@ -3,6 +3,7 @@ import { Helmet } from "react-helmet-async";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useI18n } from "@/lib/i18n";
+import { WalletPayCard } from "@/components/payments/PayInWalletChips";
 import { NpAppPickerSheet } from "@/components/payments/NowPaymentsWaitingPanel";
 import CountdownTimer from "@/components/CountdownTimer";
 
@@ -17,13 +18,6 @@ const PRICE_USD = 20;
 // EXPIRES_AT in that script and in services/queueService.js.
 const EXPIRES_AT = "2026-09-30T04:00:00Z";
 
-const CRYPTO_APP_LINKS = [
-  { label: "Revolut", url: "https://www.revolut.com/ramp/" },
-  { label: "Venmo", url: "https://venmo.com/about/crypto" },
-  { label: "Cash App", url: "https://cash.app/bitcoin" },
-  { label: "N26", url: "https://n26.com/en-eu/crypto" },
-];
-
 export default function RedeemMondaysSpundays() {
   const { user, refreshUser } = useAuth();
   const navigate = useNavigate();
@@ -31,7 +25,9 @@ export default function RedeemMondaysSpundays() {
   const es = t.lang === "es";
   const [paid, setPaid] = useState(false);
   const [expired, setExpired] = useState(() => Date.now() >= new Date(EXPIRES_AT).getTime());
-  const [checkoutOpen, setCheckoutOpen] = useState(false);
+  const [walletOpen, setWalletOpen] = useState(false);
+  const [npOpen, setNpOpen] = useState(false);
+  const [payError, setPayError] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/webapp/mondays-spundays/track-visit", {
@@ -59,6 +55,7 @@ export default function RedeemMondaysSpundays() {
     ? ["2 meses de PRIME completo", "Acceso al PRIME Channel incluido", "Shows, hangouts, streams y comunidad", "Oferta única — no se repite"]
     : ["2 months of full PRIME", "PRIME Channel access included", "Shows, hangouts, streams & community", "One-time offer — never repeats"];
   const successMsg = es ? "¡Estás dentro! Redirigiendo a Home…" : "You're in! Redirecting to Home…";
+  const planLabel = es ? `Mondays Spundays · $${PRICE_USD} · 2 meses PRIME` : `Mondays Spundays · $${PRICE_USD} · 2 months PRIME`;
 
   return (
     <div className="min-h-screen bg-black text-white">
@@ -122,36 +119,60 @@ export default function RedeemMondaysSpundays() {
             </div>
           ) : (
             <>
-              <button
-                type="button"
-                onClick={() => setCheckoutOpen(true)}
-                className="w-full rounded-2xl py-3.5 text-center font-black text-black transition-all active:scale-[0.98]"
-                style={{ background: "linear-gradient(90deg, #FBBF24, #F59E0B)" }}
-              >
-                {es ? `Pagar $${PRICE_USD} · 2 meses PRIME` : `Pay $${PRICE_USD} · 2 months PRIME`}
-              </button>
-
-              <div className="mt-4 rounded-xl border border-white/10 bg-white/[0.03] p-3.5">
-                <p className="text-[11px] font-semibold text-white/70">
-                  {es
-                    ? "¿Usas Revolut, Cash App, Venmo o N26? Copia la dirección crypto que te damos al pagar, complétalo desde tu app siguiendo sus instrucciones, y tu plan se activa automáticamente:"
-                    : "Using Revolut, Cash App, Venmo, or N26? Copy the crypto address we give you at checkout, complete it from your app following its instructions, and your plan activates automatically:"}
-                </p>
-                <ul className="mt-2 space-y-1">
-                  {CRYPTO_APP_LINKS.map((app) => (
-                    <li key={app.label}>
-                      <a
-                        href={app.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-[11px] font-semibold text-amber-300 underline decoration-dotted hover:text-amber-200"
-                      >
-                        {app.label} → {app.url}
-                      </a>
-                    </li>
-                  ))}
-                </ul>
+              {/* Pay button pair — mirrors /subscribe pattern.
+                  Left (emerald, primary): opens inline WalletPayCard (Privy USDC on Base + card + Apple Pay).
+                  Right (amber, secondary): opens NpAppPickerSheet (any-crypto popup). */}
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setWalletOpen((v) => !v)}
+                  className={`flex-1 py-3 rounded-lg font-bold text-xs text-white transition-all leading-tight ${walletOpen ? "bg-gradient-to-r from-emerald-400 to-emerald-500 ring-2 ring-emerald-300" : "bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500"}`}
+                >
+                  {es ? "💳 Tarjeta · Apple Pay · Wallet" : "💳 Card · Apple Pay · Wallet"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setNpOpen(true)}
+                  className="flex-1 py-3 rounded-lg font-bold text-xs transition-all leading-tight"
+                  style={{
+                    border: "1.5px solid rgba(255,183,0,0.50)",
+                    background: "rgba(255,183,0,0.08)",
+                    color: "rgba(255,183,0,0.85)",
+                  }}
+                >
+                  <span className="block">₿ {es ? "Apps y wallets" : "Apps & wallets"}</span>
+                  <span className="block text-[9px] font-normal opacity-70 mt-0.5">BTC · ETH · USDC · USDT · etc.</span>
+                </button>
               </div>
+
+              {walletOpen && (
+                <div className="mt-3">
+                  <WalletPayCard
+                    surface="prime"
+                    amountUsd={PRICE_USD}
+                    entitlementSpec={{ planId: PLAN_ID }}
+                    metadata={{
+                      campaign_id: CAMPAIGN_ID,
+                      source: "redeem_mondays",
+                      landed_at: new Date().toISOString(),
+                    }}
+                    label={es ? `Pagá $${PRICE_USD} · 2 meses PRIME` : `Pay $${PRICE_USD} · 2 months PRIME`}
+                    lang={es ? "es" : "en"}
+                    onSuccess={() => {
+                      setPayError(null);
+                      setPaid(true);
+                    }}
+                    onError={(err) => {
+                      const msg = err instanceof Error ? err.message : String(err);
+                      setPayError(msg);
+                    }}
+                    compact
+                  />
+                </div>
+              )}
+              {payError && (
+                <p className="mt-2 text-xs text-red-300">{payError}</p>
+              )}
             </>
           )}
         </div>
@@ -169,11 +190,11 @@ export default function RedeemMondaysSpundays() {
       </div>
 
       <NpAppPickerSheet
-        isOpen={checkoutOpen}
-        onClose={() => setCheckoutOpen(false)}
+        isOpen={npOpen}
+        onClose={() => setNpOpen(false)}
         planId={PLAN_ID}
         lang={es ? "es" : "en"}
-        planLabel={es ? `Mondays Spundays · $${PRICE_USD} · 2 meses PRIME` : `Mondays Spundays · $${PRICE_USD} · 2 months PRIME`}
+        planLabel={planLabel}
         onSuccess={() => setPaid(true)}
       />
     </div>

@@ -39,8 +39,8 @@ export interface CreatorCardCreator {
   pnptvFam?: boolean;
   pnptvFamSince?: string | null;
   creatorVerified?: boolean;
-  colombiaBadge?: boolean;
   partnerBadgeColor?: string | null;
+  badges?: string[] | null;
 }
 
 export interface CreatorCardProps {
@@ -157,8 +157,8 @@ export function CreatorCard({
               pnptvFamSince: creator.pnptvFamSince ?? null,
               crystalCreator: isCrystal,
               creatorVerified: creator.creatorVerified,
-              colombiaBadge: creator.colombiaBadge,
               partnerBadgeColor: creator.partnerBadgeColor ?? null,
+              badges: creator.badges ?? null,
             }}
           />
 

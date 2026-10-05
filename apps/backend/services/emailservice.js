@@ -313,6 +313,35 @@ class EmailService {
       } else {
         logger.warn('PNPtv SMTP not configured, welcome emails will not be sent');
       }
+
+      // Kill-switch: when EMAIL_MAGIC_LINK_ONLY=true, drop every outbound email
+      // whose subject is NOT a magic-link sign-in. Added 2026-10-03 after a
+      // mass broadcast saturated Hostinger's outbound quota and starved magic
+      // links. Toggle off by removing the env var (or setting it to anything
+      // other than 'true') and restarting the bot.
+      const MAGIC_LINK_SUBJECTS = new Set([
+        'Your PNPtv! sign-in link',
+        'Tu enlace de inicio de sesión PNPtv!',
+      ]);
+      const isMagicLinkOnly = () => String(process.env.EMAIL_MAGIC_LINK_ONLY || '').toLowerCase() === 'true';
+      for (const [name, transporter] of Object.entries(this.transporters)) {
+        if (!transporter || typeof transporter.sendMail !== 'function') continue;
+        const originalSendMail = transporter.sendMail.bind(transporter);
+        transporter.sendMail = async (mailOptions) => {
+          if (isMagicLinkOnly()) {
+            const subject = (mailOptions && mailOptions.subject) || '';
+            if (!MAGIC_LINK_SUBJECTS.has(subject)) {
+              logger.info('[email] dropped — EMAIL_MAGIC_LINK_ONLY active', {
+                transporter: name,
+                to: mailOptions && mailOptions.to,
+                subject,
+              });
+              return { messageId: 'dropped-magic-link-only', accepted: [], rejected: [], response: 'dropped by EMAIL_MAGIC_LINK_ONLY kill-switch' };
+            }
+          }
+          return originalSendMail(mailOptions);
+        };
+      }
     } catch (error) {
       logger.error('Error initializing email transporters:', error);
     }

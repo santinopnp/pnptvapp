@@ -22,6 +22,7 @@
 const { Queue } = require('bullmq');
 const Redis = require('ioredis');
 const logger = require('../utils/logger');
+const { query } = require('../config/postgres');
 
 // ─── Redis connection factory ────────────────────────────────────────────────
 /**
@@ -196,6 +197,16 @@ async function initializeQueues() {
     repeat: { pattern: '0 */2 * * *', tz: 'UTC' },
     attempts: 2, removeOnFail: false,
     jobId: 'cron-payment-cleanup',
+  });
+
+  // Abandonment recovery DM from SantinoFurioso — every 15 min.
+  // Sends one warm "need help?" DM per user per 72h whose payment attempt
+  // went abandoned/expired/failed 15min-24h ago. Kill switch: Redis
+  // pnpapp:abandonment_dm:enabled = '0'. See paymentRecoveryService.sendAbandonmentDMs.
+  await cronQueue.add('abandoned-payment-dm', {}, {
+    repeat: { pattern: '*/15 * * * *', tz: 'UTC' },
+    attempts: 2, removeOnFail: false,
+    jobId: 'cron-abandoned-payment-dm',
   });
 
   // Call booking expiry — every hour at :30
@@ -935,4 +946,8 @@ module.exports = {
   enqueueEmail,
   _makeSlackShim,
   DEFAULT_JOB_OPTS,
+
+  // Shared handlers (also wired into workers/index.js so either Worker on the
+  // 'notifications' queue can process the job — BullMQ fans out at random).
+  _handleYear50FunnelPromo,
 };

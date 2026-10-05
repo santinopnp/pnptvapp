@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { sanitizeReturnTo } from "@/lib/auth";
 import { useAuth } from "@/hooks/useAuth";
 import { useI18n } from "@/lib/i18n";
 import { usePrivy, useWallets, useConnectWallet, useCreateWallet } from "@privy-io/react-auth";
@@ -1126,6 +1127,9 @@ export default function Onboarding() {
   const navigate = useNavigate();
   const { isAuthenticated, isLoading, refreshUser, user } = useAuth();
   const o = useI18n().onboarding;
+  // Stable ref for post-signup intent — consumed once on first FoundersUpsell render,
+  // immune to re-render churn from the countdown timer inside FoundersUpsellScreen.
+  const postSignupDestRef = useRef<string | null>(null);
 
   // Persist stepIndex to sessionStorage so a re-mount (Privy popup close, HMR,
   // OAuth callback bounce, etc.) doesn't reset the wizard to step 0.
@@ -1256,7 +1260,18 @@ export default function Onboarding() {
 
   // Founders upsell shown after follow step
   if (showFoundersUpsell) {
-    const dest = "/c/santinofurioso?action=subscribe&onboarding=1";
+    const defaultDest = "/c/santinofurioso?action=subscribe&onboarding=1";
+    // Populate the ref exactly once — immune to re-renders from countdown ticks
+    if (postSignupDestRef.current === null) {
+      try {
+        const raw = sessionStorage.getItem("pnptv:postSignupIntent");
+        if (raw) sessionStorage.removeItem("pnptv:postSignupIntent");
+        postSignupDestRef.current = (raw ? sanitizeReturnTo(raw) : null) ?? defaultDest;
+      } catch {
+        postSignupDestRef.current = defaultDest;
+      }
+    }
+    const dest = postSignupDestRef.current;
     return (
       <FoundersUpsellScreen
         foundersOfferExpiresAt={user?.foundersOfferExpiresAt ?? null}

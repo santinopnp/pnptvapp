@@ -102,18 +102,19 @@ async function getCreatorBalance(creatorId) {
  * Dispatch an already-reserved (status='in_payout') order's earnings on-chain
  * and finalize the order + earnings rows on success, or roll both back to
  * 'available'/'failed' on failure. Shared by requestCashout (creator-clicked)
- * and runAutoPayoutSweep (48h auto-payout) so both paths finalize identically.
+ * and runAutoPayoutSweep (auto-payout) so both paths finalize identically.
  *
- * @param {object} order — a fiat_cashout_orders row (id, creator_id)
+ * @param {object} order — a fiat_cashout_orders row (id, amount_usd, lane)
  * @param {string[]} earningIds
  * @param {string} walletAddress
+ * @param {string} creatorId
  * @returns {Promise<object>} dispatchResult from payoutSplitService.dispatchSplit
  */
-async function _dispatchAndFinalize(order, earningIds, walletAddress) {
+async function _dispatchAndFinalize(order, earningIds, walletAddress, creatorId) {
   try {
     const dispatchResult = await dispatchSplit({
       orderId: order.id,
-      creatorId: order.creator_id,
+      creatorId,
       amountUsd: parseFloat(order.amount_usd),
       creatorAddress: walletAddress,
     });
@@ -150,13 +151,15 @@ async function _dispatchAndFinalize(order, earningIds, walletAddress) {
  * Request a cash-out.
  *
  * Validates available balance, locks the oldest available earnings rows totaling
- * amountUsd (SKIP LOCKED so concurrent requests don't race), inserts a
- * fiat_cashout_orders row, marks those earnings as 'in_payout', then dispatches
- * to the appropriate lane handler.
+ * at least amountUsd (SKIP LOCKED so concurrent requests don't race — this can
+ * overshoot amountUsd since earnings rows are indivisible), inserts a
+ * fiat_cashout_orders row for the actual (possibly-larger) locked total, marks
+ * those earnings as 'in_payout', then dispatches that same total on-chain.
  *
  * @param {object} opts
  * @param {string} opts.creatorId
- * @param {number} opts.amountUsd     — must be > 0 and <= available_usd
+ * @param {number} opts.amountUsd     — minimum requested amount; must be > 0 and <= available_usd. The
+ *                                       actual amount paid (order.amount_usd) may be slightly higher.
  * @param {string} opts.lane          — 'meru' | 'btc' | 'dash' | 'usdt_tron' | 'usdt_base'
  * @param {object} opts.destination   — lane-specific payload; see validateLaneDestination
  * @returns {Promise<{ order: object, dispatch: object }>}
@@ -259,6 +262,8 @@ async function requestCashout({ creatorId, amountUsd, lane, destination }) {
     );
 
     // Walk the candidates and pick the minimum set that covers amountUsd.
+    // Earnings rows are indivisible, so this can overshoot the requested
+    // amount (e.g. two $60 rows to cover a $100 request => $120 selected).
     let accumulated = 0;
     const selected = [];
     for (const row of candidates) {
@@ -272,15 +277,38 @@ async function requestCashout({ creatorId, amountUsd, lane, destination }) {
       throw err('INSUFFICIENT_BALANCE', `Available balance ($${accumulated.toFixed(2)}) is less than requested amount ($${amountUsd.toFixed(2)})`);
     }
 
+    // Re-check both caps against `accumulated` (what will actually be locked
+    // and paid), not the originally-requested `amountUsd`. The pre-checks
+    // above only validated the request; an overshoot from indivisible
+    // earnings rows could otherwise commit and pay out above either cap.
+    if (accumulated > MAX_CASHOUT_USD_PER_REQUEST) {
+      await client.query('ROLLBACK');
+      throw err(
+        'AMOUNT_OVER_PER_REQUEST_CAP',
+        `Your oldest available earnings can't be split — locking enough rows to cover $${amountUsd.toFixed(2)} would pay out $${accumulated.toFixed(2)}, over the $${MAX_CASHOUT_USD_PER_REQUEST.toFixed(2)} single-request cap. Try a smaller amount.`
+      );
+    }
+    if (dayTotal + accumulated > MAX_CASHOUT_USD_PER_DAY) {
+      await client.query('ROLLBACK');
+      throw err(
+        'AMOUNT_OVER_DAY_CAP',
+        `Locking enough earnings to cover $${amountUsd.toFixed(2)} would pay out $${accumulated.toFixed(2)}, pushing your 24h total to $${(dayTotal + accumulated).toFixed(2)} — over the $${MAX_CASHOUT_USD_PER_DAY.toFixed(2)} cap. Try a smaller amount.`
+      );
+    }
+
     const earningIds = selected.map(r => r.id);
 
-    // ── Insert the order ──────────────────────────────────────────────────
+    // The order (and the on-chain dispatch below) must reflect `accumulated`
+    // — the actual sum of the selected, now-locked earnings rows — not the
+    // originally-requested `amountUsd`. Dispatching only `amountUsd` while
+    // marking the full `accumulated` total as paid_out silently lost the
+    // overshoot (the difference) with no record of where it went.
     const { rows: orderRows } = await client.query(
       `INSERT INTO fiat_cashout_orders
          (creator_id, amount_usd, lane, status, destination, earning_ids)
        VALUES ($1, $2, $3, 'pending', $4::jsonb, $5::uuid[])
        RETURNING *`,
-      [String(creatorId), amountUsd, lane, JSON.stringify(destination), earningIds]
+      [String(creatorId), accumulated, lane, JSON.stringify(destination), earningIds]
     );
     const order = orderRows[0];
 
@@ -296,13 +324,16 @@ async function requestCashout({ creatorId, amountUsd, lane, destination }) {
     await client.query('COMMIT');
 
     logger.info('[cashoutService] cashout order created', {
-      orderId: order.id, creatorId, amountUsd, lane, earningCount: earningIds.length,
+      orderId: order.id, creatorId, amountUsd, accumulated, lane, earningCount: earningIds.length,
     });
 
     // ── Dispatch — 100% of the net cashout amount, on-chain, to the creator ──
     // (payoutSplitService.dispatchSplit — fixed 2026-09-29, see its docstring:
     // amountUsd here is already the creator's net share, not a gross figure)
-    const dispatchResult = await _dispatchAndFinalize(order, earningIds, destination.address);
+    // order.amount_usd = accumulated (set in the INSERT above), so
+    // _dispatchAndFinalize dispatches the correct locked amount, not the
+    // originally-requested amountUsd.
+    const dispatchResult = await _dispatchAndFinalize(order, earningIds, destination.address, creatorId);
     order.status = 'settled';
     order.provider_ref = dispatchResult.txCreator;
 
@@ -324,9 +355,9 @@ async function requestCashout({ creatorId, amountUsd, lane, destination }) {
  * Auto-payout sweep — pays matured (status='available') earnings straight to
  * the creator's Privy wallet without waiting for them to click "cash out".
  * Run hourly from services/workers/index.js's 'earnings-maturation' job, right
- * after that job flips holding -> available on EARNINGS_HOLD_HOURS (48h)
+ * after that job flips holding -> available on EARNINGS_HOLD_HOURS (6h)
  * maturity, so a creator's balance reaches their wallet within ~1h of
- * maturing (i.e. within ~49h of being earned).
+ * maturing (i.e. within ~7h of being earned).
  *
  * Idempotent and safe to run concurrently with a manual cashout or with
  * itself: it uses the exact same reservation pattern as requestCashout
@@ -426,7 +457,7 @@ async function runAutoPayoutSweep() {
         orderId: order.id, creatorId, amountUsd, earningCount: earningIds.length,
       });
 
-      await _dispatchAndFinalize(order, earningIds, walletAddress);
+      await _dispatchAndFinalize(order, earningIds, walletAddress, creatorId);
       logger.info('[cashoutService] auto payout settled', { orderId: order.id, creatorId, amountUsd });
       paid++;
     } catch (e) {

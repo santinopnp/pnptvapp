@@ -480,13 +480,14 @@ class PaymentSecurityService {
         errorCode,
         errorMessage,
         stackTrace,
+        userAgent,
       } = errorData;
 
       await query(
         `INSERT INTO payment_errors
-         (payment_id, user_id, provider, error_code, error_message, stack_trace, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
-        [paymentId, userId, provider, errorCode, errorMessage, stackTrace]
+         (payment_id, user_id, provider, error_code, error_message, stack_trace, user_agent, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
+        [paymentId, userId, provider, errorCode, errorMessage, stackTrace, userAgent || null]
       );
 
       logger.error('Payment error logged', {

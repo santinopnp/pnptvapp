@@ -1818,6 +1818,25 @@ const getPublicProfile = async (req, res) => {
   const viewerRole = req.session?.user?.role || '';
   const isAdmin = viewerRole === 'admin' || viewerRole === 'superadmin';
 
+  // Geo-hide: if the viewer's resolved region tags overlap the creator's
+  // hide_from_regions set, return a plain 404 (does not reveal why).
+  if (!isAdmin && String(viewerId) !== String(userId)) {
+    const geoTags = Array.isArray(req.viewerGeoTags) ? req.viewerGeoTags : [];
+    if (geoTags.length) {
+      try {
+        const { query } = require('../../../config/postgres');
+        const { rows: hr } = await query(
+          `SELECT 1 FROM users WHERE id = $1 AND (COALESCE(hide_from_regions, '{}') && $2::text[]) LIMIT 1`,
+          [userId, geoTags]
+        );
+        if (hr.length) {
+          res.setHeader('X-Geo-Blocked', '1');
+          return res.status(404).json({ error: 'User not found' });
+        }
+      } catch { /* fail-open */ }
+    }
+  }
+
   try {
     const viewerTier = viewerId
       ? await validateTierFresh(viewerId, req.session?.user?.tier || 'free')
@@ -1927,7 +1946,7 @@ const getPublicProfile = async (req, res) => {
         exclusiveVideoCount: result.exclusiveVideoCount,
         exclusivePhotoCount: result.exclusivePhotoCount,
         profileColor: profile.profile_color || null,
-        colombiaBadge: !!profile.colombia_badge,
+        badges: Array.isArray(profile.badges) ? profile.badges : [],
         pnptvFam: !!profile.is_pnptv_fam,
         pnptvFamSince: profile.pnptv_fam_since
           ? new Date(profile.pnptv_fam_since).toISOString()
@@ -2176,6 +2195,41 @@ const getPost = async (req, res) => {
     if (!rows.length) return res.status(404).json({ error: 'Post not found' });
     const row = rows[0];
     const photo = row.author_photo;
+
+    // Geo-hide: 404 the post if the author OR any tagged user has region-hid
+    // the current viewer. Admins + the author themselves bypass.
+    {
+      const vRole = String(req.session?.user?.role || '').toLowerCase();
+      const isAdmin = vRole === 'admin' || vRole === 'superadmin';
+      const selfAuthor = viewerId && String(viewerId) === String(row.author_id);
+      const gTags = Array.isArray(req.viewerGeoTags) ? req.viewerGeoTags : [];
+      if (!isAdmin && !selfAuthor && gTags.length) {
+        try {
+          const { rows: hit } = await dbQuery(
+            `SELECT 1
+               FROM social_posts sp
+               JOIN users u ON u.id = sp.user_id
+              WHERE sp.id = $1
+                AND (
+                  (COALESCE(u.hide_from_regions, '{}') && $2::text[])
+                  OR EXISTS (
+                    SELECT 1 FROM post_mentions pm
+                      JOIN users ut ON ut.id = pm.mentioned_user_id
+                     WHERE pm.post_id = sp.id
+                       AND pm.mention_type = 'tag'
+                       AND (COALESCE(ut.hide_from_regions, '{}') && $2::text[])
+                  )
+                )
+              LIMIT 1`,
+            [id, gTags]
+          );
+          if (hit.length) {
+            res.setHeader('X-Geo-Blocked', '1');
+            return res.status(404).json({ error: 'Post not found' });
+          }
+        } catch { /* fail-open */ }
+      }
+    }
 
     // H-06: Determine whether this post should be locked for the viewer.
     // Exclusive posts (is_exclusive=true OR content_tier='prime') are locked when:

@@ -440,6 +440,16 @@ class SocialPostService {
          ${cursorClause}
          AND sp.user_id != ALL($${blockedParamIdx}::text[])
          AND NOT (COALESCE(u.hide_from_regions, '{}') && $${geoParamIdx}::text[])
+         -- Also hide the post if ANY tagged user (post_mentions.mention_type='tag')
+         -- has region-hid the viewer. Keeps non-author users in control of
+         -- where their likeness appears.
+         AND NOT EXISTS (
+           SELECT 1 FROM post_mentions pm
+             JOIN users ut ON ut.id = pm.mentioned_user_id
+            WHERE pm.post_id = sp.id
+              AND pm.mention_type = 'tag'
+              AND (COALESCE(ut.hide_from_regions, '{}') && $${geoParamIdx}::text[])
+         )
          AND (
            u.role NOT IN ('model', 'creator')
            OR (u.creator_status = 'active' AND u.creator_locked = FALSE)
@@ -1981,7 +1991,7 @@ class SocialPostService {
                 created_at, privacy, date_of_birth, city, country,
                 creator_status, creator_type, creator_price_usd, creator_verified, creator_featured, creator_subscriber_count,
                 wellness_days_accumulated,
-                colombia_badge, is_pnptv_fam, pnptv_fam_since,
+                badges, is_pnptv_fam, pnptv_fam_since,
                 crystal_creator_active_until, partner_badge_color,
                 (SELECT il.color FROM invite_link_uses ilu JOIN invite_links il ON il.code = ilu.code
                   WHERE ilu.user_id = users.id AND il.color IS NOT NULL ORDER BY ilu.redeemed_at ASC LIMIT 1) AS profile_color
@@ -2280,6 +2290,13 @@ class SocialPostService {
          ${extraWhere}
          AND sp.user_id != ALL($${blockedParamIdx}::text[])
          AND NOT (COALESCE(u.hide_from_regions, '{}') && $${geoParamIdx}::text[])
+         AND NOT EXISTS (
+           SELECT 1 FROM post_mentions pm
+             JOIN users ut ON ut.id = pm.mentioned_user_id
+            WHERE pm.post_id = sp.id
+              AND pm.mention_type = 'tag'
+              AND (COALESCE(ut.hide_from_regions, '{}') && $${geoParamIdx}::text[])
+         )
        ${orderBy}
        LIMIT $2`;
 

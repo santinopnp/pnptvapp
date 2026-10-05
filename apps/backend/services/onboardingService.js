@@ -305,26 +305,20 @@ async function grantOnboardingBonus(userId) {
     });
 
     // 30-day pnp-member trial. Lets the /api/wallet/pay-creator-sub endpoint's
-    // MEMBER_REQUIRED check pass, so the user can actually spend the 180
-    // gifted on santinofurioso's monthly. Skipped when the user already has
-    // an active pnp-member entitlement (e.g. arrived onboarding via a legacy
-    // paid path) — otherwise the uq_user_entitlement_non_creator constraint
-    // would throw and roll back the whole grant, wasting the 180 gifted too.
-    const { rows: existingMember } = await client.query(
-      `SELECT 1 FROM user_entitlements
-         WHERE user_id = $1 AND add_on_id = 'pnp-member' AND creator_id IS NULL
-           AND (is_lifetime = true OR expires_at > NOW())
-         LIMIT 1`,
+    // MEMBER_REQUIRED check pass. UPSERT so an expired pnp-member row (same
+    // user_id/add_on_id/creator_id) doesn't trip uq_user_entitlement_non_creator
+    // and roll back the whole grant (wasting the 180 gifted). GREATEST + OR
+    // guarantees we never shorten an active or lifetime entitlement.
+    await client.query(
+      `INSERT INTO user_entitlements
+         (user_id, add_on_id, is_lifetime, expires_at, auto_renew, grant_source)
+       VALUES ($1, 'pnp-member', false, NOW() + INTERVAL '30 days', false, 'onboarding_bonus')
+       ON CONFLICT (user_id, add_on_id, creator_id) DO UPDATE
+         SET expires_at   = GREATEST(user_entitlements.expires_at, EXCLUDED.expires_at),
+             is_lifetime  = user_entitlements.is_lifetime OR EXCLUDED.is_lifetime,
+             grant_source = COALESCE(user_entitlements.grant_source, EXCLUDED.grant_source)`,
       [String(userId)]
     );
-    if (existingMember.length === 0) {
-      await client.query(
-        `INSERT INTO user_entitlements
-           (user_id, add_on_id, is_lifetime, expires_at, auto_renew, grant_source)
-         VALUES ($1, 'pnp-member', false, NOW() + INTERVAL '30 days', false, 'onboarding_bonus')`,
-        [String(userId)]
-      );
-    }
 
     await client.query('COMMIT');
 

@@ -20,6 +20,7 @@ import {
   getMuxUploadUrl,
   aiAllChannelVideo,
   getMuxThumbnails,
+  getChannelVideoMuxStatus,
   updateChannelVideo,
   publishChannelVideo,
   getChannelTagTaxonomy,
@@ -118,6 +119,7 @@ export default function UploadVideoModal({
   // Publish
   const [announce, setAnnounce] = useState(true);
   const [publishing, setPublishing] = useState(false);
+  const [muxReady, setMuxReady] = useState<boolean | null>(null);
 
   // Resume
   const [resume, setResume] = useState<ResumeState | null>(null);
@@ -144,6 +146,29 @@ export default function UploadVideoModal({
   // Abort upload on unmount
   useEffect(() => () => { abortedRef.current = true; xhrRef.current?.abort(); }, []);
 
+  // Poll mux-status while on the publish step until Mux finishes processing
+  useEffect(() => {
+    if (step !== "publish") return;
+    const vid = videoIdRef.current;
+    if (!vid) { setMuxReady(true); return; }
+    let timer: ReturnType<typeof setTimeout>;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const r = await getChannelVideoMuxStatus(channelId, vid);
+        if (cancelled) return;
+        if (r.ready) { setMuxReady(true); return; }
+        setMuxReady(false);
+        timer = setTimeout(poll, 5_000);
+      } catch {
+        if (!cancelled) timer = setTimeout(poll, 8_000);
+      }
+    };
+    setMuxReady(null);
+    poll();
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [step, channelId]);
+
   const validateFile = (f: File): string | null => {
     if (f.type && !f.type.startsWith("video/")) return "Solo se permiten archivos de video.";
     if (f.size > MAX_FILE_BYTES) return "El archivo es demasiado grande (máx 50 GB).";
@@ -155,6 +180,25 @@ export default function UploadVideoModal({
     if (err) { setError(err); return; }
     setError(null);
     setFile(f);
+  };
+
+  // Detached-input pattern: creates a fresh <input type="file"> outside React's
+  // VDOM and appends it to <body> so Android Chrome can properly return the file
+  // result. sr-only clips the input to rect(0,0,0,0) which breaks onChange on
+  // Android Chrome — a detached element with fixed off-screen positioning avoids
+  // both the clipping bug and React's synthetic event layer.
+  const openFilePicker = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.style.cssText = 'position:fixed;top:-9999px;opacity:0;pointer-events:none';
+    document.body.appendChild(input);
+    input.addEventListener('change', () => {
+      const f = input.files?.[0];
+      if (f) handleFileSelect(f);
+      else setError('No se recibió el archivo. Intenta de nuevo o abre desde otra carpeta.');
+      try { document.body.removeChild(input); } catch { /**/ }
+    }, { once: true });
+    input.click();
   };
 
   const fetchThumbnails = async (videoId: number) => {
@@ -231,18 +275,25 @@ export default function UploadVideoModal({
         if (abortedRef.current) return;
 
         if (xhr.status >= 200 && xhr.status < 300) {
-          // Upload complete (200/201/204)
-          clearResume();
-          setUploadPct(100);
-          setUploadSpeed(0);
-          setUploadEta(null);
-          setRetryCount(0);
-          setStep("metadata");
-          setTimeout(() => fetchThumbnails(videoId), 8_000);
+          if (isLastChunk) {
+            // Entire file uploaded — move on
+            clearResume();
+            setUploadPct(100);
+            setUploadSpeed(0);
+            setUploadEta(null);
+            setRetryCount(0);
+            setStep("metadata");
+            setTimeout(() => fetchThumbnails(videoId), 8_000);
+          } else {
+            // Chunk accepted — advance offset and continue
+            offset = chunkEnd;
+            chunkAttempt = 0;
+            sendChunk();
+          }
         } else if (xhr.status === 308) {
-          // GCS-style "Resume Incomplete" — advance offset from Range header
+          // GCS/OCI-style resume — use server-confirmed end byte
           const rangeHeader = xhr.getResponseHeader("Range");
-          const match = rangeHeader?.match(/bytes=0-(\d+)/);
+          const match = rangeHeader?.match(/bytes=\d+-(\d+)/);
           offset = match ? parseInt(match[1]) + 1 : chunkEnd;
           chunkAttempt = 0;
           sendChunk();
@@ -525,12 +576,19 @@ export default function UploadVideoModal({
         </div>
       )}
 
-      {/* Drop zone */}
+      {/* Drop zone — onClick calls openFilePicker which creates a detached
+          <input type="file">, appends it to <body> at a fixed off-screen
+          position (not clipped), and clicks it. This avoids the Android Chrome
+          sr-only/clip bug where onChange never fires after picker return. */}
       <div
+        role="button"
+        tabIndex={0}
+        onClick={openFilePicker}
+        onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && openFilePicker()}
         onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
         onDragLeave={() => setDrag(false)}
         onDrop={onDrop}
-        onClick={() => document.getElementById("mux-file-input")?.click()}
+        aria-label="Elegir video"
         className="cursor-pointer rounded-2xl flex flex-col items-center justify-center gap-3 py-10 px-4 transition-colors"
         style={{
           border: `2px dashed ${drag ? "#D4007A" : "rgba(212,0,122,.3)"}`,
@@ -556,15 +614,16 @@ export default function UploadVideoModal({
             <p className="text-xs text-white/40 mt-0.5">o toca para elegir · MP4, MOV, WebM · máx 50 GB</p>
           </div>
         )}
-        <input
-          id="mux-file-input"
-          type="file"
-          accept="video/*"
-          className="sr-only"
-          onClick={(e) => e.stopPropagation()}
-          onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileSelect(f); e.target.value = ""; }}
-        />
       </div>
+
+      <button
+        type="button"
+        onClick={openFilePicker}
+        className="w-full py-3 rounded-xl text-sm font-bold text-white transition-opacity active:opacity-80"
+        style={{ background: "linear-gradient(90deg,#D4007A,#7B61FF)" }}
+      >
+        📁 Elegir desde archivos
+      </button>
 
       {/* One-liner */}
       {file && (
@@ -866,11 +925,11 @@ export default function UploadVideoModal({
         </button>
         <button
           onClick={handlePublish}
-          disabled={publishing || !title.trim()}
+          disabled={publishing || !title.trim() || muxReady === false}
           className="flex-[2] py-3 rounded-xl text-sm font-bold transition-opacity disabled:opacity-40"
           style={{ background: "linear-gradient(90deg,#D4007A,#7B61FF)", color: "#fff" }}
         >
-          {publishing ? "Publicando…" : "Publicar"}
+          {publishing ? "Publicando…" : muxReady === false ? "Procesando video…" : "Publicar"}
         </button>
       </div>
     </div>

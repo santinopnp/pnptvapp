@@ -18,7 +18,8 @@ import {
 import { usePrivy, useWallets, useAddFunds, useSendTransaction } from "@privy-io/react-auth";
 import { createWalletClient, custom, encodeFunctionData, parseUnits } from "viem";
 import { base } from "viem/chains";
-import { WalletCheckoutHero, grossUpForOnramp, getPreferredWallet, setPreferredWallet } from "@/components/payments/PayInWalletChips";
+import { OpenInBrowserButton } from "@/components/telegram/OpenInBrowserButton";
+import { WalletCheckoutHero, grossUpForOnramp, getPreferredWallet, setPreferredWallet, classifyOnrampError, onrampErrorMessage, shouldOfferOpenInBrowser } from "@/components/payments/PayInWalletChips";
 
 const USDC_BASE_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const BASE_CAIP2 = "eip155:8453" as const;
@@ -134,6 +135,9 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
   // (non-cancel errors). Until this is true, keep showing the spinner so a
   // silent Privy cancel doesn't flash the old NowPayments panel.
   const [autoTriggerDone, setAutoTriggerDone] = useState(false);
+  // Last card top-up failed in a way only a real browser fixes (MoonPay
+  // popup) → offer the one-tap "Open in browser / Safari" escape.
+  const [offerOpenInBrowser, setOfferOpenInBrowser] = useState(false);
 
   // Activation-code redemption (users who received a code out-of-band, e.g. via
   // support, ops top-up, or a legacy card checkout). Not a purchase path we
@@ -474,6 +478,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
     if (!activeWallet) return;
     const price = Number(pkg.usd);
     setError(null);
+    setOfferOpenInBrowser(false);
     setPayingPackageId(pkg.id);
     try {
       // Privy Stripe onramp — user pays with card/Apple Pay/Google Pay, USDC
@@ -515,16 +520,17 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (/cancel|closed|reject/i.test(msg)) return;
-      const isWindowBlock = /unable to open|payment window|popup|blocked/i.test(msg);
-      setError(isWindowBlock
-        ? (es
-          ? "Pago con tarjeta no disponible en este dispositivo. Usa tu balance USDC arriba, o elige una app de criptos abajo ↓"
-          : "Card payment unavailable on this device. Use your USDC balance above, or choose a crypto app below ↓")
-        : (es ? `No se pudo abrir el pago: ${msg}` : `Could not open payment: ${msg}`));
+      // Old regex also matched Stripe's "This transaction has been blocked"
+      // (a card decline) and told the user card payments don't work on their
+      // device. classifyOnrampError separates popup-blocked from card-blocked.
+      const kind = classifyOnrampError(msg);
+      if (kind === "cancel") return;
+      setError(onrampErrorMessage(kind, es, msg));
+      setOfferOpenInBrowser(shouldOfferOpenInBrowser(kind));
       reportWalletClientError("buyTokensAddFunds", err, {
         surface: "rush", packageId: pkg.id, amountUsd: price,
         address: activeWallet?.address, walletType: activeWallet?.walletClientType,
+        onrampErrorKind: kind,
       });
     } finally {
       setPayingPackageId(null);
@@ -538,6 +544,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
     if (!activeWallet) return;
     const actualTokens = tokens ?? Math.round(usd * 6);
     setError(null);
+    setOfferOpenInBrowser(false);
     setPayingCustom(true);
     try {
       await addFunds({
@@ -568,17 +575,27 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (/cancel|closed|reject/i.test(msg)) {
+      const kind = classifyOnrampError(msg);
+      if (kind === "cancel") {
         if (closeOnCancel) onClose();
         return;
       }
-      if (closeOnCancel) {
-        // Auto-trigger mode: close on any non-cancel error too, rather than
-        // flashing the full NowPayments UI. User can re-tap to retry.
+      reportWalletClientError("buyTokensAddFunds", err, {
+        surface: "rush", packageId: pkgId, amountUsd: usd,
+        address: activeWallet?.address, walletType: activeWallet?.walletClientType,
+        onrampErrorKind: kind,
+      });
+      if (closeOnCancel && kind === "other") {
+        // Auto-trigger mode: close on generic errors rather than flashing the
+        // full NowPayments UI. User can re-tap to retry.
         onClose();
         return;
       }
-      setError(es ? `No se pudo abrir el pago: ${msg}` : `Could not open payment: ${msg}`);
+      // Known onramp failures need an explanation and a next step (other
+      // provider / open in browser) — unlock the UI instead of closing.
+      setAutoTriggerDone(true);
+      setError(onrampErrorMessage(kind, es, msg));
+      setOfferOpenInBrowser(shouldOfferOpenInBrowser(kind));
     } finally {
       setPayingCustom(false);
     }
@@ -627,6 +644,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
         })
         .finally(() => setPayingCustom(false));
     } else {
+      // addFunds only opens Privy's in-page modal, so no user gesture needed.
       void handleFundForCustomAmount(usd, tokens, pkgId, true);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -857,6 +875,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
               {error}
             </div>
           )}
+          {error && offerOpenInBrowser && <OpenInBrowserButton es={es} />}
           {success && (
             <div className="text-xs font-semibold text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 rounded-md px-3 py-2">
               +{success.tokens.toLocaleString()} Ru$h 💎 {es ? "acreditados" : "credited"}

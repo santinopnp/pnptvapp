@@ -219,10 +219,25 @@ export function WalletCheckoutHero({ lang = "en", compact = false }: { lang?: "e
 // balance fetch, gas-sponsored USDC transfer via Privy, and backend verify.
 
 import { useEffect as _useEffect, useState as _useState, useRef as _useRef } from "react";
-import { usePrivy, useWallets, useAddFunds, useConnectWallet, useSendTransaction, useUnlinkWallet, useCreateWallet } from "@privy-io/react-auth";
+import { usePrivy, useWallets, useAddFunds, useConnectWallet, useSendTransaction, useUnlinkWallet, useCreateWallet, type WalletListEntry } from "@privy-io/react-auth";
 import { getLinkedWallet } from "@/lib/api";
+import { OpenInBrowserButton } from "@/components/telegram/OpenInBrowserButton";
+import { isIOSStandalone, popupsUnsupported } from "@/lib/browserEnv";
 import { createWalletClient, custom, encodeFunctionData, parseUnits, parseEther } from "viem";
 import { base, mainnet } from "viem/chains";
+
+// Full wallet connector list — mirrors PrivyProvider appearance.walletList in App.tsx.
+// Passed directly to connectWallet({ walletList }) so the modal always shows all options,
+// not just Trust/MetaMask (the Privy SDK default when walletList is omitted).
+const CONNECT_WALLET_LIST: WalletListEntry[] = [
+  "detected_wallets", "wallet_connect", "metamask", "coinbase_wallet",
+  "rainbow", "phantom", "zerion", "okx_wallet", "bybit_wallet",
+  "rabby_wallet", "cryptocom", "uniswap", "binance", "bitget_wallet",
+  "kraken_wallet", "robinhood_wallet", "safe", "base_account",
+  "ronin_wallet", "haha_wallet", "solflare", "backpack", "jupiter",
+  "binanceus", "detected_solana_wallets", "detected_ethereum_wallets",
+  "wallet_connect_qr", "wallet_connect_qr_solana", "universal_profile",
+];
 
 // CAIP-2 chain id for Base mainnet — required by Privy's useAddFunds destination
 const _BASE_CAIP2 = "eip155:8453" as const;
@@ -306,6 +321,99 @@ export function grossUpForOnramp(targetUsd: number): string {
   return Math.max(15, grossed).toFixed(0);
 }
 
+// How Privy's addFunds (v3.42) actually pays, verified in the SDK bundle:
+//  • Stripe runs EMBEDDED inside Privy's modal (@stripe/crypto) — no popup.
+//    It works in Safari, the installed PWA and Telegram's webview. Its
+//    failures are risk blocks / declines / KYC / Link auth, not popups.
+//  • MoonPay (and Meld/Coinbase) are popup providers: Privy calls
+//    window.open synchronously in its own "Continue" click. When that returns
+//    null Privy throws "Unable to open payment window". A click is present,
+//    so this is not a gesture problem — it happens where window.open is not
+//    supported at all: Telegram/Instagram/TikTok webviews and (per 100%
+//    WebKit stack traces in payment_errors) iOS contexts such as the
+//    home-screen PWA.
+// So: when Stripe fails, suggest MoonPay; when MoonPay can't open, suggest
+// Stripe here or opening the page in Safari, where MoonPay's popup works.
+export type OnrampErrorKind =
+  | "cancel"
+  | "popup_blocked"   // MoonPay/Meld popup could not open
+  | "card_blocked"    // Stripe risk block / decline / 3DS failure
+  | "stripe_failed"   // Stripe KYC / limits / Link / SDK load failures
+  | "provider_region" // provider not offered in the user's country
+  | "status_timeout"  // MoonPay popup flow: status polling gave up
+  | "provider_failed" // MoonPay popup flow: provider reported failure
+  | "other";
+
+export function classifyOnrampError(msg: string): OnrampErrorKind {
+  if (/transaction has been blocked|card (was |has been )?(declined|blocked)|unable to authenticate your payment method|insufficient funds|discover cards|not supported card/i.test(msg)) return "card_blocked";
+  if (/unable to open payment window|pop-?up.*blocked/i.test(msg)) return "popup_blocked";
+  if (/not available in your region/i.test(msg)) return "provider_region";
+  if (/unable to check payment status|could not confirm payment status/i.test(msg)) return "status_timeout";
+  if (/identity verification|kyc|transaction_limit_reached|link authentication|something went wrong setting up checkout|stripe crypto sdk|failed to fetch/i.test(msg)) return "stripe_failed";
+  if (/user exited|cancel|reject/i.test(msg)) return "cancel";
+  if (/^(error: )?transaction failed/i.test(msg)) return "provider_failed";
+  return "other";
+}
+
+export { isInAppBrowser, isIOS, isIOSStandalone, popupsUnsupported } from "@/lib/browserEnv";
+
+export function onrampErrorMessage(kind: OnrampErrorKind, es: boolean, rawMsg: string): string {
+  const noPopup = popupsUnsupported();
+  const where = isIOSStandalone()
+    ? (es ? "Safari" : "Safari")
+    : (es ? "tu navegador" : "your browser");
+  // Suggesting MoonPay only makes sense where its popup can open.
+  const tryMoonpay = noPopup
+    ? (es
+      ? ` Para usar MoonPay, ábrelo en ${where} con el botón de abajo.`
+      : ` To use MoonPay, open this page in ${where} with the button below.`)
+    : (es
+      ? " Toca Recargar otra vez y elige MoonPay, o usa Apple Pay / Google Pay."
+      : " Tap Top up again and pick MoonPay, or use Apple Pay / Google Pay.");
+  switch (kind) {
+    case "popup_blocked":
+      return noPopup
+        ? (es
+          ? `Aquí no se puede abrir la ventana de MoonPay. Toca Recargar y elige Tarjeta / Apple Pay (Stripe), que sí funciona aquí, o ábrelo en ${where} para usar MoonPay.`
+          : `MoonPay's window can't open here. Tap Top up and pick Card / Apple Pay (Stripe), which works here, or open this page in ${where} to use MoonPay.`)
+        : (es
+          ? "Tu navegador bloqueó la ventana de MoonPay. Permite ventanas emergentes para pnptv.app y reintenta, o elige Tarjeta / Apple Pay (Stripe)."
+          : "Your browser blocked MoonPay's window. Allow pop-ups for pnptv.app and retry, or pick Card / Apple Pay (Stripe).");
+    case "card_blocked": {
+      const isInsufficient = /insufficient funds/i.test(rawMsg);
+      const baseMsg = isInsufficient
+        ? (es ? "Tu tarjeta no tiene fondos suficientes." : "Your card has insufficient funds.")
+        : (es ? "Stripe rechazó este pago. No se hizo ningún cargo." : "Stripe declined this payment. You were not charged.");
+      return baseMsg + tryMoonpay;
+    }
+    case "stripe_failed":
+      return (es
+        ? "Stripe no pudo completar el pago. No se hizo ningún cargo."
+        : "Stripe couldn't complete the payment. You were not charged.") + tryMoonpay;
+    case "provider_region":
+      return es
+        ? "Ese proveedor no está disponible en tu país. Toca Recargar otra vez y elige otra opción (MoonPay o Stripe)."
+        : "That provider isn't available in your country. Tap Top up again and pick another option (MoonPay or Stripe).";
+    case "provider_failed":
+      return es
+        ? "El proveedor no completó el pago. Toca Recargar otra vez y prueba con la otra opción (Tarjeta / Apple Pay con Stripe, o MoonPay)."
+        : "The provider didn't complete the payment. Tap Top up again and try the other option (Card / Apple Pay via Stripe, or MoonPay).";
+    case "status_timeout":
+      // The provider may still settle — warn against paying twice.
+      return es
+        ? "Aún no pudimos confirmar el pago. Si ya te cobraron, el saldo llegará en unos minutos; revisa tu billetera antes de pagar de nuevo."
+        : "We couldn't confirm the payment yet. If you were charged, the balance will arrive in a few minutes; check your wallet before paying again.";
+    default:
+      return es ? `No se pudo abrir el pago: ${rawMsg}` : `Could not open payment: ${rawMsg}`;
+  }
+}
+
+// Whether to show the one-tap "open in browser/Safari" escape for this error.
+export function shouldOfferOpenInBrowser(kind: OnrampErrorKind): boolean {
+  if (!popupsUnsupported()) return false;
+  return kind === "popup_blocked" || kind === "card_blocked" || kind === "stripe_failed";
+}
+
 /**
  * Detects a stuck-Privy state so the wallet UI can offer a clear recovery
  * path instead of silently showing an empty balance.
@@ -366,13 +474,19 @@ export interface WalletPayCardProps {
       caller can navigate or toast as needed. */
   onSuccess?: (result: { intentId: number; rushCredited?: number; entitlementId?: number | null; bookingId?: string | null }) => void;
   onError?: (err: unknown) => void;
+  /** When defined, called INSTEAD of showing the generic "card glitched" error
+   *  when Privy's Stripe fiat onramp fails (addFunds returns
+   *  "Unable to open payment window" / "Something went wrong setting up checkout").
+   *  Callers wire this to opening their NowPayments picker so a dead onramp
+   *  turns into a one-tap crypto fallback instead of a dead-end error. */
+  onCryptoFallback?: () => void;
   lang?: "es" | "en";
   compact?: boolean;
 }
 
 export function WalletPayCard({
   surface, amountUsd: amountUsdRaw, entitlementSpec, metadata,
-  label, onSuccess, onError, lang = "en", compact = false,
+  label, onSuccess, onError, onCryptoFallback, lang = "en", compact = false,
 }: WalletPayCardProps) {
   const es = lang === "es";
   // Caller can pass NaN if plans haven't loaded yet or price parse fails
@@ -382,7 +496,7 @@ export function WalletPayCard({
   // disabled below if amountUsd <= 0.
   const amountUsd = Number.isFinite(amountUsdRaw) && amountUsdRaw > 0 ? amountUsdRaw : 0;
   const priceReady = amountUsd > 0;
-  const { authenticated, login, getAccessToken } = usePrivy();
+  const { authenticated, login, logout, getAccessToken } = usePrivy();
   const { createWallet } = useCreateWallet();
   const { wallets } = useWallets();
   const recovery = usePrivyRecovery();
@@ -445,6 +559,10 @@ export function WalletPayCard({
   // or (b) 60s of polling elapses. Prevents the "Pay with card" button from
   // re-appearing as if nothing happened while Stripe onramp settles.
   const [funding, setFunding] = _useState(false);
+  // Last addFunds failure needs a real browser (MoonPay popup) → offer the
+  // one-tap "Open in browser / Safari" escape.
+  const [offerOpenInBrowser, setOfferOpenInBrowser] = _useState(false);
+  const fundInFlightRef = _useRef(false);
   const [eth, setEth] = _useState<number | null>(null);
   // Tracks whether the onramp poll has been cancelled (component unmounted).
   const pollCancelledRef = _useRef(false);
@@ -488,13 +606,25 @@ export function WalletPayCard({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authenticated, activeWallet?.address]);
 
-  // Auto-reload after 30s if still stuck in no_wallet state (Privy SDK
-  // sometimes needs a fresh page to hydrate the embedded wallet).
+  // Auto-reload after 30s if stuck in no_wallet state (Privy SDK sometimes
+  // needs a fresh page to hydrate the embedded wallet). Cap at 1 reload per
+  // SESSION so a persistently-stuck SDK can't trap the user in an infinite
+  // reload loop. After the first reload fails, the no_wallet UI below pivots
+  // to an explicit log-out / re-auth affordance instead of auto-retrying.
+  const NO_WALLET_RELOAD_KEY = "pnpapp:privy:no_wallet_reload_count";
+  const [noWalletReloadCount, setNoWalletReloadCount] = _useState<number>(() => {
+    try { return parseInt(sessionStorage.getItem(NO_WALLET_RELOAD_KEY) || "0", 10) || 0; } catch { return 0; }
+  });
   _useEffect(() => {
     if (recovery.status !== "no_wallet") return;
-    const t = setTimeout(() => window.location.reload(), 30_000);
+    if (noWalletReloadCount >= 1) return;
+    const t = setTimeout(() => {
+      try { sessionStorage.setItem(NO_WALLET_RELOAD_KEY, String(noWalletReloadCount + 1)); } catch { /* iOS Safari partition */ }
+      setNoWalletReloadCount(noWalletReloadCount + 1);
+      window.location.reload();
+    }, 30_000);
     return () => clearTimeout(t);
-  }, [recovery.status]);
+  }, [recovery.status, noWalletReloadCount]);
 
   // Not signed into Privy yet — frame as card-primary so a card-only user
   // doesn't bail thinking this is a new-account onboarding step. The Privy
@@ -528,7 +658,7 @@ export function WalletPayCard({
           type="button"
           onClick={() => {
             setConnectError(null);
-            try { connectWallet(); }
+            try { connectWallet({ walletList: CONNECT_WALLET_LIST }); }
             catch (err) {
               reportWalletClientError("connectWallet", err, { surface });
               setConnectError(err instanceof Error ? err.message : String(err));
@@ -536,7 +666,7 @@ export function WalletPayCard({
           }}
           className="w-full mt-2 py-2 rounded-xl text-[11px] font-semibold text-white/70 border border-white/10 hover:bg-white/[0.04] transition"
         >
-          {es ? "o conecta Trust / MetaMask" : "or connect Trust / MetaMask"}
+          {es ? "o conecta otra wallet" : "or connect another wallet"}
         </button>
         {connectError && (
           <p className="text-[10px] text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2 py-1.5 mt-2">
@@ -601,7 +731,7 @@ export function WalletPayCard({
   const handleConnectExternal = () => {
     setConnectError(null);
     try {
-      connectWallet();
+      connectWallet({ walletList: CONNECT_WALLET_LIST });
     } catch (err: unknown) {
       reportWalletClientError("connectWallet", err, { surface });
       setConnectError(err instanceof Error ? err.message : String(err));
@@ -633,6 +763,8 @@ export function WalletPayCard({
         } catch { /* keep component-level value if fetch fails */ }
         if (liveUsdc == null || liveUsdc < amountUsd) {
           setPaying(false);
+          // addFunds opens Privy's in-page modal (no popup), so this needs no
+          // user gesture; provider popups are opened by Privy's own click.
           handleFund();
           return;
         }
@@ -660,35 +792,42 @@ export function WalletPayCard({
       if (isEmbedded) {
         // Privy embedded wallets are pure EOAs — the wallet itself has to pay
         // gas out of its own ETH. requestGasTopup seeds ~$0.20 in Base ETH
-        // from a platform treasury when the wallet is empty; best-effort so
-        // we proceed with the tx attempt either way (a 503 falls back to the
-        // pre-existing "insufficient funds for gas" error, no regression).
-        // Instrumented (2026-09-06): report topup failures so we can debug
-        // silent drop-offs where a doomed tx UI opens with insufficient gas.
-        let topupResult: Awaited<ReturnType<typeof requestGasTopup>>;
+        // from a platform treasury when the wallet is empty.
+        //
+        // Previously this was best-effort (we proceeded on failure and let the
+        // tx revert with "insufficient funds for gas"), which meant a doomed
+        // signing UI opened whenever the treasury was depleted or rate-limited.
+        // Now we HARD-BLOCK on real top-up failure for embedded wallets,
+        // falling back to the ETH balance snapshot when the top-up endpoint
+        // itself is unreachable (transport error).
+        let gasReady = false;
         try {
-          topupResult = await requestGasTopup(activeWallet.address);
-          if (!topupResult.ok && !topupResult.skipped) {
+          const topupResult = await requestGasTopup(activeWallet.address);
+          if (topupResult.ok || topupResult.skipped) {
+            gasReady = true;
+          } else {
             reportWalletClientError("gasTopup", new Error(topupResult.reason || "topup_failed"), {
               surface, amountUsd, address: activeWallet.address, walletType: activeWallet.walletClientType,
             });
-            const reason = topupResult.reason || "";
-            if (!/already_funded|sufficient/i.test(reason)) {
-              setError(es
-                ? "No se pudo preparar el gas. Si el pago falla, intentá de nuevo."
-                : "Gas setup failed. If payment fails, please retry.");
-            }
+            // Some code paths return ok=false with reason=already_funded /
+            // sufficient when Alchemy already shows a non-zero ETH balance;
+            // honor those as a successful outcome.
+            if (/already_funded|sufficient/i.test(topupResult.reason || "")) gasReady = true;
           }
         } catch (gasErr: unknown) {
-          const gasMsg = gasErr instanceof Error ? gasErr.message : String(gasErr);
           reportWalletClientError("gasTopup", gasErr, {
             surface, amountUsd, address: activeWallet.address, walletType: activeWallet.walletClientType,
           });
-          if (!/already_funded|sufficient/i.test(gasMsg)) {
-            setError(es
-              ? "No se pudo preparar el gas. Si el pago falla, intentá de nuevo."
-              : "Gas setup failed. If payment fails, please retry.");
-          }
+          // Transport error — fall back to the component-level ETH balance
+          // snapshot. If it's > 0 we assume the wallet already has some gas
+          // and a tx attempt may still succeed. If it's 0 or null, abort.
+          if ((eth ?? 0) > 0) gasReady = true;
+        }
+        if (!gasReady) {
+          setError(es
+            ? "No pudimos cargar el gas de tu billetera. Reintentá en un minuto o escribí a soporte si persiste."
+            : "Could not prepare wallet gas. Retry in a minute, or contact support if it persists.");
+          return; // finally{} resets `paying`
         }
         const res = await privySendTransaction(
           { chainId: 8453, to: _USDC_BASE as `0x${string}`, data, value: "0" },
@@ -759,7 +898,13 @@ export function WalletPayCard({
 
   const handleFund = async () => {
     if (!activeWallet) return;
+    // Privy rejects a second addFunds while one is open ("Existing fiat
+    // onramp flow in progress" — 32 rows in payment_errors), e.g. auto-open
+    // from handlePay racing a manual Top-up tap.
+    if (fundInFlightRef.current) return;
+    fundInFlightRef.current = true;
     setError(null);
+    setOfferOpenInBrowser(false);
     try {
       // useAddFunds (Privy v3) surfaces ALL enabled onramps including Stripe,
       // whereas the legacy useFundWallet excludes Stripe by design. destination
@@ -829,26 +974,26 @@ export function WalletPayCard({
       poll();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (/cancel|closed|reject/i.test(msg)) return;
-      // Privy's Stripe fiat onramp intermittently returns "Unable to check
-      // payment status" / "Unable to open payment window" — the user did NOT
-      // get charged, but the flow is dead. Point them at an alternative path
-      // (Ru$h purchase via our own Stripe wire, then pay the surface in Ru$h)
-      // instead of dumping the raw error message.
-      const isOnrampGlitch =
-        /unable to (check payment status|open payment window)/i.test(msg) ||
-        /something went wrong setting up checkout/i.test(msg);
-      if (isOnrampGlitch) {
-        setError(es
-          ? "El pago con tarjeta está fallando en este momento. Prueba con 🎫 Ru$h 💎 (también con tarjeta, pipeline distinta) o vuelve a intentarlo en unos minutos."
-          : "Card top-up is glitching right now. Try 🎫 Ru$h 💎 instead (also card-based, different pipeline) or retry in a couple of minutes.");
-      } else {
-        setError(es ? `No se pudo abrir el pago: ${msg}` : `Could not open payment: ${msg}`);
+      const kind = classifyOnrampError(msg);
+      if (kind === "cancel") return;
+      // For glitch/failed cases, route to crypto fallback if the caller provided one
+      if ((kind === "stripe_failed" || kind === "status_timeout") && onCryptoFallback) {
+        reportWalletClientError("addFunds_fallback_to_crypto", err, {
+          surface, amountUsd, address: activeWallet?.address,
+          walletType: activeWallet?.walletClientType,
+        });
+        onCryptoFallback();
+        return;
       }
+      setError(onrampErrorMessage(kind, es, msg));
+      setOfferOpenInBrowser(shouldOfferOpenInBrowser(kind));
       reportWalletClientError("addFunds", err, {
         surface, amountUsd, address: activeWallet?.address,
         walletType: activeWallet?.walletClientType,
+        onrampErrorKind: kind,
       });
+    } finally {
+      fundInFlightRef.current = false;
     }
   };
 
@@ -913,7 +1058,7 @@ export function WalletPayCard({
         </button>
         <button
           type="button"
-          onClick={() => { try { connectWallet(); } catch (e) { reportWalletClientError("connectWallet", e, { surface }); } }}
+          onClick={() => { try { connectWallet({ walletList: CONNECT_WALLET_LIST }); } catch (e) { reportWalletClientError("connectWallet", e, { surface }); } }}
           className="w-full py-2 rounded-xl text-xs font-semibold transition active:scale-[0.98]"
           style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.55)" }}
         >
@@ -923,27 +1068,70 @@ export function WalletPayCard({
     );
   }
   if (recovery.status === "no_wallet") {
+    const exhausted = noWalletReloadCount >= 1;
+    const addrShort = recovery.serverWalletAddr
+      ? `${recovery.serverWalletAddr.slice(0, 6)}…${recovery.serverWalletAddr.slice(-4)}`
+      : null;
     return (
       <div className="rounded-xl border border-amber-400/40 bg-amber-500/[0.06] p-3 space-y-2">
         <div className="flex items-center gap-2">
-          <span className="text-lg">💫</span>
+          <span className="text-lg">{exhausted ? "⚠️" : "💫"}</span>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-bold text-white">{es ? "Sincronizando billetera…" : "Syncing wallet…"}</p>
+            <p className="text-sm font-bold text-white">
+              {exhausted
+                ? (es ? "Tu billetera no cargó" : "Wallet didn't load")
+                : (es ? "Sincronizando billetera…" : "Syncing wallet…")}
+            </p>
             <p className="text-[11px] text-white/60 leading-snug">
-              {es
-                ? `Vinculando ${recovery.serverWalletAddr ? "tu wallet " + recovery.serverWalletAddr.slice(0, 6) + "…" : "tu wallet"}. Reintentando en 30s…`
-                : `Linking ${recovery.serverWalletAddr ? "wallet " + recovery.serverWalletAddr.slice(0, 6) + "…" : "your wallet"}. Auto-retrying in 30s…`}
+              {exhausted
+                ? (es
+                  ? `Tu PNPtv Wallet existe${addrShort ? ` (${addrShort})` : ""} pero no cargó en este dispositivo. Salí y volvé a entrar.`
+                  : `Your PNPtv Wallet exists${addrShort ? ` (${addrShort})` : ""} but didn't hydrate on this device. Log out and sign back in.`)
+                : (es
+                  ? `Vinculando ${addrShort ? "wallet " + addrShort : "tu wallet"}. Reintentando en 30s…`
+                  : `Linking ${addrShort ? "wallet " + addrShort : "your wallet"}. Auto-retrying in 30s…`)}
             </p>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={() => window.location.reload()}
-          className="w-full py-2.5 rounded-xl text-xs font-semibold text-white/90 transition"
-          style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)" }}
-        >
-          {es ? "Recargar página" : "Refresh page"}
-        </button>
+        {exhausted ? (
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  try { sessionStorage.removeItem(NO_WALLET_RELOAD_KEY); } catch { /* ignore */ }
+                  await logout();
+                } catch (err) {
+                  reportWalletClientError("logoutFromNoWalletRecovery", err, { surface });
+                }
+              }}
+              className="flex-1 py-2.5 rounded-xl text-xs font-bold text-white transition active:scale-[0.97]"
+              style={{ background: "linear-gradient(135deg,#f59e0b,#d97706)" }}
+            >
+              {es ? "Cerrar sesión" : "Log out"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                try { sessionStorage.removeItem(NO_WALLET_RELOAD_KEY); } catch { /* ignore */ }
+                window.location.reload();
+              }}
+              className="flex-1 py-2.5 rounded-xl text-xs font-semibold text-white/90 transition"
+              style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)" }}
+            >
+              {es ? "Reintentar" : "Try again"}
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="w-full py-2.5 rounded-xl text-xs font-semibold text-white/90 transition"
+            style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)" }}
+          >
+            {es ? "Recargar página" : "Refresh page"}
+          </button>
+        )}
       </div>
     );
   }
@@ -1012,6 +1200,7 @@ export function WalletPayCard({
           {error}
         </div>
       )}
+      {error && offerOpenInBrowser && <OpenInBrowserButton es={es} />}
       {connectError && (
         <div className="text-[11px] text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2 py-1.5">
           {connectError}
@@ -1088,6 +1277,7 @@ export function WalletPayCard({
             const leftoverUsd = Math.max(0, topupUsd - amountUsd);
             const showsLeftover = leftoverUsd >= 0.5;
             return (
+              <>
               <button
                 type="button"
                 onClick={handleFund}
@@ -1109,6 +1299,20 @@ export function WalletPayCard({
                       : `This purchase: $${amountUsd.toFixed(2)} (top-up minimum)`}
                 </span>
               </button>
+              {/* MoonPay needs a popup this context can't open (Telegram /
+                  in-app browser / iOS home-screen app). Say so up front so
+                  users pick Stripe here, or move to Safari for MoonPay. */}
+              {popupsUnsupported() && !error && (
+                <div className="space-y-1.5">
+                  <p className="text-[11px] text-pnp-textSecondary leading-snug text-center">
+                    {es
+                      ? `Aquí funciona Tarjeta / Apple Pay (Stripe). MoonPay solo abre en ${isIOSStandalone() ? "Safari" : "tu navegador"}.`
+                      : `Card / Apple Pay (Stripe) works here. MoonPay only opens in ${isIOSStandalone() ? "Safari" : "your browser"}.`}
+                  </p>
+                  <OpenInBrowserButton es={es} />
+                </div>
+              )}
+              </>
             );
           })()}
           {/* External wallet with insufficient USDC → user must top up inside
@@ -1302,7 +1506,7 @@ export function WalletLoginGate({ children, lang = "en" }: { children: React.Rea
         </button>
         <button
           type="button"
-          onClick={() => { try { connectWallet(); } catch (e) { reportWalletClientError("connectWalletFromGate", e, {}); } }}
+          onClick={() => { try { connectWallet({ walletList: CONNECT_WALLET_LIST }); } catch (e) { reportWalletClientError("connectWalletFromGate", e, {}); } }}
           className="w-full py-2 rounded-xl text-xs font-semibold transition active:scale-[0.98]"
           style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.55)" }}
         >
@@ -1316,7 +1520,7 @@ export function WalletLoginGate({ children, lang = "en" }: { children: React.Rea
 }
 
 export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
-  const { authenticated, login, exportWallet, getAccessToken } = usePrivy();
+  const { authenticated, login, logout, exportWallet, getAccessToken } = usePrivy();
   const { wallets } = useWallets();
   const recovery = usePrivyRecovery();
   const { addFunds } = useAddFunds();
@@ -1516,7 +1720,7 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
   const [dustError, setDustError] = _useState<string | null>(null);
   const [dustSuccess, setDustSuccess] = _useState<{ tokens: number; usd: number } | null>(null);
   const [dustCooldown, setDustCooldown] = _useState(false);
-  const [dustCfg, setDustCfg] = _useState<{ threshold_usd: number; min_usd: number; bonus_pct: number; eth_gas_reserve: number } | null>(null);
+  const [dustCfg, setDustCfg] = _useState<{ threshold_usd: number; min_usd: number; bonus_pct: number; eth_gas_reserve: number; cooldown_active?: boolean } | null>(null);
   const [ethUsdPrice, setEthUsdPrice] = _useState<number | null>(null);
 
   // Fetch dust config once per sheet open; failure falls back to prior
@@ -1525,7 +1729,14 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
   _useEffect(() => {
     let cancelled = false;
     _getDustConfig()
-      .then((c) => { if (!cancelled) setDustCfg({ threshold_usd: c.threshold_usd, min_usd: c.min_usd, bonus_pct: c.bonus_pct, eth_gas_reserve: c.eth_gas_reserve }); })
+      .then((c) => {
+        if (cancelled) return;
+        setDustCfg({ threshold_usd: c.threshold_usd, min_usd: c.min_usd, bonus_pct: c.bonus_pct, eth_gas_reserve: c.eth_gas_reserve, cooldown_active: !!c.cooldown_active });
+        // Mirror server-side cooldown into local state so the card stays
+        // suppressed even if dustCfg is re-fetched (prevents the ETH-after-USDC
+        // loop reported 2026-10-04).
+        if (c.cooldown_active) setDustCooldown(true);
+      })
       .catch(() => { /* fallback to defaults */ });
     // ETH spot price (public endpoint, no auth) — used to preview the ETH
     // sweep USD value when USDC is zero but ETH has dust.
@@ -1623,9 +1834,12 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
       refresh();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (/cancel|closed|reject/i.test(msg)) return;
-      setError(`Payment provider error: ${msg}`);
-      reportWalletClientError("addFunds", err, { source: "WalletHomeSheet", address });
+      const kind = classifyOnrampError(msg);
+      if (kind === "cancel") return;
+      setError(kind === "other" ? `Payment provider error: ${msg}` : onrampErrorMessage(kind, false, msg));
+      reportWalletClientError("addFunds", err, {
+        source: "WalletHomeSheet", address, onrampErrorKind: kind,
+      });
     }
   };
 
@@ -1699,7 +1913,7 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
     setError(null);
     setConnectError(null);
     try {
-      connectWallet();
+      connectWallet({ walletList: CONNECT_WALLET_LIST });
     } catch (err: unknown) {
       reportWalletClientError("connectWallet", err, { source: "WalletHomeSheet" });
       setConnectError(err instanceof Error ? err.message : String(err));
@@ -2167,12 +2381,24 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
             ? "WalletConnect"
             : activeWallet.walletClientType || "External";
 
-  // Auto-reload after 30s if still stuck in no_wallet state inside the sheet.
+  // Auto-reload after 30s if stuck in no_wallet state inside the sheet.
+  // Capped at 1 reload per session (sessionStorage counter shared with the
+  // WalletPayCard's identical guard — so no_wallet users don't get caught in
+  // a reload loop between the sheet and the pay card).
+  const SHEET_NO_WALLET_RELOAD_KEY = "pnpapp:privy:no_wallet_reload_count";
+  const [sheetNoWalletReloadCount, setSheetNoWalletReloadCount] = _useState<number>(() => {
+    try { return parseInt(sessionStorage.getItem(SHEET_NO_WALLET_RELOAD_KEY) || "0", 10) || 0; } catch { return 0; }
+  });
   _useEffect(() => {
     if (recovery.status !== "no_wallet") return;
-    const t = setTimeout(() => window.location.reload(), 30_000);
+    if (sheetNoWalletReloadCount >= 1) return;
+    const t = setTimeout(() => {
+      try { sessionStorage.setItem(SHEET_NO_WALLET_RELOAD_KEY, String(sheetNoWalletReloadCount + 1)); } catch { /* ignore */ }
+      setSheetNoWalletReloadCount(sheetNoWalletReloadCount + 1);
+      window.location.reload();
+    }, 30_000);
     return () => clearTimeout(t);
-  }, [recovery.status]);
+  }, [recovery.status, sheetNoWalletReloadCount]);
 
   // Recovery UI — same 3-state coverage as WalletPayCard. Presented as a
   // compact panel INSIDE the sheet (not a full-screen replacement) so users
@@ -2228,7 +2454,7 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
           </button>
           <button
             type="button"
-            onClick={() => { try { connectWallet(); } catch (e) { reportWalletClientError("connectWallet", e, { source: "WalletHomeSheet" }); } }}
+            onClick={() => { try { connectWallet({ walletList: CONNECT_WALLET_LIST }); } catch (e) { reportWalletClientError("connectWallet", e, { source: "WalletHomeSheet" }); } }}
             className="w-full py-2 rounded-xl text-xs font-semibold transition active:scale-[0.98]"
             style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.55)" }}
           >
@@ -2238,23 +2464,58 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
       );
     }
     if (recovery.status === "no_wallet") {
+      const sheetExhausted = sheetNoWalletReloadCount >= 1;
+      const sheetAddrShort = recovery.serverWalletAddr
+        ? `${recovery.serverWalletAddr.slice(0, 6)}…${recovery.serverWalletAddr.slice(-4)}`
+        : null;
       return (
         <div className="p-6 space-y-3">
           <div className="text-center space-y-1">
-            <div className="text-3xl">💫</div>
-            <p className="text-base font-bold text-white">Sincronizando billetera…</p>
+            <div className="text-3xl">{sheetExhausted ? "⚠️" : "💫"}</div>
+            <p className="text-base font-bold text-white">
+              {sheetExhausted ? "Tu billetera no cargó" : "Sincronizando billetera…"}
+            </p>
             <p className="text-xs text-white/60 max-w-xs mx-auto leading-relaxed">
-              {recovery.serverWalletAddr
-                ? `Vinculando ${recovery.serverWalletAddr.slice(0, 6)}…${recovery.serverWalletAddr.slice(-4)}. Reintentando en 30s…`
-                : "Vinculando tu wallet. Reintentando en 30s…"}
+              {sheetExhausted
+                ? `Tu PNPtv Wallet existe${sheetAddrShort ? ` (${sheetAddrShort})` : ""} pero no cargó en este dispositivo. Salí y volvé a entrar.`
+                : (sheetAddrShort
+                  ? `Vinculando ${sheetAddrShort}. Reintentando en 30s…`
+                  : "Vinculando tu wallet. Reintentando en 30s…")}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => window.location.reload()}
-            className="w-full py-2.5 rounded-xl text-sm font-semibold text-white/90 transition"
-            style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)" }}
-          >Recargar página</button>
+          {sheetExhausted ? (
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    try { sessionStorage.removeItem(SHEET_NO_WALLET_RELOAD_KEY); } catch { /* ignore */ }
+                    await logout();
+                  } catch (err) {
+                    reportWalletClientError("logoutFromSheetNoWalletRecovery", err, {});
+                  }
+                }}
+                className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white transition active:scale-[0.97]"
+                style={{ background: "linear-gradient(135deg,#f59e0b,#d97706)" }}
+              >Cerrar sesión</button>
+              <button
+                type="button"
+                onClick={() => {
+                  try { sessionStorage.removeItem(SHEET_NO_WALLET_RELOAD_KEY); } catch { /* ignore */ }
+                  window.location.reload();
+                }}
+                className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white/90 transition"
+                style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)" }}
+              >Reintentar</button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="w-full py-2.5 rounded-xl text-sm font-semibold text-white/90 transition"
+              style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)" }}
+            >Recargar página</button>
+          )}
         </div>
       );
     }
@@ -2769,6 +3030,10 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
                   ? Math.max(0, eth - _ethReserve) * ethUsdPrice
                   : 0;
                 const _ethEligible = !_usdcEligible && _ethSpendable >= _min && _ethSpendable < _threshold;
+                // Suppress the whole card during the 24h cooldown — unless
+                // the user *just* converted (dustSuccess) in which case we
+                // keep showing the success state until they close the sheet.
+                if ((dustCfg?.cooldown_active || dustCooldown) && !dustSuccess) return null;
                 if (!_usdcEligible && !_ethEligible && !dustSuccess) return null;
                 const _asset: "usdc" | "eth" = _usdcEligible ? "usdc" : "eth";
                 const _sweepUsd = _asset === "usdc" ? Number(usdc) : _ethSpendable;
