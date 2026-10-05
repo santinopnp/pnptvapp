@@ -1,4 +1,4 @@
--- Migration 410: fix fiat_cashout_orders lane constraint + mark automatic payouts
+-- Migration 419: fix fiat_cashout_orders lane constraint + mark automatic payouts
 --
 -- 1. cashoutService.requestCashout (the only active cashout path since the
 --    2026-09-05 simplification) has inserted lane='privy_wallet' since it was
