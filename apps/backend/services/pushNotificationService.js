@@ -102,7 +102,7 @@ class PushNotificationService {
       body: body || '',
       url: url || '/',
       icon: icon || '/app-icon-192.png',
-      badge: '/badge-diamond.png',
+      badge: '/badge-diamond-v2.png',
     };
     // The Web Push spec's `image` field displays a large banner under the
     // body — a good spot for the actor's avatar / a live-snapshot card.
