@@ -740,19 +740,34 @@ async function _fulfill(client, { userId, entitlementSpec, surface, provider, in
           intentId, amountUsd, ...result.amounts,
         });
       } catch (err) {
+        // On a partial failure, _dispatchLegsInParallel's error carries
+        // `.results` (one entry per leg, fulfilled or rejected) — some legs
+        // may have already landed on-chain. Surface exactly which ones so a
+        // manual retry resends only the failed legs, never the successful
+        // ones (that would double-pay a co-founder/treasury/reinvestment).
+        const succeeded = (err.results || [])
+          .filter((r) => r.status === 'fulfilled')
+          .map((r) => `${r.value.label}→${r.value.to} ($${r.value.usd}, tx ${r.value.hash})`);
+        const stillFailed = (err.results || [])
+          .filter((r) => r.status === 'rejected')
+          .map((r) => r.reason?.message || String(r.reason));
         logger.error('[walletCheckout] PRIME channel split failed — needs manual reconciliation', {
-          intentId, amountUsd, error: err.message,
+          intentId, amountUsd, error: err.message, succeededLegs: succeeded, failedLegs: stillFailed,
         });
         try {
           const channel = process.env.SLACK_OPS_ADMIN_CHANNEL || process.env.SLACK_OPS_INCIDENTS_CHANNEL;
           const token = process.env.SLACK_BOT_TOKEN;
           if (channel && token) {
+            const succeededText = succeeded.length
+              ? `\nAlready sent (do NOT resend): ${succeeded.join('; ')}`
+              : '';
+            const failedText = stillFailed.length ? `\nStill failed: ${stillFailed.join('; ')}` : '';
             await fetch('https://slack.com/api/chat.postMessage', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json; charset=utf-8', Authorization: `Bearer ${token}` },
               body: JSON.stringify({
                 channel,
-                text: `🚨 PRIME split failed for intent \`${intentId}\` ($${amountUsd}): ${err.message}\nNeeds manual on-chain dispatch of 35/35/20/10 split.`,
+                text: `🚨 PRIME split failed for intent \`${intentId}\` ($${amountUsd}): ${err.message}\nNeeds manual on-chain dispatch of only the failed leg(s) of the 35/35/20/10 split.${succeededText}${failedText}`,
               }),
             });
           }

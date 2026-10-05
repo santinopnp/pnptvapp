@@ -110,39 +110,70 @@ async function getCreatorBalance(creatorId) {
  * @returns {Promise<object>} dispatchResult from payoutSplitService.dispatchSplit
  */
 async function _dispatchAndFinalize(order, earningIds, walletAddress) {
+  let dispatchResult;
   try {
-    const dispatchResult = await dispatchSplit({
+    dispatchResult = await dispatchSplit({
       orderId: order.id,
       creatorId: order.creator_id,
       amountUsd: parseFloat(order.amount_usd),
       creatorAddress: walletAddress,
     });
-
-    const meta = JSON.stringify({ split: dispatchResult, lane: order.lane });
-    await query(
-      `UPDATE fiat_cashout_orders
-          SET status = 'settled',
-              provider_ref = $2,
-              provider_meta = $3::jsonb,
-              processed_at = NOW(),
-              settled_at = NOW(),
-              updated_at = NOW()
-        WHERE id = $1`,
-      [order.id, dispatchResult.txCreator, meta]
-    );
-    await query(
-      `UPDATE creator_earnings
-          SET status = 'paid_out', updated_at = NOW()
-        WHERE id = ANY($1::uuid[])`,
-      [earningIds]
-    );
-    return dispatchResult;
   } catch (dispatchErr) {
+    // Nothing landed on-chain — dispatchSplit only throws after exhausting
+    // its own retries — so it's still safe to release the reserved earnings.
     logger.error('[cashoutService] dispatch failed — rolling back order', {
       orderId: order.id, lane: order.lane, error: dispatchErr.message,
     });
     await failCashoutOrder(order.id, dispatchErr.message);
     throw err('DISPATCH_FAILED', `Payment dispatch failed: ${dispatchErr.message}`, 502);
+  }
+
+  // The USDC is on-chain now. These bookkeeping writes must NEVER fall back
+  // to failCashoutOrder — that reverts earnings to 'available' and would let
+  // a retried cashout resend money that's already gone. Retry the writes
+  // instead, and if they still fail, surface a distinct error so ops pages
+  // a human for manual reconciliation (mirrors refundService.approveRefund's
+  // phase-3 handling of the same risk).
+  const meta = JSON.stringify({ split: dispatchResult, lane: order.lane });
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await query(
+        `UPDATE fiat_cashout_orders
+            SET status = 'settled',
+                provider_ref = $2,
+                provider_meta = $3::jsonb,
+                processed_at = NOW(),
+                settled_at = NOW(),
+                updated_at = NOW()
+          WHERE id = $1`,
+        [order.id, dispatchResult.txCreator, meta]
+      );
+      await query(
+        `UPDATE creator_earnings
+            SET status = 'paid_out', updated_at = NOW()
+          WHERE id = ANY($1::uuid[])`,
+        [earningIds]
+      );
+      return dispatchResult;
+    } catch (writeErr) {
+      logger.error('[cashoutService] USDC sent but order/earnings update failed — retrying', {
+        orderId: order.id, txHash: dispatchResult.txCreator, attempt, error: writeErr.message,
+      });
+      if (attempt === 3) {
+        _notifyOpsPaidButUnrecorded({
+          orderId: order.id,
+          creatorId: order.creator_id,
+          txHash: dispatchResult.txCreator,
+          walletAddress,
+          amountUsd: order.amount_usd,
+        }).catch(() => {});
+        throw Object.assign(
+          new Error('Cashout paid on-chain but the database update failed — needs manual reconciliation'),
+          { code: 'PAID_BUT_UNRECORDED', status: 500, txHash: dispatchResult.txCreator }
+        );
+      }
+      await new Promise((res) => setTimeout(res, 500 * attempt));
+    }
   }
 }
 
@@ -339,9 +370,10 @@ async function requestCashout({ creatorId, amountUsd, lane, destination }) {
     return { order, dispatch: dispatchResult };
   } catch (e) {
     // Only roll back if the transaction is still open (i.e. we didn't COMMIT yet).
-    // If e is our structured error thrown after COMMIT (dispatch failure), the
-    // failCashoutOrder call above already handled cleanup.
-    if (e.code !== 'DISPATCH_FAILED') {
+    // DISPATCH_FAILED and PAID_BUT_UNRECORDED are both thrown after COMMIT —
+    // the former already released the earnings via failCashoutOrder, and the
+    // latter must NOT be rolled back (money already sent on-chain).
+    if (e.code !== 'DISPATCH_FAILED' && e.code !== 'PAID_BUT_UNRECORDED') {
       try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
     }
     throw e;
@@ -605,6 +637,22 @@ async function failCashoutOrder(orderId, reason) {
   }
 
   logger.info('[cashoutService] order failed — earnings restored', { orderId, reason, earningCount: earningIds?.length });
+}
+
+// ── Notifications ────────────────────────────────────────────────────────────
+
+async function _notifyOpsPaidButUnrecorded({ orderId, creatorId, txHash, walletAddress, amountUsd }) {
+  const channel = process.env.SLACK_OPS_ADMIN_CHANNEL || process.env.SLACK_OPS_INCIDENTS_CHANNEL;
+  const token = process.env.SLACK_BOT_TOKEN;
+  if (!channel || !token) return;
+  await fetch('https://slack.com/api/chat.postMessage', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json; charset=utf-8', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({
+      channel,
+      text: `🚨 Cashout order \`${orderId}\` (creator \`${creatorId}\`) — USDC SENT ($${amountUsd} → \`${walletAddress}\`, tx \`${txHash}\`) but the DB update failed 3x. Needs manual reconciliation: mark the order 'settled' and the earnings 'paid_out' by hand once verified.`,
+    }),
+  });
 }
 
 module.exports = {
