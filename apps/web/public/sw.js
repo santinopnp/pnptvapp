@@ -6,7 +6,7 @@
 const CACHE_NAME = 'pnptv-49060921';
 const APP_SHELL = [
   '/Logo2-50.png',
-  '/badge-diamond-v2.png',
+  '/badge-diamond-v3.png',
   '/logo-login.png',
   '/logo-header.png',
   '/logo-nav.png',
@@ -100,7 +100,7 @@ self.addEventListener('push', (event) => {
   const options = {
     body: data.body || '',
     icon: data.icon || '/app-icon-192.png',
-    badge: '/badge-diamond-v2.png',
+    badge: '/badge-diamond-v3.png',
     tag: data.tag || undefined,
     renotify: !!data.tag,
     vibrate: [200, 100, 200],

@@ -25,6 +25,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useI18n } from "@/lib/i18n";
 import { getCreatorEligibilityStatus, getXStatus, sharePostToX, getOwnChannels, getProfile, searchCreators, createXEmbedPost, getSocialMuxUploadUrl, finalizeSocialMuxPost, generateAiVideoMetadata, type SocialPostItem, type CreatorChannel, type MentionUser } from "@/lib/api";
 import { MentionInput } from "@/components/MentionInput";
+import { MentionText } from "@/components/MentionText";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -306,6 +307,7 @@ export function PostComposer({
   const [isGeneratingAi, setIsGeneratingAi] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [showAiBox, setShowAiBox] = useState(false);
+  const [previewMode, setPreviewMode] = useState(false);
 
   const handleGenerateAiMetadata = useCallback(async () => {
     const promptText = aiPrompt.trim();
@@ -586,6 +588,7 @@ export function PostComposer({
     setShowTagPicker(false);
     setTagQuery("");
     setTagResults([]);
+    setPreviewMode(false);
     if (compact) setIsExpanded(false);
   }, [compact]);
 
@@ -930,26 +933,57 @@ export function PostComposer({
             tabIndex={-1}
           />
 
+          {/* Write / Preview tab toggle */}
+          <div className="flex items-center gap-1 mb-2">
+            <button
+              type="button"
+              onClick={() => setPreviewMode(false)}
+              className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${!previewMode ? "bg-white/15 text-white" : "text-white/40 hover:text-white/60"}`}
+            >
+              Write
+            </button>
+            <button
+              type="button"
+              onClick={() => setPreviewMode(true)}
+              disabled={!text.trim()}
+              className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors disabled:opacity-30 ${previewMode ? "bg-white/15 text-white" : "text-white/40 hover:text-white/60"}`}
+            >
+              Preview
+            </button>
+          </div>
+
           {/* Textarea — MentionInput adds @-autocomplete dropdown on top of a
               plain textarea. We keep the same visual chrome, sizing, and
               maxLength cap (MAX_CHARS + 50 for the soft overflow) as before. */}
-          <label htmlFor={textareaId} className="sr-only">
-            {resolvedPlaceholder}
-          </label>
-          <MentionInput
-            id={textareaId}
-            textareaRef={textareaRef}
-            value={text}
-            onChange={(v) => setText(v.slice(0, MAX_CHARS + 50))}
-            onKeyDown={handleKeyDown}
-            placeholder={resolvedPlaceholder}
-            rows={compact ? 2 : 3}
-            disabled={isPosting}
-            maxLength={MAX_CHARS + 50}
-            className="w-full bg-transparent text-white py-2 border-b border-white/10 mb-2 resize-none outline-none placeholder:text-white/40 disabled:opacity-60 overflow-hidden"
-            style={{ minHeight: "44px", fontSize: "16px" }}
-            aria-describedby={error ? `${baseId}-error` : undefined}
-          />
+          {previewMode ? (
+            <div
+              className="w-full py-2 border-b border-white/10 mb-2 text-sm text-white/90 leading-relaxed min-h-[44px]"
+              onClick={() => setPreviewMode(false)}
+              title="Click to edit"
+            >
+              <MentionText text={text} />
+            </div>
+          ) : (
+            <>
+              <label htmlFor={textareaId} className="sr-only">
+                {resolvedPlaceholder}
+              </label>
+              <MentionInput
+                id={textareaId}
+                textareaRef={textareaRef}
+                value={text}
+                onChange={(v) => setText(v.slice(0, MAX_CHARS + 50))}
+                onKeyDown={handleKeyDown}
+                placeholder={resolvedPlaceholder}
+                rows={compact ? 2 : 3}
+                disabled={isPosting}
+                maxLength={MAX_CHARS + 50}
+                className="w-full bg-transparent text-white py-2 border-b border-white/10 mb-2 resize-none outline-none placeholder:text-white/40 disabled:opacity-60 overflow-hidden"
+                style={{ minHeight: "44px", fontSize: "16px" }}
+                aria-describedby={error ? `${baseId}-error` : undefined}
+              />
+            </>
+          )}
 
           {/* Character counter */}
           <div className="flex justify-end mb-2">

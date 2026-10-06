@@ -1255,9 +1255,9 @@ function HangoutChatPanel({
                             return (
                               <>
                                 {noteText && (
-                                  <p className="mb-1.5">
+                                  <div className="mb-1.5">
                                     <MentionText text={noteText} />
-                                  </p>
+                                  </div>
                                 )}
                                 <div className="w-full rounded-lg overflow-hidden border border-white/15 bg-black/20">
                                   {hasThumb && (
@@ -1312,7 +1312,7 @@ function HangoutChatPanel({
                             <SharedPostCard postId={msg.meta.postId} snapshot={msg.meta.snapshot || {}} isMe={isMe} />
                           ) : msg.content ? (
                             <>
-                              <p className={msg.media_url ? "mt-0.5" : ""}><MentionText text={msg.content} /></p>
+                              <div className={msg.media_url ? "mt-0.5" : ""}><MentionText text={msg.content} /></div>
                               <PnptvLinkPreview messageContent={msg.content} />
                             </>
                           ) : null}

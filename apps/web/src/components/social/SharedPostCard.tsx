@@ -150,9 +150,9 @@ export function SharedPostCard({ postId, snapshot, isMe = false }: Props) {
   return (
     <>
       {snapshot.note && (
-        <p className="mb-1.5">
+        <div className="mb-1.5">
           <MentionText text={snapshot.note} />
-        </p>
+        </div>
       )}
 
       <div
