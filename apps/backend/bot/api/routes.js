@@ -5811,6 +5811,30 @@ app.post('/api/internal/broadcast/lifetime80', healthLimiter, asyncHandler(async
   });
 }));
 
+// GET /api/internal/nowpayments-balance — live NowPayments merchant balance.
+// Called by the remote payments-monitor routine (runs outside the server IP range).
+// Auth: Bearer INTERNAL_ZOHO_SECRET.
+app.get('/api/internal/nowpayments-balance', healthLimiter, asyncHandler(async (req, res) => {
+  const bearer = req.headers.authorization?.replace(/^Bearer\s+/, '');
+  const expected = process.env.INTERNAL_ZOHO_SECRET;
+  if (!expected || bearer !== expected) {
+    return res.status(401).json({ success: false, error: 'unauthorized' });
+  }
+  const axios = require('axios');
+  try {
+    const r = await axios.get('https://api.nowpayments.io/v1/balance', {
+      headers: { 'x-api-key': process.env.NOWPAYMENTS_API_KEY },
+      timeout: 8000,
+    });
+    return res.json({ success: true, balance: r.data });
+  } catch (err) {
+    const status = err.response?.status;
+    const data   = err.response?.data;
+    logger.warn('nowpayments balance fetch failed', { status, data });
+    return res.status(502).json({ success: false, error: 'nowpayments_error', detail: data || err.message });
+  }
+}));
+
 // GET /api/health/webhooks — public ePayco webhook delivery health (7d window).
 // Reports invalid-signature rate (security) + state-code distribution.
 app.get('/api/health/webhooks', healthLimiter, asyncHandler(async (req, res) => {

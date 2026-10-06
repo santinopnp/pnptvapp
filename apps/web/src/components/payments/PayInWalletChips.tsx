@@ -342,6 +342,7 @@ export type OnrampErrorKind =
   | "provider_region" // provider not offered in the user's country
   | "status_timeout"  // MoonPay popup flow: status polling gave up
   | "provider_failed" // MoonPay popup flow: provider reported failure
+  | "flow_in_progress" // Privy: previous onramp session still open
   | "other";
 
 export function classifyOnrampError(msg: string): OnrampErrorKind {
@@ -352,6 +353,7 @@ export function classifyOnrampError(msg: string): OnrampErrorKind {
   if (/identity verification|kyc|transaction_limit_reached|link authentication|something went wrong setting up checkout|stripe crypto sdk|failed to fetch/i.test(msg)) return "stripe_failed";
   if (/user exited|cancel|reject/i.test(msg)) return "cancel";
   if (/^(error: )?transaction failed/i.test(msg)) return "provider_failed";
+  if (/existing fiat onramp flow in progress/i.test(msg)) return "flow_in_progress";
   return "other";
 }
 
@@ -403,6 +405,10 @@ export function onrampErrorMessage(kind: OnrampErrorKind, es: boolean, rawMsg: s
       return es
         ? "Aún no pudimos confirmar el pago. Si ya te cobraron, el saldo llegará en unos minutos; revisa tu billetera antes de pagar de nuevo."
         : "We couldn't confirm the payment yet. If you were charged, the balance will arrive in a few minutes; check your wallet before paying again.";
+    case "flow_in_progress":
+      return es
+        ? "Ya hay un proceso de pago abierto. Recarga la página e inténtalo de nuevo."
+        : "A payment flow is already open. Refresh the page and try again.";
     default:
       return es ? `No se pudo abrir el pago: ${rawMsg}` : `Could not open payment: ${rawMsg}`;
   }
@@ -866,6 +872,8 @@ export function WalletPayCard({
         || /insufficient.*funds|transfer.*exceed|exceeds.*balance|execution reverted/i.test(msg);
       const isUserCancel = /User rejected|user denied|cancel/i.test(msg);
       const isChain = /wrong network|unrecognized chain|chain mismatch|switch chain|network mismatch/i.test(msg);
+      const isSubscriptionsPaused = /subscriptions paused/i.test(msg);
+      const isCreatorLocked = /creator locked/i.test(msg);
 
       if (isInsufficientFunds && isEmbedded) {
         // Silently open the fund flow — no error banner, one seamless step.
@@ -884,9 +892,13 @@ export function WalletPayCard({
           : (es ? "Cancelaste la transacción." : "You cancelled the transaction.")
         : isChain
           ? (es ? "Cambia la red de tu billetera a Base y vuelve a intentar." : "Switch your wallet network to Base and try again.")
+        : isSubscriptionsPaused
+          ? (es ? "Las suscripciones de este creador están pausadas temporalmente." : "This creator's subscriptions are currently paused.")
+        : isCreatorLocked
+          ? (es ? "Este creador no acepta suscripciones en este momento." : "This creator isn't accepting subscriptions right now.")
           : msg;
       setError(friendly);
-      if (!isUserCancel) {
+      if (!isUserCancel && !isSubscriptionsPaused && !isCreatorLocked) {
         reportWalletClientError("sendTransaction", err, {
           surface, amountUsd, address: activeWallet?.address,
           walletType: activeWallet?.walletClientType,
@@ -976,6 +988,12 @@ export function WalletPayCard({
       const msg = err instanceof Error ? err.message : String(err);
       const kind = classifyOnrampError(msg);
       if (kind === "cancel") return;
+      // User-environment issues — show the message but don't log as a real error.
+      if (kind === "flow_in_progress" || kind === "popup_blocked") {
+        setError(onrampErrorMessage(kind, es, msg));
+        setOfferOpenInBrowser(shouldOfferOpenInBrowser(kind));
+        return;
+      }
       // For glitch/failed cases, route to crypto fallback if the caller provided one
       if ((kind === "stripe_failed" || kind === "status_timeout") && onCryptoFallback) {
         reportWalletClientError("addFunds_fallback_to_crypto", err, {
