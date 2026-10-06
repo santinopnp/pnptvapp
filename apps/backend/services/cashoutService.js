@@ -376,7 +376,7 @@ async function runAutoPayoutSweep() {
        FROM creator_earnings ce
        JOIN users u ON u.id = ce.creator_id
       WHERE ce.status = 'available'
-      GROUP BY ce.creator_id, wallet_address
+      GROUP BY ce.creator_id, u.preferred_wallet_address, u.wallet_address
      HAVING COALESCE(SUM(ce.amount_creator), 0) >= $1`,
     [AUTO_PAYOUT_MIN_USD]
   );
