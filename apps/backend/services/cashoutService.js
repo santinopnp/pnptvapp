@@ -102,18 +102,19 @@ async function getCreatorBalance(creatorId) {
  * Dispatch an already-reserved (status='in_payout') order's earnings on-chain
  * and finalize the order + earnings rows on success, or roll both back to
  * 'available'/'failed' on failure. Shared by requestCashout (creator-clicked)
- * and runAutoPayoutSweep (48h auto-payout) so both paths finalize identically.
+ * and runAutoPayoutSweep (auto-payout) so both paths finalize identically.
  *
- * @param {object} order — a fiat_cashout_orders row (id, creator_id)
+ * @param {object} order — a fiat_cashout_orders row (id, amount_usd, lane)
  * @param {string[]} earningIds
  * @param {string} walletAddress
+ * @param {string} creatorId
  * @returns {Promise<object>} dispatchResult from payoutSplitService.dispatchSplit
  */
-async function _dispatchAndFinalize(order, earningIds, walletAddress) {
+async function _dispatchAndFinalize(order, earningIds, walletAddress, creatorId) {
   try {
     const dispatchResult = await dispatchSplit({
       orderId: order.id,
-      creatorId: order.creator_id,
+      creatorId,
       amountUsd: parseFloat(order.amount_usd),
       creatorAddress: walletAddress,
     });
@@ -332,7 +333,7 @@ async function requestCashout({ creatorId, amountUsd, lane, destination }) {
     // order.amount_usd = accumulated (set in the INSERT above), so
     // _dispatchAndFinalize dispatches the correct locked amount, not the
     // originally-requested amountUsd.
-    const dispatchResult = await _dispatchAndFinalize(order, earningIds, destination.address);
+    const dispatchResult = await _dispatchAndFinalize(order, earningIds, destination.address, creatorId);
     order.status = 'settled';
     order.provider_ref = dispatchResult.txCreator;
 
@@ -354,9 +355,9 @@ async function requestCashout({ creatorId, amountUsd, lane, destination }) {
  * Auto-payout sweep — pays matured (status='available') earnings straight to
  * the creator's Privy wallet without waiting for them to click "cash out".
  * Run hourly from services/workers/index.js's 'earnings-maturation' job, right
- * after that job flips holding -> available on EARNINGS_HOLD_HOURS (48h)
+ * after that job flips holding -> available on EARNINGS_HOLD_HOURS (6h)
  * maturity, so a creator's balance reaches their wallet within ~1h of
- * maturing (i.e. within ~49h of being earned).
+ * maturing (i.e. within ~7h of being earned).
  *
  * Idempotent and safe to run concurrently with a manual cashout or with
  * itself: it uses the exact same reservation pattern as requestCashout
@@ -456,7 +457,7 @@ async function runAutoPayoutSweep() {
         orderId: order.id, creatorId, amountUsd, earningCount: earningIds.length,
       });
 
-      await _dispatchAndFinalize(order, earningIds, walletAddress);
+      await _dispatchAndFinalize(order, earningIds, walletAddress, creatorId);
       logger.info('[cashoutService] auto payout settled', { orderId: order.id, creatorId, amountUsd });
       paid++;
     } catch (e) {

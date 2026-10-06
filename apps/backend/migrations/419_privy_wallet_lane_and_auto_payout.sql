@@ -1,4 +1,4 @@
--- Migration 410: fix fiat_cashout_orders lane constraint + mark automatic payouts
+-- Migration 419: fix fiat_cashout_orders lane constraint + mark automatic payouts
 --
 -- 1. cashoutService.requestCashout (the only active cashout path since the
 --    2026-09-05 simplification) has inserted lane='privy_wallet' since it was
@@ -9,7 +9,7 @@
 --    validate).
 --
 -- 2. is_automatic distinguishes creator-initiated cashouts (cashoutRoutes.js)
---    from the new 48h auto-payout sweep (cashoutService.runAutoPayoutSweep,
+--    from the auto-payout sweep (cashoutService.runAutoPayoutSweep,
 --    services/workers/index.js 'earnings-maturation') for ops/audit queries.
 
 BEGIN;
@@ -25,6 +25,6 @@ ALTER TABLE fiat_cashout_orders
   ADD COLUMN IF NOT EXISTS is_automatic BOOLEAN NOT NULL DEFAULT FALSE;
 
 COMMENT ON COLUMN fiat_cashout_orders.is_automatic IS
-  'true = dispatched by the 48h auto-payout sweep (cashoutService.runAutoPayoutSweep); false = creator clicked "cash out" via cashoutRoutes.js.';
+  'true = dispatched by the auto-payout sweep (cashoutService.runAutoPayoutSweep); false = creator clicked "cash out" via cashoutRoutes.js.';
 
 COMMIT;
