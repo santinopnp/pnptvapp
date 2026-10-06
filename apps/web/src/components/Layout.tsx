@@ -19,7 +19,7 @@ const CristinaWidget = lazy(() => import("@/components/CristinaWidget").then((m)
 import { LanguageSelector } from "@/components/LanguageSelector";
 import { NotificationBell } from "@/components/NotificationBell";
 import { UserAvatar } from "@/components/UserAvatar";
-import { AdSlot } from "@/components/AdSlot";
+import { AdSlot, MenPageBanner } from "@/components/AdSlot";
 import { FeaturedModelInterstitial, PnpFamWelcomeGate } from "@/components/badges/PnpFamWelcomeGate";
 import { Toast } from "@/components/Toast";
 import { useNearbyToggle } from "@/components/NearbyBadge";
@@ -2100,6 +2100,7 @@ export function Layout() {
           of the viewport (desktop). Kill switch: pnpapp:ads:enabled=0 in Redis. */}
       {isAuthenticated && user?.ageVerified && user?.termsAccepted && (
         <>
+          <MenPageBanner isMobile={isMobile} />
           {isMobile ? <AdSlot slot="popunder_mobile" /> : <AdSlot slot="popunder_desktop" />}
           {!isMobile && <AdSlot slot="push_inpage" showChip={false} />}
           {!isMobile && <AdSlot slot="inpage_push_v2" showChip={false} />}

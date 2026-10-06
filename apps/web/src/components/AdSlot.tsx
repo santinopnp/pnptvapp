@@ -371,3 +371,75 @@ export function AdSlot({ slot, className, style, onVastUrl, showChip = true }: P
 }
 
 export default AdSlot;
+
+// ── MenPageBanner ─────────────────────────────────────────────────────────────
+// One floating 300×250 banner per page. Free users: every page. PRIME: once
+// per 30 min with 33% probability. Resets on every navigation so free users
+// always get one. Close button hides for the current page only.
+const MEN_PAGE_PRIME_KEY = "pnpapp:men:page_ts";
+
+export function MenPageBanner({ isMobile }: { isMobile: boolean }) {
+  const { isPrime, isAdmin } = useTier();
+  const location = useLocation();
+  const [show, setShow] = useState(false);
+  const [imgIdx] = useState(() => Math.floor(Math.random() * 2));
+
+  useEffect(() => {
+    setShow(false);
+    if (isAdmin) return;
+    if (isRouteSuppressed(location.pathname)) return;
+    if (isLiveActivelyEngaged(location.pathname)) return;
+
+    if (isPrime) {
+      try {
+        const ts = parseInt(sessionStorage.getItem(MEN_PAGE_PRIME_KEY) || "0", 10);
+        if (Date.now() - ts < 30 * 60_000) return;
+        if (Math.random() > 0.33) return;
+        sessionStorage.setItem(MEN_PAGE_PRIME_KEY, String(Date.now()));
+      } catch { return; }
+    }
+
+    setShow(true);
+  }, [location.pathname, isPrime, isAdmin]);
+
+  if (!show) return null;
+
+  const banners = MEN_BANNERS["300x250"];
+  const src = banners[imgIdx % banners.length];
+
+  return (
+    <div
+      className="fixed z-[29] pointer-events-none"
+      style={isMobile
+        ? { bottom: "calc(4rem + env(safe-area-inset-bottom,0px) + 4px)", left: 0, right: 0, display: "flex", justifyContent: "center" }
+        : { bottom: "1rem", right: "1rem" }
+      }
+    >
+      <div className="pointer-events-auto relative shadow-2xl rounded-md overflow-hidden">
+        <button
+          type="button"
+          onClick={() => { setShow(false); trackAdEvent("men_page", "close", { tier: isPrime ? "prime" : "free" }); }}
+          className="absolute top-1 right-1 z-10 w-5 h-5 rounded-full bg-black/60 text-white/80 hover:bg-black/90 hover:text-white flex items-center justify-center text-xs leading-none"
+          aria-label="Close ad"
+        >×</button>
+        <a
+          href={MEN_AFFILIATE_URL}
+          target="_blank"
+          rel="noopener noreferrer sponsored"
+          onClick={() => trackAdEvent("men_page", "click", { size: "300x250", tier: isPrime ? "prime" : "free" })}
+          aria-label="Advertisement"
+          style={{ display: "block" }}
+        >
+          <img
+            src={src}
+            width={300}
+            height={250}
+            alt=""
+            style={{ display: "block", maxWidth: "300px", height: "auto" }}
+            loading="lazy"
+          />
+        </a>
+      </div>
+    </div>
+  );
+}
