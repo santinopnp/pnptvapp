@@ -17679,7 +17679,7 @@ app.post('/api/wallet/checkout/initiate', walletSpendLimiter, requireSessionAuth
   const walletCheckoutService = require('../../services/walletCheckoutService');
   const { query: dbQuery } = require('../../config/postgres');
   const userId = req.session?.user?.id;
-  const { rail, surface, entitlementSpec: clientSpec = {}, metadata = {} } = req.body || {};
+  const { rail, surface, entitlementSpec: clientSpec = {}, metadata = {}, idempotencyKey } = req.body || {};
 
   if (!rail || !['usdc', 'rush', 'eth'].includes(rail)) return res.status(400).json({ error: 'invalid rail' });
   const ALLOWED_SURFACES = new Set(['tip', 'creator_sub', 'rush', 'membership', 'prime', 'donation', 'call', 'crystal_self', 'crystal_gift', 'channel_pass']);
@@ -17725,11 +17725,23 @@ app.post('/api/wallet/checkout/initiate', walletSpendLimiter, requireSessionAuth
       });
       return res.json({ ok: true, rail, ...result });
     }
+    // idempotencyKey is optional — the client generates it once per purchase
+    // action (e.g. on button press) and resends the SAME value on a retry/
+    // double-click so initiateRushPurchase can dedupe instead of debiting
+    // twice. Bound its length defensively since it lands in a varchar(128)
+    // column.
+    const safeIdempotencyKey = (typeof idempotencyKey === 'string' && idempotencyKey.length > 0 && idempotencyKey.length <= 128)
+      ? idempotencyKey
+      : undefined;
     const result = await walletCheckoutService.initiateRushPurchase({
       userId, surface, amountUsd, entitlementSpec: resolvedSpec, metadata, allowGifted,
+      idempotencyKey: safeIdempotencyKey,
     });
     return res.json({ ok: true, rail, ...result });
   } catch (err) {
+    if (err.code === 'DUPLICATE_REQUEST_IN_PROGRESS') {
+      return res.status(409).json({ error: 'DUPLICATE_REQUEST_IN_PROGRESS', message: err.message });
+    }
     if (err.code === 'INSUFFICIENT_FUNDS') {
       return res.status(402).json({
         error: 'INSUFFICIENT_FUNDS', required: err.required, available: err.available,

@@ -110,39 +110,70 @@ async function getCreatorBalance(creatorId) {
  * @returns {Promise<object>} dispatchResult from payoutSplitService.dispatchSplit
  */
 async function _dispatchAndFinalize(order, earningIds, walletAddress) {
+  let dispatchResult;
   try {
-    const dispatchResult = await dispatchSplit({
+    dispatchResult = await dispatchSplit({
       orderId: order.id,
       creatorId: order.creator_id,
       amountUsd: parseFloat(order.amount_usd),
       creatorAddress: walletAddress,
     });
-
-    const meta = JSON.stringify({ split: dispatchResult, lane: order.lane });
-    await query(
-      `UPDATE fiat_cashout_orders
-          SET status = 'settled',
-              provider_ref = $2,
-              provider_meta = $3::jsonb,
-              processed_at = NOW(),
-              settled_at = NOW(),
-              updated_at = NOW()
-        WHERE id = $1`,
-      [order.id, dispatchResult.txCreator, meta]
-    );
-    await query(
-      `UPDATE creator_earnings
-          SET status = 'paid_out', updated_at = NOW()
-        WHERE id = ANY($1::uuid[])`,
-      [earningIds]
-    );
-    return dispatchResult;
   } catch (dispatchErr) {
+    // Nothing landed on-chain — dispatchSplit only throws after exhausting
+    // its own retries — so it's still safe to release the reserved earnings.
     logger.error('[cashoutService] dispatch failed — rolling back order', {
       orderId: order.id, lane: order.lane, error: dispatchErr.message,
     });
     await failCashoutOrder(order.id, dispatchErr.message);
     throw err('DISPATCH_FAILED', `Payment dispatch failed: ${dispatchErr.message}`, 502);
+  }
+
+  // The USDC is on-chain now. These bookkeeping writes must NEVER fall back
+  // to failCashoutOrder — that reverts earnings to 'available' and would let
+  // a retried cashout resend money that's already gone. Retry the writes
+  // instead, and if they still fail, surface a distinct error so ops pages
+  // a human for manual reconciliation (mirrors refundService.approveRefund's
+  // phase-3 handling of the same risk).
+  const meta = JSON.stringify({ split: dispatchResult, lane: order.lane });
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await query(
+        `UPDATE fiat_cashout_orders
+            SET status = 'settled',
+                provider_ref = $2,
+                provider_meta = $3::jsonb,
+                processed_at = NOW(),
+                settled_at = NOW(),
+                updated_at = NOW()
+          WHERE id = $1`,
+        [order.id, dispatchResult.txCreator, meta]
+      );
+      await query(
+        `UPDATE creator_earnings
+            SET status = 'paid_out', updated_at = NOW()
+          WHERE id = ANY($1::uuid[])`,
+        [earningIds]
+      );
+      return dispatchResult;
+    } catch (writeErr) {
+      logger.error('[cashoutService] USDC sent but order/earnings update failed — retrying', {
+        orderId: order.id, txHash: dispatchResult.txCreator, attempt, error: writeErr.message,
+      });
+      if (attempt === 3) {
+        _notifyOpsPaidButUnrecorded({
+          orderId: order.id,
+          creatorId: order.creator_id,
+          txHash: dispatchResult.txCreator,
+          walletAddress,
+          amountUsd: order.amount_usd,
+        }).catch(() => {});
+        throw Object.assign(
+          new Error('Cashout paid on-chain but the database update failed — needs manual reconciliation'),
+          { code: 'PAID_BUT_UNRECORDED', status: 500, txHash: dispatchResult.txCreator }
+        );
+      }
+      await new Promise((res) => setTimeout(res, 500 * attempt));
+    }
   }
 }
 
@@ -208,7 +239,13 @@ async function requestCashout({ creatorId, amountUsd, lane, destination }) {
   // Block concurrent / overlapping cashout orders. The DB-level SKIP LOCKED on
   // earnings rows prevents double-spend at the row level, but a creator with
   // a large balance can still spin up multiple orders in sequence — bad for
-  // every lane, since each one settles manually by an operator.
+  // every lane, since each one settles manually by an operator. This check
+  // is a fast-path only: it runs outside any transaction, so two concurrent
+  // requests can both pass it before either INSERTs. The real guarantee is
+  // the partial unique index from migration (see idx_one_open_cashout_per_creator)
+  // on (creator_id) WHERE status IN ('pending','processing') — the INSERT
+  // below will violate it for the loser of a race, and we translate that into
+  // this same OPEN_ORDER_EXISTS error.
   const { rows: openOrders } = await query(
     `SELECT id FROM fiat_cashout_orders
        WHERE creator_id = $1
@@ -225,7 +262,13 @@ async function requestCashout({ creatorId, amountUsd, lane, destination }) {
   }
 
   // Per-day cap (rolling 24h). Counts pending/processing/settled — anything
-  // that already committed earnings to a payout.
+  // that already committed earnings to a payout. Same fast-path caveat as
+  // above: this is re-checked against `accumulated` inside the transaction
+  // below, but a concurrent request racing this read can still slip a few
+  // dollars past the cap before the unique index above forces one of two
+  // racing requests to lose — acceptable since, per the audit, no funds can
+  // be double-spent (SKIP LOCKED) and this is a soft operational cap, not a
+  // security boundary.
   const { rows: dayRows } = await query(
     `SELECT COALESCE(SUM(amount_usd), 0)::numeric AS total
        FROM fiat_cashout_orders
@@ -302,13 +345,32 @@ async function requestCashout({ creatorId, amountUsd, lane, destination }) {
     // originally-requested `amountUsd`. Dispatching only `amountUsd` while
     // marking the full `accumulated` total as paid_out silently lost the
     // overshoot (the difference) with no record of where it went.
-    const { rows: orderRows } = await client.query(
-      `INSERT INTO fiat_cashout_orders
-         (creator_id, amount_usd, lane, status, destination, earning_ids)
-       VALUES ($1, $2, $3, 'pending', $4::jsonb, $5::uuid[])
-       RETURNING *`,
-      [String(creatorId), accumulated, lane, JSON.stringify(destination), earningIds]
-    );
+    let orderRows;
+    try {
+      ({ rows: orderRows } = await client.query(
+        `INSERT INTO fiat_cashout_orders
+           (creator_id, amount_usd, lane, status, destination, earning_ids)
+         VALUES ($1, $2, $3, 'pending', $4::jsonb, $5::uuid[])
+         RETURNING *`,
+        [String(creatorId), accumulated, lane, JSON.stringify(destination), earningIds]
+      ));
+    } catch (insertErr) {
+      // 23505 = unique_violation. The pre-check above is a fast path only
+      // (it runs outside this transaction) — idx_one_open_cashout_per_creator
+      // (partial unique index on creator_id WHERE status IN
+      // ('pending','processing')) is the actual guard against two concurrent
+      // requests both passing that check and racing to insert an order for
+      // the same creator. The loser lands here; report it the same way the
+      // fast-path check does.
+      if (insertErr.code === '23505') {
+        throw err(
+          'OPEN_ORDER_EXISTS',
+          'You already have a cashout order in flight. Wait for it to settle before requesting another.',
+          409
+        );
+      }
+      throw insertErr;
+    }
     const order = orderRows[0];
 
     // ── Flip selected earnings to in_payout ───────────────────────────────
@@ -339,9 +401,10 @@ async function requestCashout({ creatorId, amountUsd, lane, destination }) {
     return { order, dispatch: dispatchResult };
   } catch (e) {
     // Only roll back if the transaction is still open (i.e. we didn't COMMIT yet).
-    // If e is our structured error thrown after COMMIT (dispatch failure), the
-    // failCashoutOrder call above already handled cleanup.
-    if (e.code !== 'DISPATCH_FAILED') {
+    // DISPATCH_FAILED and PAID_BUT_UNRECORDED are both thrown after COMMIT —
+    // the former already released the earnings via failCashoutOrder, and the
+    // latter must NOT be rolled back (money already sent on-chain).
+    if (e.code !== 'DISPATCH_FAILED' && e.code !== 'PAID_BUT_UNRECORDED') {
       try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
     }
     throw e;
@@ -605,6 +668,39 @@ async function failCashoutOrder(orderId, reason) {
   }
 
   logger.info('[cashoutService] order failed — earnings restored', { orderId, reason, earningCount: earningIds?.length });
+}
+
+// ── Notifications ────────────────────────────────────────────────────────────
+
+async function _notifyOpsPaidButUnrecorded({ orderId, creatorId, txHash, walletAddress, amountUsd }) {
+  // This is the only alert ops gets for a PAID_BUT_UNRECORDED incident — the
+  // caller fire-and-forgets this (`.catch(...)`), so swallowing a failure
+  // here silently (missing config, a non-2xx response, or Slack's own
+  // `ok: false`) would mean the incident never reaches a human. Log loudly
+  // on every failure mode instead of just returning.
+  const channel = process.env.SLACK_OPS_ADMIN_CHANNEL || process.env.SLACK_OPS_INCIDENTS_CHANNEL;
+  const token = process.env.SLACK_BOT_TOKEN;
+  const context = { orderId, creatorId, txHash, walletAddress, amountUsd };
+  if (!channel || !token) {
+    logger.error('[cashoutService] PAID_BUT_UNRECORDED alert NOT sent — Slack not configured (SLACK_OPS_ADMIN_CHANNEL/SLACK_OPS_INCIDENTS_CHANNEL/SLACK_BOT_TOKEN)', context);
+    return;
+  }
+  try {
+    const res = await fetch('https://slack.com/api/chat.postMessage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json; charset=utf-8', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        channel,
+        text: `🚨 Cashout order \`${orderId}\` (creator \`${creatorId}\`) — USDC SENT ($${amountUsd} → \`${walletAddress}\`, tx \`${txHash}\`) but the DB update failed 3x. Needs manual reconciliation: mark the order 'settled' and the earnings 'paid_out' by hand once verified.`,
+      }),
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok || !body?.ok) {
+      logger.error('[cashoutService] PAID_BUT_UNRECORDED alert NOT delivered — Slack rejected it', { ...context, httpStatus: res.status, slackError: body?.error });
+    }
+  } catch (fetchErr) {
+    logger.error('[cashoutService] PAID_BUT_UNRECORDED alert NOT delivered — Slack request failed', { ...context, error: fetchErr.message });
+  }
 }
 
 module.exports = {
