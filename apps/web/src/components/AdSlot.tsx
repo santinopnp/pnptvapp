@@ -44,6 +44,16 @@ const DISPLAY_FORMATS: ReadonlySet<AdSlotFormat> = new Set([
 
 const POPUNDER_FORMATS: ReadonlySet<AdSlotFormat> = new Set(["popunder", "mobile_popunder"]);
 
+// Men.com affiliate banners — shown with priority over ExoClick for free users.
+// Two creative variants per size; one is picked randomly on mount and held for
+// the component's lifetime so it doesn't flash between images.
+const MEN_AFFILIATE_URL = "https://landing.mennetwork.com/?ats=eyJhIjoxNzYxNDQzLCJjIjo2NDYwODY2NSwibiI6MjIsInMiOjU0MiwiZSI6OTA5NCwicCI6MTF9";
+const MEN_BANNERS: Record<string, [string, string]> = {
+  "300x250": ["/ads/men/MN_300x250_1.jpg", "/ads/men/MN_300x250_2.jpg"],
+  "300x600": ["/ads/men/MN_300x600_1.jpg", "/ads/men/MN_300x600_2.jpg"],
+  "728x90":  ["/ads/men/MN_728x90_1.jpg",  "/ads/men/MN_728x90_2.jpg"],
+};
+
 // Routes where ads are hard-suppressed regardless of tier — checkout, payment
 // confirmation, and pending-wallet screens. Ads on these pages destroy
 // conversion far more than they earn, so we drop them silently.
@@ -197,6 +207,8 @@ export function AdSlot({ slot, className, style, onVastUrl, showChip = true }: P
   const [scriptUrl, setScriptUrl] = useState<string | null>(null);
   const [ux, setUx] = useState<AdsUxFlags | null>(null);
   const [modalMode, setModalMode] = useState<"popunder_replacement" | "interstitial" | null>(null);
+  // Stable random index (0 or 1) used to pick which Men.com creative to show.
+  const [menImgIdx] = useState(() => Math.floor(Math.random() * 2));
 
   useEffect(() => {
     if (adsBlocked) { setCfg(null); return; }
@@ -249,6 +261,11 @@ export function AdSlot({ slot, className, style, onVastUrl, showChip = true }: P
 
     if (DISPLAY_FORMATS.has(cfg.format) && ref.current) {
       if (cfg.capPerSession > 0 && sessionStorage.getItem(sessionCapKey(slot))) return;
+      // Men.com banners take priority — skip ExoClick injection for this slot.
+      if (cfg.size && MEN_BANNERS[cfg.size]) {
+        trackAdEvent(slot, "impression", { format: "men_banner", size: cfg.size });
+        return;
+      }
       if (scriptUrl) loadScriptOnce(scriptUrl);
       const host = ref.current;
       host.innerHTML = "";
@@ -302,8 +319,39 @@ export function AdSlot({ slot, className, style, onVastUrl, showChip = true }: P
   if (cfg.format === "vast") return modalPortal;
   if (POPUNDER_FORMATS.has(cfg.format)) return modalPortal;
 
-  const [w] = (cfg.size || "").split("x").map((n) => parseInt(n, 10));
+  const [w, h] = (cfg.size || "").split("x").map((n) => parseInt(n, 10));
   const dimStyle: React.CSSProperties = Number.isFinite(w) ? { minWidth: w } : {};
+
+  // Men.com priority: if this slot's size has a matching banner, render it instead.
+  const menBanners = cfg.size ? MEN_BANNERS[cfg.size] : undefined;
+  const menImg = menBanners ? menBanners[menImgIdx % menBanners.length] : null;
+  if (menImg) {
+    return (
+      <>
+        <div className="inline-flex flex-col items-center gap-1">
+          <a
+            href={MEN_AFFILIATE_URL}
+            target="_blank"
+            rel="noopener noreferrer sponsored"
+            onClick={() => trackAdEvent(slot, "click", { format: "men_banner", size: cfg.size })}
+            aria-label="Advertisement"
+            style={{ display: "block" }}
+          >
+            <img
+              src={menImg}
+              width={Number.isFinite(w) ? w : undefined}
+              height={Number.isFinite(h) ? h : undefined}
+              alt=""
+              style={{ display: "block", maxWidth: "100%", height: "auto" }}
+              loading="lazy"
+            />
+          </a>
+          {showChip && ux?.showUpgradeChip ? <UpgradeChip slot={slot} /> : null}
+        </div>
+        {modalPortal}
+      </>
+    );
+  }
 
   return (
     <>
