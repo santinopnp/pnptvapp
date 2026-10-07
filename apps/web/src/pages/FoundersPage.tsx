@@ -5,8 +5,12 @@ import { NpAppPickerSheet } from "@/components/payments/NowPaymentsWaitingPanel"
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
-const PLAN_ID = "lifetime-pass";
-const PRICE_USD = 99.99;
+const PLANS = {
+  annual: { id: "yearly50",     price: 50.00,  rushBonus: 0    },
+  lifetime: { id: "lifetime-pass", price: 99.99, rushBonus: 2000 },
+} as const;
+type PlanKey = keyof typeof PLANS;
+
 const LANG_KEY = "pnptv:founders:lang";
 
 function getInitialLang(): string {
@@ -26,40 +30,56 @@ const T = {
     badge:        "Founders Edition · Limited Access",
     headline:     "One payment.\nForever a member.",
     sub:          "No renewals. No expiry. Lifetime membership on PNPtv! — plus 18 months of full PRIME access included.",
-    price:        "$99.99",
-    priceNote:    "one-time · no subscription",
+    planAnnualLabel:   "PRIME Annual",
+    planAnnualPrice:   "$50",
+    planAnnualNote:    "per year · renews annually",
+    planAnnualDesc:    "Full PRIME access for 12 months.",
+    planLifetimeLabel: "Founders Lifetime",
+    planLifetimePrice: "$99.99",
+    planLifetimeNote:  "one-time · no subscription",
+    planLifetimeDesc:  "18 mo PRIME + lifetime basic access + 2,000 Ru$h 💎.",
+    mostPopular:       "Most Popular",
+    bestValue:         "Best Value",
     benefits: [
-      { icon: "🖤", title: "Lifetime Membership",   desc: "Your account stays active forever — no renewals, no expiry, no yearly fees." },
-      { icon: "⭐", title: "18 Months PRIME",        desc: "Full PRIME access included for 18 months: exclusive content, streams, and creator channels." },
+      { icon: "⭐", title: "Full PRIME Access",      desc: "Exclusive content, streams, and creator channels — everything unlocked." },
       { icon: "⚡", title: "Instant Activation",    desc: "Your account upgrades the moment payment confirms on-chain or in your wallet." },
-      { icon: "🛡",  title: "No Recurring Charges", desc: "Pay once and you're done. No surprises, ever." },
+      { icon: "🛡",  title: "No Recurring Charges", desc: "Pay once (or yearly) and you're done. No surprises, ever." },
     ],
     payWallet:    "Pay with card or USDC",
     payCrypto:    "₿ Pay with BTC · ETH · USDT",
     successTitle: "You're a Founder 🖤",
-    successBody:  "Your membership is now active. 18 months of PRIME access starts today. Thank you for being part of PNPtv! from the beginning.",
+    successBodyAnnual:   "Your PRIME access is now active for 12 months. See you inside PNPtv!",
+    successBodyLifetime: "Your membership is now active. 18 months of PRIME access starts today. Thank you for being part of PNPtv! from the beginning.",
     successCta:   "Go to PNPtv!",
-    legalNote:    "By completing payment you agree to PNPtv!'s Terms of Service. No refunds on lifetime memberships.",
+    legalNote:    "By completing payment you agree to PNPtv!'s Terms of Service.",
     toggleLang:   "ES",
   },
   es: {
     badge:        "Edición Founders · Acceso Limitado",
     headline:     "Un solo pago.\nMiembro para siempre.",
     sub:          "Sin renovaciones. Sin vencimiento. Membresía de por vida en PNPtv! — más 18 meses de acceso PRIME completo incluidos.",
-    price:        "$99.99",
-    priceNote:    "pago único · sin suscripción",
+    planAnnualLabel:   "PRIME Anual",
+    planAnnualPrice:   "$50",
+    planAnnualNote:    "por año · se renueva anualmente",
+    planAnnualDesc:    "Acceso PRIME completo por 12 meses.",
+    planLifetimeLabel: "Founders Lifetime",
+    planLifetimePrice: "$99.99",
+    planLifetimeNote:  "pago único · sin suscripción",
+    planLifetimeDesc:  "18 meses PRIME + acceso básico de por vida + 2,000 Ru$h 💎.",
+    mostPopular:       "Más Popular",
+    bestValue:         "Mejor Valor",
     benefits: [
-      { icon: "🖤", title: "Membresía de por vida",  desc: "Tu cuenta permanece activa para siempre — sin renovaciones, sin vencimiento, sin cargos anuales." },
-      { icon: "⭐", title: "18 meses PRIME",          desc: "Acceso PRIME completo por 18 meses: contenido exclusivo, streams y canales de creadores." },
+      { icon: "⭐", title: "Acceso PRIME completo",   desc: "Contenido exclusivo, streams y canales de creadores — todo desbloqueado." },
       { icon: "⚡", title: "Activación instantánea",  desc: "Tu cuenta se actualiza en el momento en que se confirma el pago." },
-      { icon: "🛡",  title: "Sin cargos recurrentes", desc: "Pagas una vez y listo. Sin sorpresas, jamás." },
+      { icon: "🛡",  title: "Sin cargos recurrentes", desc: "Pagás una vez (o anual) y listo. Sin sorpresas, jamás." },
     ],
     payWallet:    "Pagar con tarjeta o USDC",
     payCrypto:    "₿ Pagar con BTC · ETH · USDT",
     successTitle: "Eres Founder 🖤",
-    successBody:  "Tu membresía ya está activa. Los 18 meses de PRIME comienzan hoy. Gracias por ser parte de PNPtv! desde el principio.",
+    successBodyAnnual:   "Tu acceso PRIME está activo por 12 meses. ¡Te esperamos dentro de PNPtv!",
+    successBodyLifetime: "Tu membresía ya está activa. Los 18 meses de PRIME comienzan hoy. Gracias por ser parte de PNPtv! desde el principio.",
     successCta:   "Ir a PNPtv!",
-    legalNote:    "Al completar el pago aceptas los Términos de Servicio de PNPtv!. No hay reembolsos en membresías lifetime.",
+    legalNote:    "Al completar el pago aceptas los Términos de Servicio de PNPtv!.",
     toggleLang:   "EN",
   },
 } as const;
@@ -67,12 +87,15 @@ const T = {
 // ── Page ───────────────────────────────────────────────────────────────────────
 
 export default function FoundersPage() {
-  const [lang, setLang]           = useState(getInitialLang);
+  const [lang, setLang]             = useState(getInitialLang);
   const [showCrypto, setShowCrypto] = useState(false);
-  const [success, setSuccess]     = useState(false);
+  const [success, setSuccess]       = useState(false);
+  const [selectedPlan, setSelectedPlan] = useState<PlanKey>("annual");
 
-  const es = lang.toLowerCase().startsWith("es");
-  const t  = es ? T.es : T.en;
+  const es      = lang.toLowerCase().startsWith("es");
+  const t       = es ? T.es : T.en;
+  const plan    = PLANS[selectedPlan];
+  const isAnnual = selectedPlan === "annual";
 
   useEffect(() => {
     try { localStorage.setItem(LANG_KEY, lang); } catch { /* ignore */ }
@@ -90,7 +113,7 @@ export default function FoundersPage() {
         <div style={styles.successWrap}>
           <div style={styles.successIcon}>🖤</div>
           <h1 style={styles.successTitle}>{t.successTitle}</h1>
-          <p style={styles.successBody}>{t.successBody}</p>
+          <p style={styles.successBody}>{isAnnual ? t.successBodyAnnual : t.successBodyLifetime}</p>
           <a href="/" style={styles.successBtn}>{t.successCta}</a>
         </div>
       </div>
@@ -142,12 +165,6 @@ export default function FoundersPage() {
           </h1>
 
           <p style={styles.sub}>{t.sub}</p>
-
-          {/* Price */}
-          <div style={styles.priceBlock}>
-            <span style={styles.price}>{t.price}</span>
-            <span style={styles.priceNote}>{t.priceNote}</span>
-          </div>
         </div>
       </header>
 
@@ -166,21 +183,62 @@ export default function FoundersPage() {
         </div>
       </section>
 
+      {/* ── Plan picker ──────────────────────────────────────────────────────── */}
+      <section style={styles.planSection}>
+        <div style={styles.planGrid}>
+          {/* Annual card */}
+          <button
+            type="button"
+            onClick={() => setSelectedPlan("annual")}
+            style={{
+              ...styles.planCard,
+              ...(selectedPlan === "annual" ? styles.planCardSelected : {}),
+            }}
+          >
+            <span style={styles.planBadge}>{t.mostPopular}</span>
+            <p style={styles.planLabel}>{t.planAnnualLabel}</p>
+            <p style={styles.planPrice}>{t.planAnnualPrice}</p>
+            <p style={styles.planNote}>{t.planAnnualNote}</p>
+            <p style={styles.planDesc}>{t.planAnnualDesc}</p>
+          </button>
+
+          {/* Lifetime card */}
+          <button
+            type="button"
+            onClick={() => setSelectedPlan("lifetime")}
+            style={{
+              ...styles.planCard,
+              ...(selectedPlan === "lifetime" ? styles.planCardSelected : {}),
+            }}
+          >
+            <span style={{ ...styles.planBadge, ...styles.planBadgeGold }}>{t.bestValue}</span>
+            <p style={styles.planLabel}>{t.planLifetimeLabel}</p>
+            <p style={styles.planPrice}>{t.planLifetimePrice}</p>
+            <p style={styles.planNote}>{t.planLifetimeNote}</p>
+            <p style={styles.planDesc}>{t.planLifetimeDesc}</p>
+          </button>
+        </div>
+      </section>
+
       {/* ── Payment ──────────────────────────────────────────────────────────── */}
       <section style={styles.paySection}>
         <div style={styles.payCard}>
           {/* Price recap */}
           <div style={styles.payRecap}>
-            <span style={styles.payRecapLabel}>Founders · 18 mo PRIME + Lifetime Basic</span>
-            <span style={styles.payRecapPrice}>{t.price}</span>
+            <span style={styles.payRecapLabel}>
+              {isAnnual ? t.planAnnualLabel : t.planLifetimeLabel}
+            </span>
+            <span style={styles.payRecapPrice}>
+              {isAnnual ? t.planAnnualPrice : t.planLifetimePrice}
+            </span>
           </div>
 
           <WalletLoginGate lang={es ? "es" : "en"}>
             {/* Wallet / card */}
             <WalletPayCard
               surface="prime"
-              amountUsd={PRICE_USD}
-              entitlementSpec={{ planId: PLAN_ID }}
+              amountUsd={plan.price}
+              entitlementSpec={{ planId: plan.id }}
               lang={es ? "es" : "en"}
               label={t.payWallet}
               onSuccess={handleSuccess}
@@ -220,9 +278,9 @@ export default function FoundersPage() {
       <NpAppPickerSheet
         isOpen={showCrypto}
         onClose={() => setShowCrypto(false)}
-        planId={showCrypto ? PLAN_ID : null}
+        planId={showCrypto ? plan.id : null}
         lang={lang}
-        planLabel={`Founders — 18 mo PRIME + Lifetime Basic · $${PRICE_USD}`}
+        planLabel={`${isAnnual ? t.planAnnualLabel : t.planLifetimeLabel} · ${isAnnual ? t.planAnnualPrice : t.planLifetimePrice}`}
         onSuccess={handleSuccess}
       />
     </div>
@@ -345,25 +403,6 @@ const styles: Record<string, React.CSSProperties> = {
     marginLeft: "auto",
     marginRight: "auto",
   },
-  priceBlock: {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    gap: 4,
-  },
-  price: {
-    fontSize: 44,
-    fontWeight: 900,
-    color: WHITE,
-    letterSpacing: "-0.02em",
-  },
-  priceNote: {
-    fontSize: 12,
-    color: DIM,
-    fontWeight: 500,
-    letterSpacing: "0.04em",
-  },
-
   // Benefits
   benefitsSection: {
     padding: "0 16px 40px",
@@ -401,6 +440,77 @@ const styles: Record<string, React.CSSProperties> = {
     color: DIM,
     lineHeight: 1.5,
     margin: 0,
+  },
+
+  // Plan picker
+  planSection: {
+    padding: "0 16px 24px",
+    maxWidth: 480,
+    margin: "0 auto",
+  },
+  planGrid: {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    gap: 10,
+  },
+  planCard: {
+    background: FAINT,
+    border: "1px solid rgba(255,255,255,0.10)",
+    borderRadius: 16,
+    padding: "14px 12px",
+    textAlign: "left" as const,
+    cursor: "pointer",
+    transition: "border-color 0.15s, background 0.15s",
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: 4,
+    position: "relative" as const,
+  },
+  planCardSelected: {
+    border: `1px solid ${AMBER}`,
+    background: AMBER2,
+  },
+  planBadge: {
+    display: "inline-block",
+    fontSize: 9,
+    fontWeight: 800,
+    letterSpacing: "0.07em",
+    textTransform: "uppercase" as const,
+    color: "rgba(255,255,255,0.50)",
+    background: "rgba(255,255,255,0.08)",
+    borderRadius: 99,
+    padding: "2px 8px",
+    marginBottom: 4,
+    alignSelf: "flex-start" as const,
+  },
+  planBadgeGold: {
+    color: AMBER,
+    background: AMBER2,
+  },
+  planLabel: {
+    fontSize: 12,
+    fontWeight: 700,
+    color: WHITE,
+    margin: 0,
+  },
+  planPrice: {
+    fontSize: 22,
+    fontWeight: 900,
+    color: WHITE,
+    margin: "2px 0 0",
+    letterSpacing: "-0.02em",
+  },
+  planNote: {
+    fontSize: 10,
+    color: DIM,
+    margin: 0,
+    fontWeight: 500,
+  },
+  planDesc: {
+    fontSize: 11,
+    color: "rgba(255,255,255,0.40)",
+    margin: "6px 0 0",
+    lineHeight: 1.4,
   },
 
   // Payment
