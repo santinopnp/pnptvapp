@@ -106,6 +106,13 @@ export default function UploadVideoModal({
   const uploadStartRef = useRef<number>(0);
   const lastProgressRef = useRef<{ time: number; bytes: number }>({ time: 0, bytes: 0 });
   const uploadSectionRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  // iOS ghost-click shield: after the native file picker closes, iOS fires a
+  // synthetic click at the picker's dismiss-button position which lands on the
+  // modal backdrop and triggers onClose.  Set this ref true when any file
+  // input is tapped; clear it once the change event fires (or after 5 s).
+  const pickerOpenRef = useRef(false);
+  const pickerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // AI + metadata
   const [aiLoading, setAiLoading] = useState(false);
@@ -184,25 +191,34 @@ export default function UploadVideoModal({
     setTimeout(() => uploadSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 80);
   };
 
-  // Detached-input pattern: creates a fresh <input type="file"> outside React's
-  // VDOM and appends it to <body> so Android Chrome can properly return the file
-  // result. sr-only clips the input to rect(0,0,0,0) which breaks onChange on
-  // Android Chrome — a detached element with fixed off-screen positioning avoids
-  // both the clipping bug and React's synthetic event layer.
-  // Note: pointer-events:none is intentionally omitted — iOS Safari silently
-  // blocks .click() on file inputs that carry that property.
+  // Arm the ghost-click shield when a file input is tapped.
+  const armPickerShield = () => {
+    pickerOpenRef.current = true;
+    if (pickerTimerRef.current) clearTimeout(pickerTimerRef.current);
+    // Safety valve: clear automatically after 5 s if no change event fires.
+    pickerTimerRef.current = setTimeout(() => { pickerOpenRef.current = false; }, 5000);
+  };
+
+  // Drag-drop zone tap: programmatic click on the same hidden input.
+  // pointer-events:none intentionally omitted — iOS silently blocks .click()
+  // on file inputs that carry that property.
   const openFilePicker = () => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.style.cssText = 'position:fixed;top:-9999px;opacity:0;';
-    document.body.appendChild(input);
-    input.addEventListener('change', () => {
-      const f = input.files?.[0];
-      if (f) handleFileSelect(f);
-      else setError('No se recibió el archivo. Intenta de nuevo o abre desde otra carpeta.');
-      try { document.body.removeChild(input); } catch { /**/ }
-    }, { once: true });
-    input.click();
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+      fileInputRef.current.click();
+    }
+  };
+
+  // Handles file selection from both the label button and drag-drop click.
+  const onFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    e.target.value = '';
+    // Disarm ghost-click shield — shorten the window to 600 ms now that the
+    // picker has returned.  The ghost click arrives within ~300 ms on iOS.
+    if (pickerTimerRef.current) clearTimeout(pickerTimerRef.current);
+    pickerTimerRef.current = setTimeout(() => { pickerOpenRef.current = false; }, 600);
+    if (f) handleFileSelect(f);
+    else setError('No se recibió el archivo. Intenta de nuevo o abre desde otra carpeta.');
   };
 
   const fetchThumbnails = async (videoId: number) => {
@@ -580,54 +596,70 @@ export default function UploadVideoModal({
         </div>
       )}
 
-      {/* Drop zone — onClick calls openFilePicker which creates a detached
-          <input type="file">, appends it to <body> at a fixed off-screen
-          position (not clipped), and clicks it. This avoids the Android Chrome
-          sr-only/clip bug where onChange never fires after picker return. */}
+      {/* Drop zone — transparent input overlay handles taps directly on iOS.
+          Drag events still work on the outer div. */}
       <div
-        role="button"
-        tabIndex={0}
-        onClick={openFilePicker}
-        onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && openFilePicker()}
         onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
         onDragLeave={() => setDrag(false)}
         onDrop={onDrop}
-        aria-label="Elegir video"
-        className="cursor-pointer rounded-2xl flex flex-col items-center justify-center gap-3 py-10 px-4 transition-colors"
+        className="relative rounded-2xl flex flex-col items-center justify-center gap-3 py-10 px-4 transition-colors overflow-hidden"
         style={{
           border: `2px dashed ${drag ? "#D4007A" : "rgba(212,0,122,.3)"}`,
           background: drag ? "rgba(212,0,122,.06)" : "rgba(255,255,255,.02)",
           minHeight: 180,
         }}
       >
-        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke={drag ? "#D4007A" : "rgba(255,255,255,.35)"} strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M15 10l-4 4l-4-4" />
-          <path d="M11 14V3" />
-          <path d="M5 21h14" />
-          <rect x="3" y="3" width="4" height="4" rx="1" />
-          <rect x="17" y="3" width="4" height="4" rx="1" />
-        </svg>
-        {file ? (
-          <div className="text-center">
-            <p className="text-sm font-semibold text-white">{file.name}</p>
-            <p className="text-xs text-white/50 mt-0.5">{fmtBytes(file.size)}</p>
-          </div>
-        ) : (
-          <div className="text-center">
-            <p className="text-sm font-semibold text-white">Arrastra tu video aquí</p>
-            <p className="text-xs text-white/40 mt-0.5">o toca para elegir · MP4, MOV, WebM · máx 50 GB</p>
-          </div>
-        )}
+        <input
+          type="file"
+          onChange={onFileInputChange}
+          onClick={armPickerShield}
+          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+          aria-label="Elegir video"
+          style={{ zIndex: 1 }}
+        />
+        <div className="pointer-events-none flex flex-col items-center gap-3">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke={drag ? "#D4007A" : "rgba(255,255,255,.35)"} strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M15 10l-4 4l-4-4" />
+            <path d="M11 14V3" />
+            <path d="M5 21h14" />
+            <rect x="3" y="3" width="4" height="4" rx="1" />
+            <rect x="17" y="3" width="4" height="4" rx="1" />
+          </svg>
+          {file ? (
+            <div className="text-center">
+              <p className="text-sm font-semibold text-white">{file.name}</p>
+              <p className="text-xs text-white/50 mt-0.5">{fmtBytes(file.size)}</p>
+            </div>
+          ) : (
+            <div className="text-center">
+              <p className="text-sm font-semibold text-white">Arrastra tu video aquí</p>
+              <p className="text-xs text-white/40 mt-0.5">o toca para elegir · MP4, MOV, WebM · máx 50 GB</p>
+            </div>
+          )}
+        </div>
       </div>
 
-      <button
-        type="button"
-        onClick={openFilePicker}
-        className="w-full py-3 rounded-xl text-sm font-bold text-white transition-opacity active:opacity-80"
+      {/* Overlay pattern: transparent input sits ON TOP of the visual button.
+          iOS Safari only fires change reliably when the user taps the input
+          element directly — programmatic .click() and display:none+label both
+          suppress the event on iOS. overflow:hidden clips the input to the
+          button bounds so it can't be accidentally tapped elsewhere. */}
+      <div
+        className="relative w-full rounded-xl overflow-hidden"
         style={{ background: "linear-gradient(90deg,#D4007A,#7B61FF)" }}
       >
-        📁 Elegir desde archivos
-      </button>
+        <div className="w-full py-3 text-sm font-bold text-white flex items-center justify-center pointer-events-none select-none">
+          📁 Elegir desde archivos
+        </div>
+        <input
+          ref={fileInputRef}
+          type="file"
+          onChange={onFileInputChange}
+          onClick={armPickerShield}
+          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+          aria-label="Elegir video"
+        />
+      </div>
 
       {/* One-liner */}
       <div ref={uploadSectionRef}>
@@ -978,7 +1010,7 @@ export default function UploadVideoModal({
       aria-modal="true"
       aria-label="Subir video"
     >
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={step === "uploading" ? undefined : onClose} aria-hidden="true" />
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={step === "uploading" ? undefined : () => { if (pickerOpenRef.current) return; onClose(); }} aria-hidden="true" />
       <div
         className="relative w-full sm:max-w-md max-h-[92dvh] overflow-hidden flex flex-col rounded-t-2xl sm:rounded-2xl"
         style={{
