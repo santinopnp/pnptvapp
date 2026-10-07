@@ -613,6 +613,7 @@ export default function UploadVideoModal({
           type="file"
           onChange={onFileInputChange}
           onClick={armPickerShield}
+          onPointerDown={armPickerShield}
           className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
           aria-label="Elegir video"
           style={{ zIndex: 1 }}
@@ -656,6 +657,7 @@ export default function UploadVideoModal({
           type="file"
           onChange={onFileInputChange}
           onClick={armPickerShield}
+          onPointerDown={armPickerShield}
           className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
           aria-label="Elegir video"
         />
@@ -1026,7 +1028,7 @@ export default function UploadVideoModal({
             <h2 className="text-sm font-bold text-white leading-tight">{stepLabel}</h2>
           </div>
           {step !== "uploading" && (
-            <button onClick={onClose} aria-label="Cerrar" className="text-white/40 hover:text-white transition-colors">
+            <button onClick={() => { if (pickerOpenRef.current) return; onClose(); }} aria-label="Cerrar" className="text-white/40 hover:text-white transition-colors">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M6 18L18 6M6 6l12 12" />
               </svg>
