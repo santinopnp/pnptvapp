@@ -33,14 +33,14 @@ const SANTINO_CHAT = '8599671840';
 
 // Videos <50 MB — rotate by 6h slot so each run uses a different one
 const ELIGIBLE_VIDEOS = [
-  '/root/promos/090704_1788793918671.mp4',
-  '/root/promos/090710_1788821247845.mp4',
-  '/root/promos/090901_1788999827377.mp4',
-  '/root/promos/092204_1790134553067.mp4',
-  '/root/promos/092902_1790709194112.mp4',
-  '/root/promos/092904_1790730219512.mp4',
-  '/root/promos/andres1.mp4',
-  '/root/promos/andres2.mp4',
+  '/tmp/promos/090704_1788793918671.mp4',
+  '/tmp/promos/090710_1788821247845.mp4',
+  '/tmp/promos/090901_1788999827377.mp4',
+  '/tmp/promos/092204_1790134553067.mp4',
+  '/tmp/promos/092902_1790709194112.mp4',
+  '/tmp/promos/092904_1790730219512.mp4',
+  '/tmp/promos/andres1.mp4',
+  '/tmp/promos/andres2.mp4',
 ].filter(p => { try { return fs.statSync(p).isFile(); } catch { return false; } });
 
 function pickVideo() {

@@ -6,7 +6,9 @@
 set -euo pipefail
 
 LOG=/opt/pnptvapp/logs/mp-cop-trickle.log
-SCRIPT=/opt/pnptvapp/apps/backend/scripts/broadcast-mp-cop-trickle.js
+HOST_SCRIPT=/opt/pnptvapp/apps/backend/scripts/broadcast-mp-cop-trickle.js
+# Container app root is /app — mount the script there so __dirname resolves correctly
+CONTAINER_SCRIPT=/app/apps/backend/scripts/broadcast-mp-cop-trickle.js
 
 {
   echo "═══ $(date -Is) — MP COP trickle cycle ═══"
@@ -24,8 +26,8 @@ SCRIPT=/opt/pnptvapp/apps/backend/scripts/broadcast-mp-cop-trickle.js
     -e "POSTGRES_SSL=$POSTGRES_SSL" \
     -e "BOT_TOKEN=$BOT_TOKEN" \
     -e NODE_ENV=production \
-    -v "$SCRIPT:$SCRIPT:ro" \
-    -v "/root/promos:/root/promos:ro" \
+    -v "$HOST_SCRIPT:$CONTAINER_SCRIPT:ro" \
+    -v "/root/promos:/tmp/promos:ro" \
     pnptv-bot:latest \
-    node "$SCRIPT"
+    node "$CONTAINER_SCRIPT"
 } >>"$LOG" 2>&1
