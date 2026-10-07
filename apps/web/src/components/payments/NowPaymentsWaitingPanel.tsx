@@ -463,6 +463,15 @@ export function NpAppPickerSheet({
                   </p>
                 </div>
               )}
+              {chosenAsset === 'usdttrc20' && (
+                <div className="rounded-lg border border-red-500/50 bg-red-500/10 px-3 py-2 text-center">
+                  <p className="text-[11px] font-bold text-red-400">
+                    {es
+                      ? '🚨 Solo red TRC-20 (TRON). Enviar por ERC-20 o BEP-20 perderá tus fondos.'
+                      : '🚨 TRC-20 (TRON) network only. Sending via ERC-20 or BEP-20 will lose your funds.'}
+                  </p>
+                </div>
+              )}
               <p className="text-[10px] text-white/35 text-center">
                 {es ? 'Dirección de envío:' : 'Send to this address:'}
               </p>

@@ -995,7 +995,7 @@ export function WalletPayCard({
           }
         }
         if (pollCancelledRef.current) return;
-        if (Date.now() - start >= 60_000) {
+        if (Date.now() - start >= 180_000) {
           setFunding(false);
           setError(es
             ? "El pago tardó demasiado en confirmar. Revisá tu wallet y reintentá."

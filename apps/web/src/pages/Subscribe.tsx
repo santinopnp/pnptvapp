@@ -648,22 +648,15 @@ export default function Subscribe() {
       <Helmet>
         <title>{s.pageTitle}</title>
         <meta name="description" content={s.pageDescription} />
-        {/* Ru$h Wallet launch OG override — replaces the generic /og-image.png fallback from index.html */}
-        <meta property="og:title" content="Ru$h Wallet on PNPtv! — 20% off yearly & lifetime PRIME" />
-        <meta property="og:description" content="Tip creators, unlock content, book private calls — all with Ru$h 💎. Launch offer through Aug 23." />
-        <meta property="og:image" content="https://pnptv.app/rush-wallet/preview.jpg" />
+        <meta property="og:title" content="Join PNPtv! PRIME — Exclusive queer content, creator tips & private calls" />
+        <meta property="og:description" content="Unlock premium content, tip your favorite creators with Ru$h 💎, and book private calls. Join PNPtv! PRIME today." />
+        <meta property="og:image" content="https://pnptv.app/og-image.png" />
         <meta property="og:image:width" content="1200" />
-        <meta property="og:image:height" content="2133" />
-        <meta property="og:image:alt" content="Ru$h Wallet preview" />
-        <meta property="og:video" content="https://pnptv.app/rush-wallet/marketing-vertical.mp4" />
-        <meta property="og:video:type" content="video/mp4" />
-        <meta property="og:video:width" content="1080" />
-        <meta property="og:video:height" content="1920" />
+        <meta property="og:image:height" content="630" />
         <meta name="twitter:card" content="summary_large_image" />
-        <meta name="twitter:title" content="Ru$h Wallet on PNPtv! — 20% off yearly & lifetime PRIME" />
-        <meta name="twitter:description" content="Tip creators, unlock content, book private calls — all with Ru$h 💎." />
-        <meta name="twitter:image" content="https://pnptv.app/rush-wallet/preview.jpg" />
-        <meta name="twitter:image:alt" content="Ru$h Wallet preview" />
+        <meta name="twitter:title" content="Join PNPtv! PRIME — Exclusive queer content & creator tips" />
+        <meta name="twitter:description" content="Unlock premium content, tip creators with Ru$h 💎, book private calls. Join PNPtv! PRIME." />
+        <meta name="twitter:image" content="https://pnptv.app/og-image.png" />
       </Helmet>
 
       {/* Header */}
@@ -776,21 +769,23 @@ export default function Subscribe() {
                     >
                       {t.lang === "es" ? "💳 Tarjeta · Apple Pay · Wallet" : "💳 Card · Apple Pay · Wallet"}
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => openAppSheet(plan.id, isLifetime
-                        ? (t.lang === "es" ? "Membresía Founders" : "Founders Membership")
-                        : (t.lang === "es" ? "PRIME anual" : "PRIME Annual"))}
-                      className="w-full py-2.5 rounded-xl text-[11px] font-black transition-all active:scale-[0.97] leading-tight"
-                      style={{
-                        border: "1.5px solid rgba(255,183,0,0.45)",
-                        background: "rgba(255,183,0,0.07)",
-                        color: "rgba(255,183,0,0.80)",
-                      }}
-                    >
-                      <span className="block">₿ {t.lang === "es" ? "Apps y wallets" : "Apps & wallets"}</span>
-                      <span className="block text-[9px] font-normal opacity-50 mt-0.5">BTC · ETH · USDC · USDT · etc.</span>
-                    </button>
+                    {parseFloat(String(plan.price)) >= NOWPAYMENTS_MINIMUM_USD ? (
+                      <button
+                        type="button"
+                        onClick={() => openAppSheet(plan.id, isLifetime
+                          ? (t.lang === "es" ? "Membresía Founders" : "Founders Membership")
+                          : (t.lang === "es" ? "PRIME anual" : "PRIME Annual"))}
+                        className="w-full py-2.5 rounded-xl text-[11px] font-black transition-all active:scale-[0.97] leading-tight"
+                        style={{
+                          border: "1.5px solid rgba(255,183,0,0.45)",
+                          background: "rgba(255,183,0,0.07)",
+                          color: "rgba(255,183,0,0.80)",
+                        }}
+                      >
+                        <span className="block">₿ {t.lang === "es" ? "Apps y wallets" : "Apps & wallets"}</span>
+                        <span className="block text-[9px] font-normal opacity-50 mt-0.5">BTC · ETH · USDC · USDT · etc.</span>
+                      </button>
+                    ) : null}
                   </div>
 
                   {/* Inline wallet checkout panel */}
@@ -1002,19 +997,21 @@ export default function Subscribe() {
                   >
                     {t.lang === "es" ? "💳 Tarjeta · Apple Pay · Wallet" : "💳 Card · Apple Pay · Wallet"}
                   </button>
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); openAppSheet(plan.id, plan.display_name || plan.name || plan.id); }}
-                    className="flex-1 py-3 rounded-lg font-bold text-xs transition-all leading-tight"
-                    style={{
-                      border: "1.5px solid rgba(255,183,0,0.50)",
-                      background: "rgba(255,183,0,0.08)",
-                      color: "rgba(255,183,0,0.85)",
-                    }}
-                  >
-                    <span className="block">₿ {t.lang === "es" ? "Apps y wallets" : "Apps & wallets"}</span>
-                    <span className="block text-[9px] font-normal opacity-60 mt-0.5">BTC · ETH · USDC…</span>
-                  </button>
+                  {parseFloat(String(plan.price)) >= NOWPAYMENTS_MINIMUM_USD && (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); openAppSheet(plan.id, plan.display_name || plan.name || plan.id); }}
+                      className="flex-1 py-3 rounded-lg font-bold text-xs transition-all leading-tight"
+                      style={{
+                        border: "1.5px solid rgba(255,183,0,0.50)",
+                        background: "rgba(255,183,0,0.08)",
+                        color: "rgba(255,183,0,0.85)",
+                      }}
+                    >
+                      <span className="block">₿ {t.lang === "es" ? "Apps y wallets" : "Apps & wallets"}</span>
+                      <span className="block text-[9px] font-normal opacity-60 mt-0.5">BTC · ETH · USDC…</span>
+                    </button>
+                  )}
                 </div>
                 {(() => {
                   const cost = Math.round(parseFloat(String(plan.price)) * 6);
@@ -1201,19 +1198,21 @@ export default function Subscribe() {
                   >
                     {t.lang === "es" ? "💳 Tarjeta · Apple Pay · Wallet" : "💳 Card · Apple Pay · Wallet"}
                   </button>
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); openAppSheet(plan.id, plan.display_name || plan.name || plan.id); }}
-                    className="flex-1 py-3 rounded-lg font-bold text-xs transition-all leading-tight"
-                    style={{
-                      border: "1.5px solid rgba(255,183,0,0.50)",
-                      background: "rgba(255,183,0,0.08)",
-                      color: "rgba(255,183,0,0.85)",
-                    }}
-                  >
-                    <span className="block">₿ {t.lang === "es" ? "Apps y wallets" : "Apps & wallets"}</span>
-                    <span className="block text-[9px] font-normal opacity-60 mt-0.5">BTC · ETH · USDC…</span>
-                  </button>
+                  {parseFloat(String(plan.price)) >= NOWPAYMENTS_MINIMUM_USD && (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); openAppSheet(plan.id, plan.display_name || plan.name || plan.id); }}
+                      className="flex-1 py-3 rounded-lg font-bold text-xs transition-all leading-tight"
+                      style={{
+                        border: "1.5px solid rgba(255,183,0,0.50)",
+                        background: "rgba(255,183,0,0.08)",
+                        color: "rgba(255,183,0,0.85)",
+                      }}
+                    >
+                      <span className="block">₿ {t.lang === "es" ? "Apps y wallets" : "Apps & wallets"}</span>
+                      <span className="block text-[9px] font-normal opacity-60 mt-0.5">BTC · ETH · USDC…</span>
+                    </button>
+                  )}
                 </div>
                 {(() => {
                   const cost = Math.round(parseFloat(String(plan.price)) * 6);
