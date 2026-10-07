@@ -105,6 +105,7 @@ export default function UploadVideoModal({
   const videoIdRef = useRef<number | null>(null);
   const uploadStartRef = useRef<number>(0);
   const lastProgressRef = useRef<{ time: number; bytes: number }>({ time: 0, bytes: 0 });
+  const uploadSectionRef = useRef<HTMLDivElement>(null);
 
   // AI + metadata
   const [aiLoading, setAiLoading] = useState(false);
@@ -180,6 +181,7 @@ export default function UploadVideoModal({
     if (err) { setError(err); return; }
     setError(null);
     setFile(f);
+    setTimeout(() => uploadSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 80);
   };
 
   // Detached-input pattern: creates a fresh <input type="file"> outside React's
@@ -628,51 +630,48 @@ export default function UploadVideoModal({
       </button>
 
       {/* One-liner */}
-      {file && (
-        <div>
-          <label className="block text-xs font-semibold text-white/60 mb-1.5">
-            ¿De qué trata en una línea? <span style={{ color: "#FF4DA6" }}>*</span>{" "}
-            <span className="text-white/30">— la IA arma título, descripción y tags a partir de esto</span>
-          </label>
-          <textarea id="pnp-uploadvideomodal-1"
-            rows={2}
-            maxLength={300}
-            value={oneLiner}
-            onChange={(e) => setOneLiner(e.target.value)}
-            placeholder="Ej: Mi primera sesión en cuero con mi compañero de cuarto..."
-            className="w-full rounded-xl px-3 py-2.5 text-sm resize-none"
-            style={{
-              background: "#161616",
-              border: `1px solid ${oneLiner.trim() ? "#2A2A2A" : "rgba(212,0,122,.35)"}`,
-              color: "#fff",
-              outline: "none",
-            }}
-          />
-          {!oneLiner.trim() && (
-            <p className="text-[11px] text-white/40 mt-1">
-              Sin esto la IA no puede generar nada — el paso 2 quedaría vacío.
-            </p>
-          )}
-        </div>
-      )}
+      <div ref={uploadSectionRef}>
+        {file && (
+          <div>
+            <label className="block text-xs font-semibold text-white/60 mb-1.5">
+              ¿De qué trata en una línea?{" "}
+              <span className="text-white/30">— opcional, la IA genera título y tags a partir de esto</span>
+            </label>
+            <textarea id="pnp-uploadvideomodal-1"
+              rows={2}
+              maxLength={300}
+              value={oneLiner}
+              onChange={(e) => setOneLiner(e.target.value)}
+              placeholder="Ej: Mi primera sesión en cuero con mi compañero de cuarto..."
+              className="w-full rounded-xl px-3 py-2.5 text-sm resize-none"
+              style={{
+                background: "#161616",
+                border: "1px solid #2A2A2A",
+                color: "#fff",
+                outline: "none",
+              }}
+            />
+          </div>
+        )}
 
-      {error && <p className="text-xs font-medium" style={{ color: "#FF6B6B" }}>{error}</p>}
+        {error && <p className="text-xs font-medium mt-2" style={{ color: "#FF6B6B" }}>{error}</p>}
 
-      <button
-        disabled={!file || !oneLiner.trim() || overQuota}
-        onClick={() => file && oneLiner.trim() && !overQuota && startUpload(file, oneLiner)}
-        className="w-full py-3.5 rounded-xl text-sm font-bold transition-opacity disabled:opacity-30"
-        style={{ background: "linear-gradient(90deg,#D4007A,#7B61FF)", color: "#fff" }}
-      >
+        <button
+          disabled={!file || overQuota}
+          onClick={() => file && !overQuota && startUpload(file, oneLiner)}
+          className="w-full py-3.5 rounded-xl text-sm font-bold transition-opacity disabled:opacity-30 mt-3"
+          style={{ background: "linear-gradient(90deg,#D4007A,#7B61FF)", color: "#fff" }}
+        >
         {overQuota
           ? "Sin espacio · No storage"
           : isSameFileAsResume
           ? "Retomar subida →"
           : "Subir a Mux →"}
       </button>
-      <p className="text-center text-xs text-white/30">
+      <p className="text-center text-xs text-white/30 mt-2">
         Sube directo a Mux en chunks de 50 MB — reanudable si se corta
       </p>
+      </div>
     </div>
   );
 
