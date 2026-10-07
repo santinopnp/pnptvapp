@@ -2694,6 +2694,10 @@ const channelPurchaseLimiter = rateLimit({ windowMs: 60 * 1000, max: 3, keyGener
 // Token-wallet spend routes: cap at 10/5min per user. Prevents a script from
 // hammering the connection pool via rapid debit→grant cycles.
 const walletSpendLimiter = rateLimit({ windowMs: 5 * 60 * 1000, max: 10, keyGenerator: (req) => req.session?.user?.id || req.ip, handler: (req, res) => res.status(429).json({ success: false, error: 'Too many requests. Wait a few minutes and try again.', code: 'RATE_LIMITED' }), standardHeaders: true, legacyHeaders: false });
+// Gas-topup has a looser limit — it's a read+conditional-write that no-ops when
+// the wallet already has ETH. 20/5min gives retrying users room to recover without
+// exhausting the spend budget for actual checkout calls.
+const gasTopupLimiter = rateLimit({ windowMs: 5 * 60 * 1000, max: 20, keyGenerator: (req) => req.session?.user?.id || req.ip, handler: (req, res) => res.status(429).json({ success: false, error: 'Too many requests. Wait a moment and try again.', code: 'RATE_LIMITED' }), standardHeaders: true, legacyHeaders: false });
 // Token-buy invoice-creation endpoints: cap at 20 / 10 min per user. Users
 // legitimately browse multiple methods (Dash, NowPayments, BTC) and packages
 // before deciding — all three endpoints share this counter, so 20 gives enough
@@ -18239,7 +18243,7 @@ app.post('/api/wallet/checkout/verify-tx', walletSpendLimiter, requireSessionAut
 // daily cap, or if the treasury daily cap is exhausted. Returns 503 only if
 // the treasury has no funds — the frontend swallows that and falls through to
 // the existing "user pays own gas" flow so we degrade gracefully.
-app.post('/api/wallet/gas-topup', walletSpendLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
+app.post('/api/wallet/gas-topup', gasTopupLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
   const gasTopupService = require('../../services/gasTopupService');
   const { query: dbQuery } = require('../../config/postgres');
   const userId = req.session?.user?.id;

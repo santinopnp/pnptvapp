@@ -609,8 +609,9 @@ export function WalletPayCard({
       }
     }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
+  // amountUsd included so auto-pay re-evaluates if plans arrive after wallet auth
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authenticated, activeWallet?.address]);
+  }, [authenticated, activeWallet?.address, amountUsd]);
 
   // Auto-reload after 30s if stuck in no_wallet state (Privy SDK sometimes
   // needs a fresh page to hydrate the embedded wallet). Cap at 1 reload per
@@ -867,6 +868,7 @@ export function WalletPayCard({
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       const errStatus = (err as { status?: number }).status;
+      const isRateLimited = errStatus === 429 || /RATE_LIMITED|rate.?limit/i.test(msg);
       const isInsufficientFunds = errStatus === 402
         || msg === "INSUFFICIENT_FUNDS"
         || /insufficient.*funds|transfer.*exceed|exceeds.*balance|execution reverted/i.test(msg);
@@ -874,6 +876,20 @@ export function WalletPayCard({
       const isChain = /wrong network|unrecognized chain|chain mismatch|switch chain|network mismatch/i.test(msg);
       const isSubscriptionsPaused = /subscriptions paused/i.test(msg);
       const isCreatorLocked = /creator locked/i.test(msg);
+
+      if (isRateLimited) {
+        // Too many retries — route to NowPayments if available, otherwise surface a clear message.
+        if (onCryptoFallback) {
+          setPaying(false);
+          onCryptoFallback();
+          return;
+        }
+        setError(es
+          ? "Demasiados intentos. Esperá un minuto e intentá de nuevo."
+          : "Too many attempts. Please wait a minute and try again.");
+        onError?.(err);
+        return;
+      }
 
       if (isInsufficientFunds && isEmbedded) {
         // Silently open the fund flow — no error banner, one seamless step.
@@ -960,6 +976,7 @@ export function WalletPayCard({
           setUsdc(bal);
           if (bal != null && bal >= amountUsd) {
             setFunding(false);
+            pollCancelledRef.current = true; // prevent a second poll tick from firing another handlePay
             handlePay().catch(() => { /* handlePay owns its own error UI */ });
             return;
           }
