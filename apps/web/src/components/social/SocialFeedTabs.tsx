@@ -41,6 +41,7 @@ export interface SocialFeedTabsProps {
 const PRIME_CHANNEL_SLUG = 'pnptv-prime';
 const PRIME_CHANNEL_COVER = '/uploads/channels/channel-209-1788546353680.webp';
 const PRIME_BANNER_DISMISS_KEY = 'pnptv:prime-channel-banner:dismissed';
+const FOUNDERS_BANNER_DISMISS_KEY = 'pnptv:founders-banner:dismissed';
 
 function PrimeChannelBanner({ isPrime, onNavigate }: { isPrime: boolean; onNavigate: (path: string) => void }) {
   const [dismissed, setDismissed] = React.useState(() =>
@@ -115,6 +116,95 @@ function PrimeChannelBanner({ isPrime, onNavigate }: { isPrime: boolean; onNavig
         onClick={handleDismiss}
         className="absolute top-2 right-2 z-20 w-6 h-6 flex items-center justify-center rounded-full text-white/60 hover:text-white"
         style={{ background: 'rgba(0,0,0,0.4)' }}
+        aria-label="Dismiss"
+      >
+        ✕
+      </button>
+    </div>
+  );
+}
+
+function FoundersBanner({ onNavigate }: { onNavigate: (path: string) => void }) {
+  const [dismissed, setDismissed] = React.useState(() =>
+    sessionStorage.getItem(FOUNDERS_BANNER_DISMISS_KEY) === '1'
+  );
+  if (dismissed) return null;
+
+  const handleDismiss = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    sessionStorage.setItem(FOUNDERS_BANNER_DISMISS_KEY, '1');
+    setDismissed(true);
+  };
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => onNavigate('/lifetime100')}
+      onKeyDown={(e) => e.key === 'Enter' && onNavigate('/lifetime100')}
+      className="relative mb-3 rounded-2xl overflow-hidden cursor-pointer select-none"
+      style={{
+        background: 'linear-gradient(135deg, #111008 0%, #1a1200 60%, #0d0d0d 100%)',
+        border: '1px solid rgba(230,145,56,0.30)',
+      }}
+      aria-label="PNPtv! Founders — Lifetime PRIME access"
+    >
+      {/* Amber glow blob */}
+      <div
+        className="absolute"
+        style={{
+          top: -40, right: -40, width: 160, height: 160,
+          borderRadius: '50%',
+          background: 'radial-gradient(circle, rgba(230,145,56,0.18) 0%, transparent 70%)',
+          pointerEvents: 'none',
+        }}
+        aria-hidden="true"
+      />
+      <div className="relative z-10 flex items-center justify-between px-4 py-3 gap-3">
+        {/* Left: text */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1">
+            <span
+              className="text-xs font-bold px-2 py-0.5 rounded-full"
+              style={{ background: 'rgba(220,38,38,0.80)', color: '#fff', letterSpacing: '0.06em' }}
+            >
+              ⏳ LAST WEEK
+            </span>
+            <span
+              className="text-xs font-semibold"
+              style={{ color: 'rgba(230,145,56,0.80)', letterSpacing: '0.05em' }}
+            >
+              FOUNDERS EDITION
+            </span>
+          </div>
+          <p className="font-bold text-sm text-white leading-snug">
+            Lifetime PRIME access — one payment, forever.
+          </p>
+          <p className="text-white/55 text-xs mt-0.5">
+            From <span style={{ color: '#E69138', fontWeight: 700 }}>$50/yr</span>
+            {' '}or{' '}
+            <span style={{ color: '#E69138', fontWeight: 700 }}>$99.99 one-time</span>
+            {' '}· No renewals.
+          </p>
+        </div>
+        {/* Right: CTA */}
+        <div
+          className="flex-shrink-0 px-3 py-2 rounded-xl text-xs font-bold whitespace-nowrap"
+          style={{
+            background: 'linear-gradient(135deg, #E69138, #c97a1e)',
+            color: '#000',
+            letterSpacing: '0.01em',
+          }}
+        >
+          Become a Founder →
+        </div>
+      </div>
+      {/* Dismiss */}
+      <button
+        type="button"
+        onClick={handleDismiss}
+        className="absolute top-2 right-2 z-20 w-5 h-5 flex items-center justify-center rounded-full text-white/50 hover:text-white"
+        style={{ background: 'rgba(0,0,0,0.45)', fontSize: 10 }}
         aria-label="Dismiss"
       >
         ✕
@@ -432,6 +522,11 @@ export default function SocialFeedTabs({
       {/* PRIME Channel featured CTA — non-prime users → /subscribe, prime → channel */}
       {isAuthenticated && !hangoutGroupId && !hashtagFilter && (
         <PrimeChannelBanner isPrime={isPrime} onNavigate={onNavigate} />
+      )}
+
+      {/* Founders Edition upsell — lifetime100 link, last-week urgency */}
+      {isAuthenticated && !hangoutGroupId && !hashtagFilter && (
+        <FoundersBanner onNavigate={onNavigate} />
       )}
 
       {/* Persistent hashtag filter input — visible on every tab. Enter to apply. */}
