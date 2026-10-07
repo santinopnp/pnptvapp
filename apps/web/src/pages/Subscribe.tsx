@@ -794,7 +794,7 @@ export default function Subscribe() {
                   </div>
 
                   {/* Inline wallet checkout panel */}
-                  {isWalletOpen && (
+                  {isWalletOpen && usdcAvailable !== false && (
                     <div className="px-3 pb-3">
                       <WalletPayCard
                         surface="prime"
@@ -805,6 +805,7 @@ export default function Subscribe() {
                           ? `Pagar $${parseFloat(String(plan.price)).toFixed(0)} · ${isLifetime ? "Membresía Founders" : "PRIME anual"}`
                           : `Pay $${parseFloat(String(plan.price)).toFixed(0)} · ${isLifetime ? "Founders Membership" : "PRIME Annual"}`}
                         lang={(t.lang as "es" | "en")}
+                        alreadyEntitled={user?.tier === 'prime'}
                         onSuccess={() => {
                           setWalletPanelPlanId(null);
                           setTimeout(() => { window.location.href = "/"; }, 1200);
@@ -1036,25 +1037,32 @@ export default function Subscribe() {
                     </button>
                   );
                 })()}
-                {walletPanelPlanId === plan.id && (
+                {walletPanelPlanId === plan.id && usdcAvailable !== false && (
                   <div className="w-full mt-2" onClick={(e) => e.stopPropagation()}>
-                    <WalletPayCard
-                      surface={MEMBER_PLAN_IDS.has(plan.id) ? "membership" : "prime"}
-                      amountUsd={parseFloat(String(plan.price))}
-                      entitlementSpec={{ planId: plan.id }}
-                      metadata={{ source: "subscribe_page", planId: plan.id }}
-                      label={t.lang === "es" ? `Pagar $${parseFloat(String(plan.price)).toFixed(2)} · ${plan.name || plan.id}` : `Pay $${parseFloat(String(plan.price)).toFixed(2)} · ${plan.name || plan.id}`}
-                      lang={(t.lang as "es" | "en")}
-                      onSuccess={() => {
-                        setWalletPanelPlanId(null);
-                        // Reload to reflect the new entitlement everywhere.
-                        setTimeout(() => { window.location.href = "/"; }, 1200);
-                      }}
-                      onCryptoFallback={parseFloat(String(plan.price)) >= NOWPAYMENTS_MINIMUM_USD
-                        ? () => openAppSheet(plan.id, `${plan.name || plan.id} · $${parseFloat(String(plan.price)).toFixed(2)}`)
-                        : undefined}
-                      compact
-                    />
+                    {(() => {
+                      const pLabel = getPlanLabel(plan, MEMBER_PLAN_IDS.has(plan.id));
+                      const alreadyEnt = (pLabel === 'PRIME' && user?.tier === 'prime') || (pLabel === 'BASIC' && user?.tier === 'member');
+                      return (
+                        <WalletPayCard
+                          surface={MEMBER_PLAN_IDS.has(plan.id) ? "membership" : "prime"}
+                          amountUsd={parseFloat(String(plan.price))}
+                          entitlementSpec={{ planId: plan.id }}
+                          metadata={{ source: "subscribe_page", planId: plan.id }}
+                          label={t.lang === "es" ? `Pagar $${parseFloat(String(plan.price)).toFixed(2)} · ${plan.name || plan.id}` : `Pay $${parseFloat(String(plan.price)).toFixed(2)} · ${plan.name || plan.id}`}
+                          lang={(t.lang as "es" | "en")}
+                          alreadyEntitled={alreadyEnt}
+                          onSuccess={() => {
+                            setWalletPanelPlanId(null);
+                            // Reload to reflect the new entitlement everywhere.
+                            setTimeout(() => { window.location.href = "/"; }, 1200);
+                          }}
+                          onCryptoFallback={parseFloat(String(plan.price)) >= NOWPAYMENTS_MINIMUM_USD
+                            ? () => openAppSheet(plan.id, `${plan.name || plan.id} · $${parseFloat(String(plan.price)).toFixed(2)}`)
+                            : undefined}
+                          compact
+                        />
+                      );
+                    })()}
                   </div>
                 )}
               </div>
@@ -1228,25 +1236,32 @@ export default function Subscribe() {
                     </button>
                   );
                 })()}
-                {walletPanelPlanId === plan.id && (
+                {walletPanelPlanId === plan.id && usdcAvailable !== false && (
                   <div className="w-full mt-2" onClick={(e) => e.stopPropagation()}>
-                    <WalletPayCard
-                      surface={MEMBER_PLAN_IDS.has(plan.id) ? "membership" : "prime"}
-                      amountUsd={parseFloat(String(plan.price))}
-                      entitlementSpec={{ planId: plan.id }}
-                      metadata={{ source: "subscribe_page", planId: plan.id }}
-                      label={t.lang === "es" ? `Pagar $${parseFloat(String(plan.price)).toFixed(2)} · ${plan.name || plan.id}` : `Pay $${parseFloat(String(plan.price)).toFixed(2)} · ${plan.name || plan.id}`}
-                      lang={(t.lang as "es" | "en")}
-                      onSuccess={() => {
-                        setWalletPanelPlanId(null);
-                        // Reload to reflect the new entitlement everywhere.
-                        setTimeout(() => { window.location.href = "/"; }, 1200);
-                      }}
-                      onCryptoFallback={parseFloat(String(plan.price)) >= NOWPAYMENTS_MINIMUM_USD
-                        ? () => openAppSheet(plan.id, `${plan.name || plan.id} · $${parseFloat(String(plan.price)).toFixed(2)}`)
-                        : undefined}
-                      compact
-                    />
+                    {(() => {
+                      const pLabel = getPlanLabel(plan, MEMBER_PLAN_IDS.has(plan.id));
+                      const alreadyEnt = (pLabel === 'PRIME' && user?.tier === 'prime') || (pLabel === 'BASIC' && user?.tier === 'member');
+                      return (
+                        <WalletPayCard
+                          surface={MEMBER_PLAN_IDS.has(plan.id) ? "membership" : "prime"}
+                          amountUsd={parseFloat(String(plan.price))}
+                          entitlementSpec={{ planId: plan.id }}
+                          metadata={{ source: "subscribe_page", planId: plan.id }}
+                          label={t.lang === "es" ? `Pagar $${parseFloat(String(plan.price)).toFixed(2)} · ${plan.name || plan.id}` : `Pay $${parseFloat(String(plan.price)).toFixed(2)} · ${plan.name || plan.id}`}
+                          lang={(t.lang as "es" | "en")}
+                          alreadyEntitled={alreadyEnt}
+                          onSuccess={() => {
+                            setWalletPanelPlanId(null);
+                            // Reload to reflect the new entitlement everywhere.
+                            setTimeout(() => { window.location.href = "/"; }, 1200);
+                          }}
+                          onCryptoFallback={parseFloat(String(plan.price)) >= NOWPAYMENTS_MINIMUM_USD
+                            ? () => openAppSheet(plan.id, `${plan.name || plan.id} · $${parseFloat(String(plan.price)).toFixed(2)}`)
+                            : undefined}
+                          compact
+                        />
+                      );
+                    })()}
                   </div>
                 )}
               </div>

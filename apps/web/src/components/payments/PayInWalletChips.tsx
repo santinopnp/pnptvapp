@@ -488,11 +488,13 @@ export interface WalletPayCardProps {
   onCryptoFallback?: () => void;
   lang?: "es" | "en";
   compact?: boolean;
+  /** Skip auto-pay when the user already holds this entitlement to avoid silent re-charges */
+  alreadyEntitled?: boolean;
 }
 
 export function WalletPayCard({
   surface, amountUsd: amountUsdRaw, entitlementSpec, metadata,
-  label, onSuccess, onError, onCryptoFallback, lang = "en", compact = false,
+  label, onSuccess, onError, onCryptoFallback, lang = "en", compact = false, alreadyEntitled = false,
 }: WalletPayCardProps) {
   const es = lang === "es";
   // Caller can pass NaN if plans haven't loaded yet or price parse fails
@@ -559,6 +561,7 @@ export function WalletPayCard({
   const [loading, setLoading] = _useState(false);
   const [paying, setPaying] = _useState(false);
   const [error, setError] = _useState<string | null>(null);
+  const [gasTopupFailed, setGasTopupFailed] = _useState(false);
   const [success, setSuccess] = _useState(false);
   const [lastTxHash, setLastTxHash] = _useState<string | null>(null);
   // True from when addFunds resolves until either (a) balance covers the price
@@ -603,7 +606,7 @@ export function WalletPayCard({
       // component mounts (user topped up externally or is returning after a
       // cancelled signing), fire handlePay automatically once so they don't
       // have to find and tap the Pay button themselves.
-      if (bal != null && priceReady && bal >= amountUsd && !autoPayFiredRef.current && isEmbedded) {
+      if (bal != null && priceReady && bal >= amountUsd && !autoPayFiredRef.current && isEmbedded && !alreadyEntitled) {
         autoPayFiredRef.current = true;
         setTimeout(() => handlePay(), 400);
       }
@@ -754,7 +757,7 @@ export function WalletPayCard({
       setError(es ? "Precio no disponible. Recarga la página." : "Price unavailable. Please reload.");
       return;
     }
-    setError(null); setPaying(true);
+    setError(null); setGasTopupFailed(false); setPaying(true);
     try {
       // Live balance gate: re-fetch before creating the intent so we don't
       // waste a gas topup on a user who has 0 USDC. The component-level `usdc`
@@ -832,8 +835,9 @@ export function WalletPayCard({
         }
         if (!gasReady) {
           setError(es
-            ? "No pudimos cargar el gas de tu billetera. Reintentá en un minuto o escribí a soporte si persiste."
-            : "Could not prepare wallet gas. Retry in a minute, or contact support if it persists.");
+            ? "No pudimos cargar el gas de tu billetera. Conectá una wallet externa (MetaMask/Trust) con ETH propio, o reintentá en un minuto."
+            : "Could not prepare wallet gas. Connect an external wallet (MetaMask/Trust) with your own ETH, or retry in a minute.");
+          setGasTopupFailed(true);
           return; // finally{} resets `paying`
         }
         const res = await privySendTransaction(
@@ -1045,12 +1049,23 @@ export function WalletPayCard({
   // an explicit re-login / retry affordance so the user can recover in 1 tap.
   if (recovery.status === "initializing") {
     return (
-      <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/[0.05] p-3 flex items-center justify-center gap-2">
-        <svg className="w-4 h-4 animate-spin text-emerald-300" fill="none" viewBox="0 0 24 24">
-          <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" className="opacity-25" />
-          <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-        </svg>
-        <span className="text-xs text-white/70">{es ? "Cargando billetera…" : "Loading wallet…"}</span>
+      <div className="space-y-2">
+        <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/[0.05] p-3 flex items-center justify-center gap-2">
+          <svg className="w-4 h-4 animate-spin text-emerald-300" fill="none" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" className="opacity-25" />
+            <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+          <span className="text-xs text-white/70">{es ? "Cargando billetera…" : "Loading wallet…"}</span>
+        </div>
+        {onCryptoFallback && (
+          <button
+            type="button"
+            onClick={onCryptoFallback}
+            className="w-full py-1.5 rounded-xl text-xs text-white/50 hover:text-white/70 transition-colors"
+          >
+            {es ? "¿Problema? Pagar con cripto →" : "Having trouble? Pay with crypto →"}
+          </button>
+        )}
       </div>
     );
   }
@@ -1236,6 +1251,15 @@ export function WalletPayCard({
         </div>
       )}
       {error && offerOpenInBrowser && <OpenInBrowserButton es={es} />}
+      {gasTopupFailed && (
+        <button
+          type="button"
+          onClick={handleConnectExternal}
+          className="w-full py-2 rounded-xl text-xs font-semibold text-white/80 border border-white/15 bg-white/[0.04] active:scale-[0.98] transition-transform"
+        >
+          {es ? "🔗 Conectar wallet externa (MetaMask / Trust)" : "🔗 Connect external wallet (MetaMask / Trust)"}
+        </button>
+      )}
       {connectError && (
         <div className="text-[11px] text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2 py-1.5">
           {connectError}

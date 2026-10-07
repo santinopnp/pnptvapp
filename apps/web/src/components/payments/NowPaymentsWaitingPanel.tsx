@@ -217,8 +217,40 @@ export function NpAppPickerSheet({
       setCopied(false);
       setSelectedApp(null);
       if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    } else {
+      // Restore a pending order if the sheet was closed mid-payment (< 30 min ago)
+      try {
+        const raw = sessionStorage.getItem('pnpapp:np:pending');
+        if (raw) {
+          const saved = JSON.parse(raw);
+          if (saved.planId === planId && saved.orderId && Date.now() - saved.ts < 30 * 60 * 1000) {
+            setOrderId(saved.orderId);
+            setChosenAsset(saved.chosenAsset);
+            setPhase('ready');
+            // Resume poll
+            if (pollRef.current) clearInterval(pollRef.current);
+            pollRef.current = setInterval(async () => {
+              try {
+                const status = await getUsdcSubscriptionStatus(saved.orderId);
+                if (status.completed) {
+                  if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+                  try { sessionStorage.removeItem('pnpapp:np:pending'); } catch { /* */ }
+                  setPhase('success');
+                  onSuccess?.(saved.orderId);
+                  setTimeout(() => { onClose(); }, 2500);
+                } else if (status.failed) {
+                  if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+                  try { sessionStorage.removeItem('pnpapp:np:pending'); } catch { /* */ }
+                  setInvoiceError(es ? 'El pago falló. Intenta de nuevo.' : 'Payment failed. Please try again.');
+                  setPhase('error');
+                }
+              } catch { /* swallow poll errors */ }
+            }, 8000);
+          }
+        }
+      } catch { /* sessionStorage unavailable */ }
     }
-  }, [isOpen]);
+  }, [isOpen, planId, es, onSuccess, onClose]);
 
   const createInvoice = useCallback(async (asset: NpAssetWire) => {
     if (!planId) return;
@@ -237,6 +269,11 @@ export function NpAppPickerSheet({
       setPayAddress(res.payAddress);
       setPayAmount(res.payAmount ?? null);
       setPhase('ready');
+      try {
+        sessionStorage.setItem('pnpapp:np:pending', JSON.stringify({
+          orderId: res.orderId, chosenAsset: asset, planId, ts: Date.now(),
+        }));
+      } catch { /* iOS Safari private mode */ }
 
       if (pollRef.current) clearInterval(pollRef.current);
       pollRef.current = setInterval(async () => {
@@ -244,11 +281,13 @@ export function NpAppPickerSheet({
           const status = await getUsdcSubscriptionStatus(res.orderId as string);
           if (status.completed) {
             if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+            try { sessionStorage.removeItem('pnpapp:np:pending'); } catch { /* */ }
             setPhase('success');
             onSuccess?.(res.orderId as string);
             setTimeout(() => { onClose(); }, 2500);
           } else if (status.failed) {
             if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+            try { sessionStorage.removeItem('pnpapp:np:pending'); } catch { /* */ }
             setInvoiceError(es ? 'El pago falló. Intenta de nuevo.' : 'Payment failed. Please try again.');
             setPhase('error');
           }
@@ -362,7 +401,7 @@ export function NpAppPickerSheet({
           <div className="rounded-2xl border border-red-500/30 bg-red-500/8 p-4 text-center space-y-3">
             <p className="text-sm text-red-400">{invoiceError}</p>
             <div className="flex gap-2 justify-center flex-wrap">
-              {chosenAsset && (
+              {chosenAsset && !/minimum|below|mínimo/i.test(invoiceError || '') && (
                 <button
                   type="button"
                   onClick={() => { if (chosenAsset) createInvoice(chosenAsset); }}
@@ -372,13 +411,24 @@ export function NpAppPickerSheet({
                   {es ? 'Reintentar' : 'Try again'}
                 </button>
               )}
-              <button
-                type="button"
-                onClick={() => { setPhase('picking'); setChosenAsset(null); setInvoiceError(null); }}
-                className="px-4 py-2 rounded-xl font-semibold text-sm text-white/80 border border-white/15 bg-white/[0.04] transition-all active:scale-[0.97]"
-              >
-                {es ? 'Elegir otra cripto' : 'Pick different crypto'}
-              </button>
+              {/minimum|below|mínimo/i.test(invoiceError || '') ? (
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="px-4 py-2 rounded-xl font-semibold text-sm text-white transition-all active:scale-[0.97]"
+                  style={{ background: 'linear-gradient(90deg, #7c3aed, #ff3377)' }}
+                >
+                  {es ? '← Pagar con tarjeta' : '← Pay with card'}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => { setPhase('picking'); setChosenAsset(null); setInvoiceError(null); }}
+                  className="px-4 py-2 rounded-xl font-semibold text-sm text-white/80 border border-white/15 bg-white/[0.04] transition-all active:scale-[0.97]"
+                >
+                  {es ? 'Elegir otra cripto' : 'Pick different crypto'}
+                </button>
+              )}
             </div>
           </div>
         )}
