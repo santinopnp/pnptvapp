@@ -1454,14 +1454,14 @@ async function aiMetadataAll(userId, channelId, videoId, oneLiner) {
 
 // ── Mux: thumbnail options ────────────────────────────────────────────────────
 
-async function getMuxThumbnails(userId, channelId, videoId) {
+async function getMuxThumbnails(userId, channelId, videoId, isAdmin = false) {
   const muxService = require('./muxService');
   const { rows: [video] } = await query(
     'SELECT mux_playback_id, uploader_id FROM channel_videos WHERE id = $1 AND channel_id = $2',
     [videoId, channelId]
   );
   if (!video) throw Object.assign(new Error('Video not found'), { status: 404 });
-  if (String(video.uploader_id) !== String(userId)) throw Object.assign(new Error('Forbidden'), { status: 403 });
+  if (!isAdmin && String(video.uploader_id) !== String(userId)) throw Object.assign(new Error('Forbidden'), { status: 403 });
   if (!video.mux_playback_id) return [];
   return muxService.getThumbnailOptions(video.mux_playback_id);
 }

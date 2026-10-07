@@ -927,11 +927,11 @@ export default function UploadVideoModal({
         </button>
         <button
           onClick={handlePublish}
-          disabled={publishing || !title.trim() || muxReady === false}
+          disabled={publishing || !title.trim() || muxReady !== true}
           className="flex-[2] py-3 rounded-xl text-sm font-bold transition-opacity disabled:opacity-40"
           style={{ background: "linear-gradient(90deg,#D4007A,#7B61FF)", color: "#fff" }}
         >
-          {publishing ? "Publicando…" : muxReady === false ? "Procesando video…" : "Publicar"}
+          {publishing ? "Publicando…" : muxReady === false ? "Procesando video…" : muxReady === null ? "Verificando…" : "Publicar"}
         </button>
       </div>
     </div>

@@ -2405,6 +2405,7 @@ const muxUrlLimiter = rateLimit({
   handler: (req, res) => res.status(429).json({ error: 'Too many upload attempts. Please wait a moment and try again.' }),
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => ['admin', 'superadmin'].includes(req.session?.user?.role || ''),
 });
 
 // Root dashboard for web preview
@@ -21472,10 +21473,10 @@ app.post('/api/creators/:id/services/:serviceId/book',
     asyncHandler(async (req, res) => {
       const videoId = parseInt(req.params.videoId, 10);
       if (!Number.isFinite(videoId)) return res.status(400).json({ success: false, error: 'Invalid video id' });
-      const { userId } = userCtx(req);
+      const { userId, isAdmin } = userCtx(req);
       try {
         const thumbnails = await channelVideoService.getMuxThumbnails(
-          userId, req.params.channelId, videoId
+          userId, req.params.channelId, videoId, isAdmin
         );
         res.json({ success: true, thumbnails });
       } catch (err) { handleSvcError(res, err); }
