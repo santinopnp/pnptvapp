@@ -3,14 +3,11 @@
 
 /**
  * Telegram-DM broadcast: "pay for PRIME with your card in COP via
- * Mercado Pago, we activate manually in 2–6h."
+ * Mercado Pago, we activate manually in 2–6h." — includes a promo video.
  *
- * Runs every 12 hours (via /etc/cron.d/pnptv-mp-cop-trickle). Each user
- * sees this at most once (dedup via `broadcast_mp_cop_trickle_sent` log
- * table), so subsequent runs only pick up new signups + previously
- * unreachable users. Audience naturally exhausts over ~1 week.
- *
- * Bilingual: EN or ES depending on users.language.
+ * Runs every 6 hours (via /etc/cron.d/pnptv-mp-cop-trickle).
+ * Each user sees this at most once per reset (dedup via broadcast_mp_cop_trickle_sent).
+ * Rotates through eligible promo videos (<50 MB) per 6h slot.
  *
  * Usage:
  *   docker run ... node broadcast-mp-cop-trickle.js [--dry-run] [--limit=N]
@@ -18,6 +15,7 @@
 
 const path = require('path');
 const https = require('https');
+const fs   = require('fs');
 const BACKEND = path.resolve(__dirname, '..');
 try { require('dotenv').config({ path: path.join(BACKEND, '../../.env') }); } catch {}
 try { require('dotenv').config({ path: path.join(BACKEND, '../../.env.production'), override: true }); } catch {}
@@ -29,9 +27,27 @@ const LIMIT_ARG = process.argv.find(a => a.startsWith('--limit='));
 const LIMIT     = LIMIT_ARG ? parseInt(LIMIT_ARG.split('=')[1], 10) : 0;
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const LOG_TABLE = 'broadcast_mp_cop_trickle_sent';
-const TG_DELAY_MS = 100;
+const TG_DELAY_MS = 120;
 
-const SANTINO_CHAT = '8599671840'; // force-send once per cycle so Carlos sees what users see
+const SANTINO_CHAT = '8599671840';
+
+// Videos <50 MB — rotate by 6h slot so each run uses a different one
+const ELIGIBLE_VIDEOS = [
+  '/root/promos/090704_1788793918671.mp4',
+  '/root/promos/090710_1788821247845.mp4',
+  '/root/promos/090901_1788999827377.mp4',
+  '/root/promos/092204_1790134553067.mp4',
+  '/root/promos/092902_1790709194112.mp4',
+  '/root/promos/092904_1790730219512.mp4',
+  '/root/promos/andres1.mp4',
+  '/root/promos/andres2.mp4',
+].filter(p => { try { return fs.statSync(p).isFile(); } catch { return false; } });
+
+function pickVideo() {
+  if (!ELIGIBLE_VIDEOS.length) return null;
+  const slot = Math.floor(Date.now() / (6 * 3600 * 1000));
+  return ELIGIBLE_VIDEOS[slot % ELIGIBLE_VIDEOS.length];
+}
 
 const COPY = {
   en: `<b>💳 Pay for PRIME with your card in Colombian pesos</b>
@@ -78,6 +94,7 @@ Después de pagar, respondé acá con el comprobante y tu usuario de PNPtv!. Act
 const resolveLang = (raw) => (String(raw || '').toLowerCase().startsWith('es') ? 'es' : 'en');
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+// JSON-based API call (for file_id reuse)
 function tgApi(method, payload) {
   return new Promise((resolve) => {
     const body = JSON.stringify(payload);
@@ -86,7 +103,7 @@ function tgApi(method, payload) {
       path: `/bot${BOT_TOKEN}/${method}`,
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
-      timeout: 10000,
+      timeout: 15000,
     }, (res) => {
       let d = ''; res.on('data', c => { d += c; });
       res.on('end', () => { try { resolve(JSON.parse(d)); } catch { resolve({ ok: false }); } });
@@ -97,13 +114,49 @@ function tgApi(method, payload) {
   });
 }
 
-async function tgSend(chatId, text) {
-  return tgApi('sendMessage', {
-    chat_id: chatId,
-    text,
-    parse_mode: 'HTML',
-    disable_web_page_preview: true,
+// Multipart upload — reads file into memory, sends as video
+function tgUploadVideo(chatId, filePath, caption) {
+  return new Promise((resolve) => {
+    const boundary = 'TGBound' + Date.now();
+    const fileData = fs.readFileSync(filePath);
+    const fileName = path.basename(filePath);
+
+    const parts = [
+      `--${boundary}\r\nContent-Disposition: form-data; name="chat_id"\r\n\r\n${chatId}`,
+      `--${boundary}\r\nContent-Disposition: form-data; name="parse_mode"\r\n\r\nHTML`,
+      `--${boundary}\r\nContent-Disposition: form-data; name="caption"\r\n\r\n${caption}`,
+    ].join('\r\n') + '\r\n';
+
+    const fileHeader = `--${boundary}\r\nContent-Disposition: form-data; name="video"; filename="${fileName}"\r\nContent-Type: video/mp4\r\n\r\n`;
+    const body = Buffer.concat([
+      Buffer.from(parts),
+      Buffer.from(fileHeader),
+      fileData,
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ]);
+
+    const req = https.request({
+      hostname: 'api.telegram.org',
+      path: `/bot${BOT_TOKEN}/sendVideo`,
+      method: 'POST',
+      headers: {
+        'Content-Type': `multipart/form-data; boundary=${boundary}`,
+        'Content-Length': body.length,
+      },
+      timeout: 180000, // 3 min for large files
+    }, (res) => {
+      let d = ''; res.on('data', c => { d += c; });
+      res.on('end', () => { try { resolve(JSON.parse(d)); } catch { resolve({ ok: false }); } });
+    });
+    req.on('error', (e) => resolve({ ok: false, error: e.message }));
+    req.on('timeout', () => { req.destroy(); resolve({ ok: false, error: 'timeout' }); });
+    req.write(body); req.end();
   });
+}
+
+// Reuse a cached file_id — no re-upload
+function tgSendVideo(chatId, fileId, caption) {
+  return tgApi('sendVideo', { chat_id: chatId, video: fileId, caption, parse_mode: 'HTML' });
 }
 
 async function ensureLogTable() {
@@ -128,7 +181,9 @@ async function logSend(userId, status, error) {
 async function main() {
   if (!BOT_TOKEN) { console.error('BOT_TOKEN not set'); process.exit(1); }
 
+  const videoPath = pickVideo();
   console.log(`\n═ MP COP trickle broadcast — ${new Date().toISOString()} ═`);
+  console.log(`   Video: ${videoPath || '(none — text-only fallback)'}`);
   if (DRY_RUN) console.log(' MODE: DRY RUN\n');
 
   await ensureLogTable();
@@ -165,7 +220,6 @@ async function main() {
   console.log(`     EN: ${byLang.en || 0} · ES: ${byLang.es || 0}`);
 
   if (DRY_RUN) {
-    console.log('\n── sample EN ──\n' + COPY.en);
     console.log('\n── sample ES ──\n' + COPY.es);
     console.log('\n(dry run)\n');
     process.exit(0);
@@ -176,23 +230,52 @@ async function main() {
     process.exit(0);
   }
 
-  // Send Santino his copy first so he sees what users see on each cycle
-  const { rows: santinoLog } = await query(
-    `SELECT 1 FROM ${LOG_TABLE} WHERE user_id = $1 AND status = 'sent'`,
-    [SANTINO_CHAT]
-  );
-  if (!santinoLog.length) {
-    const res = await tgSend(SANTINO_CHAT, '[QA copy] ' + COPY.es);
-    if (res.ok) await logSend(SANTINO_CHAT, 'sent');
-    else console.error('   ✗ Santino QA copy failed:', res.description || res.error);
-    await sleep(TG_DELAY_MS);
+  // ── Upload video once via Santino QA send → cache file_id ──────────────────
+  let videoFileId = null;
+
+  if (videoPath) {
+    console.log(`\n   Uploading video (${path.basename(videoPath)}) via QA send to Santino…`);
+    const qaRes = await tgUploadVideo(SANTINO_CHAT, videoPath, '[QA] ' + COPY.es);
+    if (qaRes.ok && qaRes.result?.video?.file_id) {
+      videoFileId = qaRes.result.video.file_id;
+      await logSend(SANTINO_CHAT, 'sent');
+      console.log(`   ✓ QA send OK — file_id cached (${videoFileId.slice(0, 20)}…)`);
+    } else {
+      console.error('   ✗ QA video upload failed:', qaRes.description || qaRes.error);
+      console.log('   Falling back to text-only broadcast');
+    }
+  } else {
+    // No video — still send text QA copy to Santino
+    const { rows: santinoLog } = await query(
+      `SELECT 1 FROM ${LOG_TABLE} WHERE user_id = $1 AND status = 'sent'`, [SANTINO_CHAT]
+    );
+    if (!santinoLog.length) {
+      const res = await tgApi('sendMessage', {
+        chat_id: SANTINO_CHAT, text: '[QA] ' + COPY.es,
+        parse_mode: 'HTML', disable_web_page_preview: true,
+      });
+      if (res.ok) await logSend(SANTINO_CHAT, 'sent');
+    }
   }
 
+  await sleep(TG_DELAY_MS);
+
+  // ── Main broadcast loop ─────────────────────────────────────────────────────
   let sent = 0, failed = 0;
   for (const t of targets) {
     const lang = resolveLang(t.language);
-    const text = COPY[lang];
-    const res = await tgSend(t.telegram, text);
+    const caption = COPY[lang];
+
+    let res;
+    if (videoFileId) {
+      res = await tgSendVideo(t.telegram, videoFileId, caption);
+    } else {
+      res = await tgApi('sendMessage', {
+        chat_id: t.telegram, text: caption,
+        parse_mode: 'HTML', disable_web_page_preview: true,
+      });
+    }
+
     if (res.ok) {
       await logSend(t.user_id, 'sent');
       sent++;

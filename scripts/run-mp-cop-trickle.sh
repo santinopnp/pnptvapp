@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# MP COP trickle Telegram broadcast — recurring every 12h via
-# /etc/cron.d/pnptv-mp-cop-trickle. Each user DM'd at most once ever
-# (dedup via broadcast_mp_cop_trickle_sent); subsequent cycles only
-# pick up new signups + previously-unreachable users.
+# MP COP trickle Telegram broadcast — recurring every 6h via
+# /etc/cron.d/pnptv-mp-cop-trickle. Rotates promo videos from /root/promos.
+# Dedup resets manually; each reset re-sends to all eligible users.
 
 set -euo pipefail
 
@@ -26,6 +25,7 @@ SCRIPT=/opt/pnptvapp/apps/backend/scripts/broadcast-mp-cop-trickle.js
     -e "BOT_TOKEN=$BOT_TOKEN" \
     -e NODE_ENV=production \
     -v "$SCRIPT:$SCRIPT:ro" \
+    -v "/root/promos:/root/promos:ro" \
     pnptv-bot:latest \
     node "$SCRIPT"
 } >>"$LOG" 2>&1
