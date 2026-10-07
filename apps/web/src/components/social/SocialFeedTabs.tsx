@@ -181,10 +181,8 @@ function FoundersBanner({ onNavigate }: { onNavigate: (path: string) => void }) 
             Lifetime PRIME access — one payment, forever.
           </p>
           <p className="text-white/55 text-xs mt-0.5">
-            From <span style={{ color: '#E69138', fontWeight: 700 }}>$50/yr</span>
-            {' '}or{' '}
             <span style={{ color: '#E69138', fontWeight: 700 }}>$99.99 one-time</span>
-            {' '}· No renewals.
+            {' '}· No renewals, ever.
           </p>
         </div>
         {/* Right: CTA */}
