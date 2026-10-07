@@ -224,7 +224,87 @@ async function _alertLowTreasury(balanceWei, kind) {
   } catch { /* alerting is best-effort */ }
 }
 
+/**
+ * Anomaly detector — runs every 15 min via BullMQ.
+ * Fetches recent outgoing txs from the treasury on-chain and checks each
+ * against gas_topups. Any tx NOT in our table = unauthorized spend → Slack alert.
+ */
+async function checkAnomalies() {
+  const rpcUrl = _rpcUrl();
+  if (!rpcUrl) return;
+
+  let treasuryAddress;
+  try {
+    const { account } = _clients();
+    treasuryAddress = account.address.toLowerCase();
+  } catch {
+    return; // GAS_TREASURY_PRIVATE_KEY not set
+  }
+
+  // Fetch last 20 outgoing txs from treasury via Alchemy
+  const res = await fetch(rpcUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0', id: 1, method: 'alchemy_getAssetTransfers',
+      params: [{
+        fromBlock: '0x0', toBlock: 'latest',
+        fromAddress: treasuryAddress,
+        category: ['external', 'internal'],
+        maxCount: '0x14', order: 'desc',
+      }],
+    }),
+  });
+  const json = await res.json();
+  const transfers = json?.result?.transfers ?? [];
+  if (!transfers.length) return;
+
+  // Check each tx against our DB — only look at last 24h to limit scope
+  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const recent = transfers.filter(t => t.metadata?.blockTimestamp >= cutoff);
+  if (!recent.length) return;
+
+  const hashes = recent.map(t => t.hash);
+  const { rows } = await query(
+    `SELECT tx_hash FROM gas_topups WHERE tx_hash = ANY($1)`,
+    [hashes]
+  );
+  const known = new Set(rows.map(r => r.tx_hash));
+
+  const unauthorized = recent.filter(t => !known.has(t.hash));
+  if (!unauthorized.length) return;
+
+  // Alert once per tx via Redis dedup
+  const redis = require('../config/redis');
+  const tok = process.env.SLACK_BOT_TOKEN;
+  const channel = process.env.SLACK_OPS_ADMIN_CHANNEL;
+
+  for (const tx of unauthorized) {
+    const dedupKey = `pnpapp:gas:anomaly:alerted:${tx.hash}`;
+    const already = await redis.get(dedupKey);
+    if (already) continue;
+    await redis.set(dedupKey, '1', 'EX', 86400);
+
+    const ethAmt = (tx.value || 0).toFixed(6);
+    logger.error('[gasTopup] ANOMALY — unauthorized outgoing tx', {
+      hash: tx.hash, to: tx.to, value: ethAmt, ts: tx.metadata?.blockTimestamp,
+    });
+
+    if (tok && channel) {
+      await fetch('https://slack.com/api/chat.postMessage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok}` },
+        body: JSON.stringify({
+          channel,
+          text: `🚨 *Gas treasury anomaly* — tx NOT in gas_topups:\n• Hash: \`${tx.hash}\`\n• To: \`${tx.to}\`\n• Amount: ${ethAmt} ETH\n• Time: ${tx.metadata?.blockTimestamp}\n\nPossible key compromise. Change GAS_TREASURY_PRIVATE_KEY immediately.`,
+        }),
+      }).catch(() => {});
+    }
+  }
+}
+
 module.exports = {
   topupIfNeeded,
   getStatus,
+  checkAnomalies,
 };

@@ -238,6 +238,14 @@ async function initializeQueues() {
     jobId: 'cron-nowpayments-reconcile',
   });
 
+  // Gas treasury anomaly detector — every 15 min
+  // Compares on-chain outgoing txs vs gas_topups table; alerts Slack on unauthorized sends
+  await cronQueue.add('gas-treasury-anomaly', {}, {
+    repeat: { pattern: '*/15 * * * *', tz: 'UTC' },
+    attempts: 1, removeOnFail: false,
+    jobId: 'cron-gas-treasury-anomaly',
+  });
+
   // Ru$h creator ledger sweep — every 10 min. Inline settle already fires
   // when a creator crosses RUSH_MIN_SETTLE_USD; this is the safety net for
   // failed inline settles (RPC blip, wallet still provisioning, etc).

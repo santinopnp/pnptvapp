@@ -339,6 +339,13 @@ async function cronProcessor(job) {
       return;
     }
 
+    case 'gas-treasury-anomaly': {
+      const gasSvc = _safeRequire('../gasTopupService');
+      if (!gasSvc || typeof gasSvc.checkAnomalies !== 'function') { logger.warn('[BullMQ] gas-treasury-anomaly: service not found'); return; }
+      await gasSvc.checkAnomalies();
+      return;
+    }
+
     case 'rush-ledger-sweep': {
       const rushLedger = _safeRequire('../rushLedgerService');
       if (!rushLedger || typeof rushLedger.sweepPending !== 'function') {
