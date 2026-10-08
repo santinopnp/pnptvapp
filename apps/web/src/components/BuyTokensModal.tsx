@@ -138,6 +138,13 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
   // Last card top-up failed in a way only a real browser fixes (MoonPay
   // popup) → offer the one-tap "Open in browser / Safari" escape.
   const [offerOpenInBrowser, setOfferOpenInBrowser] = useState(false);
+  // Debounce guard: prevents multiple addFunds calls firing while Privy
+  // is still opening its onramp modal (e.g. rapid taps before popup appears).
+  // Mirrored from WalletPayCard.fundInFlightRef — same Privy error source.
+  const fundInFlightRef = useRef(false);
+  // Set to true when a Stripe-specific error is caught so the button label
+  // changes to signal a different action ("Try another method") on re-tap.
+  const [stripeHasFailed, setStripeHasFailed] = useState(false);
 
   // Activation-code redemption (users who received a code out-of-band, e.g. via
   // support, ops top-up, or a legacy card checkout). Not a purchase path we
@@ -152,7 +159,12 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
   // activation echo / custom amount) so a re-opened modal doesn't show stale
   // results from a previous session.
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) {
+      // Always clear the in-flight guard when the modal closes so a re-open
+      // isn't blocked by a stale true value from the previous session.
+      fundInFlightRef.current = false;
+      return;
+    }
     setError(null);
     setSuccess(null);
     setActivationSuccess(null);
@@ -161,6 +173,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
     setPayingPackageId(null);
     setPayingCustom(false);
     setNpFallbackPackageId(null);
+    setStripeHasFailed(false);
     if (initialAmountUsd && initialAmountUsd >= 1) setCustomUsd(String(initialAmountUsd));
     else setCustomUsd("");
     setLoadingPackages(true);
@@ -476,6 +489,11 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
 
   const handleFundForPackage = async (pkg: TokenPackage) => {
     if (!activeWallet) return;
+    // Guard: Privy throws "Existing fiat onramp flow in progress" if addFunds
+    // is called while a previous call is still open (rapid multi-tap before the
+    // modal appears). Early-return here so we never surface that error to users.
+    if (fundInFlightRef.current) return;
+    fundInFlightRef.current = true;
     const price = Number(pkg.usd);
     setError(null);
     setOfferOpenInBrowser(false);
@@ -525,6 +543,9 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
       // device. classifyOnrampError separates popup-blocked from card-blocked.
       const kind = classifyOnrampError(msg);
       if (kind === "cancel") return;
+      if (kind === "stripe_failed" || kind === "card_blocked" || kind === "provider_region") {
+        setStripeHasFailed(true);
+      }
       setError(onrampErrorMessage(kind, es, msg));
       setOfferOpenInBrowser(shouldOfferOpenInBrowser(kind));
       reportWalletClientError("buyTokensAddFunds", err, {
@@ -533,6 +554,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
         onrampErrorKind: kind,
       });
     } finally {
+      fundInFlightRef.current = false;
       setPayingPackageId(null);
     }
   };
@@ -542,6 +564,10 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
   // the package's real token count (including bonus) instead of the flat rate.
   const handleFundForCustomAmount = async (usd: number, tokens?: number, pkgId?: string, closeOnCancel = false) => {
     if (!activeWallet) return;
+    // Same guard as handleFundForPackage — prevents the "Existing fiat onramp
+    // flow in progress" Privy error on multi-tap before the modal opens.
+    if (fundInFlightRef.current) return;
+    fundInFlightRef.current = true;
     const actualTokens = tokens ?? Math.round(usd * 6);
     setError(null);
     setOfferOpenInBrowser(false);
@@ -591,12 +617,16 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
         onClose();
         return;
       }
+      if (kind === "stripe_failed" || kind === "card_blocked" || kind === "provider_region") {
+        setStripeHasFailed(true);
+      }
       // Known onramp failures need an explanation and a next step (other
       // provider / open in browser) — unlock the UI instead of closing.
       setAutoTriggerDone(true);
       setError(onrampErrorMessage(kind, es, msg));
       setOfferOpenInBrowser(shouldOfferOpenInBrowser(kind));
     } finally {
+      fundInFlightRef.current = false;
       setPayingCustom(false);
     }
   };
@@ -1022,7 +1052,9 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
                         ? (rail === "eth"
                             ? `Paga con PNPtv! Wallet 💎 · Ξ ${ethNeeded.toFixed(6)}`
                             : `Paga con PNPtv! Wallet 💎 · $${price.toFixed(2)} +fees`)
-                        : `💳 $${grossUpForOnramp(price)} +fees · ${es ? "Tarjeta" : "Card"}`;
+                        : stripeHasFailed
+                          ? (es ? "↩ Otro método →" : "↩ Try another method →")
+                          : `💳 $${grossUpForOnramp(price)} +fees · ${es ? "Tarjeta" : "Card"}`;
                     return (
                       <button
                         key={pkg.id}

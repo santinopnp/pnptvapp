@@ -571,6 +571,11 @@ export function WalletPayCard({
   // Last addFunds failure needs a real browser (MoonPay popup) → offer the
   // one-tap "Open in browser / Safari" escape.
   const [offerOpenInBrowser, setOfferOpenInBrowser] = _useState(false);
+  // True when a Stripe-specific error has been caught (KYC, region block,
+  // Link auth failure, SDK load error). Used to change the button label so
+  // the user understands that tapping again will re-open Privy's onramp
+  // picker where they can explicitly choose MoonPay or Apple Pay instead.
+  const [stripeHasFailed, setStripeHasFailed] = _useState(false);
   const fundInFlightRef = _useRef(false);
   const [eth, setEth] = _useState<number | null>(null);
   // Tracks whether the onramp poll has been cancelled (component unmounted).
@@ -580,8 +585,10 @@ export function WalletPayCard({
   const autoPayFiredRef = _useRef(false);
 
   _useEffect(() => {
-    // Reset cancellation flag when the wallet/auth changes so a fresh poll can run.
+    // Reset cancellation flag and stripe-failure state when the wallet/auth
+    // changes so a fresh poll can run and the button label resets.
     pollCancelledRef.current = false;
+    setStripeHasFailed(false);
     return () => {
       pollCancelledRef.current = true;
       setFunding(false);
@@ -1027,6 +1034,12 @@ export function WalletPayCard({
         onCryptoFallback();
         return;
       }
+      // Track Stripe-specific failures so the button label changes on re-tap.
+      // In popup-capable browsers this signals to the user that they can pick
+      // MoonPay (or Apple Pay) inside Privy's onramp picker on their next tap.
+      if (kind === "stripe_failed" || kind === "card_blocked" || kind === "provider_region") {
+        setStripeHasFailed(true);
+      }
       setError(onrampErrorMessage(kind, es, msg));
       setOfferOpenInBrowser(shouldOfferOpenInBrowser(kind));
       reportWalletClientError("addFunds", err, {
@@ -1343,22 +1356,29 @@ export function WalletPayCard({
               <button
                 type="button"
                 onClick={handleFund}
-                className="w-full py-3 rounded-xl text-white transition active:scale-[0.98] flex flex-col items-center gap-0.5"
+                disabled={fundInFlightRef.current}
+                className="w-full py-3 rounded-xl text-white transition active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed flex flex-col items-center gap-0.5"
                 style={{ background: "linear-gradient(135deg,#10b981,#059669)" }}
               >
                 <span className="text-base font-bold">
-                  {es
-                    ? `💳 Recargar $${topupUsd} con tarjeta`
-                    : `💳 Top up $${topupUsd} with card`}
+                  {stripeHasFailed
+                    ? (es ? "↩ Probar otro método →" : "↩ Try another method →")
+                    : (es
+                        ? `💳 Recargar $${topupUsd} con tarjeta`
+                        : `💳 Top up $${topupUsd} with card`)}
                 </span>
                 <span className="text-[11px] font-medium opacity-90">
-                  {es
-                    ? showsLeftover
-                      ? `Esta compra: $${amountUsd.toFixed(2)} · Sobra en wallet: $${leftoverUsd.toFixed(2)}`
-                      : `Esta compra: $${amountUsd.toFixed(2)} (mínimo de recarga)`
-                    : showsLeftover
-                      ? `This purchase: $${amountUsd.toFixed(2)} · Left in wallet: $${leftoverUsd.toFixed(2)}`
-                      : `This purchase: $${amountUsd.toFixed(2)} (top-up minimum)`}
+                  {stripeHasFailed
+                    ? (es
+                        ? "Se abrirá el selector de métodos — elige MoonPay o Apple Pay"
+                        : "The payment picker will open — choose MoonPay or Apple Pay")
+                    : (es
+                        ? showsLeftover
+                          ? `Esta compra: $${amountUsd.toFixed(2)} · Sobra en wallet: $${leftoverUsd.toFixed(2)}`
+                          : `Esta compra: $${amountUsd.toFixed(2)} (mínimo de recarga)`
+                        : showsLeftover
+                          ? `This purchase: $${amountUsd.toFixed(2)} · Left in wallet: $${leftoverUsd.toFixed(2)}`
+                          : `This purchase: $${amountUsd.toFixed(2)} (top-up minimum)`)}
                 </span>
               </button>
               {/* MoonPay needs a popup this context can't open (Telegram /
