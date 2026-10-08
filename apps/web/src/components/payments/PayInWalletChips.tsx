@@ -1015,8 +1015,11 @@ export function WalletPayCard({
         setOfferOpenInBrowser(shouldOfferOpenInBrowser(kind));
         return;
       }
-      // For glitch/failed cases, route to crypto fallback if the caller provided one
-      if ((kind === "stripe_failed" || kind === "status_timeout") && onCryptoFallback) {
+      // In popup-capable browsers: stay on WalletPayCard so the user can retry
+      // with MoonPay (Privy's addFunds picker shows it alongside Stripe).
+      // Only fall through to NowPayments when popups are blocked too (Telegram
+      // WebView, iOS PWA) — MoonPay would fail there anyway.
+      if ((kind === "stripe_failed" || kind === "status_timeout") && onCryptoFallback && popupsUnsupported()) {
         reportWalletClientError("addFunds_fallback_to_crypto", err, {
           surface, amountUsd, address: activeWallet?.address,
           walletType: activeWallet?.walletClientType,
