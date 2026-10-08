@@ -74,7 +74,7 @@ const {
 } = require('../config/monetizationConfig');
 
 // ── USDC on Base ─────────────────────────────────────────────────────────────
-const USDC_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+const USDC_ADDRESS = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
 const USDC_DECIMALS = 6;
 const USDC_TRANSFER_ABI = [{
   name: 'transfer',
@@ -427,7 +427,7 @@ async function provisionCreatorWallet(userId) {
     const embeddedWallet = linkedAccounts.find(
       (a) => a.type === 'wallet' && (a.walletClientType === 'privy' || a.walletClient === 'privy')
     );
-    const address = embeddedWallet?.address ?? null;
+    const address = embeddedWallet?.address ? embeddedWallet.address.toLowerCase() : null;
 
     if (address) {
       await query(

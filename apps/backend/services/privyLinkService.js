@@ -13,7 +13,7 @@
  * it — `SELECT id, telegram, twitter FROM users WHERE lower(wallet_address) = lower('0xabc')`.
  */
 
-const { query } = require('../config/postgres');
+const { query, getPool } = require('../config/postgres');
 const logger = require('../utils/logger');
 const { validateSingleWallet, ensureCreatorWallet } = require('./privyWalletService');
 
@@ -227,75 +227,88 @@ async function verifyAndLink({ pnptvUserId, privyToken }) {
     throw e;
   }
 
-  // Read the outgoing state so we can archive it if the incoming values differ.
-  // Without this the address becomes write-once and any Privy-side rotation
-  // strands the funds sitting on the old address (see wallet_changes audit).
-  const priorRes = await query(
-    `SELECT privy_id AS old_privy_id, wallet_address AS old_wallet_address
-       FROM users WHERE id = $1`,
-    [pnptvUserId],
-  );
-  const prior = priorRes.rows[0] || {};
-  const oldWallet = prior.old_wallet_address ? String(prior.old_wallet_address).toLowerCase() : null;
-  const newWallet = walletAddress || null;
-  const walletChanged = Boolean(newWallet) && oldWallet !== newWallet;
-  const privyIdChanged = Boolean(privyId) && prior.old_privy_id && prior.old_privy_id !== privyId;
+  // Read the outgoing state inside a transaction with a row-level lock so
+  // concurrent re-auth requests for the same user cannot race through the
+  // funded-exception check and skip archiving the old wallet.
+  const pool = getPool();
+  const client = await pool.connect();
+  let prior = {}, oldWallet, newWallet, walletChanged, privyIdChanged, oldWalletUsdBalance = 0;
+  try {
+    await client.query('BEGIN');
+    const priorRes = await client.query(
+      `SELECT privy_id AS old_privy_id, wallet_address AS old_wallet_address
+         FROM users WHERE id = $1 FOR UPDATE`,
+      [pnptvUserId],
+    );
+    prior = priorRes.rows[0] || {};
+    oldWallet = prior.old_wallet_address ? String(prior.old_wallet_address).toLowerCase() : null;
+    newWallet = walletAddress || null;
+    walletChanged = Boolean(newWallet) && oldWallet !== newWallet;
+    privyIdChanged = Boolean(privyId) && prior.old_privy_id && prior.old_privy_id !== privyId;
 
-  // Max 1 wallet per user, enforced app-side (friendly error) on top of the
-  // DB unique index (idx_users_wallet_address_unique, migration 370). Only
-  // relevant when the incoming address is new/changed — re-linking the same
-  // address the user already owns is always fine.
-  if (walletChanged) {
-    await validateSingleWallet(newWallet, pnptvUserId);
+    // Max 1 wallet per user, enforced app-side (friendly error) on top of the
+    // DB unique index (idx_users_wallet_address_unique, migration 370). Only
+    // relevant when the incoming address is new/changed — re-linking the same
+    // address the user already owns is always fine.
+    if (walletChanged) {
+      await validateSingleWallet(newWallet, pnptvUserId);
+    }
+
+    if (walletChanged) {
+      // Funded-exception check: if the old address still holds USDC on any
+      // supported chain, keep both wallets alive (previous_wallet_address
+      // preserved + wallet_lock_reason marker so future audits know why).
+      oldWalletUsdBalance = oldWallet ? await _oldWalletUsdBalance(oldWallet) : 0;
+      const isFundedException = oldWalletUsdBalance > 0.01;
+
+      await client.query(
+        `UPDATE users
+            SET privy_id                     = $1,
+                wallet_address               = $2,
+                previous_wallet_address      = CASE WHEN $3::text IS NULL THEN previous_wallet_address ELSE $3::text END,
+                wallet_linked_at             = NOW(),
+                has_pnptv_payout_configured  = FALSE,
+                wallet_lock_reason           = CASE WHEN $5::boolean THEN 'multi_wallet_funded_exception' ELSE wallet_lock_reason END
+          WHERE id = $4`,
+        [privyId, newWallet, oldWallet, pnptvUserId, isFundedException],
+      );
+      await client.query(
+        `INSERT INTO wallet_changes (user_id, old_wallet_address, new_wallet_address, old_privy_id, new_privy_id, source)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [String(pnptvUserId), oldWallet, newWallet, prior.old_privy_id || null, privyId,
+         isFundedException ? 'privy-link-funded-exception' : 'privy-link'],
+      );
+      logger.warn('[privy-link] wallet address changed', {
+        pnptvUserId, privyId, oldWallet, newWallet, oldWalletUsdBalance, isFundedException,
+      });
+    } else {
+      await client.query(
+        `UPDATE users
+            SET privy_id         = $1,
+                wallet_address   = COALESCE(NULLIF($2::text, ''), wallet_address),
+                wallet_linked_at = COALESCE(wallet_linked_at, CASE WHEN $2::text <> '' THEN NOW() ELSE wallet_linked_at END)
+          WHERE id = $3`,
+        [privyId, walletAddress || '', pnptvUserId],
+      );
+      if (privyIdChanged) {
+        await client.query(
+          `INSERT INTO wallet_changes (user_id, old_wallet_address, new_wallet_address, old_privy_id, new_privy_id, source)
+           VALUES ($1, $2, $3, $4, $5, 'privy-link')`,
+          [String(pnptvUserId), oldWallet, newWallet, prior.old_privy_id, privyId],
+        );
+      }
+      logger.info('[privy-link] linked', { pnptvUserId, privyId, walletAddress });
+    }
+    await client.query('COMMIT');
+  } catch (txErr) {
+    await client.query('ROLLBACK');
+    throw txErr;
+  } finally {
+    client.release();
   }
 
   if (walletChanged) {
-    // Funded-exception check: if the old address still holds USDC on Base,
-    // keep both wallets alive (previous_wallet_address preserved + a
-    // wallet_lock_reason marker so future audits know why). The DM/Slack
-    // notification uses the balance to switch to the "two wallets active"
-    // wording so the user knows nothing was lost.
-    const oldWalletUsdBalance = oldWallet ? await _oldWalletUsdBalance(oldWallet) : 0;
-    const isFundedException = oldWalletUsdBalance > 0.01;
-
-    await query(
-      `UPDATE users
-          SET privy_id                     = $1,
-              wallet_address               = $2,
-              previous_wallet_address      = CASE WHEN $3::text IS NULL THEN previous_wallet_address ELSE $3::text END,
-              wallet_linked_at             = NOW(),
-              has_pnptv_payout_configured  = FALSE,
-              wallet_lock_reason           = CASE WHEN $5::boolean THEN 'multi_wallet_funded_exception' ELSE wallet_lock_reason END
-        WHERE id = $4`,
-      [privyId, newWallet, oldWallet, pnptvUserId, isFundedException],
-    );
-    await query(
-      `INSERT INTO wallet_changes (user_id, old_wallet_address, new_wallet_address, old_privy_id, new_privy_id, source)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [String(pnptvUserId), oldWallet, newWallet, prior.old_privy_id || null, privyId,
-       isFundedException ? 'privy-link-funded-exception' : 'privy-link'],
-    );
-    logger.warn('[privy-link] wallet address changed', {
-      pnptvUserId, privyId, oldWallet, newWallet, oldWalletUsdBalance, isFundedException,
-    });
     _notifyWalletChanged({ pnptvUserId, oldWallet, newWallet, oldWalletUsdBalance }).catch(() => {});
-  } else {
-    await query(
-      `UPDATE users
-          SET privy_id         = $1,
-              wallet_address   = COALESCE(NULLIF($2::text, ''), wallet_address),
-              wallet_linked_at = COALESCE(wallet_linked_at, CASE WHEN $2::text <> '' THEN NOW() ELSE wallet_linked_at END)
-        WHERE id = $3`,
-      [privyId, walletAddress || '', pnptvUserId],
-    );
-    if (privyIdChanged) {
-      await query(
-        `INSERT INTO wallet_changes (user_id, old_wallet_address, new_wallet_address, old_privy_id, new_privy_id, source)
-         VALUES ($1, $2, $3, $4, $5, 'privy-link')`,
-        [String(pnptvUserId), oldWallet, newWallet, prior.old_privy_id, privyId],
-      );
-    }
-    logger.info('[privy-link] linked', { pnptvUserId, privyId, walletAddress });
   }
 
   // "wallet_linked" for active creators/performers: make sure the wallet is
