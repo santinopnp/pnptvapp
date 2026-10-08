@@ -1310,21 +1310,23 @@ app.use(async (req, res, next) => {
       }
     }
 
-    // View logging — record every fetch for leak detection. Deduped per
-    // (viewer, url) over 5 min via Redis SET-NX so a single playback's 50+
-    // range requests count as ONE view. Fire-and-forget: failures don't block.
-    try {
-      const viewerKey = req.session?.user?.id || `ip:${req.ip}`;
-      const dedupeKey = `videolog:${viewerKey}:${url}`;
-      const redis = videoGuardGetRedis();
-      const set = await redis.set(dedupeKey, '1', 'EX', 300, 'NX');
-      if (set === 'OK') {
-        videoGuardQuery(
-          `INSERT INTO video_fetch_log (media_url, user_id, ip_address) VALUES ($1, $2, $3)`,
-          [url, req.session?.user?.id || null, req.ip || null]
-        ).catch(() => {});
-      }
-    } catch { /* logging failure is never fatal */ }
+    // View logging — fully off the critical path via setImmediate so the Redis
+    // SET-NX dedup + INSERT never block video delivery.
+    setImmediate(() => {
+      try {
+        const viewerKey = req.session?.user?.id || `ip:${req.ip}`;
+        const dedupeKey = `videolog:${viewerKey}:${url}`;
+        const redis = videoGuardGetRedis();
+        redis.set(dedupeKey, '1', 'EX', 300, 'NX').then((set) => {
+          if (set === 'OK') {
+            videoGuardQuery(
+              `INSERT INTO video_fetch_log (media_url, user_id, ip_address) VALUES ($1, $2, $3)`,
+              [url, req.session?.user?.id || null, req.ip || null]
+            ).catch(() => {});
+          }
+        }).catch(() => {});
+      } catch { /* logging failure is never fatal */ }
+    });
 
     // Helper: hand off to R2 with a presigned URL. TTL varies by content tier.
     // Falls through to express.static (disk) on any error.
@@ -2622,15 +2624,20 @@ app.get('/health', healthLimiter, async (req, res) => {
     }
 
     try {
-      // Check PostgreSQL connection (optional in test env)
+      // Check PostgreSQL connection — race against 3s so this never blocks the
+      // Docker health check past its 5s timeout under pool pressure.
       const { testConnection } = require('../../config/postgres');
-      const dbOk = await testConnection();
+      const dbOk = await Promise.race([
+        testConnection(),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('health-db-timeout')), 3000)),
+      ]);
       fullHealth.dependencies.database = dbOk ? 'ok' : 'error';
       if (!dbOk) fullHealth.status = 'degraded';
     } catch (error) {
-      fullHealth.dependencies.database = 'error';
-      fullHealth.status = 'degraded';
-      logger.error('Database health check failed:', error);
+      fullHealth.dependencies.database = error.message === 'health-db-timeout' ? 'timeout' : 'error';
+      // Don't set status=degraded on timeout — pool pressure shouldn't kill the health check
+      if (error.message !== 'health-db-timeout') fullHealth.status = 'degraded';
+      if (error.message !== 'health-db-timeout') logger.error('Database health check failed:', error);
     }
 
     const statusCode = fullHealth.status === 'ok' ? 200 : 503;
