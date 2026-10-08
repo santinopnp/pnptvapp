@@ -231,11 +231,11 @@ async function verifyAndLink({ pnptvUserId, privyToken }) {
   // concurrent re-auth requests for the same user cannot race through the
   // funded-exception check and skip archiving the old wallet.
   const pool = getPool();
-  const client = await pool.connect();
+  const pgClient = await pool.connect();
   let prior = {}, oldWallet, newWallet, walletChanged, privyIdChanged, oldWalletUsdBalance = 0;
   try {
-    await client.query('BEGIN');
-    const priorRes = await client.query(
+    await pgClient.query('BEGIN');
+    const priorRes = await pgClient.query(
       `SELECT privy_id AS old_privy_id, wallet_address AS old_wallet_address
          FROM users WHERE id = $1 FOR UPDATE`,
       [pnptvUserId],
@@ -261,7 +261,7 @@ async function verifyAndLink({ pnptvUserId, privyToken }) {
       oldWalletUsdBalance = oldWallet ? await _oldWalletUsdBalance(oldWallet) : 0;
       const isFundedException = oldWalletUsdBalance > 0.01;
 
-      await client.query(
+      await pgClient.query(
         `UPDATE users
             SET privy_id                     = $1,
                 wallet_address               = $2,
@@ -272,7 +272,7 @@ async function verifyAndLink({ pnptvUserId, privyToken }) {
           WHERE id = $4`,
         [privyId, newWallet, oldWallet, pnptvUserId, isFundedException],
       );
-      await client.query(
+      await pgClient.query(
         `INSERT INTO wallet_changes (user_id, old_wallet_address, new_wallet_address, old_privy_id, new_privy_id, source)
          VALUES ($1, $2, $3, $4, $5, $6)`,
         [String(pnptvUserId), oldWallet, newWallet, prior.old_privy_id || null, privyId,
@@ -282,7 +282,7 @@ async function verifyAndLink({ pnptvUserId, privyToken }) {
         pnptvUserId, privyId, oldWallet, newWallet, oldWalletUsdBalance, isFundedException,
       });
     } else {
-      await client.query(
+      await pgClient.query(
         `UPDATE users
             SET privy_id         = $1,
                 wallet_address   = COALESCE(NULLIF($2::text, ''), wallet_address),
@@ -291,7 +291,7 @@ async function verifyAndLink({ pnptvUserId, privyToken }) {
         [privyId, walletAddress || '', pnptvUserId],
       );
       if (privyIdChanged) {
-        await client.query(
+        await pgClient.query(
           `INSERT INTO wallet_changes (user_id, old_wallet_address, new_wallet_address, old_privy_id, new_privy_id, source)
            VALUES ($1, $2, $3, $4, $5, 'privy-link')`,
           [String(pnptvUserId), oldWallet, newWallet, prior.old_privy_id, privyId],
@@ -299,12 +299,12 @@ async function verifyAndLink({ pnptvUserId, privyToken }) {
       }
       logger.info('[privy-link] linked', { pnptvUserId, privyId, walletAddress });
     }
-    await client.query('COMMIT');
+    await pgClient.query('COMMIT');
   } catch (txErr) {
-    await client.query('ROLLBACK');
+    await pgClient.query('ROLLBACK');
     throw txErr;
   } finally {
-    client.release();
+    pgClient.release();
   }
 
   if (walletChanged) {

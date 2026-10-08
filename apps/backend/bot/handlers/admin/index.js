@@ -6188,8 +6188,11 @@ async function sendBroadcastWithButtons(ctx, bot) {
     // Get target users
     let users = [];
     if (broadcastTarget === 'all') {
-      const result = await UserModel.getAll(10000);
-      users = result.users;
+      const { query: broadcastQuery } = require('../../../config/postgres');
+      const { rows: broadcastRows } = await broadcastQuery(
+        `SELECT id, language FROM users WHERE is_deleted = false AND id <> '1087968824' ORDER BY created_at DESC LIMIT 10000`
+      );
+      users = broadcastRows;
     } else if (broadcastTarget === 'premium') {
       users = await UserModel.getBySubscriptionStatus('active');
     } else if (broadcastTarget === 'free') {
