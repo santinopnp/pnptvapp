@@ -208,6 +208,8 @@ services:
       AUTHENTIK_EMAIL__USE_TLS: "true"
       AUTHENTIK_EMAIL__USE_SSL: "false"
       AUTHENTIK_EMAIL__TIMEOUT: "30"
+      AUTHENTIK_WEB__WORKERS: "3"
+      AUTHENTIK_WEB__WORKER_MAX_REQUESTS: "500"
     networks:
       - pnptvapp_net
     labels:
@@ -230,7 +232,7 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:9000/-/health/live/')\""]
       interval: 30s
-      timeout: 5s
+      timeout: 15s
       retries: 3
       start_period: 60s
 
