@@ -2993,13 +2993,31 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
   }, [location.search, location.pathname, location.hash]);
 
   // Auto-open BuyTokensModal on ?buy_rush=1 — used by push notification CTAs.
+  // Also handles ?action=buy-rush&amount=<usd> — used by DM action CTA buttons.
   useEffect(() => {
     if (!isAuthenticated) return;
     const params = new URLSearchParams(location.search);
+    const cleaned = new URLSearchParams(location.search);
+    let shouldReplace = false;
+
     if (params.get("buy_rush") === "1") {
       setLiveBuyOpen(true);
-      const cleaned = new URLSearchParams(location.search);
       cleaned.delete("buy_rush");
+      shouldReplace = true;
+    }
+
+    if (params.get("action") === "buy-rush") {
+      const amount = parseFloat(params.get("amount") ?? "0");
+      if (amount > 0) {
+        setLiveBuyUsd(amount);
+        setLiveBuyOpen(true);
+      }
+      cleaned.delete("action");
+      cleaned.delete("amount");
+      shouldReplace = true;
+    }
+
+    if (shouldReplace) {
       const search = cleaned.toString();
       window.history.replaceState({}, "", location.pathname + (search ? `?${search}` : "") + location.hash);
     }

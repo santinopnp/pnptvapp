@@ -84,6 +84,11 @@ interface DmMessage {
       note?: string | null;
     };
     translations?: Record<string, string>;
+    action?: {
+      type: 'buy-rush' | 'bridge-to-base';
+      amountUsd: number;
+      label: string;
+    };
   } | null;
 }
 
@@ -1841,6 +1846,24 @@ function DmChatView({ userId, myDbId, myUserId, isAdmin, onBack, panelMode }: { 
                         })() : msg.message_type === "post_card" && msg.meta?.postId ? (
                           <SharedPostCard postId={msg.meta.postId} snapshot={msg.meta.snapshot || {}} isMe={isMe} />
                         ) : renderMessageContent(msg)}
+                        {msg.meta?.action?.type === 'buy-rush' && (
+                          <button
+                            onClick={() => navigate(`/?action=buy-rush&amount=${msg.meta!.action!.amountUsd}`)}
+                            className="mt-2 w-full rounded-xl bg-amber-500 hover:bg-amber-400 active:scale-95 transition-all px-4 py-2.5 text-sm font-bold text-black flex items-center justify-center gap-2"
+                          >
+                            💎 {msg.meta.action.label}
+                          </button>
+                        )}
+                        {msg.meta?.action?.type === 'bridge-to-base' && (
+                          <a
+                            href="https://bridge.base.org/deposit"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="mt-2 w-full rounded-xl bg-blue-600 hover:bg-blue-500 active:scale-95 transition-all px-4 py-2.5 text-sm font-bold text-white flex items-center justify-center gap-2 no-underline"
+                          >
+                            🌉 {msg.meta.action.label}
+                          </a>
+                        )}
                         <div className={`flex items-center gap-1 mt-0.5 ${isMe ? "justify-end" : ""}`}>
                           {msg.id === pinnedMessageId && (
                             <svg className={`w-2.5 h-2.5 ${isMe ? "text-white/50" : "text-pnp-textSecondary/60"}`} fill="currentColor" viewBox="0 0 20 20"><path d="M10 2a1 1 0 011 1v3.586l1.707 1.707a1 1 0 01.293.707V13a1 1 0 01-1 1h-2v4a1 1 0 11-2 0v-4H6a1 1 0 01-1-1V9a1 1 0 01.293-.707L7 6.586V3a1 1 0 011-1h2z" /></svg>
