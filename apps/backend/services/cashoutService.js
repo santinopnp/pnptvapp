@@ -132,7 +132,7 @@ async function _dispatchAndFinalize(order, earningIds, walletAddress) {
     );
     await query(
       `UPDATE creator_earnings
-          SET status = 'paid_out', updated_at = NOW()
+          SET status = 'paid_out'
         WHERE id = ANY($1::uuid[])`,
       [earningIds]
     );
@@ -314,8 +314,7 @@ async function requestCashout({ creatorId, amountUsd, lane, destination }) {
     // ── Flip selected earnings to in_payout ───────────────────────────────
     await client.query(
       `UPDATE creator_earnings
-          SET status = 'in_payout',
-              updated_at = NOW()
+          SET status = 'in_payout'
         WHERE id = ANY($1::uuid[])`,
       [earningIds]
     );
@@ -446,7 +445,7 @@ async function runAutoPayoutSweep() {
 
       await client.query(
         `UPDATE creator_earnings
-            SET status = 'in_payout', updated_at = NOW()
+            SET status = 'in_payout'
           WHERE id = ANY($1::uuid[])`,
         [earningIds]
       );
@@ -556,8 +555,7 @@ async function settleCashoutOrder(orderId, providerRef) {
   if (earningIds && earningIds.length > 0) {
     await query(
       `UPDATE creator_earnings
-          SET status = 'paid_out',
-              updated_at = NOW()
+          SET status = 'paid_out'
         WHERE id = ANY($1::uuid[])`,
       [earningIds]
     );
@@ -596,8 +594,7 @@ async function failCashoutOrder(orderId, reason) {
   if (earningIds && earningIds.length > 0) {
     await query(
       `UPDATE creator_earnings
-          SET status = 'available',
-              updated_at = NOW()
+          SET status = 'available'
         WHERE id = ANY($1::uuid[])
           AND status = 'in_payout'`,
       [earningIds]
