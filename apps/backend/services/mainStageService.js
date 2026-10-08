@@ -1140,6 +1140,12 @@ async function addCammer(identity) {
     logger.warn('[MainStage] notifyFollowersOnStage failed', { identity, error: err.message })
   );
 
+  // Fire-and-forget: schedule a 3-minute delayed promo for active performers
+  // only. Cool-off prevents double-firing on quick disconnect/reconnect cycles.
+  scheduleStagePromo(identity).catch((err) =>
+    logger.warn('[MainStage] scheduleStagePromo failed', { identity, error: err.message })
+  );
+
   // Fire mode auto-flip evaluation AFTER the cammer is in the queue + role cached.
   const creatorsAfter = await countCreatorsInQueue();
   const humansAfter = await countHumanCammers();
@@ -1330,6 +1336,149 @@ async function notifyFollowersOnStage(identity) {
     followerCount: followerRows.length,
     persistedPush: nonMemberFollowerIds.length,
     socketToast: emitCount,
+  });
+}
+
+/**
+ * Queue a delayed BullMQ job that will fire runStagePromo after 3 minutes.
+ * Only proceeds if the identity belongs to an active performer. Errors are
+ * swallowed — callers use .catch() so a broken queue never blocks a join.
+ */
+async function scheduleStagePromo(performerId) {
+  const idStr = String(performerId);
+  if (idStr === MEDIA_BOT_IDENTITY) return;
+  if (idStr.startsWith('guest_') || idStr.startsWith('viewer_')) return;
+
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `SELECT p.user_id FROM performers p WHERE p.user_id::text = $1 AND p.status = 'active' LIMIT 1`,
+    [idStr]
+  );
+  if (!rows.length) return;
+
+  const queueService = require('./queueService');
+  await queueService.addJob(
+    'notifications',
+    'stage-promo',
+    { type: 'stage-promo', performerId: idStr },
+    { delay: 3 * 60 * 1000, attempts: 1 }
+  );
+}
+
+/**
+ * Execute the stage promo: push-to-all, social post as performer, DM to followers.
+ * Called by the BullMQ notifications worker after a 3-minute delay.
+ * All sub-actions are error-isolated so one failure never aborts the others.
+ */
+async function runStagePromo(performerId) {
+  const idStr = String(performerId);
+  const redis = getRedis();
+  const pool  = getPool();
+
+  // Verify performer is still on stage
+  const queue = await redis.lrange('mainstage:spotlight:queue', 0, -1);
+  if (!queue.includes(idStr)) return;
+
+  // Cool-off check — SET NX so first caller wins atomically
+  const coolKey = `pnpapp:stage-promo-cooloff:${idStr}`;
+  const acquired = await redis.set(coolKey, '1', 'EX', 4 * 60 * 60, 'NX');
+  if (!acquired) return;
+
+  // Fetch performer display info
+  const { rows: userRows } = await pool.query(
+    `SELECT u.id, u.username, u.first_name,
+            COALESCE(p.photo_url, u.photo_file_id) AS avatar_url
+       FROM users u
+       LEFT JOIN performers p ON p.user_id::text = u.id::text AND p.status = 'active'
+      WHERE u.id::text = $1
+      LIMIT 1`,
+    [idStr]
+  );
+  if (!userRows.length) return;
+  const user = userRows[0];
+  const displayName = user.first_name || user.username || 'A creator';
+  const profileUrl  = `https://pnptv.app/c/${user.username}`;
+
+  // 1. Push notification to ALL users
+  const PushNotificationService = require('./pushNotificationService');
+  PushNotificationService.sendToAll({
+    title: `🎬 ${displayName} is LIVE on Main Stage`,
+    body: `Book a private video call — $80/hr`,
+    url: '/main-stage',
+    tag: `stage-promo-${idStr}`,
+    image: user.avatar_url || '/app-icon-192.png',
+  }, { notifType: 'live_events' }).catch((err) =>
+    logger.warn('[StagePromo] push failed', { performerId: idStr, error: err.message })
+  );
+
+  // 2. Social post published as the performer
+  const SocialPostService = require('./socialPostService');
+  SocialPostService.createPost(
+    idStr,
+    `🎬 On the Main Stage now — slide into my DMs or book a private call 📞 $80/hr\n\n${profileUrl}`
+  ).catch((err) =>
+    logger.warn('[StagePromo] social post failed', { performerId: idStr, error: err.message })
+  );
+
+  // 3. DM to followers (max 500), batched to avoid DB saturation
+  const { rows: followerRows } = await pool.query(
+    `SELECT uf.follower_id::text AS follower_id
+       FROM user_follows uf
+       JOIN users u ON u.id = uf.follower_id
+      WHERE uf.following_id::text = $1
+        AND u.deleted_at IS NULL
+        AND COALESCE(u.tier, 'free') != 'banned'
+      LIMIT 500`,
+    [idStr]
+  );
+
+  if (followerRows.length === 0) {
+    logger.info('[StagePromo] promo sent (no followers)', { performerId: idStr, displayName });
+    return;
+  }
+
+  const dmContent = `Hey! I'm live on the Main Stage right now and available for private video calls ($80/hr). Book your session here 👇\n\n${profileUrl}`;
+  const BATCH_SIZE = 20;
+
+  for (let i = 0; i < followerRows.length; i += BATCH_SIZE) {
+    const batch = followerRows.slice(i, i + BATCH_SIZE);
+    await Promise.allSettled(batch.map(async ({ follower_id }) => {
+      // Per-follower dedupe within the same cool-off window
+      const dmKey = `pnpapp:stage-promo-dm:${idStr}:${follower_id}`;
+      const dmSent = await redis.set(dmKey, '1', 'EX', 4 * 60 * 60, 'NX');
+      if (!dmSent) return;
+
+      const { rows: msgRows } = await pool.query(
+        `INSERT INTO direct_messages (sender_id, recipient_id, content, message_type)
+         VALUES ($1, $2, $3, 'text') RETURNING id`,
+        [idStr, follower_id, dmContent]
+      );
+      const msgId = msgRows[0].id;
+
+      const [a, b] = [idStr, follower_id].sort();
+      const preview = dmContent.slice(0, 100);
+      await pool.query(
+        `INSERT INTO dm_threads (user_a, user_b, last_message_at, last_message, last_message_id, unread_for_a, unread_for_b)
+         VALUES ($1, $2, NOW(), $3, $7, $4, $5)
+         ON CONFLICT (user_a, user_b) DO UPDATE SET
+           last_message_at = NOW(),
+           last_message    = EXCLUDED.last_message,
+           last_message_id = EXCLUDED.last_message_id,
+           unread_for_a    = CASE WHEN dm_threads.user_a = $6 THEN 0 ELSE dm_threads.unread_for_a + 1 END,
+           unread_for_b    = CASE WHEN dm_threads.user_b = $6 THEN 0 ELSE dm_threads.unread_for_b + 1 END`,
+        [a, b, preview, idStr === a ? 0 : 1, idStr === b ? 0 : 1, idStr, msgId]
+      );
+    }));
+    // Brief pause between batches to avoid overwhelming the DB connection pool
+    if (i + BATCH_SIZE < followerRows.length) {
+      await new Promise((r) => setTimeout(r, 200));
+    }
+  }
+
+  logger.info('[StagePromo] promo sent', {
+    performerId: idStr,
+    displayName,
+    followers: followerRows.length,
   });
 }
 
@@ -2190,6 +2339,8 @@ module.exports = {
   getPinnedAnnouncement,
   setPinnedAnnouncement,
   clearPinnedAnnouncement,
+  // Stage promo — delayed push + social post + follower DMs on performer join
+  runStagePromo,
   // PNPtv! Mode — spotlight-lock streaming format
   fetchPnptvModeGrant,
   isPnptvModeLocked,

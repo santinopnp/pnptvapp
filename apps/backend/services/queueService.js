@@ -762,6 +762,11 @@ async function _processNotification(job) {
       await emailService.send(args[0]);
       break;
     }
+    case 'stage-promo': {
+      const mainStageService = require('./mainStageService');
+      await mainStageService.runStagePromo(job.data.performerId);
+      break;
+    }
     default:
       logger.warn(`[BullMQ] notifications processor: unknown type "${type}"`);
   }
