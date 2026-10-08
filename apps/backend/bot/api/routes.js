@@ -21449,6 +21449,8 @@ app.post('/api/creators/:id/services/:serviceId/book',
   // GET /api/webapp/channels/:channelId/videos/:videoId/mux-status
   // Lightweight poll endpoint — returns mux_status + ready flag so the frontend
   // can gate the Publish button until Mux finishes transcoding.
+  // Fallback: when Mux webhook is delayed (>5 min), live-check the Mux API and
+  // update the DB so the frontend unblocks without waiting for the webhook.
   app.get(
     '/api/webapp/channels/:channelId/videos/:videoId/mux-status',
     requireSessionAuth,
@@ -21457,10 +21459,47 @@ app.post('/api/creators/:id/services/:serviceId/book',
       if (!Number.isFinite(videoId)) return res.status(400).json({ success: false, error: 'Invalid video id' });
       try {
         const { rows: [v] } = await query(
-          `SELECT id, status, mux_status, mux_playback_id FROM channel_videos WHERE id = $1`,
+          `SELECT id, status, mux_status, mux_playback_id, mux_asset_id, created_at FROM channel_videos WHERE id = $1`,
           [videoId]
         );
         if (!v) return res.status(404).json({ success: false, error: 'Video not found' });
+
+        if (v.mux_status !== 'ready' && v.mux_asset_id && (Date.now() - new Date(v.created_at).getTime()) > 5 * 60 * 1000) {
+          try {
+            const muxService = require('../../services/muxService');
+            const asset = await muxService.getAsset(v.mux_asset_id);
+            if (asset.status === 'ready') {
+              const playbackId = asset.playback_ids?.[0]?.id;
+              const durationSec = asset.duration ? Math.round(asset.duration) : null;
+              const thumbUrl = playbackId ? muxService.getThumbnailUrl(playbackId, { percentage: 25 }) : null;
+              await query(
+                `UPDATE channel_videos
+                 SET mux_playback_id = COALESCE($1, mux_playback_id),
+                     mux_status = 'ready',
+                     status = CASE WHEN status = 'processing' THEN 'draft' ELSE status END,
+                     duration_sec = COALESCE($2, duration_sec),
+                     thumbnail_url = COALESCE(thumbnail_url, $3),
+                     updated_at = NOW()
+                 WHERE id = $4`,
+                [playbackId, durationSec, thumbUrl, videoId]
+              );
+              logger.info('mux-status fallback: live-check found asset ready', { videoId, assetId: v.mux_asset_id });
+              v.mux_status = 'ready';
+              v.mux_playback_id = playbackId || v.mux_playback_id;
+              v.status = v.status === 'processing' ? 'draft' : v.status;
+            } else if (asset.status === 'errored') {
+              await query(
+                `UPDATE channel_videos SET mux_status = 'errored', status = 'failed', updated_at = NOW() WHERE id = $1`,
+                [videoId]
+              );
+              v.mux_status = 'errored';
+              v.status = 'failed';
+            }
+          } catch (muxErr) {
+            logger.warn('mux-status fallback: live-check failed', { videoId, err: muxErr.message });
+          }
+        }
+
         res.json({ success: true, muxStatus: v.mux_status, status: v.status, ready: v.mux_status === 'ready' });
       } catch (err) { handleSvcError(res, err); }
     })
