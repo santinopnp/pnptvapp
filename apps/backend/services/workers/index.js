@@ -1329,6 +1329,18 @@ async function cronProcessor(job) {
       return;
     }
 
+    case 'events-expire': {
+      try {
+        const EventModel = _safeRequire('../../models/eventModel');
+        if (EventModel && typeof EventModel.expirePastEvents === 'function') {
+          await EventModel.expirePastEvents();
+        }
+      } catch (err) {
+        logger.error('[BullMQ] events-expire error', { err: err.message });
+      }
+      return;
+    }
+
     default:
       logger.warn(`[BullMQ] cronProcessor: unhandled job name "${job.name}"`);
   }

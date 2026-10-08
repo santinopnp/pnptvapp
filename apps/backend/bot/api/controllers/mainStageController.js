@@ -116,16 +116,31 @@ function isAdminRole(role) {
   return role === 'admin' || role === 'superadmin';
 }
 
-// ── State cache (2-second in-memory cache for the public /state endpoint) ─────
+// ── State cache (5-second in-memory cache for the public /state endpoint) ─────
+// Single-flight coalescing: if a refresh is already in-flight all concurrent
+// callers await the same promise instead of each hitting the DB independently.
 
-let _stateCache      = null;
-let _stateCacheUntil = 0;
+let _stateCache         = null;
+let _stateCacheUntil    = 0;
+let _stateRefreshPromise = null;
 
 async function getCachedState() {
   if (_stateCache && Date.now() < _stateCacheUntil) return _stateCache;
-  _stateCache      = await mainStageService.getState();
-  _stateCacheUntil = Date.now() + 2000;
-  return _stateCache;
+  if (_stateRefreshPromise) return _stateRefreshPromise;
+  _stateRefreshPromise = mainStageService.getState()
+    .then((state) => {
+      _stateCache          = state;
+      _stateCacheUntil     = Date.now() + 5000;
+      _stateRefreshPromise = null;
+      return state;
+    })
+    .catch((err) => {
+      _stateRefreshPromise = null;
+      // Return stale cache rather than crashing the response when DB is under pressure
+      if (_stateCache) return _stateCache;
+      throw err;
+    });
+  return _stateRefreshPromise;
 }
 
 // ── Endpoints ─────────────────────────────────────────────────────────────────

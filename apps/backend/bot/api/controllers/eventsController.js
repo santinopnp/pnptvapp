@@ -67,7 +67,6 @@ const eventsController = {
 
   // GET /api/proxy/events/upcoming
   async getUpcoming(req, res) {
-    await EventModel.expirePastEvents();
     const { type, limit, hangout_group_id } = req.query;
     const viewerUserId = req.session?.user?.id || null;
     const events = await EventModel.getUpcoming({

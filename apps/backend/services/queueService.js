@@ -668,6 +668,12 @@ async function initializeQueues() {
     jobId: 'cron-sunday-spun-days-recap',
   });
 
+  await cronQueue.add('events-expire', {}, {
+    repeat: { pattern: '*/15 * * * *', tz: 'UTC' },
+    attempts: 1, removeOnFail: false,
+    jobId: 'cron-events-expire',
+  });
+
   // Privy wallet purge intentionally removed 2026-09-28 (see project_privy_orphan_wallets_2026_09_27.md).
   // The purge codepath is the root cause of the orphan-wallet crisis; do NOT re-add it.
 
