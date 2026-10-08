@@ -15,11 +15,11 @@ import {
   reportWalletClientError,
   type TokenPackage,
 } from "@/lib/api";
-import { usePrivy, useWallets, useAddFunds, useSendTransaction } from "@privy-io/react-auth";
+import { usePrivy, useWallets, useAddFunds, useFundWallet, useSendTransaction } from "@privy-io/react-auth";
 import { createWalletClient, custom, encodeFunctionData, parseUnits } from "viem";
 import { base } from "viem/chains";
 import { OpenInBrowserButton } from "@/components/telegram/OpenInBrowserButton";
-import { WalletCheckoutHero, grossUpForOnramp, getPreferredWallet, setPreferredWallet, classifyOnrampError, onrampErrorMessage, shouldOfferOpenInBrowser } from "@/components/payments/PayInWalletChips";
+import { WalletCheckoutHero, grossUpForOnramp, getPreferredWallet, setPreferredWallet, classifyOnrampError, onrampErrorMessage, shouldOfferOpenInBrowser, popupsUnsupported } from "@/components/payments/PayInWalletChips";
 
 const USDC_BASE_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const BASE_CAIP2 = "eip155:8453" as const;
@@ -77,6 +77,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
   const { authenticated, login } = usePrivy();
   const { wallets } = useWallets();
   const { addFunds } = useAddFunds();
+  const { fundWallet } = useFundWallet();
   const { sendTransaction: privySendTransaction } = useSendTransaction();
 
   // Active-wallet picker — honors the user's preferred wallet (shared with
@@ -489,9 +490,8 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
 
   const handleFundForPackage = async (pkg: TokenPackage) => {
     if (!activeWallet) return;
-    // Guard: Privy throws "Existing fiat onramp flow in progress" if addFunds
-    // is called while a previous call is still open (rapid multi-tap before the
-    // modal appears). Early-return here so we never surface that error to users.
+    // Guard: Privy throws "Existing fiat onramp flow in progress" if a call is
+    // still open. Early-return so we never surface that error to users.
     if (fundInFlightRef.current) return;
     fundInFlightRef.current = true;
     const price = Number(pkg.usd);
@@ -499,18 +499,26 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
     setOfferOpenInBrowser(false);
     setPayingPackageId(pkg.id);
     try {
-      // Privy Stripe onramp — user pays with card/Apple Pay/Google Pay, USDC
-      // lands in their embedded wallet. grossUpForOnramp adds a fee buffer so
-      // the USDC that arrives is ≥ pack price (Stripe/MoonPay/Meld deduct their
-      // fee from what we pass); also enforces the $15 on-ramp minimum.
-      await addFunds({
-        destination: {
+      // Primary: useFundWallet (MoonPay only — Coinbase disabled). grossUpForOnramp
+      // adds a fee buffer so USDC that arrives ≥ pack price; enforces $15 minimum.
+      // Fallback: useAddFunds (Stripe, inline) when MoonPay already failed or
+      // popups are blocked (Telegram / in-app browser / iOS PWA).
+      const grossed = grossUpForOnramp(price);
+      if (!stripeHasFailed && !popupsUnsupported()) {
+        await fundWallet({
           address: activeWallet.address,
-          chain: BASE_CAIP2,
-          asset: USDC_BASE_ADDRESS,
-        },
-        fiat: { defaultAmount: grossUpForOnramp(price), source: { defaultAsset: "usd" } },
-      });
+          options: { chain: base, amount: grossed, asset: "USDC" },
+        });
+      } else {
+        await addFunds({
+          destination: {
+            address: activeWallet.address,
+            chain: BASE_CAIP2,
+            asset: USDC_BASE_ADDRESS,
+          },
+          fiat: { defaultAmount: grossed, source: { defaultAsset: "usd" } },
+        });
+      }
       // Poll balance until USDC covers the pack (or timeout ~60s), then trigger
       // the on-chain Ru$h purchase automatically so the card user gets the
       // one-tap "pay and get Ru$h" experience instead of a two-step manual flow.
@@ -538,17 +546,19 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      // Old regex also matched Stripe's "This transaction has been blocked"
-      // (a card decline) and told the user card payments don't work on their
-      // device. classifyOnrampError separates popup-blocked from card-blocked.
       const kind = classifyOnrampError(msg);
       if (kind === "cancel") return;
-      if (kind === "stripe_failed" || kind === "card_blocked" || kind === "provider_region") {
+      // MoonPay popup blocked or provider error → next tap uses Stripe
+      if (!stripeHasFailed && (kind === "popup_blocked" || kind === "provider_failed" || kind === "provider_region" || kind === "status_timeout")) {
+        setStripeHasFailed(true);
+      }
+      // Card decline / Stripe failure
+      if (kind === "stripe_failed" || kind === "card_blocked") {
         setStripeHasFailed(true);
       }
       setError(onrampErrorMessage(kind, es, msg));
       setOfferOpenInBrowser(shouldOfferOpenInBrowser(kind));
-      reportWalletClientError("buyTokensAddFunds", err, {
+      reportWalletClientError("buyTokensFundWallet", err, {
         surface: "rush", packageId: pkg.id, amountUsd: price,
         address: activeWallet?.address, walletType: activeWallet?.walletClientType,
         onrampErrorKind: kind,
@@ -573,14 +583,24 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
     setOfferOpenInBrowser(false);
     setPayingCustom(true);
     try {
-      await addFunds({
-        destination: {
+      // Primary: MoonPay via useFundWallet (Coinbase disabled = MoonPay only).
+      // Fallback: Stripe via useAddFunds when MoonPay already failed or popups blocked.
+      const grossed = grossUpForOnramp(usd);
+      if (!stripeHasFailed && !popupsUnsupported()) {
+        await fundWallet({
           address: activeWallet.address,
-          chain: BASE_CAIP2,
-          asset: USDC_BASE_ADDRESS,
-        },
-        fiat: { defaultAmount: grossUpForOnramp(usd), source: { defaultAsset: "usd" } },
-      });
+          options: { chain: base, amount: grossed, asset: "USDC" },
+        });
+      } else {
+        await addFunds({
+          destination: {
+            address: activeWallet.address,
+            chain: BASE_CAIP2,
+            asset: USDC_BASE_ADDRESS,
+          },
+          fiat: { defaultAmount: grossed, source: { defaultAsset: "usd" } },
+        });
+      }
       const deadline = Date.now() + 60_000;
       let bal = walletUsdc ?? 0;
       while (Date.now() < deadline && bal < usd) {
@@ -606,7 +626,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
         if (closeOnCancel) onClose();
         return;
       }
-      reportWalletClientError("buyTokensAddFunds", err, {
+      reportWalletClientError("buyTokensFundWallet", err, {
         surface: "rush", packageId: pkgId, amountUsd: usd,
         address: activeWallet?.address, walletType: activeWallet?.walletClientType,
         onrampErrorKind: kind,
@@ -617,7 +637,11 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
         onClose();
         return;
       }
-      if (kind === "stripe_failed" || kind === "card_blocked" || kind === "provider_region") {
+      // MoonPay popup blocked or provider failure → next tap uses Stripe
+      if (!stripeHasFailed && (kind === "popup_blocked" || kind === "provider_failed" || kind === "provider_region" || kind === "status_timeout")) {
+        setStripeHasFailed(true);
+      }
+      if (kind === "stripe_failed" || kind === "card_blocked") {
         setStripeHasFailed(true);
       }
       // Known onramp failures need an explanation and a next step (other
