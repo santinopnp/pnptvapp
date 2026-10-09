@@ -135,7 +135,7 @@ async function createWebUser({ id, firstName, lastName, username, email, passwor
  */
 async function findOrLinkUser({ telegramId, twitterHandle, xId, email, firstName, lastName, username, photoFileId } = {}) {
   const RETURN_COLS = `id, pnptv_id, first_name, last_name, username, email,
-    subscription_status, tier, terms_accepted, photo_file_id, bio, language, telegram, twitter, x_id, role`;
+    subscription_status, tier, terms_accepted, photo_file_id, bio, language, telegram, twitter, x_id, role, is_pnptv_fam`;
 
   let user = null;
 
@@ -292,6 +292,7 @@ function buildSession(user, extra = {}) {
     bio: user.bio,
     language: user.language,
     role: user.role || 'user',
+    is_pnptv_fam: !!user.is_pnptv_fam,
     creator_status: user.creator_status || 'none',
     creator_locked: user.creator_locked === true,
     contentDisclaimer: user.content_disclaimer || false,

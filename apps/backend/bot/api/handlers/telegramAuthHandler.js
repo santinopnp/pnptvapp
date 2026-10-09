@@ -364,6 +364,7 @@ const handleTelegramAuth = async (req, res) => {
       onboardingComplete: user.onboarding_complete,
       contentDisclaimer: user.content_disclaimer || false,
       role,
+      is_pnptv_fam: !!user.is_pnptv_fam,
       last_login_method: 'mini_app',
       liveChannel: user.live_channel || null,
       sessionCreatedAt: Date.now(),
@@ -546,7 +547,7 @@ const checkAuthStatus = async (req, res) => {
     // Refresh tier, role, and subscription from DB (prevents stale session data)
     try {
       const { rows } = await query(
-        'SELECT pnptv_id, tier, role, subscription_status, photo_file_id, creator_status, creator_type, creator_role, creator_locked, age_verified, terms_accepted, date_of_birth, content_disclaimer, onboarding_complete, live_channel, twitter, x_username, founders_offer_expires_at, founders_popup_dismissed_at, year50_popup_dismissed_at FROM users WHERE id = $1',
+        'SELECT pnptv_id, tier, role, subscription_status, photo_file_id, creator_status, creator_type, creator_role, creator_locked, age_verified, terms_accepted, date_of_birth, content_disclaimer, onboarding_complete, live_channel, twitter, x_username, founders_offer_expires_at, founders_popup_dismissed_at, year50_popup_dismissed_at, is_pnptv_fam FROM users WHERE id = $1',
         [user.id]
       );
       if (rows.length > 0) {

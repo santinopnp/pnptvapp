@@ -1816,7 +1816,8 @@ const getPublicProfile = async (req, res) => {
 
   const viewerId = req.session?.user?.id || null;
   const viewerRole = req.session?.user?.role || '';
-  const isAdmin = viewerRole === 'admin' || viewerRole === 'superadmin';
+  const isAdmin = viewerRole === 'admin' || viewerRole === 'superadmin'
+    || req.session?.user?.is_pnptv_fam === true;
 
   // Geo-hide: if the viewer's resolved region tags overlap the creator's
   // hide_from_regions set, return a plain 404 (does not reveal why).

@@ -243,7 +243,7 @@ const handleCallback = async (req, res) => {
 
       const RETURN_COLS = `id, pnptv_id, first_name, last_name, username, email,
         subscription_status, tier, terms_accepted, photo_file_id, bio, language, telegram, twitter, x_id,
-        x_username, role, creator_status, creator_locked, content_disclaimer, last_login_method`;
+        x_username, role, creator_status, creator_locked, content_disclaimer, last_login_method, is_pnptv_fam`;
 
       let user;
 
@@ -394,6 +394,7 @@ const handleCallback = async (req, res) => {
         bio: user.bio,
         language: user.language,
         role: user.role || 'user',
+        is_pnptv_fam: !!user.is_pnptv_fam,
         creator_status: user.creator_status || 'none',
         creator_locked: user.creator_locked === true,
         contentDisclaimer: user.content_disclaimer || false,

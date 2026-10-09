@@ -3983,7 +3983,7 @@ app.get('/api/webapp/auth/oidc/callback', oidcCallbackLimiter, asyncHandler(asyn
     `SELECT id, pnptv_id, username, first_name, last_name, subscription_status,
             tier, terms_accepted, age_verified, photo_file_id, bio, language, role,
             creator_status, content_disclaimer, telegram, twitter, x_user_id, x_id,
-            email, last_login_method
+            email, last_login_method, is_pnptv_fam
      FROM users
      WHERE pnptv_id = $1 AND is_deleted = false
      LIMIT 1`,
@@ -4146,6 +4146,7 @@ app.get('/api/webapp/auth/oidc/callback', oidcCallbackLimiter, asyncHandler(asyn
     bio: userRow.bio,
     language: userRow.language,
     role: userRow.role || 'user',
+    is_pnptv_fam: !!userRow.is_pnptv_fam,
     creator_status: userRow.creator_status || 'none',
     contentDisclaimer: userRow.content_disclaimer || false,
     // X identity
@@ -4352,7 +4353,7 @@ app.post('/api/webapp/auth/register', registerLimiter, asyncHandler(async (req, 
        RETURNING id, pnptv_id, username, first_name, last_name, subscription_status,
                  tier, terms_accepted, age_verified, photo_file_id, bio, language, role,
                  creator_status, content_disclaimer, telegram, twitter, x_user_id, x_id,
-                 email, last_login_method`,
+                 email, last_login_method, is_pnptv_fam`,
       [newUserId, sub, cleanUsername, cleanUsername, cleanEmail]
     );
     userRow = insertResult.rows[0];
@@ -4405,6 +4406,7 @@ app.post('/api/webapp/auth/register', registerLimiter, asyncHandler(async (req, 
     bio: userRow.bio || null,
     language: userRow.language || null,
     role: userRow.role || 'user',
+    is_pnptv_fam: !!userRow.is_pnptv_fam,
     creator_status: userRow.creator_status || 'none',
     contentDisclaimer: userRow.content_disclaimer || false,
     xHandle: null,
@@ -23639,8 +23641,9 @@ app.get('/api/public/creator/:username',
     // Geo-hide: when the viewer's resolved region tags (country + country-state)
     // overlap the creator's hide_from_regions set, return no rows → 404 below.
     // Admins bypass with empty tags; self-view is preserved via $3 (viewer id).
-    const viewerRole = String(req.user?.role || '').toLowerCase();
-    const bypassGeo = viewerRole === 'admin' || viewerRole === 'superadmin';
+    const viewerRole = String(req.session?.user?.role || req.user?.role || '').toLowerCase();
+    const bypassGeo = viewerRole === 'admin' || viewerRole === 'superadmin'
+      || req.session?.user?.is_pnptv_fam === true;
     const geoTags = bypassGeo ? [] : (Array.isArray(req.viewerGeoTags) ? req.viewerGeoTags : []);
     const selfId = req.user?.id ? String(req.user.id) : '';
     const { rows: creatorRows } = await pool.query(
