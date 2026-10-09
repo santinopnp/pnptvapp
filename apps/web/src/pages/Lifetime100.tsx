@@ -25,7 +25,21 @@ const REDIRECT_DELAY_MS = 2500;
 const LIFETIME100_PLAN_ID = "lifetime100";
 const LIFETIME100_PRICE_USD = 100;
 
-// Crypto currencies accepted for lifetime100 — mirrors the backend allow-list.
+interface PlanPageConfig {
+  planId: string;
+  priceUsd: number;
+  apiSlug: string;
+  basePath: string;
+  totalSlots: number;
+}
+const PLAN_CONFIGS: Record<string, PlanPageConfig> = {
+  "yearly50": { planId: "yearly50", priceUsd: 50, apiSlug: "yearly50", basePath: "/yearly50", totalSlots: 50 },
+  "lifetime100": { planId: "lifetime100", priceUsd: 100, apiSlug: "lifetime100", basePath: "/lifetime100", totalSlots: 100 },
+};
+const PlanConfigContext = React.createContext<PlanPageConfig>(PLAN_CONFIGS.lifetime100);
+function usePlanConfig(): PlanPageConfig { return React.useContext(PlanConfigContext); }
+
+// Crypto currencies accepted — mirrors the backend allow-list.
 const CRYPTO_CURRENCIES = [
   { code: "usdcbase", labelKey: "cryptoUsdcLabel" as const, chain: "Base" },
   { code: "usdterc20", labelKey: "cryptoUsdtLabel" as const, chain: "ERC-20" },
@@ -228,6 +242,7 @@ interface InvoiceState {
 }
 
 function CryptoPaymentModal({ s, lang, onClose }: CryptoPaymentModalProps) {
+  const cfg = usePlanConfig();
   const [email, setEmail] = useState("");
   const [payCurrency, setPayCurrency] = useState<string>("usdcbase");
   const [submitting, setSubmitting] = useState(false);
@@ -279,7 +294,7 @@ function CryptoPaymentModal({ s, lang, onClose }: CryptoPaymentModalProps) {
     setSubmitting(true);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/api/public/lifetime100/np-invoice`, {
+      const res = await fetch(`${API_BASE}/api/public/${cfg.apiSlug}/np-invoice`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: trimmed, payCurrency, language: lang }),
@@ -891,6 +906,7 @@ interface HeroViewProps {
 }
 
 function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpenSheet }: HeroViewProps) {
+  const cfg = usePlanConfig();
   const [modalOpen, setModalOpen] = useState(false);
   const [walletModalOpen, setWalletModalOpen] = useState(false);
   const [signupPanelOpen, setSignupPanelOpen] = useState(false);
@@ -981,7 +997,7 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
       await magicLinkStart(trimmed);
       // localStorage persists across tabs — needed because the magic-link click
       // opens in a new tab from the email client (sessionStorage is tab-scoped).
-      try { localStorage.setItem("pnptv:postSignupIntent", "/lifetime100?autopay=1"); } catch {}
+      try { localStorage.setItem("pnptv:postSignupIntent", `${cfg.basePath}?autopay=1`); } catch {}
       setEmailStep("sent");
     } catch {
       setEmailError("Couldn't send the link. Please try again.");
@@ -1073,11 +1089,11 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
   // X OAuth — must leave the page; intent preserved in sessionStorage so
   // Layout.tsx redirect hook brings them back to /lifetime100?autopay=1
   const handleXSignup = useCallback(() => {
-    try { sessionStorage.setItem("pnptv:postSignupIntent", "/lifetime100?autopay=1"); } catch {}
+    try { sessionStorage.setItem("pnptv:postSignupIntent", `${cfg.basePath}?autopay=1`); } catch {}
     window.location.href = `${API_BASE}/api/webapp/auth/x/start?redirect=true`;
   }, []);
 
-  const activateHref = `/lifetime100/activate`;
+  const activateHref = `${cfg.basePath}/activate`;
 
   return (
     <div
@@ -1228,7 +1244,7 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
               }}
             >
               <span style={{ fontSize: "0.36em", marginTop: "0.55em", opacity: 0.8 }}>$</span>
-              <span>100</span>
+              <span>{cfg.priceUsd}</span>
             </div>
             <span
               style={{
@@ -1636,7 +1652,7 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
                 Create your account to pay with card
               </p>
               <p style={{ margin: "6px 0 0", fontSize: 13, color: "rgba(255,255,255,0.55)" }}>
-                After signup you'll go directly to checkout — $100 one-time.
+                After signup you'll go directly to checkout — ${cfg.priceUsd}.
               </p>
             </div>
 
@@ -1803,6 +1819,7 @@ interface WalletPaymentModalProps {
 }
 
 function WalletPaymentModal({ s, lang, onClose }: WalletPaymentModalProps) {
+  const cfg = usePlanConfig();
   const uiLang: "es" | "en" = lang.toLowerCase().startsWith("en") ? "en" : "es";
   return (
     <ModalOverlay onClose={onClose}>
@@ -1815,9 +1832,9 @@ function WalletPaymentModal({ s, lang, onClose }: WalletPaymentModalProps) {
         </p>
         <WalletPayCard
           surface="prime"
-          amountUsd={LIFETIME100_PRICE_USD}
-          entitlementSpec={{ planId: LIFETIME100_PLAN_ID }}
-          metadata={{ source: "lifetime100_page", planId: LIFETIME100_PLAN_ID }}
+          amountUsd={cfg.priceUsd}
+          entitlementSpec={{ planId: cfg.planId }}
+          metadata={{ source: `${cfg.apiSlug}_page`, planId: cfg.planId }}
           label={s.walletPayLabel}
           lang={uiLang}
           onSuccess={() => {
@@ -2488,6 +2505,9 @@ export default function Lifetime100() {
   const [searchParams] = useSearchParams();
   const location = useLocation();
 
+  // Pick plan config based on current path
+  const cfg = location.pathname.startsWith("/yearly50") ? PLAN_CONFIGS.yearly50 : PLAN_CONFIGS.lifetime100;
+
   // Determine display mode
   const isActivatePath = location.pathname.includes("/activate");
   const modeParam = searchParams.get("mode");
@@ -2504,7 +2524,7 @@ export default function Lifetime100() {
 
   // Language
   const [lang, setLang] = useState(getInitialLang);
-  const s = useLifetime100Strings(lang);
+  const s = useLifetime100Strings(lang, cfg.planId);
 
   const handleLangChange = (next: string) => {
     setLang(next);
@@ -2523,7 +2543,7 @@ export default function Lifetime100() {
     if (isActivateMode) return;
     let cancelled = false;
     setAvailabilityLoading(true);
-    fetch(`${API_BASE}/api/public/lifetime100/availability`, {
+    fetch(`${API_BASE}/api/public/${cfg.apiSlug}/availability`, {
       credentials: "include",
     })
       .then((r) => r.json())
@@ -2563,53 +2583,55 @@ export default function Lifetime100() {
 
   if (isActivateMode) {
     return (
-      <div
-        style={{
-          minHeight: "100vh",
-          background: "#120d14",
-          color: "#ffffff",
-          position: "relative",
-          overflowX: "hidden",
-          paddingBottom: 96, // clearance for fixed NavFooter
-        }}
-      >
-        {/* Header with lang toggle */}
-        <header
+      <PlanConfigContext.Provider value={cfg}>
+        <div
           style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            padding: "20px 24px",
+            minHeight: "100vh",
+            background: "#120d14",
+            color: "#ffffff",
+            position: "relative",
+            overflowX: "hidden",
+            paddingBottom: 96, // clearance for fixed NavFooter
           }}
         >
-          <a href="/" aria-label="PNPtv! home" style={{ display: "flex" }}>
-            <img src="/logo-header.png" alt="PNPtv!" style={{ height: 36, width: "auto" }} />
-          </a>
-          <LangToggle lang={lang} onChange={handleLangChange} />
-        </header>
+          {/* Header with lang toggle */}
+          <header
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              padding: "20px 24px",
+            }}
+          >
+            <a href="/" aria-label="PNPtv! home" style={{ display: "flex" }}>
+              <img src="/logo-header.png" alt="PNPtv!" style={{ height: 36, width: "auto" }} />
+            </a>
+            <LangToggle lang={lang} onChange={handleLangChange} />
+          </header>
 
-        <ActivateView s={s} initialCode={codeParam} />
-        <NavFooter onOpenSheet={setActiveSheet} />
-        {sheetData && (
-          <SheetModal sheet={sheetData} onClose={() => setActiveSheet(null)} />
-        )}
-      </div>
+          <ActivateView s={s} initialCode={codeParam} />
+          <NavFooter onOpenSheet={setActiveSheet} />
+          {sheetData && (
+            <SheetModal sheet={sheetData} onClose={() => setActiveSheet(null)} />
+          )}
+        </div>
+      </PlanConfigContext.Provider>
     );
   }
 
   return (
-    <>
-    <HeroView
-      s={s}
-      available={available}
-      availabilityLoading={availabilityLoading}
-      lang={lang}
-      onLangChange={handleLangChange}
-      onOpenSheet={setActiveSheet}
-    />
-    {sheetData && (
-      <SheetModal sheet={sheetData} onClose={() => setActiveSheet(null)} />
-    )}
-    </>
+    <PlanConfigContext.Provider value={cfg}>
+      <HeroView
+        s={s}
+        available={available}
+        availabilityLoading={availabilityLoading}
+        lang={lang}
+        onLangChange={handleLangChange}
+        onOpenSheet={setActiveSheet}
+      />
+      {sheetData && (
+        <SheetModal sheet={sheetData} onClose={() => setActiveSheet(null)} />
+      )}
+    </PlanConfigContext.Provider>
   );
 }

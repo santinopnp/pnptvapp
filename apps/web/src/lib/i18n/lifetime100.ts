@@ -347,7 +347,70 @@ export const strings = {
 
 export type Lifetime100Strings = (typeof strings)["en"];
 
-export function useLifetime100Strings(lang?: string): Lifetime100Strings {
+const yearly50Overrides = {
+  en: {
+    pageTitle: "Annual PRIME — PNPtv!",
+    heroTitle: "PRIME Annual",
+    heroSubtitle: "Full access for a year — just $50.",
+    oldPrice: "",
+    newPrice: "$50",
+    limitedBadge: "PRIME ANNUAL · LIMITED SPOTS",
+    cryptoModalTitle: "Pay Annual PRIME with crypto",
+    cryptoModalSubtitle:
+      "Enter your email, pick your coin, and complete the payment. PRIME activates automatically the moment your payment confirms — no waiting on a code.",
+    benefits: [
+      "1 full year of PRIME access — everything included.",
+      "✨ Prime Channel access: exclusive creator content.",
+      "Private sessions with creators.",
+      "Priority support, always.",
+      "Renew next year at the same price.",
+    ],
+    noticeFundraising: "Your $50 goes directly to building PNPtv — annual price while we grow.",
+    noticeEarlyAccess: "Lock in a full year of PRIME access for just $50.",
+    ctaGetAccess: "CLAIM YOUR SPOT — $50",
+    ctaPayWithCrypto: "₿ Apps & wallets — $50",
+    ctaPayWithCard: "💳 PAY WITH CARD — $50",
+    ctaPayWithWallet: "💳 Card · Apple Pay · Wallet — $50",
+    walletPayLabel: "Pay $50 · PRIME Annual",
+    activateSuccessBody: "Your annual PRIME membership is now active. Redirecting you to the app...",
+    errorCodeExpired: "This code has expired. Please request a new payment link at /yearly50.",
+    errorPoolEmpty: "All spots have been claimed. Join our waitlist to be notified if a spot opens up.",
+  },
+  es: {
+    pageTitle: "PRIME Anual — PNPtv!",
+    heroTitle: "PRIME Anual",
+    heroSubtitle: "Acceso total por un año — solo $50.",
+    oldPrice: "",
+    newPrice: "$50",
+    limitedBadge: "PRIME ANUAL · CUPOS LIMITADOS",
+    cryptoModalTitle: "Paga PRIME Anual con cripto",
+    cryptoModalSubtitle:
+      "Escribe tu correo, escoge la moneda y completa el pago. PRIME se activa automáticamente en cuanto tu pago confirme — sin esperar códigos.",
+    benefits: [
+      "1 año completo de acceso PRIME — todo incluido.",
+      "✨ Acceso al Prime Channel: contenido exclusivo de creadores.",
+      "Sesiones privadas con creadores.",
+      "Soporte prioritario, siempre.",
+      "Renueva el próximo año al mismo precio.",
+    ],
+    noticeFundraising: "Tus $50 van directamente a construir PNPtv — precio anual mientras crecemos.",
+    noticeEarlyAccess: "Asegura un año completo de PRIME por solo $50.",
+    ctaGetAccess: "RECLAMA TU LUGAR — $50",
+    ctaPayWithCrypto: "₿ Apps y wallets — $50",
+    ctaPayWithCard: "💳 PAGAR CON TARJETA — $50",
+    ctaPayWithWallet: "💳 Tarjeta · Apple Pay · Wallet — $50",
+    walletPayLabel: "Pagar $50 · PRIME Anual",
+    activateSuccessBody: "Tu membresía PRIME anual está activa. Redirigiendo a la app...",
+    errorCodeExpired: "Este código ha expirado. Solicita un nuevo enlace de pago en /yearly50.",
+    errorPoolEmpty: "Todos los lugares han sido reclamados. Únete a la lista de espera para ser notificado si hay disponibilidad.",
+  },
+};
+
+export function useLifetime100Strings(lang?: string, planId?: string): Lifetime100Strings {
   const key = (lang || "es").toLowerCase().startsWith("en") ? "en" : "es";
-  return strings[key as keyof typeof strings];
+  const base = strings[key as keyof typeof strings];
+  if (planId === "yearly50") {
+    return { ...base, ...yearly50Overrides[key as keyof typeof yearly50Overrides] };
+  }
+  return base;
 }

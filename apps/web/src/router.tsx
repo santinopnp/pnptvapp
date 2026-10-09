@@ -1471,6 +1471,22 @@ export const router = createBrowserRouter([
     ),
   },
   {
+    path: "/yearly50",
+    element: (
+      <ModuleLoader>
+        <Lifetime100 />
+      </ModuleLoader>
+    ),
+  },
+  {
+    path: "/yearly50/activate",
+    element: (
+      <ModuleLoader>
+        <Lifetime100 />
+      </ModuleLoader>
+    ),
+  },
+  {
     path: "/crypto-guide",
     element: (
       <ModuleLoader>

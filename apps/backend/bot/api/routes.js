@@ -517,6 +517,8 @@ const GEO_BLOCK_BYPASS_PATHS = [
   /^\/api\/public\/geo-invite\//,
   // lifetime100 purchase flow is exempt by operator policy
   /^\/api\/public\/lifetime100\b/,
+  // yearly50 purchase flow is exempt by operator policy
+  /^\/api\/public\/yearly50\b/,
   // Socios program invite links (frontend page + backend API). Colombian
   // socios need to click their /invite/CODE link and complete redemption
   // from a CO IP; without this bypass they hit an infinite redirect loop
@@ -1155,6 +1157,16 @@ app.get('/lifetime100', (req, res) => {
   }
   const qs = req.url.includes('?') ? '?' + req.url.split('?')[1] : '';
   return res.redirect(302, 'https://app.pnptv.app/lifetime100' + qs);
+});
+
+// YEARLY50 — redirect to the React SPA, preserving any query string
+app.get('/yearly50', (req, res) => {
+  const host = req.get('host') || '';
+  if (host.includes('easybots.store') || host.includes('easybots')) {
+    return res.status(404).send('Not found');
+  }
+  const qs = req.url.includes('?') ? '?' + req.url.split('?')[1] : '';
+  return res.redirect(302, 'https://app.pnptv.app/yearly50' + qs);
 });
 
 // ── CMS asset proxy ──────────────────────────────────────────────────────────
@@ -14718,6 +14730,169 @@ app.post('/api/public/lifetime100/np-invoice', lifetime100NpInvoiceLimiter, asyn
   });
 }));
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Public yearly50 crypto checkout (no auth) — mirrors the lifetime100 flow but
+// for the $50 annual PRIME plan (plan_id = 'yearly50', 50 total slots).
+// ─────────────────────────────────────────────────────────────────────────────
+const YEARLY50_PAY_CURRENCIES = new Set(['usdcbase', 'usdterc20', 'eth', 'btc']);
+const yearly50NpInvoiceLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 12,
+  message: { success: false, error: 'Too many payment attempts. Try again in an hour.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.ip,
+});
+
+app.get('/api/public/yearly50/availability', asyncHandler(async (req, res) => {
+  try {
+    const TOTAL_SLOTS = 50;
+    const { rows } = await getPool().query(
+      `SELECT COUNT(*) AS sold FROM dash_subscription_orders
+       WHERE plan_id = 'yearly50' AND status = 'completed'
+         AND metadata->>'flow' = 'yearly50-public'`
+    );
+    const sold = parseInt(rows[0]?.sold || 0, 10);
+    return res.json({ success: true, available: Math.max(0, TOTAL_SLOTS - sold), sold, total: TOTAL_SLOTS });
+  } catch (err) {
+    logger.error('yearly50/availability error', err);
+    return res.json({ success: true, available: null });
+  }
+}));
+
+app.post('/api/public/yearly50/np-invoice', yearly50NpInvoiceLimiter, asyncHandler(async (req, res) => {
+  if (!NOWPAYMENTS_API_KEY) {
+    return res.status(503).json({ success: false, error: 'Crypto payments are temporarily unavailable.' });
+  }
+
+  const { email: rawEmail, payCurrency: rawPayCurrency, language: rawLang } = req.body || {};
+  const email = String(rawEmail || '').trim().toLowerCase();
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
+    return res.status(400).json({ success: false, error: 'A valid email address is required.' });
+  }
+  const payCurrency = String(rawPayCurrency || '').toLowerCase();
+  if (!YEARLY50_PAY_CURRENCIES.has(payCurrency)) {
+    return res.status(400).json({ success: false, error: 'Unsupported currency.' });
+  }
+  const language = (typeof rawLang === 'string' && rawLang.toLowerCase().startsWith('es')) ? 'es' : 'en';
+
+  const { query: dbQuery } = require('../../config/postgres');
+  const { ensureEmailCredentials } = require('../../services/userService');
+
+  const existing = await dbQuery(
+    `SELECT id FROM users WHERE LOWER(email) = LOWER($1) AND COALESCE(is_deleted, false) = false LIMIT 1`,
+    [email]
+  );
+  let userId;
+  if (existing.rows.length > 0) {
+    userId = existing.rows[0].id;
+  } else {
+    userId = crypto.randomUUID();
+    const firstName = email.split('@')[0].slice(0, 80) || 'Member';
+    const rawUname = (email.split('@')[0] || '').toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 30) || `user_${crypto.randomBytes(4).toString('hex')}`;
+    const { rows: urows } = await dbQuery('SELECT 1 FROM users WHERE LOWER(username)=LOWER($1) LIMIT 1', [rawUname]);
+    const username = urows.length > 0 ? `${rawUname.slice(0, 24)}_${crypto.randomBytes(3).toString('hex')}` : rawUname;
+    await dbQuery(
+      `INSERT INTO users (id, email, username, first_name, tier, role, subscription_status, language, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, 'free', 'user', 'free', $5, NOW(), NOW())`,
+      [userId, email, username, firstName, language]
+    );
+    try { await ensureEmailCredentials(userId, email, language, { skipEmail: true }); } catch (_) {}
+  }
+
+  const planRes = await dbQuery(
+    `SELECT id, display_name, name, price FROM plans WHERE id = 'yearly50' AND active = true LIMIT 1`
+  );
+  if (planRes.rows.length === 0) {
+    return res.status(503).json({ success: false, error: 'Annual plan not available.' });
+  }
+  const plan = planRes.rows[0];
+  const usdAmount = parseFloat(plan.price);
+  const planDisplayName = plan.display_name || plan.name || 'PNPtv! PRIME Annual';
+
+  const resumeRes = await dbQuery(
+    `SELECT id, btcpay_invoice_id, metadata FROM dash_subscription_orders
+     WHERE user_id = $1 AND plan_id = 'yearly50' AND status = 'pending'
+       AND metadata->>'flow' = 'yearly50-public'
+       AND metadata->>'payCurrency' = $2
+       AND created_at > NOW() - INTERVAL '23 hours'
+     ORDER BY created_at DESC LIMIT 1`,
+    [String(userId), payCurrency]
+  );
+  if (resumeRes.rows.length > 0) {
+    const meta = resumeRes.rows[0].metadata || {};
+    if (meta.invoiceUrl && meta.nowpaymentsInvoiceId) {
+      return res.json({
+        success: true,
+        orderId: resumeRes.rows[0].btcpay_invoice_id,
+        invoiceUrl: meta.invoiceUrl,
+        nowpaymentsInvoiceId: String(meta.nowpaymentsInvoiceId),
+        payCurrency,
+        usdAmount,
+        planName: planDisplayName,
+        resumed: true,
+      });
+    }
+  }
+
+  const webappUrl = (process.env.WEBAPP_URL || 'https://pnptv.app').replace(/\/$/, '');
+  const orderId = `pnptv-y50-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+
+  let invoiceUrl, nowpaymentsInvoiceId;
+  try {
+    const paymentResp = await axios.post(`${NOWPAYMENTS_URL}/invoice`, {
+      price_amount: usdAmount,
+      price_currency: 'usd',
+      pay_currency: payCurrency,
+      order_id: orderId,
+      order_description: `${planDisplayName} — PNPtv!`,
+      ipn_callback_url: `${webappUrl}/api/webhooks/nowpayments`,
+      success_url: `${webappUrl}/yearly50?paid=1&order=${encodeURIComponent(orderId)}`,
+      cancel_url: `${webappUrl}/yearly50`,
+      customer_email: email,
+    }, {
+      headers: { 'x-api-key': NOWPAYMENTS_API_KEY, 'Content-Type': 'application/json' },
+      timeout: 10000,
+    });
+    nowpaymentsInvoiceId = paymentResp.data?.id;
+    invoiceUrl = paymentResp.data?.invoice_url;
+    if (!nowpaymentsInvoiceId) throw new Error('No invoice id in response');
+    if (!invoiceUrl) invoiceUrl = nowpaymentsWidgetUrl(nowpaymentsInvoiceId);
+  } catch (err) {
+    logger.error('[Y50-NP] NowPayments invoice creation failed', {
+      email, payCurrency, error: err.response?.data || err.message,
+    });
+    return res.status(502).json({ success: false, error: 'Could not reach the payment provider. Please try again in a minute.' });
+  }
+
+  await dbQuery(
+    `INSERT INTO dash_subscription_orders
+       (user_id, plan_id, email, usd_amount, btcpay_invoice_id, status, metadata)
+     VALUES ($1, 'yearly50', $2, $3, $4, 'pending', $5)
+     ON CONFLICT (btcpay_invoice_id) DO NOTHING`,
+    [String(userId), email, usdAmount, orderId, JSON.stringify({
+      provider: 'nowpayments',
+      flow: 'yearly50-public',
+      source: 'yearly50-widget',
+      payCurrency,
+      language,
+      invoiceUrl,
+      nowpaymentsInvoiceId: String(nowpaymentsInvoiceId),
+    })]
+  );
+
+  logger.info('[Y50-NP] Invoice created', { userId, email, orderId, payCurrency, usdAmount });
+
+  return res.json({
+    success: true,
+    orderId,
+    invoiceUrl,
+    nowpaymentsInvoiceId: String(nowpaymentsInvoiceId),
+    payCurrency,
+    usdAmount,
+    planName: planDisplayName,
+  });
+}));
 
 // Subscribable (recurring) plan IDs → NOWPayments subscription plan ID env var names
 const NOWPAYMENTS_SUBSCRIPTION_PLAN_MAP = {
