@@ -1864,7 +1864,7 @@ const getPublicProfile = async (req, res) => {
     // profile always sees it (String equality check above already scoped block
     // to non-self, mirror that here).
     const geoTags = Array.isArray(req.viewerGeoTags) ? req.viewerGeoTags : [];
-    if (geoTags.length > 0 && String(viewerId || '') !== String(userId)) {
+    if (!isAdmin && geoTags.length > 0 && String(viewerId || '') !== String(userId)) {
       const { rows: hideRows } = await dbQuery(
         `SELECT 1 FROM users WHERE id = $1 AND COALESCE(hide_from_regions, '{}') && $2::text[] LIMIT 1`,
         [userId, geoTags]
