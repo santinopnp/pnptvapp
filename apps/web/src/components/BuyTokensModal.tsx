@@ -7,6 +7,7 @@ import {
   getWalletUsdcBalance,
   getWalletEthBalance,
   getWalletEthPrice,
+  getWalletUsdcMainnetBalance,
   activateTokenCode,
   buyTokensWithNowPayments,
   getNowPaymentsOrderStatus,
@@ -111,6 +112,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
   const [walletUsdc, setWalletUsdc] = useState<number | null>(null);
   const [walletEth, setWalletEth] = useState<number | null>(null);
   const [walletLoading, setWalletLoading] = useState(false);
+  const [usdcMainnet, setUsdcMainnet] = useState<number | null>(null);
   const [payingPackageId, setPayingPackageId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<{ tokens: number } | null>(null);
@@ -205,6 +207,23 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
       setEthUsdPrice(p && p.priceUsd > 0 ? p.priceUsd : null);
     }).finally(() => setWalletLoading(false));
   }, [isOpen, authenticated, activeWallet?.address]);
+
+  // Silently check Ethereum mainnet USDC when base balance is insufficient.
+  // Only fires once per open to avoid hammering Alchemy.
+  const mainnetCheckedRef = useRef(false);
+  useEffect(() => {
+    if (!isOpen) { mainnetCheckedRef.current = false; setUsdcMainnet(null); return; }
+    if (walletLoading || !authenticated || !activeWallet) return;
+    if (mainnetCheckedRef.current) return;
+    const requiredUsd = initialAmountUsd ?? 0;
+    const baseUsdc = walletUsdc ?? 0;
+    if (requiredUsd > 0 && baseUsdc < requiredUsd) {
+      mainnetCheckedRef.current = true;
+      getWalletUsdcMainnetBalance(activeWallet.address)
+        .then((r) => { if (r.ok && r.usdc > 0.5) setUsdcMainnet(r.usdc); })
+        .catch(() => {});
+    }
+  }, [isOpen, walletLoading, authenticated, activeWallet?.address, walletUsdc, initialAmountUsd]);
 
   if (!isOpen) return null;
 
@@ -770,7 +789,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
         {/* Body — scrollable */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {/* Auto-trigger loading screen — shown briefly while Privy checkout launches */}
-          {isAutoTriggerMode && (
+          {isAutoTriggerMode && usdcMainnet == null && (
             <div className="flex flex-col items-center justify-center py-10 gap-4">
               <svg className="w-8 h-8 animate-spin text-emerald-400" fill="none" viewBox="0 0 24 24">
                 <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" className="opacity-25" />
@@ -795,6 +814,41 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
                   );
                 })()}
               </div>
+            </div>
+          )}
+
+          {/* Bridge banner — shown in auto-trigger mode when Ethereum mainnet USDC
+              is detected but Base balance is insufficient. Routes to /subscribe
+              which has the full CCTP bridge UI (approve → burn → ~15 min → mint). */}
+          {isAutoTriggerMode && usdcMainnet != null && usdcMainnet > 0 && (
+            <div className="rounded-xl border border-amber-500/40 bg-amber-500/[0.08] p-4 space-y-3">
+              <div className="flex items-start gap-2.5">
+                <span className="text-xl leading-none pt-0.5">⚠️</span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-bold text-amber-200">
+                    {es ? "Tu USDC está en Ethereum, no en Base" : "Your USDC is on Ethereum, not Base"}
+                  </p>
+                  <p className="text-[12px] text-amber-100/80 leading-snug mt-1">
+                    {es
+                      ? <>Detectamos <span className="font-mono font-bold">${usdcMainnet.toFixed(2)} USDC</span> en Ethereum mainnet. PNPtv opera en Base — puentealo primero (gratis vía Circle, ~15 min).</>
+                      : <>We found <span className="font-mono font-bold">${usdcMainnet.toFixed(2)} USDC</span> on Ethereum mainnet. PNPtv runs on Base — bridge it first (free via Circle, ~15 min).</>
+                    }
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => { onClose(); window.location.href = "/?openWallet=1"; }}
+                className="w-full min-h-[44px] rounded-xl text-sm font-bold text-white transition active:scale-[0.98]"
+                style={{ background: "linear-gradient(135deg,#E69138,#D4007A)" }}
+              >
+                🌉 {es ? `Puentear $${usdcMainnet.toFixed(2)} USDC → Base` : `Bridge $${usdcMainnet.toFixed(2)} USDC to Base`}
+              </button>
+              <p className="text-[10px] text-amber-100/50 leading-snug text-center">
+                {es
+                  ? "Después del bridge volvé acá para convertir tu USDC a Ru$h 💎"
+                  : "After bridging, come back here to convert your USDC to Ru$h 💎"}
+              </p>
             </div>
           )}
 
@@ -837,6 +891,35 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
                   );
                 })}
               </div>
+            </div>
+          )}
+
+          {/* Ethereum mainnet bridge banner — full UI variant (manual open).
+              Shown when user has stranded USDC on Ethereum and Base balance is low. */}
+          {authenticated && usdcMainnet != null && usdcMainnet > 0 && (walletUsdc ?? 0) < 1 && (
+            <div className="rounded-xl border border-amber-500/40 bg-amber-500/[0.08] p-3 space-y-2.5">
+              <div className="flex items-start gap-2">
+                <span className="text-lg leading-none pt-0.5">⚠️</span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-bold text-amber-200">
+                    {es ? "USDC en la red equivocada" : "USDC on wrong network"}
+                  </p>
+                  <p className="text-[11px] text-amber-100/80 leading-snug mt-0.5">
+                    {es
+                      ? <>Tenés <span className="font-mono font-bold">${usdcMainnet.toFixed(2)} USDC</span> en Ethereum. PNPtv usa Base — puentealo primero (gratis, ~15 min).</>
+                      : <>You have <span className="font-mono font-bold">${usdcMainnet.toFixed(2)} USDC</span> on Ethereum. PNPtv uses Base — bridge it first (free, ~15 min).</>
+                    }
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => { onClose(); window.location.href = "/?openWallet=1"; }}
+                className="w-full min-h-[40px] rounded-xl text-sm font-bold text-white transition active:scale-[0.98]"
+                style={{ background: "linear-gradient(135deg,#E69138,#D4007A)" }}
+              >
+                🌉 {es ? `Puentear $${usdcMainnet.toFixed(2)} USDC → Base` : `Bridge $${usdcMainnet.toFixed(2)} USDC to Base`}
+              </button>
             </div>
           )}
 
