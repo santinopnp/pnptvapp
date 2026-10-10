@@ -29,7 +29,12 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const LOG_TABLE = 'broadcast_mp_cop_trickle_sent';
 const TG_DELAY_MS = 120;
 
-const SANTINO_CHAT = '8599671840';
+// Permanently unreachable Telegram errors — skip on retry
+const TERMINAL_ERRORS = ['bot was blocked', 'user is deactivated', 'USER_BOT_TO_BOT_DISABLED', "bot can't initiate"];
+
+function getQaChatId() {
+  return '8370209084'; // @pnptvoficial
+}
 
 // Videos <50 MB — rotate by 6h slot so each run uses a different one
 const ELIGIBLE_VIDEOS = [
@@ -204,7 +209,17 @@ async function main() {
        )
        AND NOT EXISTS (
          SELECT 1 FROM ${LOG_TABLE} s
-          WHERE s.user_id = u.id::text AND s.status = 'sent'
+          WHERE s.user_id = u.id::text
+            AND (
+              s.status = 'sent'
+              OR (s.status = 'failed' AND (
+                s.error ILIKE '%blocked by the user%'
+                OR s.error ILIKE '%bot was blocked%'
+                OR s.error ILIKE '%user is deactivated%'
+                OR s.error ILIKE '%USER_BOT_TO_BOT_DISABLED%'
+                OR s.error ILIKE '%can''t initiate conversation%'
+              ))
+            )
        )
      ORDER BY u.last_active DESC NULLS LAST
      ${LIMIT ? `LIMIT ${LIMIT}` : ''}
@@ -230,31 +245,32 @@ async function main() {
     process.exit(0);
   }
 
-  // ── Upload video once via Santino QA send → cache file_id ──────────────────
+  // ── Upload video once via QA send → cache file_id ─────────────────────────
+  const QA_CHAT = getQaChatId();
   let videoFileId = null;
 
   if (videoPath) {
-    console.log(`\n   Uploading video (${path.basename(videoPath)}) via QA send to Santino…`);
-    const qaRes = await tgUploadVideo(SANTINO_CHAT, videoPath, '[QA] ' + COPY.es);
+    console.log(`\n   Uploading video (${path.basename(videoPath)}) via QA send to ${QA_CHAT}…`);
+    const qaRes = await tgUploadVideo(QA_CHAT, videoPath, '[QA] ' + COPY.es);
     if (qaRes.ok && qaRes.result?.video?.file_id) {
       videoFileId = qaRes.result.video.file_id;
-      await logSend(SANTINO_CHAT, 'sent');
+      await logSend(QA_CHAT, 'qa_sent');
       console.log(`   ✓ QA send OK — file_id cached (${videoFileId.slice(0, 20)}…)`);
     } else {
       console.error('   ✗ QA video upload failed:', qaRes.description || qaRes.error);
-      console.log('   Falling back to text-only broadcast');
+      console.log('   Continuing without cached file_id — will upload per user');
     }
   } else {
-    // No video — still send text QA copy to Santino
-    const { rows: santinoLog } = await query(
-      `SELECT 1 FROM ${LOG_TABLE} WHERE user_id = $1 AND status = 'sent'`, [SANTINO_CHAT]
+    // No video — send text QA copy
+    const { rows: qaLog } = await query(
+      `SELECT 1 FROM ${LOG_TABLE} WHERE user_id = $1 AND status = 'qa_sent'`, [QA_CHAT]
     );
-    if (!santinoLog.length) {
+    if (!qaLog.length) {
       const res = await tgApi('sendMessage', {
-        chat_id: SANTINO_CHAT, text: '[QA] ' + COPY.es,
+        chat_id: QA_CHAT, text: '[QA] ' + COPY.es,
         parse_mode: 'HTML', disable_web_page_preview: true,
       });
-      if (res.ok) await logSend(SANTINO_CHAT, 'sent');
+      if (res.ok) await logSend(QA_CHAT, 'qa_sent');
     }
   }
 
@@ -269,6 +285,12 @@ async function main() {
     let res;
     if (videoFileId) {
       res = await tgSendVideo(t.telegram, videoFileId, caption);
+    } else if (videoPath) {
+      // QA upload failed but we still have the file — upload inline, cache file_id on first success
+      res = await tgUploadVideo(t.telegram, videoPath, caption);
+      if (res.ok && res.result?.video?.file_id) {
+        videoFileId = res.result.video.file_id; // cache for remaining users
+      }
     } else {
       res = await tgApi('sendMessage', {
         chat_id: t.telegram, text: caption,
