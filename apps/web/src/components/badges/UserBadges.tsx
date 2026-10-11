@@ -8,6 +8,7 @@ export type BadgeKey =
   | "crystal"
   | "verified"
   | "partner"
+  | "founder"
   | "meth_alpha"
   | "slam_slut"
   | "spun_royal"
@@ -50,6 +51,7 @@ export function buildBadges(source: BadgeSource): BuiltBadge[] {
   if (source.creatorVerified) out.push({ key: "verified" });
   if (source.partnerBadgeColor) out.push({ key: "partner", color: source.partnerBadgeColor });
   if (source.badges && source.badges.length) {
+    if (source.badges.includes("founder")) out.push({ key: "founder" });
     for (const persona of CLOUDY_DAYS_PERSONAS) {
       if (source.badges.includes(persona)) out.push({ key: persona });
     }
@@ -114,6 +116,16 @@ function BadgeIcon({ badge, size = "md" }: BadgeIconProps) {
           IconEl: Handshake,
           shadow: `0 2px 10px ${badge.color ? badge.color + "80" : "rgba(139,92,246,0.45)"}`,
         };
+      case "founder":
+        return {
+          bg: "linear-gradient(135deg, #0d0900 0%, #3d2d00 50%, #c9a000 100%)",
+          border: "rgba(201,160,0,0.80)",
+          color: "#fff8d6",
+          IconEl: null,
+          shadow: "0 2px 10px rgba(200,150,0,0.55)",
+          emoji: "P",
+          bold: true,
+        };
       case "meth_alpha":
         return {
           bg: "linear-gradient(135deg, #1a1035 0%, #3d2a6b 50%, #6b4bd6 100%)",
@@ -155,6 +167,7 @@ function BadgeIcon({ badge, size = "md" }: BadgeIconProps) {
 
   const IconEl = chrome.IconEl;
   const emoji = "emoji" in chrome ? chrome.emoji : undefined;
+  const bold = "bold" in chrome ? chrome.bold : false;
 
   return (
     <span className="relative inline-flex items-center justify-center">
@@ -181,7 +194,7 @@ function BadgeIcon({ badge, size = "md" }: BadgeIconProps) {
         }}
       >
         {emoji ? (
-          <span style={{ fontSize: icon, lineHeight: 1 }}>{emoji}</span>
+          <span style={{ fontSize: icon, lineHeight: 1, fontWeight: bold ? 700 : undefined }}>{emoji}</span>
         ) : IconEl ? (
           <IconEl size={icon} strokeWidth={2.4} />
         ) : null}

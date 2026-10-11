@@ -182,6 +182,10 @@ const strings = {
         name: "PNP Partners Network",
         reason: "Member of a PNP Partners network — invited through a partner referral link.",
       },
+      founder: {
+        name: "Founder",
+        reason: "Original supporter — joined PNPtv with a lifetime pass.",
+      },
       meth_alpha: {
         name: "Meth Alpha",
         reason: "Legacy Cloudy Days badge — the sharp mind of the crew.",
@@ -807,6 +811,10 @@ const strings = {
       partner: {
         name: "Red de Partners PNP",
         reason: "Miembro de una red de Partners PNP — invitado por un enlace de referido.",
+      },
+      founder: {
+        name: "Founder",
+        reason: "Supporter original — se unió a PNPtv con un pase de por vida.",
       },
       meth_alpha: {
         name: "Meth Alpha",
