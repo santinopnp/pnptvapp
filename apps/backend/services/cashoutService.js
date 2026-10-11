@@ -369,6 +369,9 @@ async function requestCashout({ creatorId, amountUsd, lane, destination }) {
  * @returns {Promise<{ success: boolean, candidates: number, paid: number, skipped: number, failed: number }>}
  */
 async function runAutoPayoutSweep() {
+  // First-time creators must accumulate $100 before auto-payout; repeat
+  // creators only need AUTO_PAYOUT_MIN_USD ($50 env default).
+  const FIRST_PAYOUT_MIN_USD = 100;
   const { rows: candidates } = await query(
     `SELECT ce.creator_id,
             COALESCE(NULLIF(u.preferred_wallet_address, ''), NULLIF(u.wallet_address, '')) AS wallet_address
@@ -376,8 +379,12 @@ async function runAutoPayoutSweep() {
        JOIN users u ON u.id = ce.creator_id
       WHERE ce.status = 'available'
       GROUP BY ce.creator_id, u.preferred_wallet_address, u.wallet_address
-     HAVING COALESCE(SUM(ce.amount_creator), 0) >= $1`,
-    [AUTO_PAYOUT_MIN_USD]
+     HAVING COALESCE(SUM(ce.amount_creator), 0) >=
+       CASE WHEN EXISTS(
+         SELECT 1 FROM creator_earnings ex
+          WHERE ex.creator_id = ce.creator_id AND ex.status = 'paid_out'
+       ) THEN $1 ELSE $2 END`,
+    [AUTO_PAYOUT_MIN_USD, FIRST_PAYOUT_MIN_USD]
   );
 
   let paid = 0;
@@ -423,7 +430,13 @@ async function runAutoPayoutSweep() {
         earnRows.reduce((sum, row) => sum + parseFloat(row.amount_creator), 0) * 100
       ) / 100;
 
-      if (amountUsd < AUTO_PAYOUT_MIN_USD) {
+      const { rows: priorPaid } = await client.query(
+        `SELECT 1 FROM creator_earnings WHERE creator_id = $1 AND status = 'paid_out' LIMIT 1`,
+        [creatorId]
+      );
+      const effectiveMin = priorPaid.length > 0 ? AUTO_PAYOUT_MIN_USD : FIRST_PAYOUT_MIN_USD;
+
+      if (amountUsd < effectiveMin) {
         // Rows were claimed by a concurrent transaction between the
         // aggregate query above and this lock — nothing left to pay here.
         await client.query('ROLLBACK');

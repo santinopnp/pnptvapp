@@ -449,12 +449,15 @@ async function initializeQueues() {
     jobId: 'cron-reconcile-stuck-payouts',
   });
 
-  // Creator earnings maturation — hourly
-  await cronQueue.add('earnings-maturation', {}, {
-    repeat: { pattern: '0 * * * *', tz: 'UTC' },
-    attempts: 2, removeOnFail: false,
-    jobId: 'cron-earnings-maturation',
-  });
+  // Creator earnings maturation — hourly (paused 2026-10-10; payout EOA empty)
+  // Re-enable by removing this guard and running removeRepeatableByKey to reset.
+  if (process.env.EARNINGS_MATURATION_ENABLED === '1') {
+    await cronQueue.add('earnings-maturation', {}, {
+      repeat: { pattern: '0 * * * *', tz: 'UTC' },
+      attempts: 2, removeOnFail: false,
+      jobId: 'cron-earnings-maturation',
+    });
+  }
 
   // Notification cleanup — daily at 03:20 UTC
   await cronQueue.add('notification-cleanup', {}, {
