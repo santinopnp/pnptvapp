@@ -51,9 +51,10 @@ const DRY_RUN   = process.argv.includes('--dry-run');
 const LIMIT_ARG = process.argv.find(a => a.startsWith('--limit='));
 const LIMIT     = LIMIT_ARG ? parseInt(LIMIT_ARG.split('=')[1], 10) : 0;
 
-const CAMPAIGN   = 'yearly50-inapp-20261010';
+const CAMPAIGN   = 'yearly50-inapp-20261012';
 const SANTINO_ID = '8599671840';
-const HERO_URL   = 'https://pnptv.app/uploads/creator-media/8599671840-1783409405497.webp';
+const SENDER_ID  = '8552451957'; // @pnptv / PNPtv! News
+const VIDEO_URL  = 'https://pnptv.app/uploads/092902_promo_yearly50.mp4';
 const CTA_URL    = 'https://pnptv.app/yearly50';
 
 const DM_DELAY_MS = 80;
@@ -77,7 +78,7 @@ function dmText(lang, name) {
       `✅ Sesiones privadas, sin límites\n` +
       `✅ Un solo pago. Sin cobros recurrentes.\n\n` +
       `👉 ${CTA_URL}\n\n` +
-      `— Santino`
+      `— PNPtv!`
     );
   }
   return (
@@ -88,7 +89,7 @@ function dmText(lang, name) {
     `✅ Private sessions, no limits\n` +
     `✅ One payment. No recurring charges.\n\n` +
     `👉 ${CTA_URL}\n\n` +
-    `— Santino`
+    `— PNPtv!`
   );
 }
 
@@ -120,7 +121,7 @@ async function main() {
   const esCount = targets.filter(t => t.lang === 'es').length;
 
   console.log('══════════════════════════════════════════════════════════════');
-  console.log('  PNPtv! — PRIME Annual $50 — In-App Mass DM — 2026-10-10');
+  console.log('  PNPtv! — PRIME Annual $50 — In-App Mass DM — 2026-10-12');
   console.log(`  Audience  : ${targets.length} users`);
   console.log(`  EN        : ${targets.length - esCount}  |  ES : ${esCount}`);
   console.log(`  Campaign  : ${CAMPAIGN}`);
@@ -151,11 +152,11 @@ async function main() {
     const name = pickName(u);
     try {
       await sendSystemDM(
-        SANTINO_ID,
+        SENDER_ID,
         String(u.id),
         dmText(u.lang, name),
         query,
-        { mediaUrl: HERO_URL, mediaType: 'image' }
+        { mediaUrl: VIDEO_URL, mediaType: 'video' }
       );
       await query(
         `INSERT INTO broadcast_dedup (batch_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,

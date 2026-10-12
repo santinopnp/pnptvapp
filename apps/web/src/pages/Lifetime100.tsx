@@ -1430,62 +1430,10 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
           ))}
         </div>
 
-        {/* CTA buttons — stacked: Pay with Crypto (primary) + Pay with Card (MP) */}
-        <div style={{ padding: "4px 20px 0", display: "flex", flexDirection: "column", gap: 8, maxWidth: 500, margin: "0 auto" }}>
-          <button
-            onClick={handleCtaClick}
-            disabled={availabilityLoading || isClosed}
-            aria-disabled={availabilityLoading || isClosed}
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 2,
-              width: "100%",
-              padding: "18px 24px",
-              borderRadius: 16,
-              border: "none",
-              background: isClosed
-                ? "rgba(255,255,255,0.08)"
-                : "linear-gradient(90deg, #ff3377, #ff9933)",
-              color: isClosed ? "#8E8E93" : "#ffffff",
-              fontSize: 15,
-              fontWeight: 800,
-              textTransform: "uppercase",
-              letterSpacing: "0.08em",
-              cursor: availabilityLoading || isClosed ? "not-allowed" : "pointer",
-              minHeight: 56,
-              boxShadow: isClosed
-                ? "none"
-                : "0 8px 32px rgba(255,51,119,0.4)",
-              transition: "opacity 0.15s, transform 0.1s",
-            }}
-            onMouseDown={(e) => {
-              if (!isClosed) (e.currentTarget as HTMLButtonElement).style.transform = "scale(0.98)";
-            }}
-            onMouseUp={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.transform = "scale(1)";
-            }}
-            onTouchStart={(e) => {
-              if (!isClosed) (e.currentTarget as HTMLButtonElement).style.transform = "scale(0.98)";
-            }}
-            onTouchEnd={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.transform = "scale(1)";
-            }}
-          >
-            {availabilityLoading && <Spinner size={16} />}
-            {availabilityLoading
-              ? s.ctaLoading
-              : isClosed
-              ? s.ctaSoldOut
-              : <><span>{s.ctaPayWithCrypto}</span><span style={{ fontSize: 10, fontWeight: 400, opacity: 0.55, letterSpacing: "0.02em", textTransform: "none" }}>BTC · ETH · USDC · USDT · etc.</span></>}
-          </button>
+        {/* CTA buttons — stacked: Privy/USDC (primary) + NowPayments (secondary) */}
+        <div style={{ padding: "4px 20px 0", display: "flex", flexDirection: "column", gap: 10, maxWidth: 500, margin: "0 auto" }}>
 
-          {/* Wallet / USDC on Base (card or crypto wallet).
-              Auth users: open the modal directly.
-              Unauth users: persist intent in sessionStorage, go to signup → onboarding
-              auto-redirects back here with ?autopay=1 on completion. */}
+          {/* ── PRIMARY: Privy / USDC on Base ── */}
           {!isAuthenticated && !isClosed && (
             <button
               onClick={handleSignupToPay}
@@ -1495,18 +1443,18 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
                 justifyContent: "center",
                 gap: 8,
                 width: "100%",
-                padding: "18px 24px",
+                padding: "20px 24px",
                 borderRadius: 16,
                 border: "none",
                 background: "linear-gradient(90deg, #10b981, #059669)",
                 color: "#ffffff",
-                fontSize: 15,
+                fontSize: 16,
                 fontWeight: 800,
                 textTransform: "uppercase",
                 letterSpacing: "0.08em",
                 cursor: "pointer",
-                minHeight: 56,
-                boxShadow: "0 8px 32px rgba(16,185,129,0.4)",
+                minHeight: 60,
+                boxShadow: "0 10px 40px rgba(16,185,129,0.5)",
                 transition: "opacity 0.15s, transform 0.1s",
               }}
               onMouseDown={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = "scale(0.98)"; }}
@@ -1529,22 +1477,22 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
                 justifyContent: "center",
                 gap: 8,
                 width: "100%",
-                padding: "18px 24px",
+                padding: "20px 24px",
                 borderRadius: 16,
                 border: "none",
                 background: isClosed
                   ? "rgba(255,255,255,0.08)"
                   : "linear-gradient(90deg, #10b981, #059669)",
                 color: isClosed ? "#8E8E93" : "#ffffff",
-                fontSize: 15,
+                fontSize: 16,
                 fontWeight: 800,
                 textTransform: "uppercase",
                 letterSpacing: "0.08em",
                 cursor: availabilityLoading || isClosed ? "not-allowed" : "pointer",
-                minHeight: 56,
+                minHeight: 60,
                 boxShadow: isClosed
                   ? "none"
-                  : "0 8px 32px rgba(16,185,129,0.4)",
+                  : "0 10px 40px rgba(16,185,129,0.5)",
                 transition: "opacity 0.15s, transform 0.1s",
               }}
               onMouseDown={(e) => {
@@ -1567,6 +1515,55 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
                 : s.ctaPayWithWallet}
             </button>
           )}
+
+          {/* ── SECONDARY: NowPayments (any crypto) ── */}
+          <button
+            onClick={handleCtaClick}
+            disabled={availabilityLoading || isClosed}
+            aria-disabled={availabilityLoading || isClosed}
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 2,
+              width: "100%",
+              padding: "14px 24px",
+              borderRadius: 16,
+              border: isClosed ? "none" : "1.5px solid rgba(255,51,119,0.35)",
+              background: isClosed
+                ? "rgba(255,255,255,0.08)"
+                : "rgba(255,51,119,0.08)",
+              color: isClosed ? "#8E8E93" : "#ff6699",
+              fontSize: 13,
+              fontWeight: 700,
+              textTransform: "uppercase",
+              letterSpacing: "0.08em",
+              cursor: availabilityLoading || isClosed ? "not-allowed" : "pointer",
+              minHeight: 48,
+              boxShadow: "none",
+              transition: "opacity 0.15s, transform 0.1s",
+            }}
+            onMouseDown={(e) => {
+              if (!isClosed) (e.currentTarget as HTMLButtonElement).style.transform = "scale(0.98)";
+            }}
+            onMouseUp={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.transform = "scale(1)";
+            }}
+            onTouchStart={(e) => {
+              if (!isClosed) (e.currentTarget as HTMLButtonElement).style.transform = "scale(0.98)";
+            }}
+            onTouchEnd={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.transform = "scale(1)";
+            }}
+          >
+            {availabilityLoading && <Spinner size={14} />}
+            {availabilityLoading
+              ? s.ctaLoading
+              : isClosed
+              ? s.ctaSoldOut
+              : <><span>{s.ctaPayWithCrypto}</span><span style={{ fontSize: 10, fontWeight: 400, opacity: 0.6, letterSpacing: "0.02em", textTransform: "none" }}>BTC · ETH · USDC · USDT · etc.</span></>}
+          </button>
 
         </div>
 
