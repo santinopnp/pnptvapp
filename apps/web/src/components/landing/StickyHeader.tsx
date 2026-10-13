@@ -4,6 +4,7 @@ import { LanguageSelector } from "@/components/LanguageSelector";
 interface StickyHeaderProps {
   lang: "en" | "es" | string;
   onSignIn: () => void;
+  topOffset?: number;
 }
 
 const copy = {
@@ -35,25 +36,27 @@ function pick(lang: string) {
   return lang === "es" ? copy.es : copy.en;
 }
 
-export function StickyHeader({ lang, onSignIn }: StickyHeaderProps) {
+export function StickyHeader({ lang, onSignIn, topOffset = 0 }: StickyHeaderProps) {
   const c = pick(lang);
   const [scrolled, setScrolled] = useState(false);
 
   useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 40);
+    const onScroll = () => setScrolled(window.scrollY > topOffset + 10);
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
-  }, []);
+  }, [topOffset]);
 
   return (
     <header
-      className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-4 h-14 lg:h-20 lg:px-8 transition-all duration-300"
+      className="fixed left-0 right-0 z-50 flex items-center justify-between px-4 h-14 lg:h-20 lg:px-8 transition-all duration-300"
       style={{
+        top: scrolled ? 0 : topOffset,
         background: scrolled ? "rgba(8,8,8,0.95)" : "transparent",
         backdropFilter: scrolled ? "blur(20px)" : "none",
         WebkitBackdropFilter: scrolled ? "blur(20px)" : "none",
         borderBottom: scrolled ? "1px solid rgba(255,255,255,0.06)" : "1px solid transparent",
         boxShadow: scrolled ? "0 4px 32px rgba(0,0,0,0.4)" : "none",
+        transition: "top 0.2s ease, background 0.3s, backdrop-filter 0.3s, border-color 0.3s, box-shadow 0.3s",
       }}
     >
       {/* Logo */}

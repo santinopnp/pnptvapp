@@ -995,8 +995,54 @@ export function LandingPage() {
   return (
     <div className="bg-pnp-background min-h-screen">
 
+      {/* Men.com Welcome Bar */}
+      <div style={{ position: "relative", width: "100%", lineHeight: 0 }}>
+        <a
+          href="https://landing.mennetwork.com/?ats=eyJhIjoxNzYxNDQzLCJjIjo2NDYxNjAzMSwibiI6MjIsInMiOjU0MiwiZSI6OTA5NCwicCI6MTF9"
+          target="_blank"
+          rel="noopener noreferrer sponsored"
+          style={{ display: "block" }}
+        >
+          <div style={{
+            width: "100%",
+            height: 50,
+            background: "linear-gradient(90deg, #5C0020 0%, #B0003E 40%, #D4005A 60%, #B0003E 80%, #5C0020 100%)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            overflow: "hidden",
+            position: "relative",
+          }}>
+            <img
+              src="/broadcast/men-728x90.jpg"
+              alt="Men.com exclusive promo"
+              style={{ height: "100%", width: "100%", objectFit: "cover", objectPosition: "center", opacity: 0.55, position: "absolute", inset: 0 }}
+            />
+            <div style={{ position: "relative", zIndex: 1, display: "flex", alignItems: "center", gap: 12, padding: "0 16px" }}>
+              <span style={{ color: "#fff", fontWeight: 700, fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase", textShadow: "0 1px 4px rgba(0,0,0,0.7)", whiteSpace: "nowrap" }}>
+                ⚡ EXCLUSIVE PROMO — JOIN MEN.COM TODAY! ⚡
+              </span>
+              <span style={{
+                background: "transparent",
+                border: "1.5px solid #fff",
+                color: "#fff",
+                fontWeight: 700,
+                fontSize: 11,
+                letterSpacing: "0.06em",
+                padding: "4px 12px",
+                borderRadius: 4,
+                whiteSpace: "nowrap",
+                textShadow: "0 1px 4px rgba(0,0,0,0.7)",
+              }}>
+                CLICK HERE →
+              </span>
+            </div>
+          </div>
+        </a>
+      </div>
+
       {/* ── STICKY HEADER — transparent-to-solid on scroll ───────────────── */}
-      <StickyHeader lang={t.lang} onSignIn={scrollToAuth} />
+      <StickyHeader lang={t.lang} onSignIn={scrollToAuth} topOffset={50} />
 
       {/* ── PUBLIC LANDING SECTIONS ──────────────────────────────────────── */}
       <PublicHero
