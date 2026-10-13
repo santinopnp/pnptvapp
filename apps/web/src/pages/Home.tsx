@@ -51,6 +51,14 @@ export default function Home() {
 
   // Crypto-guide onboarding banner — shown once per session for users who
   // haven't completed the wizard. Dismissed via sessionStorage.
+  const [menBarDismissed, setMenBarDismissed] = useState(() =>
+    typeof localStorage !== "undefined" && localStorage.getItem("pnptv:men:bar:dismissed") === "1"
+  );
+  const dismissMenBar = () => {
+    setMenBarDismissed(true);
+    localStorage.setItem("pnptv:men:bar:dismissed", "1");
+  };
+
   const [showCryptoBanner, setShowCryptoBanner] = useState(false);
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -156,6 +164,65 @@ export default function Home() {
 
   return (
     <AppShell rightRail={homeRail}>
+    {/* Men.com Welcome Bar — always visible for free users, dismissable for PRIME */}
+    {!menBarDismissed && (
+      <div style={{ position: "relative", width: "100%", lineHeight: 0 }}>
+        <a
+          href="https://landing.mennetwork.com/?ats=eyJhIjoxNzYxNDQzLCJjIjo2NDYxNjAzMSwibiI6MjIsInMiOjU0MiwiZSI6OTA5NCwicCI6MTF9"
+          target="_blank"
+          rel="noopener noreferrer sponsored"
+          style={{ display: "block" }}
+        >
+          <div style={{
+            width: "100%",
+            height: 50,
+            background: "linear-gradient(90deg, #5C0020 0%, #B0003E 40%, #D4005A 60%, #B0003E 80%, #5C0020 100%)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            overflow: "hidden",
+            position: "relative",
+          }}>
+            <img
+              src="/broadcast/men-728x90.jpg"
+              alt="Men.com exclusive promo"
+              style={{ height: "100%", width: "100%", objectFit: "cover", objectPosition: "center", opacity: 0.55, position: "absolute", inset: 0 }}
+            />
+            <div style={{ position: "relative", zIndex: 1, display: "flex", alignItems: "center", gap: 12, padding: "0 48px 0 16px" }}>
+              <span style={{ color: "#fff", fontWeight: 700, fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase", textShadow: "0 1px 4px rgba(0,0,0,0.7)", whiteSpace: "nowrap" }}>
+                ⚡ EXCLUSIVE PROMO — JOIN MEN.COM TODAY! ⚡
+              </span>
+              <span style={{
+                background: "transparent",
+                border: "1.5px solid #fff",
+                color: "#fff",
+                fontWeight: 700,
+                fontSize: 11,
+                letterSpacing: "0.06em",
+                padding: "4px 12px",
+                borderRadius: 4,
+                whiteSpace: "nowrap",
+                textShadow: "0 1px 4px rgba(0,0,0,0.7)",
+              }}>
+                CLICK HERE →
+              </span>
+            </div>
+          </div>
+        </a>
+        {isPrime && (
+          <button
+            onClick={dismissMenBar}
+            aria-label="Dismiss"
+            style={{
+              position: "absolute", top: "50%", right: 8, transform: "translateY(-50%)",
+              background: "rgba(0,0,0,0.45)", border: "none", color: "#fff",
+              width: 22, height: 22, borderRadius: "50%", cursor: "pointer",
+              fontSize: 14, lineHeight: "22px", textAlign: "center", padding: 0, zIndex: 2,
+            }}
+          >×</button>
+        )}
+      </div>
+    )}
     <div className="max-w-5xl mx-auto px-4 py-6">
       <Helmet>
         <title>{t.home.pageTitle}</title>
