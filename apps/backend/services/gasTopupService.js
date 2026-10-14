@@ -275,15 +275,16 @@ async function checkAnomalies() {
   if (!unauthorized.length) return;
 
   // Alert once per tx via Redis dedup
-  const redis = require('../config/redis');
+  const { getRedis } = require('../config/redis');
+  const redis = getRedis();
   const tok = process.env.SLACK_BOT_TOKEN;
   const channel = process.env.SLACK_OPS_ADMIN_CHANNEL;
 
   for (const tx of unauthorized) {
     const dedupKey = `pnpapp:gas:anomaly:alerted:${tx.hash}`;
-    const already = await redis.get(dedupKey);
+    const already = redis ? await redis.get(dedupKey) : null;
     if (already) continue;
-    await redis.set(dedupKey, '1', 'EX', 86400);
+    if (redis) await redis.set(dedupKey, '1', 'EX', 86400);
 
     const ethAmt = (tx.value || 0).toFixed(6);
     logger.error('[gasTopup] ANOMALY — unauthorized outgoing tx', {

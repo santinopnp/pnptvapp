@@ -160,6 +160,29 @@ async function initializeQueues() {
   const complianceQueue = getQueue('compliance-checks');
   const cronQueue = getQueue('cron-jobs');
 
+  // ── Ghost-killer: remove retired/misplaced repeatables from Redis ─────────
+  // Deleting .add() from code alone does NOT stop the schedule — BullMQ
+  // persists repeatables in Redis indefinitely. Purge on every startup.
+  // Run in a setImmediate so the connection is fully established before querying.
+  const RETIRED_JOB_NAMES = new Set([
+    'meru-reconcile', 'meru-token-reconcile', 'meru-reservation-cleanup',
+    'btcpay-reconcile', 'btcpay-webhook-probe',
+    'stream-health-monitor', // stateful — lives in cron.js only, not BullMQ
+  ]);
+  setImmediate(async () => {
+    try {
+      const existing = await cronQueue.getRepeatableJobs();
+      for (const job of existing) {
+        if (RETIRED_JOB_NAMES.has(job.name)) {
+          await cronQueue.removeRepeatableByKey(job.key);
+          logger.info(`[BullMQ] Purged retired repeatable: ${job.name}`);
+        }
+      }
+    } catch (err) {
+      logger.warn('[BullMQ] Failed to purge retired repeatables', { error: err.message });
+    }
+  });
+
   // ── Wave 5: Repeatable cron jobs ──────────────────────────────────────────
   // Each has a stable jobId so BullMQ de-duplicates on every restart.
   // Expressions match the original node-cron schedules in scripts/cron.js.
@@ -224,13 +247,6 @@ async function initializeQueues() {
     jobId: 'cron-wallet-reconcile',
   });
 
-  // Dash/BTCPay reconciliation — every 10 min
-  await cronQueue.add('btcpay-reconcile', {}, {
-    repeat: { pattern: '*/10 * * * *', tz: 'UTC' },
-    attempts: 2, removeOnFail: false,
-    jobId: 'cron-btcpay-reconcile',
-  });
-
   // NOWPayments reconciler — every 15 min
   await cronQueue.add('nowpayments-reconcile', {}, {
     repeat: { pattern: '*/15 * * * *', tz: 'UTC' },
@@ -276,20 +292,6 @@ async function initializeQueues() {
     jobId: 'cron-monetization-daily-report',
   });
 
-  // Meru lifetime100 reconciliation — 7/22/37/52 of each hour
-  await cronQueue.add('meru-reconcile', {}, {
-    repeat: { pattern: '7,22,37,52 * * * *', tz: 'UTC' },
-    attempts: 2, removeOnFail: false,
-    jobId: 'cron-meru-reconcile',
-  });
-
-  // Meru token-activation reconciliation — 9/24/39/54 of each hour
-  await cronQueue.add('meru-token-reconcile', {}, {
-    repeat: { pattern: '9,24,39,54 * * * *', tz: 'UTC' },
-    attempts: 2, removeOnFail: false,
-    jobId: 'cron-meru-token-reconcile',
-  });
-
   // Video leak detector — every hour at :17
   await cronQueue.add('video-leak-detector', {}, {
     repeat: { pattern: '17 * * * *', tz: 'UTC' },
@@ -327,13 +329,6 @@ async function initializeQueues() {
     repeat: { pattern: '0 15 * * *', tz: 'UTC' },
     attempts: 2, removeOnFail: false,
     jobId: 'cron-featured-creator-promo',
-  });
-
-  // BTCPay webhook probe — daily at 06:30 UTC
-  await cronQueue.add('btcpay-webhook-probe', {}, {
-    repeat: { pattern: '30 6 * * *', tz: 'UTC' },
-    attempts: 2, removeOnFail: false,
-    jobId: 'cron-btcpay-webhook-probe',
   });
 
   // Performer eligibility enforcement runs from scripts/cron.js (node-cron) —
@@ -550,13 +545,6 @@ async function initializeQueues() {
     jobId: 'cron-booking-auto-complete',
   });
 
-  // Meru reservation cleanup — every 5 min
-  await cronQueue.add('meru-reservation-cleanup', {}, {
-    repeat: { pattern: '*/5 * * * *', tz: 'UTC' },
-    attempts: 2, removeOnFail: false,
-    jobId: 'cron-meru-reservation-cleanup',
-  });
-
   // user_access_logs retention — daily at 03:50 UTC
   await cronQueue.add('access-logs-retention', {}, {
     repeat: { pattern: '50 3 * * *', tz: 'UTC' },
@@ -604,13 +592,6 @@ async function initializeQueues() {
     repeat: { pattern: '*/2 * * * *', tz: 'UTC' },
     attempts: 2, removeOnFail: false,
     jobId: 'cron-creator-avail-expiry-notify',
-  });
-
-  // Restreamer stream health monitor — every 2 min
-  await cronQueue.add('stream-health-monitor', {}, {
-    repeat: { pattern: '*/2 * * * *', tz: 'UTC' },
-    attempts: 2, removeOnFail: false,
-    jobId: 'cron-stream-health-monitor',
   });
 
   // Slack availability poller — every 5 min
