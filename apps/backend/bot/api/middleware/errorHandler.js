@@ -37,6 +37,13 @@ function errorHandler(err, req, res, _next) {
     return res.headersSent ? undefined : res.status(499).end();
   }
 
+  // busboy "Unexpected end of form" — upload stream cut off before completion
+  // (client disconnected, proxy timeout, bad Content-Length). Not a server bug.
+  if (/Unexpected end of form/i.test(err.message || '')) {
+    logger.warn('Upload stream terminated early:', { url: req.url, ip: req.ip });
+    return res.headersSent ? undefined : res.status(400).json({ error: 'Upload was interrupted. Please check your connection and try again.' });
+  }
+
   // express.json() malformed-body error: Express sets statusCode=400 but the
   // SyntaxError has no `code`, so we'd otherwise return {error: 'INTERNAL_ERROR'}
   // with the raw parse message. Convert to a clean 400.
