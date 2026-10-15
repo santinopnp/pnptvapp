@@ -8514,10 +8514,12 @@ export interface BookingPaymentStatus {
   roomName?: string;
 }
 
+// Accepts a bookings.id UUID or a payments.id UUID.
+// The controller resolves both via a fallback JOIN.
 export function getBookingPaymentStatus(
-  bookingId: string | number
+  bookingOrPaymentRef: string | number
 ): Promise<BookingPaymentStatus> {
-  return request(`/api/webapp/bookings/${encodeURIComponent(String(bookingId))}/payment-status`);
+  return request(`/api/webapp/bookings/${encodeURIComponent(String(bookingOrPaymentRef))}/payment-status`);
 }
 
 export interface UpcomingBooking {

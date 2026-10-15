@@ -1590,7 +1590,7 @@ async function getPublicCreatorBookingInfo(req, res) {
               bio
        FROM users
        WHERE LOWER(username) = $1
-         AND creator_status IN ('approved', 'active')
+         AND creator_status = 'active'
        LIMIT 1`,
       [cleanHandle]
     );

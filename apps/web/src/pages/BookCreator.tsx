@@ -21,16 +21,16 @@ interface BoytoySlot {
 }
 
 // ── Package variant classification ──────────────────────────────────────────
-// We classify each package by its price tier since SKU naming may vary.
-// $100 = Solo, $180 = Boytoy1, $250 = Boytoy2.
 type PackageVariant = "solo" | "boytoy1" | "boytoy2" | "other";
 
+// ── Payment step ─────────────────────────────────────────────────────────────
+type PayStep = "idle" | "choosing" | "success" | "error";
+
 function classifyPackage(pkg: PublicBookingPackage): PackageVariant {
-  const price = pkg.priceUsd;
-  if (price <= 110) return "solo";
-  if (price <= 190) return "boytoy1";
-  if (price <= 260) return "boytoy2";
-  return "other";
+  const sku = pkg.sku?.toUpperCase() ?? "";
+  if (sku.includes("BOYTOY2")) return "boytoy2";
+  if (sku.includes("BOYTOY1")) return "boytoy1";
+  return "solo";
 }
 
 // ── Small spinner ─────────────────────────────────────────────────────────────
@@ -115,7 +115,7 @@ function PackageCard({
   onBoytoy2Change: (v: BoytoyChoice) => void;
 }) {
   const descriptionMap: Record<PackageVariant, string> = {
-    solo: `An intimate 60-minute private video call with just you and ${creatorName}.`,
+    solo: `An intimate ${pkg.durationMinutes}-minute private video call with just you and ${creatorName}.`,
     boytoy1: `A 60-minute private video call with ${creatorName} and one of their handpicked boytoys.`,
     boytoy2: `The full experience — ${creatorName} plus two boytoys for 60 minutes of private time.`,
     other: pkg.description || `A private video call with ${creatorName}.`,
@@ -202,7 +202,7 @@ function NpCallCheckout({
 }) {
   const [loading, setLoading] = useState(false);
   const [polling, setPolling] = useState(false);
-  const [paymentId, setPaymentId] = useState<string | null>(null);
+  const [pollRef_id, setPollRef_id] = useState<string | null>(null);
   const popupRef = useRef<Window | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -215,8 +215,8 @@ function NpCallCheckout({
 
   // Poll for completion
   useEffect(() => {
-    if (!polling || !paymentId) return;
-    const pid = paymentId;
+    if (!polling || !pollRef_id) return;
+    const pid = pollRef_id;
     pollRef.current = setInterval(async () => {
       try {
         const status = await getBookingPaymentStatus(pid);
@@ -231,7 +231,7 @@ function NpCallCheckout({
           if (pollRef.current) clearInterval(pollRef.current);
           pollRef.current = null;
           setPolling(false);
-          setPaymentId(null);
+          setPollRef_id(null);
           onError("Payment failed or expired. Please try again.");
         }
       } catch (_) { /* swallow — keep polling */ }
@@ -239,7 +239,7 @@ function NpCallCheckout({
     return () => {
       if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
     };
-  }, [polling, paymentId, onSuccess, onError]);
+  }, [polling, pollRef_id, onSuccess, onError]);
 
   const handleLaunch = useCallback(async () => {
     setLoading(true);
@@ -248,12 +248,14 @@ function NpCallCheckout({
         packageId,
         clientNotes: clientNotes || null,
       });
-      if (!res.success || !res.invoiceUrl || !res.paymentId) {
+      // Prefer bookingId if backend returns it; fall back to paymentId
+      const pollTarget = (res as any).bookingId ?? res.paymentId;
+      if (!res.success || !res.invoiceUrl || !pollTarget) {
         throw new Error(res.error || "Could not create crypto payment.");
       }
       const w = window.open(res.invoiceUrl, "np_book_checkout", "width=480,height=720,left=200,top=100");
       popupRef.current = w;
-      setPaymentId(res.paymentId);
+      setPollRef_id(String(pollTarget));
       setPolling(true);
     } catch (err) {
       onError(err instanceof Error ? err.message : "Crypto payment error.");
@@ -283,7 +285,7 @@ function NpCallCheckout({
             if (pollRef.current) clearInterval(pollRef.current);
             pollRef.current = null;
             setPolling(false);
-            setPaymentId(null);
+            setPollRef_id(null);
             try { popupRef.current?.close(); } catch (_) {}
             popupRef.current = null;
           }}
@@ -337,9 +339,9 @@ export default function BookCreator() {
   const [boytoy2, setBoytoy2] = useState<BoytoyChoice | null>(null);
 
   // Payment state
-  type PayStep = "idle" | "choosing" | "success" | "error";
   const [payStep, setPayStep] = useState<PayStep>("idle");
   const [payError, setPayError] = useState<string | null>(null);
+  const [confirmedBookingId, setConfirmedBookingId] = useState<string | number | null>(null);
 
   useEffect(() => {
     if (!handle) {
@@ -360,7 +362,20 @@ export default function BookCreator() {
           const v = classifyPackage(p);
           return v === "solo" || v === "boytoy1" || v === "boytoy2";
         });
-        setPackages(canonical.length > 0 ? canonical : res.packages);
+        const finalPkgs = canonical.length > 0 ? canonical : res.packages;
+        setPackages(finalPkgs);
+        // Restore pending package selection if user just returned from login
+        try {
+          const pendingPkgId = sessionStorage.getItem("pnptv:book_pending_pkg");
+          if (pendingPkgId && isAuthenticated) {
+            const pkgId = Number(pendingPkgId);
+            if (!isNaN(pkgId) && finalPkgs.some((p) => p.id === pkgId)) {
+              setSelectedPkgId(pkgId);
+              setPayStep("choosing");
+              sessionStorage.removeItem("pnptv:book_pending_pkg");
+            }
+          }
+        } catch (_) {}
       })
       .catch(() => setError("Could not load creator information."))
       .finally(() => setLoading(false));
@@ -401,7 +416,8 @@ export default function BookCreator() {
     setPayError(null);
   }
 
-  function handlePaySuccess() {
+  function handlePaySuccess(bookingId?: string | number | null) {
+    if (bookingId != null) setConfirmedBookingId(bookingId);
     setPayStep("success");
   }
 
@@ -493,6 +509,7 @@ export default function BookCreator() {
                   alt={creator.displayName}
                   className="w-12 h-12 rounded-full object-cover flex-shrink-0"
                   style={{ border: "2px solid rgba(212,0,122,0.60)" }}
+                  onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
                 />
               )}
               <div className="flex-1 min-w-0 pb-0.5">
@@ -626,9 +643,11 @@ export default function BookCreator() {
                   <button
                     type="button"
                     onClick={() => {
-                      // Store intent so we can redirect back after auth
                       try {
                         sessionStorage.setItem("pnptv:post_login_redirect", window.location.pathname);
+                        if (selectedPkgId) {
+                          sessionStorage.setItem("pnptv:book_pending_pkg", String(selectedPkgId));
+                        }
                       } catch (_) {}
                       navigate("/login");
                     }}
@@ -640,41 +659,57 @@ export default function BookCreator() {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {/* Wallet USDC */}
-                  <WalletPayCard
-                    surface="call"
-                    amountUsd={selectedPkg.priceUsd}
-                    entitlementSpec={{
-                      packageId: selectedPkg.id,
-                      creator_id: creator.id,
-                      clientNotes: buildClientNotes(selectedPkg) ?? undefined,
-                    }}
-                    metadata={{ source: "book_creator_page", handle: creator.username }}
-                    label={`Pay $${selectedPkg.priceUsd.toFixed(2)}`}
-                    lang="en"
-                    onSuccess={() => handlePaySuccess()}
-                  />
+                  {(() => {
+                    const variant = selectedPkg ? classifyPackage(selectedPkg) : "other";
+                    const boytoyIncomplete =
+                      (variant === "boytoy1" && !boytoy1) ||
+                      (variant === "boytoy2" && (!boytoy1 || !boytoy2));
+                    return boytoyIncomplete ? (
+                      <p className="text-center text-xs py-3" style={{ color: "rgba(255,183,0,0.85)" }}>
+                        Please choose your boytoy above to continue.
+                      </p>
+                    ) : (
+                      <>
+                        {/* Wallet USDC */}
+                        <WalletPayCard
+                          surface="call"
+                          amountUsd={selectedPkg.priceUsd}
+                          entitlementSpec={{
+                            packageId: selectedPkg.id,
+                            creator_id: creator.id,
+                            clientNotes: buildClientNotes(selectedPkg) ?? undefined,
+                          }}
+                          metadata={{ source: "book_creator_page", handle: creator.username }}
+                          label={`Pay $${selectedPkg.priceUsd.toFixed(2)}`}
+                          lang="en"
+                          onSuccess={(result) => {
+                            handlePaySuccess((result as any)?.bookingId ?? null);
+                          }}
+                        />
 
-                  {/* Divider */}
-                  <div className="flex items-center gap-3">
-                    <div className="flex-1 h-px" style={{ background: "rgba(255,255,255,0.08)" }} />
-                    <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: "rgba(255,255,255,0.30)" }}>
-                      or pay with crypto
-                    </span>
-                    <div className="flex-1 h-px" style={{ background: "rgba(255,255,255,0.08)" }} />
-                  </div>
+                        {/* Divider */}
+                        <div className="flex items-center gap-3">
+                          <div className="flex-1 h-px" style={{ background: "rgba(255,255,255,0.08)" }} />
+                          <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: "rgba(255,255,255,0.30)" }}>
+                            or pay with crypto
+                          </span>
+                          <div className="flex-1 h-px" style={{ background: "rgba(255,255,255,0.08)" }} />
+                        </div>
 
-                  {/* NowPayments crypto popup */}
-                  <NpCallCheckout
-                    packageId={selectedPkg.id}
-                    clientNotes={buildClientNotes(selectedPkg)}
-                    onSuccess={handlePaySuccess}
-                    onError={handlePayError}
-                  />
+                        {/* NowPayments crypto popup */}
+                        <NpCallCheckout
+                          packageId={selectedPkg.id}
+                          clientNotes={buildClientNotes(selectedPkg)}
+                          onSuccess={handlePaySuccess}
+                          onError={handlePayError}
+                        />
 
-                  <p className="text-[10px] text-center" style={{ color: "rgba(255,255,255,0.30)" }}>
-                    BTC · ETH · USDT · USDC · and more
-                  </p>
+                        <p className="text-[10px] text-center" style={{ color: "rgba(255,255,255,0.30)" }}>
+                          BTC · ETH · USDT · USDC · and more
+                        </p>
+                      </>
+                    );
+                  })()}
 
                   {payStep === "error" && payError && (
                     <div
@@ -710,6 +745,11 @@ export default function BookCreator() {
               <p className="text-xs" style={{ color: "rgba(255,255,255,0.55)" }}>
                 {creator.displayName} will be in touch to confirm the time. Check your messages on PNPtv.
               </p>
+              {confirmedBookingId != null && (
+                <p className="text-[10px]" style={{ color: "rgba(255,255,255,0.35)" }}>
+                  Booking ref: {String(confirmedBookingId)}
+                </p>
+              )}
               <button
                 type="button"
                 onClick={() => navigate(isAuthenticated ? "/dm" : "/")}
@@ -724,7 +764,7 @@ export default function BookCreator() {
           {/* Footer */}
           <div className="pb-6 text-center space-y-1">
             <p className="text-[10px]" style={{ color: "rgba(255,255,255,0.25)" }}>
-              Powered by PNPtv! · Secure payments via Privy &amp; NowPayments
+              Powered by PNPtv! · Secure payments
             </p>
             <a
               href="/"
