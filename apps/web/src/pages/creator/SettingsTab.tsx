@@ -30,11 +30,20 @@ import {
   setCreatorPrice,
   saveChannelPassSettings,
   updateVideoPricing,
+  getMyParches,
+  createParche,
+  setParcheOpen,
+  inviteCreatorToParche,
+  respondToParcheInvite,
+  leaveParche,
+  createParchePackage,
+  deactivateParchePackage,
   type CreatorDashboard as DashboardData,
   type CreatorMediaItem,
   type StreamRecording,
   type ChunkUploadProgress,
   type CreatorLiveEligibility,
+  type ParcheDetail,
 } from "@/lib/api";
 import { type CreatorStrings } from "@/lib/i18n/creator";
 import { formatBio } from "@/lib/feedI18n";
@@ -79,6 +88,41 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
       .then((res) => setLiveEligibility(res as CreatorLiveEligibility))
       .catch(() => {});
   }, []);
+
+  // ── My Parche ─────────────────────────────────────────────────────────────
+  const [myParches, setMyParches] = useState<ParcheDetail[]>([]);
+  const [parcheLoading, setParcheLoading] = useState(true);
+  const [inviteHandle, setInviteHandle] = useState("");
+  const [inviting, setInviting] = useState(false);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  const [inviteSuccess, setInviteSuccess] = useState<string | null>(null);
+  const [showCreateParche, setShowCreateParche] = useState(false);
+  const [newParcheName, setNewParcheName] = useState("");
+  const [newParcheCity, setNewParcheCity] = useState("");
+  const [newParcheDesc, setNewParcheDesc] = useState("");
+  const [creatingParche, setCreatingParche] = useState(false);
+  const [createParcheError, setCreateParcheError] = useState<string | null>(null);
+  const [newPkgTitle, setNewPkgTitle] = useState("");
+  const [newPkgDesc, setNewPkgDesc] = useState("");
+  const [newPkgDuration, setNewPkgDuration] = useState(60);
+  const [newPkgPrice, setNewPkgPrice] = useState("");
+  const [addingPkg, setAddingPkg] = useState(false);
+  const [addPkgError, setAddPkgError] = useState<string | null>(null);
+  const [addPkgSuccess, setAddPkgSuccess] = useState<string | null>(null);
+
+  const reloadMyParches = useCallback(async () => {
+    setParcheLoading(true);
+    try {
+      const res = await getMyParches();
+      setMyParches(res.parches || []);
+    } catch (_) {
+      setMyParches([]);
+    } finally {
+      setParcheLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { reloadMyParches(); }, [reloadMyParches]);
 
   // Per-lane payout destinations. Creators save multiple and pick a lane at
   // cashout time. Empty fields are not sent on save.
@@ -1770,6 +1814,553 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
             ))}
           </div>
         )}
+      </div>
+
+      {/* ── My Parche ──────────────────────────────────────────────────── */}
+      <div
+        className="rounded-2xl p-5"
+        style={{
+          background: "var(--pnp-surface, #1e1e1e)",
+          border: "1px solid var(--pnp-border, #2a2a2a)",
+        }}
+      >
+        <h2 className="text-lg font-semibold text-white mb-1">{t.parcheTitle}</h2>
+        <p className="text-xs mb-4" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+          {t.parcheSubtitle}
+        </p>
+
+        {parcheLoading ? (
+          <div className="flex items-center gap-2 py-4" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+            <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+            <span className="text-sm">{t.parcheLoading}</span>
+          </div>
+        ) : (() => {
+          const activeParche: ParcheDetail | null = myParches[0] ?? null;
+
+          // ── STATE A: No parche ──────────────────────────────────────────
+          if (!activeParche) {
+            return (
+              <div className="space-y-4">
+                {!showCreateParche ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowCreateParche(true)}
+                    className="px-4 py-2.5 rounded-xl text-sm font-bold text-white transition-all active:scale-[0.98]"
+                    style={{ background: "linear-gradient(135deg, #D4007A, #7B61FF)" }}
+                  >
+                    + Start a Parche
+                  </button>
+                ) : (
+                  <div
+                    className="p-4 rounded-xl space-y-3"
+                    style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}
+                  >
+                    <p className="text-sm font-semibold text-white">{t.parcheCreateTitle}</p>
+                    <div className="space-y-2">
+                      <input
+                        id="pnp-parche-name"
+                        type="text"
+                        value={newParcheName}
+                        onChange={(e) => setNewParcheName(e.target.value)}
+                        maxLength={80}
+                        placeholder={t.parcheNamePlaceholder}
+                        className="w-full px-3 py-2 rounded-lg text-sm text-white bg-black/30 border border-white/10 focus:outline-none focus:border-white/30 placeholder-white/30"
+                      />
+                      <input
+                        id="pnp-parche-city"
+                        type="text"
+                        value={newParcheCity}
+                        onChange={(e) => setNewParcheCity(e.target.value)}
+                        maxLength={80}
+                        placeholder={t.parcheCityPlaceholder}
+                        className="w-full px-3 py-2 rounded-lg text-sm text-white bg-black/30 border border-white/10 focus:outline-none focus:border-white/30 placeholder-white/30"
+                      />
+                      <textarea
+                        id="pnp-parche-desc"
+                        value={newParcheDesc}
+                        onChange={(e) => setNewParcheDesc(e.target.value)}
+                        maxLength={500}
+                        rows={3}
+                        placeholder={t.parcheDescPlaceholder}
+                        className="w-full px-3 py-2 rounded-lg text-sm text-white bg-black/30 border border-white/10 focus:outline-none focus:border-white/30 resize-none placeholder-white/30"
+                      />
+                    </div>
+                    {createParcheError && (
+                      <p className="text-xs" style={{ color: "#FF453A" }}>{createParcheError}</p>
+                    )}
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        disabled={creatingParche || !newParcheName.trim()}
+                        onClick={async () => {
+                          if (!newParcheName.trim()) return;
+                          setCreatingParche(true);
+                          setCreateParcheError(null);
+                          try {
+                            await createParche({
+                              name: newParcheName.trim(),
+                              locationCity: newParcheCity.trim() || undefined,
+                              description: newParcheDesc.trim() || undefined,
+                            });
+                            setNewParcheName("");
+                            setNewParcheCity("");
+                            setNewParcheDesc("");
+                            setShowCreateParche(false);
+                            await reloadMyParches();
+                          } catch (err) {
+                            setCreateParcheError(err instanceof Error ? err.message : t.parcheCreateError);
+                          } finally {
+                            setCreatingParche(false);
+                          }
+                        }}
+                        className="px-4 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-50 transition-all"
+                        style={{ background: "linear-gradient(135deg, #D4007A, #7B61FF)" }}
+                      >
+                        {creatingParche ? t.parcheCreating : t.parcheCreate}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setShowCreateParche(false); setCreateParcheError(null); }}
+                        className="px-4 py-2 rounded-lg text-sm font-semibold transition-all"
+                        style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          }
+
+          const isForming =
+            activeParche.status === "forming" ||
+            activeParche.members.filter((m) => m.inviteStatus === "accepted").length < 2;
+
+          const myMembership = activeParche.members.find(
+            (m) => m.creatorId === (authUser as any)?.id
+          );
+          const isPendingInvite = myMembership?.inviteStatus === "pending";
+
+          // ── STATE B: Forming ────────────────────────────────────────────
+          if (isForming) {
+            return (
+              <div className="space-y-4">
+                {/* Header */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-base font-bold text-white">{activeParche.name}</span>
+                  <span
+                    className="text-[10px] font-semibold px-2 py-0.5 rounded-full"
+                    style={{ background: "rgba(255,255,255,0.10)", color: "rgba(255,255,255,0.50)" }}
+                  >
+                    Forming
+                  </span>
+                </div>
+                <p className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                  Your Parche goes live once 2 creators accept.
+                </p>
+
+                {/* Pending invite banner */}
+                {isPendingInvite && (
+                  <div
+                    className="rounded-xl p-3 space-y-2"
+                    style={{ background: "rgba(212,0,122,0.10)", border: "1px solid rgba(212,0,122,0.30)" }}
+                  >
+                    <p className="text-sm font-semibold text-white">{t.parcheInvitedTitle}</p>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            await respondToParcheInvite(activeParche.id, true);
+                            await reloadMyParches();
+                          } catch (err) {
+                            alert(err instanceof Error ? err.message : t.parcheAcceptError);
+                          }
+                        }}
+                        className="px-3 py-1.5 rounded-lg text-xs font-bold text-white transition-all active:scale-[0.98]"
+                        style={{ background: "linear-gradient(135deg, #D4007A, #7B61FF)" }}
+                      >
+                        Accept
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            await respondToParcheInvite(activeParche.id, false);
+                            await reloadMyParches();
+                          } catch (err) {
+                            alert(err instanceof Error ? err.message : t.parcheDeclineError);
+                          }
+                        }}
+                        className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all"
+                        style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}
+                      >
+                        Decline
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Member list */}
+                <div className="space-y-2">
+                  {activeParche.members.map((m) => {
+                    const initial = (m.displayName || "?").charAt(0).toUpperCase();
+                    const statusColor: Record<string, string> = {
+                      accepted: "#34C759",
+                      pending: "#E69138",
+                      declined: "#FF453A",
+                    };
+                    return (
+                      <div key={m.id} className="flex items-center gap-3 py-1">
+                        <div
+                          className="w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-xs overflow-hidden flex-shrink-0"
+                          style={{ background: "linear-gradient(135deg, #D4007A, #7B61FF)" }}
+                        >
+                          {m.photoUrl
+                            ? <img src={m.photoUrl} alt={m.displayName} className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                            : initial}
+                        </div>
+                        <span className="flex-1 text-sm text-white truncate">{m.displayName}</span>
+                        <span
+                          className="text-[10px] font-semibold px-2 py-0.5 rounded-full capitalize"
+                          style={{
+                            background: `${statusColor[m.inviteStatus] ?? "rgba(255,255,255,0.15)"}22`,
+                            color: statusColor[m.inviteStatus] ?? "rgba(255,255,255,0.50)",
+                          }}
+                        >
+                          {m.inviteStatus}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Invite section */}
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-white/60">{t.parcheInviteCreatorLabel}</p>
+                  <div className="flex gap-2">
+                    <input
+                      id="pnp-parche-invite"
+                      type="text"
+                      value={inviteHandle}
+                      onChange={(e) => setInviteHandle(e.target.value)}
+                      placeholder="@username or handle"
+                      className="flex-1 min-w-0 px-3 py-2 rounded-lg text-sm text-white bg-black/30 border border-white/10 focus:outline-none focus:border-white/30 placeholder-white/30"
+                      onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                    />
+                    <button
+                      type="button"
+                      disabled={inviting || !inviteHandle.trim()}
+                      onClick={async () => {
+                        if (!inviteHandle.trim()) return;
+                        setInviting(true);
+                        setInviteError(null);
+                        setInviteSuccess(null);
+                        try {
+                          await inviteCreatorToParche(activeParche.id, inviteHandle.trim().replace(/^@/, ""));
+                          setInviteHandle("");
+                          setInviteSuccess(t.parcheInviteSent);
+                          await reloadMyParches();
+                        } catch (err) {
+                          setInviteError(err instanceof Error ? err.message : t.parcheInviteError);
+                        } finally {
+                          setInviting(false);
+                        }
+                      }}
+                      className="px-4 py-2 rounded-lg text-sm font-bold text-white disabled:opacity-50 transition-all active:scale-[0.97]"
+                      style={{ background: "rgba(212,0,122,0.20)", border: "1px solid rgba(212,0,122,0.40)" }}
+                    >
+                      {inviting ? t.parcheInviting : t.parcheInvite}
+                    </button>
+                  </div>
+                  {inviteError && <p className="text-xs" style={{ color: "#FF453A" }}>{inviteError}</p>}
+                  {inviteSuccess && <p className="text-xs" style={{ color: "#34C759" }}>{inviteSuccess}</p>}
+                </div>
+
+                {/* Leave button — available in forming state */}
+                <div className="pt-2 border-t border-white/10">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (!confirm(t.parcheLeaveConfirm)) return;
+                      try {
+                        await leaveParche(activeParche.id);
+                        await reloadMyParches();
+                      } catch (err) {
+                        alert(err instanceof Error ? err.message : t.parcheLeaveError);
+                      }
+                    }}
+                    className="text-xs font-medium transition-colors hover:opacity-80"
+                    style={{ color: "#FF453A" }}
+                  >
+                    Leave Parche
+                  </button>
+                </div>
+              </div>
+            );
+          }
+
+          // ── STATE C: Active ─────────────────────────────────────────────
+          const acceptedMembers = activeParche.members.filter((m) => m.inviteStatus === "accepted");
+          const canInviteMore = acceptedMembers.length < (activeParche.maxMembers ?? 5);
+
+          return (
+            <div className="space-y-5">
+              {/* Header + open toggle */}
+              <div className="flex items-center gap-2 flex-wrap justify-between">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-base font-bold text-white">{activeParche.name}</span>
+                  <span
+                    className="text-[10px] font-semibold px-2 py-0.5 rounded-full"
+                    style={{ background: "rgba(52,211,153,0.15)", color: "rgba(52,211,153,0.90)" }}
+                  >
+                    Active
+                  </span>
+                </div>
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={activeParche.isOpen}
+                    onChange={async () => {
+                      try {
+                        await setParcheOpen(activeParche.id, !activeParche.isOpen);
+                        await reloadMyParches();
+                      } catch (err) {
+                        alert(err instanceof Error ? err.message : t.parcheUpdateError);
+                      }
+                    }}
+                    className="w-4 h-4 rounded accent-pink-500"
+                  />
+                  <span className="text-xs text-white/70">{t.parcheOpenForBookings}</span>
+                </label>
+              </div>
+
+              {/* Members */}
+              <div className="space-y-2">
+                <p className="text-xs font-semibold text-white/60">{t.parchemCrewLabel}</p>
+                {acceptedMembers.map((m) => {
+                  const initial = (m.displayName || "?").charAt(0).toUpperCase();
+                  return (
+                    <div key={m.id} className="flex items-center gap-3 py-1">
+                      <div
+                        className="w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-xs overflow-hidden flex-shrink-0"
+                        style={{ background: "linear-gradient(135deg, #D4007A, #7B61FF)" }}
+                      >
+                        {m.photoUrl
+                          ? <img src={m.photoUrl} alt={m.displayName} className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                          : initial}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm text-white truncate">{m.displayName}</p>
+                        {m.role && m.role !== "member" && (
+                          <p className="text-[10px] text-white/40 capitalize">{m.role}</p>
+                        )}
+                      </div>
+                      {m.isOnline && (
+                        <span className="w-2 h-2 rounded-full bg-emerald-400 flex-shrink-0" />
+                      )}
+                    </div>
+                  );
+                })}
+                {/* Invite more if under max */}
+                {canInviteMore && (
+                  <div className="pt-1 space-y-2">
+                    <div className="flex gap-2">
+                      <input
+                        id="pnp-parche-invite-active"
+                        type="text"
+                        value={inviteHandle}
+                        onChange={(e) => setInviteHandle(e.target.value)}
+                        placeholder={t.parcheInvitePlaceholder}
+                        className="flex-1 min-w-0 px-3 py-2 rounded-lg text-sm text-white bg-black/30 border border-white/10 focus:outline-none focus:border-white/30 placeholder-white/30"
+                      />
+                      <button
+                        type="button"
+                        disabled={inviting || !inviteHandle.trim()}
+                        onClick={async () => {
+                          if (!inviteHandle.trim()) return;
+                          setInviting(true);
+                          setInviteError(null);
+                          setInviteSuccess(null);
+                          try {
+                            await inviteCreatorToParche(activeParche.id, inviteHandle.trim().replace(/^@/, ""));
+                            setInviteHandle("");
+                            setInviteSuccess(t.parcheInviteSent);
+                            await reloadMyParches();
+                          } catch (err) {
+                            setInviteError(err instanceof Error ? err.message : t.parcheInviteError);
+                          } finally {
+                            setInviting(false);
+                          }
+                        }}
+                        className="px-4 py-2 rounded-lg text-sm font-bold text-white disabled:opacity-50 transition-all active:scale-[0.97]"
+                        style={{ background: "rgba(212,0,122,0.20)", border: "1px solid rgba(212,0,122,0.40)" }}
+                      >
+                        {inviting ? t.parcheInviting : t.parcheInvite}
+                      </button>
+                    </div>
+                    {inviteError && <p className="text-xs" style={{ color: "#FF453A" }}>{inviteError}</p>}
+                    {inviteSuccess && <p className="text-xs" style={{ color: "#34C759" }}>{inviteSuccess}</p>}
+                  </div>
+                )}
+              </div>
+
+              {/* Packages */}
+              <div className="space-y-3">
+                <p className="text-xs font-semibold text-white/60">{t.parchePackagesLabel}</p>
+                {activeParche.packages.filter((p) => p.isActive).length === 0 && (
+                  <p className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>{t.parcheNoPackages}</p>
+                )}
+                {activeParche.packages.filter((p) => p.isActive).map((pkg) => (
+                  <div
+                    key={pkg.id}
+                    className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl"
+                    style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-white truncate">{pkg.title}</p>
+                      <p className="text-[10px] text-white/40">{pkg.durationMinutes}min · ${pkg.priceUsd}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          await deactivateParchePackage(activeParche.id, pkg.id);
+                          await reloadMyParches();
+                        } catch (err) {
+                          alert(err instanceof Error ? err.message : t.parcheDeactivateError);
+                        }
+                      }}
+                      className="text-xs px-2.5 py-1 rounded-lg transition-all active:scale-[0.97]"
+                      style={{ background: "rgba(255,69,58,0.10)", color: "#FF453A", border: "1px solid rgba(255,69,58,0.25)" }}
+                    >
+                      Deactivate
+                    </button>
+                  </div>
+                ))}
+
+                {/* Add package form */}
+                <div
+                  className="p-3 rounded-xl space-y-2"
+                  style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}
+                >
+                  <p className="text-xs font-semibold text-white/60">{t.parcheAddPackageLabel}</p>
+                  <input
+                    id="pnp-parche-pkg-title"
+                    type="text"
+                    value={newPkgTitle}
+                    onChange={(e) => setNewPkgTitle(e.target.value)}
+                    maxLength={80}
+                    placeholder={t.parchePkgTitlePlaceholder}
+                    className="w-full px-3 py-2 rounded-lg text-sm text-white bg-black/30 border border-white/10 focus:outline-none focus:border-white/30 placeholder-white/30"
+                  />
+                  <textarea
+                    id="pnp-parche-pkg-desc"
+                    value={newPkgDesc}
+                    onChange={(e) => setNewPkgDesc(e.target.value)}
+                    maxLength={300}
+                    rows={2}
+                    placeholder={t.parchePkgDescPlaceholder}
+                    className="w-full px-3 py-2 rounded-lg text-sm text-white bg-black/30 border border-white/10 focus:outline-none focus:border-white/30 resize-none placeholder-white/30"
+                  />
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[10px] font-medium text-white/50 mb-1">{t.parchePkgDurationLabel}</label>
+                      <select
+                        id="pnp-parche-pkg-duration"
+                        value={newPkgDuration}
+                        onChange={(e) => setNewPkgDuration(Number(e.target.value))}
+                        className="w-full px-3 py-2 rounded-lg text-sm text-white bg-black/30 border border-white/10 focus:outline-none focus:border-white/30"
+                        style={{ background: "rgba(0,0,0,0.40)" }}
+                      >
+                        <option value={30}>30 min</option>
+                        <option value={60}>60 min</option>
+                        <option value={90}>90 min</option>
+                        <option value={120}>120 min</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-medium text-white/50 mb-1">{t.parchePkgPriceLabel}</label>
+                      <input
+                        id="pnp-parche-pkg-price"
+                        type="number"
+                        inputMode="decimal"
+                        min={1}
+                        step={0.01}
+                        value={newPkgPrice}
+                        onChange={(e) => setNewPkgPrice(e.target.value)}
+                        placeholder="50.00"
+                        className="w-full px-3 py-2 rounded-lg text-sm text-white bg-black/30 border border-white/10 focus:outline-none focus:border-white/30 placeholder-white/30"
+                      />
+                    </div>
+                  </div>
+                  {addPkgError && <p className="text-xs" style={{ color: "#FF453A" }}>{addPkgError}</p>}
+                  {addPkgSuccess && <p className="text-xs" style={{ color: "#34C759" }}>{addPkgSuccess}</p>}
+                  <button
+                    type="button"
+                    disabled={addingPkg || !newPkgTitle.trim() || !newPkgPrice}
+                    onClick={async () => {
+                      const price = Number(newPkgPrice);
+                      if (!newPkgTitle.trim() || !Number.isFinite(price) || price <= 0) {
+                        setAddPkgError(t.parchePkgValidationError);
+                        return;
+                      }
+                      setAddingPkg(true);
+                      setAddPkgError(null);
+                      setAddPkgSuccess(null);
+                      try {
+                        await createParchePackage(activeParche.id, {
+                          title: newPkgTitle.trim(),
+                          description: newPkgDesc.trim() || undefined,
+                          durationMinutes: newPkgDuration,
+                          priceUsd: price,
+                        });
+                        setNewPkgTitle("");
+                        setNewPkgDesc("");
+                        setNewPkgDuration(60);
+                        setNewPkgPrice("");
+                        setAddPkgSuccess(t.parchePkgAdded);
+                        await reloadMyParches();
+                      } catch (err) {
+                        setAddPkgError(err instanceof Error ? err.message : t.parchePkgAddError);
+                      } finally {
+                        setAddingPkg(false);
+                      }
+                    }}
+                    className="px-4 py-2 rounded-lg text-sm font-bold text-white disabled:opacity-50 transition-all active:scale-[0.97]"
+                    style={{ background: "rgba(212,0,122,0.20)", border: "1px solid rgba(212,0,122,0.40)" }}
+                  >
+                    {addingPkg ? t.parcheAdding : t.parcheAddPackage}
+                  </button>
+                </div>
+              </div>
+
+              {/* Leave */}
+              <div className="pt-2 border-t" style={{ borderColor: "rgba(255,255,255,0.07)" }}>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!window.confirm(`Leave ${activeParche.name}? This cannot be undone.`)) return;
+                    try {
+                      await leaveParche(activeParche.id);
+                      await reloadMyParches();
+                    } catch (err) {
+                      alert(err instanceof Error ? err.message : t.parcheLeaveError);
+                    }
+                  }}
+                  className="text-xs font-semibold transition-all"
+                  style={{ color: "#FF453A" }}
+                >
+                  Leave Parche
+                </button>
+              </div>
+            </div>
+          );
+        })()}
       </div>
 
       {/* ── About me ───────────────────────────────────────────────────── */}

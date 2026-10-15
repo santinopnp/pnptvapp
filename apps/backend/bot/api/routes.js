@@ -16723,6 +16723,36 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
     return res.json({ received: true });
   }
 
+  // parche_booking: confirm the Parche group-call booking via parcheService.confirmBooking
+  if (order.plan_id === 'parche_booking') {
+    const parchemeta = typeof order.metadata === 'string' ? JSON.parse(order.metadata) : (order.metadata || {});
+    const parcheBookingId = parchemeta.bookingId;
+    if (!parcheBookingId) {
+      await dbQuery(
+        `UPDATE dash_subscription_orders SET status = 'pending', notes = $2 WHERE btcpay_invoice_id = $1`,
+        [order_id, 'parche_booking:missing_bookingId']
+      ).catch(() => {});
+      throw new Error(`parche_booking IPN: missing bookingId in DSO metadata for order ${order_id}`);
+    }
+    try {
+      const parcheService = require('../../services/parcheService');
+      await parcheService.confirmBooking(parcheBookingId);
+    } catch (parcheGrantErr) {
+      await dbQuery(
+        `UPDATE dash_subscription_orders SET status = 'pending', notes = $2 WHERE btcpay_invoice_id = $1`,
+        [order_id, `parche_booking:confirm_failed:${parcheGrantErr.message}`.slice(0, 500)]
+      ).catch(() => {});
+      throw parcheGrantErr;
+    }
+    await dbQuery(
+      `UPDATE dash_subscription_orders SET status = 'completed', completed_at = NOW(), notes = $2 WHERE btcpay_invoice_id = $1`,
+      [order_id, `nowpayments:parche:${payment_id}`]
+    );
+    logger.info('[NOWPayments] IPN: parche_booking confirmed', { order_id, parcheBookingId, userId: order.user_id });
+    maybeGrantFirstHourCryptoBonus(order.user_id).catch(() => {});
+    return res.json({ received: true, type: 'parche_booking' });
+  }
+
   // channel_pass: grant creator channel subscription via channelPassService.
   // Detected by meta.flow = 'channel_pass' (set at invoice creation).
   // Must run BEFORE token_purchase to prevent fall-through on unrecognised plan_id.
@@ -22087,6 +22117,25 @@ app.delete('/api/webapp/creator/call-packages/:packageId',
 // ── Book a Call: Checkout, Booking Management & Creator Availability ─────────
 const callBookingController = require('./controllers/callBookingController');
 
+// ── Parche public info — MUST come before /book/:handle/info ─────────────────
+// The :handle pattern would otherwise swallow "parche" as a username.
+const parcheController = require('./controllers/parcheController');
+const parchePublicLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  keyGenerator: (req) => req.ip,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: 'Too many requests' },
+});
+app.get('/api/webapp/book/parche/:slug/info',
+  parchePublicLimiter,
+  asyncHandler(parcheController.getPublicInfo));
+
+app.get('/api/webapp/parches',
+  parchePublicLimiter,
+  asyncHandler(parcheController.listActiveParches));
+
 // ── Public creator booking page info ─────────────────────────────────────────
 // GET /api/webapp/book/:handle/info — no auth required.
 // Rate-limited by IP to prevent enumeration scraping.
@@ -22269,6 +22318,96 @@ app.get('/api/webapp/creator/next-show-date',
 app.put('/api/webapp/creator/next-show-date',
   requireSessionAuth, creatorGuard,
   asyncHandler(callBookingController.setNextShowDate));
+
+// ── Parche — creator collectives for group calls ─────────────────────────────
+// NOTE: parcheController + parchePublicLimiter are already required and registered
+// above, before /api/webapp/book/:handle/info. Only member + creator routes here.
+
+const parcheCheckoutLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  keyGenerator: (req) => req.session?.user?.id || req.ip,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: 'Please wait before booking again' },
+});
+
+const parcheInviteLimiter = rateLimit({
+  windowMs: 3600 * 1000,
+  max: 20,
+  keyGenerator: (req) => req.session?.user?.id || req.ip,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: 'Invite limit reached, try again later' },
+});
+
+// Member
+app.post('/api/webapp/book-parche/checkout',
+  requireSessionAuth, parcheCheckoutLimiter,
+  asyncHandler(parcheController.checkout));
+
+app.get('/api/webapp/parche-bookings/:bookingId/token',
+  requireSessionAuth,
+  asyncHandler(parcheController.getLiveKitToken));
+
+app.get('/api/webapp/parche-bookings/:bookingId/status',
+  requireSessionAuth,
+  asyncHandler(async (req, res) => {
+    const { bookingId } = req.params;
+    const userId = req.session.user.id;
+    const { query: dbQ } = require('../../config/postgres');
+    const { rows } = await dbQ(
+      `SELECT pb.status, pb.livekit_room_name
+       FROM parche_bookings pb
+       WHERE pb.id = $1 AND pb.buyer_id = $2`,
+      [bookingId, userId]
+    );
+    if (!rows.length) return res.status(404).json({ success: false, error: 'Booking not found', code: 'NOT_FOUND' });
+    return res.json({ success: true, status: rows[0].status, livekitRoomName: rows[0].livekit_room_name });
+  }));
+
+// Creator
+app.get('/api/webapp/creator/parche',
+  requireSessionAuth, creatorGuard,
+  asyncHandler(parcheController.getMyParches));
+
+app.post('/api/webapp/creator/parche',
+  requireSessionAuth, creatorGuard,
+  asyncHandler(parcheController.createParche));
+
+app.put('/api/webapp/creator/parche/:parcheId',
+  requireSessionAuth, creatorGuard,
+  asyncHandler(parcheController.updateParche));
+
+app.post('/api/webapp/creator/parche/:parcheId/open',
+  requireSessionAuth, creatorGuard,
+  asyncHandler(parcheController.setOpen));
+
+app.post('/api/webapp/creator/parche/:parcheId/invite',
+  requireSessionAuth, creatorGuard, parcheInviteLimiter,
+  asyncHandler(parcheController.inviteCreator));
+
+app.post('/api/webapp/creator/parche/:parcheId/respond',
+  requireSessionAuth, creatorGuard,
+  asyncHandler(parcheController.respondToInvite));
+
+app.post('/api/webapp/creator/parche/:parcheId/leave',
+  requireSessionAuth, creatorGuard,
+  asyncHandler(parcheController.leaveParche));
+
+app.post('/api/webapp/creator/parche/:parcheId/packages',
+  requireSessionAuth, creatorGuard,
+  asyncHandler(parcheController.createPackage));
+
+app.put('/api/webapp/creator/parche/:parcheId/packages/:packageId',
+  requireSessionAuth, creatorGuard,
+  asyncHandler(parcheController.updatePackage));
+
+app.delete('/api/webapp/creator/parche/:parcheId/packages/:packageId',
+  requireSessionAuth, creatorGuard,
+  asyncHandler(parcheController.deactivatePackage));
+
+// ── END Parche ────────────────────────────────────────────────────────────────
 
 // GET /api/webapp/creator/subscribers — handled by creatorRoutes.js (mounted above)
 

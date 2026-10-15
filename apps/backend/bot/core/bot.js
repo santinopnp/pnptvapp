@@ -33,6 +33,8 @@ const { initializeRedis } = require('../../config/redis');
 const { initializeCoreTables } = require('../../config/ensureCoreTables');
 // meruLinkInitializer removed 2026-08 (Meru retired)
 const { initSentry } = require('./plugins/sentry');
+// Must run before any require() that loads express, so Sentry can instrument it
+initSentry();
 const { validateServices } = require('./plugins/serviceValidator');
 const sessionMiddleware = require('./middleware/session');
 const { userExistsMiddleware } = require('./middleware/userExistsMiddleware');
@@ -316,13 +318,7 @@ const startBot = async () => {
     }
     // Scan services/ for AI-generated no-op stubs before any request is served
     validateServices();
-    // Initialize Sentry (optional)
-    try {
-      initSentry();
-      logger.info('✓ Sentry initialized');
-    } catch (error) {
-      logger.warn(`Sentry initialization failed, continuing without monitoring: ${error.message}`);
-    }
+    logger.info('✓ Sentry initialized');
     // Event loop lag monitor — logs every 30s so we can correlate PG "slow
     // query" warnings with actual event-loop stalls in this process.
     try {
@@ -2047,6 +2043,8 @@ const startBot = async () => {
       // Wizard buttons (language / age / terms / etc.) — without this the
       // wizard shows the first screen but tapping buttons is a no-op.
       ['onboardingHandlers', () => require('../handlers/user/onboarding')(bot)],
+      // Parche invite accept/decline inline keyboard callbacks
+      ['parcheCallbacks', () => require('../../services/parcheNotificationService').registerParcheCallbacks(bot)],
     ];
     let hLoaded = 0;
     for (const [name, register] of handlerList) {

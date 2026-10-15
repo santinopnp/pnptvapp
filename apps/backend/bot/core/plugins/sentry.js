@@ -14,6 +14,9 @@ const initSentry = () => {
     Sentry.init({
       dsn: process.env.SENTRY_DSN,
       environment: process.env.SENTRY_ENVIRONMENT || process.env.NODE_ENV || 'development',
+      integrations: [
+        Sentry.httpIntegration?.() ?? undefined,
+      ].filter(Boolean),
       tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.1 : 1.0,
       beforeSend(event, hint) {
         // Filter out sensitive data

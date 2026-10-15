@@ -405,6 +405,7 @@ const Donate = lazy(() => import("@/pages/Donate"));
 const Onboarding = lazy(() => import("@/pages/Onboarding"));
 const Models = lazy(() => import("@/pages/Models"));
 const BookCreator = lazy(() => import("@/pages/BookCreator"));
+const BookParche = lazy(() => import("@/pages/BookParche"));
 
 export const router = createBrowserRouter([
   {
@@ -1581,7 +1582,15 @@ export const router = createBrowserRouter([
   },
   // ── Public creator booking pages ──────────────────────────────────────────
   // These are standalone (no Layout shell) so the full viewport is used for
-  // the hero + package cards. Auth is handled inline by BookCreator itself.
+  // the hero + package cards. Auth is handled inline by the page itself.
+  {
+    path: "/book/parche/:slug",
+    element: (
+      <ModuleLoader>
+        <BookParche />
+      </ModuleLoader>
+    ),
+  },
   {
     path: "/book/:handle",
     element: (

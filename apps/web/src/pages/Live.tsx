@@ -22,11 +22,13 @@ import {
   getSlotNotifyStatus,
   listCreatorMedia,
   getAvailableCreators,
+  listActiveParches,
   type FeaturedPerformer,
   type LiveStream,
   type LiveScheduleSlot,
   type CreatorMediaItem,
   type AvailableCreator,
+  type ParcheListingItem,
 } from "@/lib/api";
 import { PerformerDrawer } from "@/components/live/PerformerDrawer";
 import { BookCallModal } from "@/components/creators/BookCallModal";
@@ -46,6 +48,66 @@ function isValidPhotoUrl(photo: string | null | undefined): photo is string {
   } catch {
     return false;
   }
+}
+
+// ── Parche card for the horizontal scroll strip ───────────────────────────────
+function ParcheCard({ parche, onBook }: { parche: ParcheListingItem; onBook: () => void }) {
+  const maxAvatars = Math.min(parche.memberPreviews.length, 4);
+  return (
+    <button
+      type="button"
+      onClick={onBook}
+      className="relative flex-shrink-0 overflow-hidden text-left active:scale-[0.98] transition-transform rounded-2xl p-3 space-y-2"
+      style={{
+        width: 150,
+        background: "linear-gradient(135deg, rgba(212,0,122,0.18), rgba(123,97,255,0.14))",
+        border: "1px solid rgba(212,0,122,0.30)",
+      }}
+      aria-label={`Book ${parche.name}`}
+    >
+      {/* Overlapping avatar strip */}
+      <div className="relative" style={{ height: 36, width: Math.max(36, 12 + maxAvatars * 22) }}>
+        {parche.memberPreviews.slice(0, maxAvatars).map((mp, i) => {
+          const initial = (mp.displayName || "?").charAt(0).toUpperCase();
+          return (
+            <div
+              key={i}
+              className="absolute top-0 flex items-center justify-center rounded-full overflow-hidden text-white font-bold text-xs"
+              style={{
+                width: 36,
+                height: 36,
+                left: i * 22,
+                zIndex: maxAvatars - i,
+                background: "linear-gradient(135deg, #D4007A, #7B61FF)",
+                border: "2px solid #0A0A0F",
+              }}
+            >
+              {mp.photoUrl
+                ? <img src={mp.photoUrl} alt={mp.displayName} className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                : initial}
+            </div>
+          );
+        })}
+      </div>
+      {/* Name + meta */}
+      <div className="space-y-1">
+        <p className="text-xs font-bold text-white leading-tight truncate">{parche.name}</p>
+        <div className="flex flex-wrap items-center gap-1">
+          {parche.locationCity && (
+            <span className="text-[9px] text-white/50 truncate max-w-[80px]">{parche.locationCity}</span>
+          )}
+          <span
+            className="inline-flex items-center gap-0.5 text-[9px] font-semibold px-1.5 py-0.5 rounded-full"
+            style={{ background: "rgba(52,211,153,0.15)", color: "rgba(52,211,153,0.90)" }}
+          >
+            <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse" aria-hidden="true" />
+            Open
+          </span>
+        </div>
+        <p className="text-[9px] text-white/40">{parche.activePackageCount} pkg{parche.activePackageCount !== 1 ? "s" : ""}</p>
+      </div>
+    </button>
+  );
 }
 
 export default function Live() {
@@ -179,6 +241,7 @@ export default function Live() {
   const [availableCreators, setAvailableCreators] = useState<AvailableCreator[]>([]);
   const [sheetCreator, setSheetCreator] = useState<AvailableCreator | null>(null);
   const [bookModalCreator, setBookModalCreator] = useState<AvailableCreator | null>(null);
+  const [activeParches, setActiveParches] = useState<ParcheListingItem[]>([]);
   useEffect(() => {
     let cancelled = false;
     const load = () => {
@@ -186,6 +249,13 @@ export default function Live() {
         if (cancelled) return;
         setAvailableCreators(r?.creators || []);
       }).catch(() => { if (!cancelled) setAvailableCreators([]); });
+      listActiveParches().then((r) => {
+        if (cancelled) return;
+        setActiveParches(r?.parches || []);
+      }).catch((err) => {
+        if (!cancelled) setActiveParches([]);
+        console.warn('[Live] parche fetch failed', err);
+      });
     };
     load();
     const iv = setInterval(load, 20_000);
@@ -692,6 +762,24 @@ export default function Live() {
         </div>
       )}
 
+
+      {/* ── Parches — open creator collectives ────────────────────────────── */}
+      {activeParches.length > 0 && (
+        <div className="px-0 mb-6">
+          <h3 className="text-white/60 text-xs font-semibold uppercase tracking-widest mb-3">{t.creator.parches}</h3>
+          <div className="-mx-4 px-4">
+            <div className="flex gap-3 overflow-x-auto pb-1 no-scrollbar">
+              {activeParches.map((p) => (
+                <ParcheCard
+                  key={p.id}
+                  parche={p}
+                  onBook={() => navigate(`/book/parche/${p.slug}`)}
+                />
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Magic Search — single sticky container: input + selected-category pill + chip rail ── */}
       <div
