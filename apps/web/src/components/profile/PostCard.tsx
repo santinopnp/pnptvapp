@@ -8,6 +8,9 @@ import { useI18n } from "@/lib/i18n";
 // Add IDs here to promote additional creators.
 const PRIME_UPSELL_CREATOR_IDS = new Set(["8599671840", "8552451957", "8f5f4dd1-7bdb-4571-b026-e09d91113c91"]); // Santino (SantinoFurioso + pnptv alt) + PNPLatinoBoy (Lex)
 
+// Session-scoped cache so repeated posts from the same creator don't refetch.
+const creatorPackageCache = new Map<string, boolean>();
+
 const CHECKOUT_MODAL_PLANS = [
   { id: "yearly50",    label: "PRIME Annual",   tag: "1 year",  price: 50.00  },
   { id: "lifetime100", label: "PNPtv Founders", tag: "18 mo PRIME + ✨ Channel", price: 100.00 },
@@ -19,6 +22,7 @@ import {
   createReply,
   editSocialPost,
   searchCreators,
+  getCreatorCallPackages,
   ApiError,
   type SocialPostItem,
   type MentionUser,
@@ -311,6 +315,35 @@ export default function PostCard({
   };
   const isSantinoPost = ["8599671840", "8552451957"].includes(String(post.author_id)) ||
     String(post.author_username || "").toLowerCase() === "santinoFurioso".toLowerCase();
+  const showBookCallCta =
+    post.author_creator_status === "active" &&
+    String(user?.id ?? "") !== String(post.author_id) &&
+    post.author_id !== "8552451957";
+  const [hasCallPackages, setHasCallPackages] = useState<boolean>(
+    () => creatorPackageCache.get(String(post.author_id)) ?? false
+  );
+  useEffect(() => {
+    if (!showBookCallCta) return;
+    const creatorId = String(post.author_id);
+    if (creatorPackageCache.has(creatorId)) {
+      setHasCallPackages(creatorPackageCache.get(creatorId)!);
+      return;
+    }
+    let cancelled = false;
+    getCreatorCallPackages(creatorId)
+      .then(res => {
+        if (cancelled) return;
+        const has = (res.packages || []).length > 0;
+        creatorPackageCache.set(creatorId, has);
+        setHasCallPackages(has);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        creatorPackageCache.set(creatorId, true);
+        setHasCallPackages(true);
+      });
+    return () => { cancelled = true; };
+  }, [post.author_id]); // eslint-disable-line react-hooks/exhaustive-deps
   const [showBookCallModal, setShowBookCallModal] = useState(false);
   const [promoModalPlanId, setPromoModalPlanId] = useState<"yearly50" | "lifetime100" | null>(null);
   const [npPickerPlanId, setNpPickerPlanId] = useState<string | null>(null);
@@ -1335,7 +1368,7 @@ export default function PostCard({
                       )}
                     </div>
                   )}
-                  {/* Santino + Lex action pills — Subscribe to PRIME (non-PRIME only) + Book a Call (Santino only) */}
+                  {/* PRIME creator action pills — Subscribe to PRIME + Book a Call */}
                   {isPrimeCreator && String(user?.id ?? "") !== String(post.author_id) && (
                     <div className="mt-2.5 flex gap-2" onClick={(e) => e.stopPropagation()}>
                       {showPrimeUpsell && (
@@ -1349,7 +1382,7 @@ export default function PostCard({
                           <span>{userLang === "es" ? "Suscríbete a PRIME" : "Subscribe to PRIME"}</span>
                         </button>
                       )}
-                      {isSantinoPost && (
+                      {showBookCallCta && hasCallPackages && (
                         <button
                           type="button"
                           onClick={() => setShowBookCallModal(true)}
@@ -1360,6 +1393,20 @@ export default function PostCard({
                           <span>{userLang === "es" ? "Reservar llamada" : "Book a Call"}</span>
                         </button>
                       )}
+                    </div>
+                  )}
+                  {/* Book a Call pill for non-PRIME active creators */}
+                  {showBookCallCta && hasCallPackages && !isPrimeCreator && (
+                    <div className="mt-2.5 flex gap-2" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        onClick={() => setShowBookCallModal(true)}
+                        className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-[11px] font-bold transition-all active:scale-95"
+                        style={{ background: "rgba(94,209,196,0.12)", border: "1px solid rgba(94,209,196,0.4)", color: "#5ED1C4" }}
+                      >
+                        <span>📅</span>
+                        <span>{userLang === "es" ? "Reservar llamada" : "Book a Call"}</span>
+                      </button>
                     </div>
                   )}
 
@@ -2053,7 +2100,7 @@ export default function PostCard({
           onClose={() => setShowBookCallModal(false)}
           creator={{
             id: String(post.author_id),
-            username: post.author_username || "SantinoFurioso",
+            username: post.author_username || "",
             photo_url: null,
             creator_type: "full_time",
             creator_price_usd: 0,

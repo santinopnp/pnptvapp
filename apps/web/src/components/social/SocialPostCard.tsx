@@ -39,6 +39,10 @@ import {
   searchCreators,
   getOwnChannels,
   assignPostToChannel,
+  getCreatorCallPackages,
+  followUser,
+  unfollowUser,
+  getFollowStatus,
   NP_COINS_SUBSCRIBE,
   prepareUsdcSubscription,
   assertPaymentUrl,
@@ -53,6 +57,10 @@ import { useAuth } from "@/hooks/useAuth";
 import { useTier } from "@/hooks/useTier";
 
 declare const window: Window & { twttr?: any };
+
+// Session-scoped cache so repeated posts from the same creator don't refetch.
+const creatorPackageCache = new Map<string, boolean>();
+const followStatusCache = new Map<string, { isFollowing: boolean; followsBack: boolean }>();
 
 const LazyBuyTokensModal = lazy(() =>
   import("@/components/BuyTokensModal").then((m) => ({ default: m.BuyTokensModal }))
@@ -460,8 +468,82 @@ export default function SocialPostCard({
   const isPnptvOfficial =
     String(post.author_id) === "8552451957" ||
     String(post.author_username || "").toLowerCase() === "pnptv";
+  const showBookCallCta =
+    post.author_creator_status === "active" &&
+    !isOwn &&
+    !isPnptvOfficial;
+  const [hasCallPackages, setHasCallPackages] = useState<boolean>(
+    () => creatorPackageCache.get(String(post.author_id)) ?? false
+  );
+  useEffect(() => {
+    if (!showBookCallCta) return;
+    const creatorId = String(post.author_id);
+    if (creatorPackageCache.has(creatorId)) {
+      setHasCallPackages(creatorPackageCache.get(creatorId)!);
+      return;
+    }
+    let cancelled = false;
+    getCreatorCallPackages(creatorId)
+      .then(res => {
+        if (cancelled) return;
+        const has = (res.packages || []).length > 0;
+        creatorPackageCache.set(creatorId, has);
+        setHasCallPackages(has);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        creatorPackageCache.set(creatorId, true);
+        setHasCallPackages(true);
+      });
+    return () => { cancelled = true; };
+  }, [post.author_id]); // eslint-disable-line react-hooks/exhaustive-deps
   const [showBookCallModal, setShowBookCallModal] = useState(false);
   const [showBuyRushModal, setShowBuyRushModal] = useState(false);
+
+  // Follow state — lazy-loaded per unique author, cached for the session
+  const shouldShowFollow = !isOwn && !!currentUserId && post.author_id !== "8552451957" && !post.is_carousel;
+  const [followState, setFollowState] = useState<{ isFollowing: boolean; followsBack: boolean } | null>(
+    () => followStatusCache.get(String(post.author_id)) ?? null
+  );
+  const [followLoading, setFollowLoading] = useState(false);
+  useEffect(() => {
+    if (!shouldShowFollow) return;
+    const authorId = String(post.author_id);
+    if (followStatusCache.has(authorId)) {
+      setFollowState(followStatusCache.get(authorId)!);
+      return;
+    }
+    let cancelled = false;
+    getFollowStatus(authorId)
+      .then(res => {
+        if (cancelled) return;
+        const s = { isFollowing: res.isFollowing, followsBack: res.targetFollowsViewer ?? false };
+        followStatusCache.set(authorId, s);
+        setFollowState(s);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        const s = { isFollowing: false, followsBack: false };
+        followStatusCache.set(authorId, s);
+        setFollowState(s);
+      });
+    return () => { cancelled = true; };
+  }, [post.author_id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const handleToggleFollow = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (followLoading || !followState) return;
+    setFollowLoading(true);
+    try {
+      const res = followState.isFollowing
+        ? await unfollowUser(String(post.author_id))
+        : await followUser(String(post.author_id));
+      const s = { isFollowing: res.isFollowing, followsBack: res.targetFollowsViewer ?? followState.followsBack };
+      followStatusCache.set(String(post.author_id), s);
+      setFollowState(s);
+    } catch { /* ignore */ } finally {
+      setFollowLoading(false);
+    }
+  };
   const showPrimeUpsell = isPrimeCreator && viewerTier !== "prime" && !post.is_exclusive && !isOwn;
   const primeUpsellKey = `pnp_prime_upsell_dismissed_${post.author_id}`;
   const [primeUpsellDismissed, setPrimeUpsellDismissed] = useState(() => {
@@ -888,6 +970,16 @@ export default function SocialPostCard({
               &middot; {timeAgo(post.created_at, t.translating)}
             </span>
 
+            {/* "Follows you" badge — shown when author follows viewer but viewer hasn't followed back */}
+            {shouldShowFollow && followState?.followsBack && !followState?.isFollowing && (
+              <span
+                className="inline-flex items-center text-[10px] font-semibold px-1.5 py-0.5 rounded-full flex-shrink-0"
+                style={{ background: "rgba(255,180,84,0.12)", color: "#FFB454", border: "1px solid rgba(255,180,84,0.25)" }}
+              >
+                Follows you
+              </span>
+            )}
+
             {/* Nearby badge */}
             {distanceKm != null && (
               <NearbyBadge distanceKm={distanceKm} variant="compact" />
@@ -950,9 +1042,28 @@ export default function SocialPostCard({
               </svg>
             )}
 
+            {/* Follow button + 3-dots — pushed to far right as a unit */}
+            <div className="ml-auto flex items-center gap-1.5 flex-shrink-0">
+              {shouldShowFollow && followState !== null && (
+                <button
+                  type="button"
+                  onClick={handleToggleFollow}
+                  disabled={followLoading}
+                  className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full transition-all active:scale-95 flex-shrink-0"
+                  style={
+                    followState.isFollowing
+                      ? { background: "rgba(255,255,255,0.07)", color: "rgba(255,255,255,0.45)", border: "1px solid rgba(255,255,255,0.12)" }
+                      : followState.followsBack
+                      ? { background: "rgba(255,180,84,0.14)", color: "#FFB454", border: "1px solid rgba(255,180,84,0.35)" }
+                      : { background: "rgba(94,209,196,0.12)", color: "#5ED1C4", border: "1px solid rgba(94,209,196,0.35)" }
+                  }
+                >
+                  {followLoading ? "…" : followState.isFollowing ? "Following" : followState.followsBack ? "Follow back" : "Follow"}
+                </button>
+              )}
             {/* 3-dots post menu */}
             {hasRealPostId && !post.is_promoted && (canDelete || !isOwn) && (
-              <div className="relative ml-auto" ref={menuRef}>
+              <div className="relative" ref={menuRef}>
                 <button
                   onClick={(e) => { e.stopPropagation(); setShowMenu((v) => !v); }}
                   className="p-1 rounded-full transition-colors hover:bg-white/10"
@@ -1069,6 +1180,7 @@ export default function SocialPostCard({
                 )}
               </div>
             )}
+            </div>{/* end ml-auto follow+menu group */}
           </div>
 
           {/* Tagged performers */}
@@ -1748,7 +1860,7 @@ export default function SocialPostCard({
               )}
 
 
-              {/* Santino + Lex action pills — Subscribe to PRIME (non-PRIME only) + Book a Call (Santino only) */}
+              {/* PRIME creator action pills — Buy Ru$h / Subscribe to PRIME / Book a Call */}
               {isPrimeCreator && !isOwn && (
                 <div className="mt-2.5 flex gap-2" onClick={(e) => e.stopPropagation()}>
                   {isPnptvOfficial && (
@@ -1773,7 +1885,7 @@ export default function SocialPostCard({
                       <span>{lang === "es" ? "Suscríbete a PRIME" : "Subscribe to PRIME"}</span>
                     </button>
                   )}
-                  {isSantinoPost && !isPnptvOfficial && (
+                  {showBookCallCta && hasCallPackages && (
                     <button
                       type="button"
                       onClick={() => setShowBookCallModal(true)}
@@ -1784,6 +1896,20 @@ export default function SocialPostCard({
                       <span>{lang === "es" ? "Reservar llamada" : "Book a Call"}</span>
                     </button>
                   )}
+                </div>
+              )}
+              {/* Book a Call pill for non-PRIME active creators */}
+              {showBookCallCta && hasCallPackages && !isPrimeCreator && (
+                <div className="mt-2.5 flex gap-2" onClick={(e) => e.stopPropagation()}>
+                  <button
+                    type="button"
+                    onClick={() => setShowBookCallModal(true)}
+                    className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-[11px] font-bold transition-all active:scale-95"
+                    style={{ background: "rgba(94,209,196,0.12)", border: "1px solid rgba(94,209,196,0.4)", color: "#5ED1C4" }}
+                  >
+                    <span>📅</span>
+                    <span>{lang === "es" ? "Reservar llamada" : "Book a Call"}</span>
+                  </button>
                 </div>
               )}
 
@@ -2536,7 +2662,7 @@ export default function SocialPostCard({
           onClose={() => setShowBookCallModal(false)}
           creator={{
             id: String(post.author_id),
-            username: post.author_username || "SantinoFurioso",
+            username: post.author_username || "",
             photo_url: null,
             creator_type: "full_time",
             creator_price_usd: 0,

@@ -2009,7 +2009,10 @@ class SocialPostService {
       ),
       query(
         `SELECT p.id, p.is_available, p.base_price, p.total_rating, p.rating_count, p.availability_message,
-                (SELECT COUNT(*)::int FROM bookings b WHERE b.performer_id = p.id AND b.status = 'completed') AS total_calls
+                (SELECT COUNT(*)::int FROM bookings b WHERE b.performer_id = p.id AND b.status = 'completed') +
+                (SELECT COUNT(*)::int FROM parche_bookings pb
+                   JOIN parche_members pm ON pm.parche_id = pb.parche_id
+                   WHERE pm.creator_id = p.user_id AND pm.invite_status = 'accepted' AND pb.status = 'completed') AS total_calls
          FROM performers p WHERE p.user_id = $1 AND p.status = 'active' LIMIT 1`,
         [userId]
       ),

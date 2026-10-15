@@ -1435,7 +1435,7 @@ export default function CreatorProfilePage() {
               {(() => {
                 const pd = (creator as { performerData?: { averageRating?: number; totalCalls?: number } }).performerData;
                 const avgRating = pd?.averageRating;
-                const callCount = pd?.totalCalls ?? 0;
+                const callCount = (creator as { completedCallsCount?: number }).completedCallsCount ?? pd?.totalCalls ?? 0;
                 return (
                   <>
                     <div className="text-[15px] font-bold text-white flex items-center gap-1">

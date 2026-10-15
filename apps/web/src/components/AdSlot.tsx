@@ -228,12 +228,15 @@ export function AdSlot({ slot, className, style, onVastUrl, showChip = true }: P
 
   const dismissModal = useCallback((reason: "closed" | "fallback_popunder") => {
     setModalMode(null);
-    if (reason === "fallback_popunder" && cfg && POPUNDER_FORMATS.has(cfg.format)) {
+    // Only fire the real ExoClick popunder when the modal was NOT used as a
+    // logged-in replacement — i.e., pure anon variant B. Logged-in free users
+    // who get replace_popunder mode never receive the raw script on dismiss.
+    if (reason === "fallback_popunder" && cfg && POPUNDER_FORMATS.has(cfg.format) && ux?.upgradeModalMode !== "replace_popunder") {
       const insClass = "eas6a97888e17";
       mountRealPopunder(String(cfg.zoneId), insClass);
     }
     trackAdEvent(slot, "dismiss", { reason });
-  }, [cfg, slot]);
+  }, [cfg, slot, ux]);
 
   useEffect(() => {
     if (!cfg || adsBlocked) return;
@@ -390,16 +393,21 @@ export function MenPageBanner({ isMobile }: { isMobile: boolean }) {
     if (isRouteSuppressed(location.pathname)) return;
     if (isLiveActivelyEngaged(location.pathname)) return;
 
-    if (isPrime) {
-      try {
-        const ts = parseInt(sessionStorage.getItem(MEN_PAGE_PRIME_KEY) || "0", 10);
-        if (Date.now() - ts < 30 * 60_000) return;
-        if (Math.random() > 0.33) return;
-        sessionStorage.setItem(MEN_PAGE_PRIME_KEY, String(Date.now()));
-      } catch { return; }
-    }
+    // Respect the global ads kill switch (pnpapp:ads:enabled in Redis).
+    getAdsConfig().then((r) => {
+      if (!r.showAds) return;
 
-    setShow(true);
+      if (isPrime) {
+        try {
+          const ts = parseInt(sessionStorage.getItem(MEN_PAGE_PRIME_KEY) || "0", 10);
+          if (Date.now() - ts < 30 * 60_000) return;
+          if (Math.random() > 0.33) return;
+          sessionStorage.setItem(MEN_PAGE_PRIME_KEY, String(Date.now()));
+        } catch { return; }
+      }
+
+      setShow(true);
+    }).catch(() => {});
   }, [location.pathname, isPrime, isAdmin]);
 
   if (!show) return null;

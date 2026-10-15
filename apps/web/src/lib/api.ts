@@ -3386,6 +3386,7 @@ export interface GlobalSearchResult {
 export function followUser(userId: string): Promise<{
   success: boolean;
   isFollowing: boolean;
+  targetFollowsViewer: boolean;
   followerCount: number;
   followingCount: number;
 }> {
@@ -3395,6 +3396,7 @@ export function followUser(userId: string): Promise<{
 export function unfollowUser(userId: string): Promise<{
   success: boolean;
   isFollowing: boolean;
+  targetFollowsViewer: boolean;
   followerCount: number;
   followingCount: number;
 }> {
@@ -3419,6 +3421,7 @@ export async function getSuggestedFollows(): Promise<{ suggestions: SuggestedFol
 export function getFollowStatus(userId: string): Promise<{
   success: boolean;
   isFollowing: boolean;
+  targetFollowsViewer: boolean;
   followerCount: number;
   followingCount: number;
 }> {

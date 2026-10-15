@@ -19733,7 +19733,9 @@ app.get('/api/ads/config', softAuth, asyncHandler(async (req, res) => {
   const uxFlags = showAds ? {
     variant: uxVariant,
     showUpgradeChip: (isLoggedFree || !user) && chipOn,
-    upgradeModalMode: ((isLoggedFree || !user) && modalOn) ? 'replace_popunder' : 'off',
+    // Logged-in free users always get the UpgradeModal — never the raw ExoClick
+    // popunder, regardless of A/B variant. Anon users still A/B test.
+    upgradeModalMode: (isLoggedFree || (!user && modalOn)) ? 'replace_popunder' : 'off',
     interstitialAfterN: (isLoggedFree && interstitialOn) ? 20 : 0,
     interstitialCapPerWeek: 3,
   } : {
@@ -24341,19 +24343,35 @@ app.get('/api/public/creator/:username',
       logger.warn('Public creator profile: post count fetch failed (non-fatal)', { creatorId, error: pcErr.message });
     }
 
-    // 15. Follow counts + viewer's follow status
+    // 15. Follow counts (live from user_follows — avoids denormalized drift) + viewer follow status
     let followerCount = Number(creator.followers_count) || 0;
     let followingCount = Number(creator.following_count) || 0;
     let isFollowing = false;
-    if (viewerId && viewerId !== creatorId) {
-      try {
-        const { rows: followRows } = await pool.query(
-          `SELECT 1 FROM user_follows WHERE follower_id = $1 AND following_id = $2 LIMIT 1`,
+    try {
+      const queries = [
+        pool.query('SELECT COUNT(*)::int AS count FROM user_follows WHERE following_id = $1', [creatorId]),
+        pool.query('SELECT COUNT(*)::int AS count FROM user_follows WHERE follower_id = $1', [creatorId]),
+      ];
+      if (viewerId && viewerId !== creatorId) {
+        queries.push(pool.query(
+          'SELECT 1 FROM user_follows WHERE follower_id = $1 AND following_id = $2 LIMIT 1',
           [viewerId, creatorId]
-        );
-        isFollowing = followRows.length > 0;
-      } catch (followErr) {
-        logger.warn('Public creator profile: follow status fetch failed (non-fatal)', { creatorId, error: followErr.message });
+        ));
+      }
+      const results = await Promise.all(queries);
+      followerCount = results[0].rows[0]?.count ?? followerCount;
+      followingCount = results[1].rows[0]?.count ?? followingCount;
+      if (results[2]) isFollowing = results[2].rows.length > 0;
+    } catch (followErr) {
+      logger.warn('Public creator profile: follow counts fetch failed (non-fatal)', { creatorId, error: followErr.message });
+      if (viewerId && viewerId !== creatorId) {
+        try {
+          const { rows: followRows } = await pool.query(
+            'SELECT 1 FROM user_follows WHERE follower_id = $1 AND following_id = $2 LIMIT 1',
+            [viewerId, creatorId]
+          );
+          isFollowing = followRows.length > 0;
+        } catch {}
       }
     }
 
@@ -24393,7 +24411,10 @@ app.get('/api/public/creator/:username',
     let completedCallsCount = 0;
     try {
       const { rows: callRows } = await pool.query(
-        `SELECT COUNT(*)::int AS count FROM bookings WHERE performer_id::text = $1 AND status = 'completed'`,
+        `SELECT COUNT(*)::int AS count
+           FROM bookings b
+           JOIN performers p ON p.id = b.performer_id
+          WHERE p.user_id = $1 AND b.status = 'completed'`,
         [creatorId]
       );
       completedCallsCount = callRows[0]?.count ?? 0;

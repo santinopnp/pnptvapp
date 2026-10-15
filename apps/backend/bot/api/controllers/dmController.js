@@ -141,8 +141,11 @@ const getThreads = async (req, res) => {
       `SELECT dt.user_a, dt.user_b, dt.last_message, dt.last_message_at,
               dt.unread_for_a, dt.unread_for_b,
               CASE WHEN dt.user_a = $1 THEN dt.user_b ELSE dt.user_a END as partner_id,
-              u.username as partner_username, u.first_name as partner_first_name,
-              u.photo_file_id as partner_photo, u.pnptv_id as partner_pnptv_id,
+              CASE WHEN u.is_deleted THEN NULL ELSE u.username END as partner_username,
+              CASE WHEN u.is_deleted THEN NULL ELSE u.first_name END as partner_first_name,
+              CASE WHEN u.is_deleted THEN NULL ELSE u.photo_file_id END as partner_photo,
+              u.pnptv_id as partner_pnptv_id,
+              u.is_deleted as partner_is_deleted,
               lm.id AS last_message_id,
               lm.sender_id AS last_message_sender_id,
               lm.media_type AS last_message_media_type,
@@ -155,9 +158,8 @@ const getThreads = async (req, res) => {
         AND s.partner_id = CASE WHEN dt.user_a = $1 THEN dt.user_b ELSE dt.user_a END
        LEFT JOIN direct_messages lm ON lm.id = dt.last_message_id
        WHERE (dt.user_a = $1 OR dt.user_b = $1)
-         AND u.is_deleted = false
        ORDER BY (s.pinned_at IS NOT NULL) DESC, s.pinned_at DESC NULLS LAST, dt.last_message_at DESC
-       LIMIT 100`,
+       LIMIT 200`,
       [user.id]
     );
 
@@ -196,13 +198,15 @@ const getThreads = async (req, res) => {
       const lastMessageReadByOther = isMineLast ? !!r.last_message_is_read : false;
       const unread = String(user.id) === String(r.user_a) ? r.unread_for_a : r.unread_for_b;
       const partnerHasPriority = priorityBuyerSet.has(partnerIdStr);
+      const partnerDeleted = !!r.partner_is_deleted;
       return {
         // canonical (new) field names
         partnerId: partnerIdStr,
-        partnerUsername: r.partner_username || '',
-        partnerFirstName: r.partner_first_name || '',
-        partnerPhoto: r.partner_photo || null,
+        partnerUsername: partnerDeleted ? '' : (r.partner_username || ''),
+        partnerFirstName: partnerDeleted ? 'Deleted account' : (r.partner_first_name || ''),
+        partnerPhoto: partnerDeleted ? null : (r.partner_photo || null),
         partnerPnptvId: r.partner_pnptv_id || null,
+        partnerIsDeleted: partnerDeleted,
         lastMessage: r.last_message || '',
         lastMessageAt: r.last_message_at ? new Date(r.last_message_at).toISOString() : null,
         lastMessageSenderId: r.last_message_sender_id ? String(r.last_message_sender_id) : null,
@@ -221,9 +225,9 @@ const getThreads = async (req, res) => {
         partnerHasPriority,
         // legacy aliases used by older callers (Layout.tsx, etc.)
         userId: partnerIdStr,
-        username: r.partner_username || '',
-        firstName: r.partner_first_name || '',
-        photoUrl: normalizeImageUrl(r.partner_photo),
+        username: partnerDeleted ? '' : (r.partner_username || ''),
+        firstName: partnerDeleted ? 'Deleted account' : (r.partner_first_name || ''),
+        photoUrl: partnerDeleted ? null : normalizeImageUrl(r.partner_photo),
         unreadCount: unread,
       };
     });

@@ -90,11 +90,11 @@ const followUser = async (req, res) => {
       });
     }
 
-    // Return updated counts for the target profile
-    const countsRes = await query(
-      'SELECT followers_count, following_count FROM users WHERE id = $1',
-      [targetId]
-    );
+    // Return updated counts + reverse-follow flag
+    const [countsRes, reverseRes] = await Promise.all([
+      query('SELECT followers_count, following_count FROM users WHERE id = $1', [targetId]),
+      query('SELECT 1 FROM user_follows WHERE follower_id = $2 AND following_id = $1', [targetId, actor.id]),
+    ]);
     const counts = countsRes.rows[0] || { followers_count: 0, following_count: 0 };
 
     // Bust for-you cache for both parties (fire-and-forget)
@@ -104,6 +104,7 @@ const followUser = async (req, res) => {
     return res.json({
       success: true,
       isFollowing: true,
+      targetFollowsViewer: reverseRes.rowCount > 0,
       followerCount: counts.followers_count,
       followingCount: counts.following_count,
     });
@@ -148,10 +149,10 @@ const unfollowUser = async (req, res) => {
       await query('UPDATE users SET followers_count = GREATEST(followers_count - 1, 0) WHERE id = $1', [targetId]);
     }
 
-    const countsRes = await query(
-      'SELECT followers_count, following_count FROM users WHERE id = $1',
-      [targetId]
-    );
+    const [countsRes, reverseRes] = await Promise.all([
+      query('SELECT followers_count, following_count FROM users WHERE id = $1', [targetId]),
+      query('SELECT 1 FROM user_follows WHERE follower_id = $2 AND following_id = $1', [targetId, actor.id]),
+    ]);
     const counts = countsRes.rows[0] || { followers_count: 0, following_count: 0 };
 
     // Bust for-you cache for both parties (fire-and-forget)
@@ -161,6 +162,7 @@ const unfollowUser = async (req, res) => {
     return res.json({
       success: true,
       isFollowing: false,
+      targetFollowsViewer: reverseRes.rowCount > 0,
       followerCount: counts.followers_count,
       followingCount: counts.following_count,
     });
@@ -179,9 +181,13 @@ const getFollowStatus = async (req, res) => {
   if (!targetId) return res.status(400).json({ error: 'userId required' });
 
   try {
-    const [followRes, countsRes] = await Promise.all([
+    const [followRes, reverseRes, countsRes] = await Promise.all([
       query(
         'SELECT 1 FROM user_follows WHERE follower_id = $1 AND following_id = $2',
+        [actor.id, targetId]
+      ),
+      query(
+        'SELECT 1 FROM user_follows WHERE follower_id = $2 AND following_id = $1',
         [actor.id, targetId]
       ),
       query('SELECT followers_count, following_count FROM users WHERE id = $1', [targetId]),
@@ -192,6 +198,7 @@ const getFollowStatus = async (req, res) => {
     return res.json({
       success: true,
       isFollowing: followRes.rowCount > 0,
+      targetFollowsViewer: reverseRes.rowCount > 0,
       followerCount: counts.followers_count,
       followingCount: counts.following_count,
     });
