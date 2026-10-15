@@ -142,9 +142,97 @@ const REMINDERS = [
   },
 ];
 
-// Disabled — Cristina onboarding DMs removed per admin request.
 class CristinaOnboardingReminders {
-  static async process() { return { sent: 0, skipped: 0 }; }
+  /**
+   * Scan all users who registered in the last 7 days and send the appropriate
+   * day-N DM if it has not been sent yet.
+   *
+   * Idempotency: Redis key `cristina:onboard_remind:{userId}:{key}` (60-day TTL)
+   * ensures each day's message is delivered at most once per user.
+   *
+   * @returns {{ sent: number, skipped: number }}
+   */
+  static async process() {
+    let sent = 0;
+    let skipped = 0;
+
+    let users;
+    try {
+      const { rows } = await db.query(`
+        SELECT id, first_name, username, language, created_at
+          FROM users
+         WHERE created_at >= NOW() - INTERVAL '8 days'
+           AND created_at <= NOW() - INTERVAL '1 hour'
+           AND tier != 'banned'
+         ORDER BY created_at ASC
+         LIMIT 500
+      `);
+      users = rows;
+    } catch (err) {
+      logger.error('CristinaOnboardingReminders: DB query failed', { error: err.message });
+      return { sent: 0, skipped: 0 };
+    }
+
+    const redis = getRedis();
+
+    for (const user of users) {
+      const userId = String(user.id);
+      const displayName = user.first_name || user.username || 'friend';
+      const isSpanish = (user.language || 'en').toLowerCase().startsWith('es');
+      const registeredAt = new Date(user.created_at);
+      const nowMs = Date.now();
+      const daysSinceJoin = Math.floor((nowMs - registeredAt.getTime()) / (1000 * 60 * 60 * 24));
+
+      // Find the reminder for this day (if any)
+      const reminder = REMINDERS.find((r) => r.day === daysSinceJoin);
+      if (!reminder) {
+        skipped++;
+        continue;
+      }
+
+      // Redis idempotency guard
+      const redisKey = `${REDIS_PREFIX}${userId}:${reminder.key}`;
+      if (redis) {
+        try {
+          const alreadySent = await redis.get(redisKey);
+          if (alreadySent) {
+            skipped++;
+            continue;
+          }
+        } catch { /* fail open */ }
+      }
+
+      // Build message content
+      const content = isSpanish ? reminder.es(displayName) : reminder.en(displayName);
+
+      // Send DM from Cristina
+      try {
+        await sendSystemDM(CRISTINA_ID, userId, content, db.query.bind(db));
+
+        // Mark as sent in Redis
+        if (redis) {
+          await redis.set(redisKey, '1', 'EX', REDIS_TTL).catch(() => {});
+        }
+
+        logger.info('CristinaOnboardingReminders: sent', {
+          userId,
+          day: reminder.day,
+          key: reminder.key,
+          lang: isSpanish ? 'es' : 'en',
+        });
+        sent++;
+      } catch (err) {
+        logger.warn('CristinaOnboardingReminders: DM failed', {
+          userId,
+          key: reminder.key,
+          error: err.message,
+        });
+        skipped++;
+      }
+    }
+
+    return { sent, skipped };
+  }
 }
 
 module.exports = CristinaOnboardingReminders;

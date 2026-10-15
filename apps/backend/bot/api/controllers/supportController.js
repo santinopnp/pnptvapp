@@ -3,6 +3,7 @@ const { getRedis } = require('../../../config/redis');
 const { getPool } = require('../../../config/postgres');
 const { chatWithCristina, isCristinaAIAvailable } = require('../../../services/cristinaAIService');
 const { buildCristinaSystemPrompt } = require('../../handlers/support/cristinaAI');
+const wellnessModeService = require('../../../services/wellnessModeService');
 const supportRoutingService = require('../../../services/supportRoutingService');
 const SupportTopicModel = require('../../../models/supportTopicModel');
 const SupportTicketMessageModel = require('../../../models/supportTicketMessageModel');
@@ -31,8 +32,23 @@ async function chat(req, res) {
   const userId = String(user.id);
   const language = lang === 'es' ? 'es' : 'en';
 
+  // Per-user Redis rate limit: 10 messages per 60 seconds
   try {
-    // Load conversation history from Redis
+    const rateLimitRedis = getRedis();
+    if (rateLimitRedis) {
+      const rateKey = `cristina:chat:rate:${userId}`;
+      const count = await rateLimitRedis.incr(rateKey);
+      if (count === 1) await rateLimitRedis.expire(rateKey, 60);
+      if (count > 10) {
+        return res.status(429).json({ success: false, error: 'Too many messages — please wait a moment.' });
+      }
+    }
+  } catch (rateErr) {
+    logger.warn('Support chat rate limit check failed (allowing)', { error: rateErr.message, userId });
+  }
+
+  try {
+    // Load conversation history from Redis (with DB fallback)
     const redis = getRedis();
     const redisKey = `${REDIS_PREFIX}${userId}`;
     let history = [];
@@ -40,6 +56,26 @@ async function chat(req, res) {
       const stored = await redis.get(redisKey);
       if (stored) {
         history = JSON.parse(stored);
+      } else {
+        // Redis cache empty/expired — reload last 10 messages from DB
+        try {
+          const pool = getPool();
+          const histResult = await pool.query(
+            `SELECT role, content FROM cristina_chat_messages
+             WHERE user_id = $1
+             ORDER BY created_at DESC
+             LIMIT 10`,
+            [userId]
+          );
+          if (histResult.rows.length > 0) {
+            // Rows come back newest-first; reverse to chronological order
+            history = histResult.rows.reverse().map(r => ({ role: r.role, content: r.content }));
+            // Re-populate Redis cache
+            await redis.set(redisKey, JSON.stringify(history), 'EX', REDIS_TTL);
+          }
+        } catch (dbErr) {
+          logger.warn('Failed to load support chat history from DB', { error: dbErr.message, userId });
+        }
       }
     } catch (e) {
       logger.warn('Failed to load support chat history from Redis', { error: e.message, userId });
@@ -74,7 +110,28 @@ async function chat(req, res) {
 
     // Build system prompt with user context
     const basePrompt = await buildCristinaSystemPrompt(language);
-    const systemPrompt = basePrompt + userContext;
+
+    // Append Wellness Break Mode directive when the user has it active.
+    // isActive() is a cheap DB query (single indexed lookup, no joins).
+    let wellnessDirective = '';
+    try {
+      const isInWellnessMode = await wellnessModeService.isActive(userId);
+      if (isInWellnessMode) {
+        wellnessDirective = `
+
+WELLNESS BREAK MODE ACTIVE: This user has activated Wellness Break Mode.
+- Focus ALL responses on wellness, rest, harm reduction, and self-care
+- Gently redirect any PNP-related questions to wellness resources and support
+- Do not discuss explicit content or platform features unrelated to wellness
+- End every response with a brief, encouraging self-care message
+- If the user seems to be in crisis, immediately prioritize support resources and crisis lines`;
+      }
+    } catch (wellnessErr) {
+      // Non-fatal — fail open so Cristina still responds
+      logger.warn('supportController: could not check wellness mode status', { userId, error: wellnessErr.message });
+    }
+
+    const systemPrompt = basePrompt + userContext + wellnessDirective;
 
     // Build messages array
     const messages = [...history, { role: 'user', content: sanitizedMessage }];
@@ -109,6 +166,21 @@ async function chat(req, res) {
       await redis.set(redisKey, JSON.stringify(history), 'EX', REDIS_TTL);
     } catch (e) {
       logger.warn('Failed to save support chat history to Redis', { error: e.message, userId });
+    }
+
+    // Persist user message and AI response to DB
+    try {
+      const pool = getPool();
+      await pool.query(
+        `INSERT INTO cristina_chat_messages (user_id, role, content) VALUES ($1, 'user', $2)`,
+        [userId, sanitizedMessage]
+      );
+      await pool.query(
+        `INSERT INTO cristina_chat_messages (user_id, role, content) VALUES ($1, 'assistant', $2)`,
+        [userId, aiResponse]
+      );
+    } catch (dbErr) {
+      logger.warn('Failed to persist support chat messages to DB', { error: dbErr.message, userId });
     }
 
     logger.info('Support chat response generated', { userId, msgLen: sanitizedMessage.length });
@@ -194,6 +266,15 @@ async function clearHistory(req, res) {
   try {
     const redis = getRedis();
     await redis.del(`${REDIS_PREFIX}${userId}`);
+
+    // Also purge DB history
+    try {
+      const pool = getPool();
+      await pool.query(`DELETE FROM cristina_chat_messages WHERE user_id = $1`, [userId]);
+    } catch (dbErr) {
+      logger.warn('Failed to delete support chat history from DB', { error: dbErr.message, userId });
+    }
+
     logger.info('Support chat history cleared', { userId });
     return res.json({ success: true });
   } catch (error) {

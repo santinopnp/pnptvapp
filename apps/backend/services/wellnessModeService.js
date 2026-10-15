@@ -91,11 +91,14 @@ async function getStatus(userId) {
     hoursLeft = Math.max(0, COOLING_OFF_HOURS - elapsedH);
   }
 
+  const untilDate = until ? new Date(until) : null;
+  const disableRequestedDate = disableRequested ? new Date(disableRequested) : null;
+
   return {
     active,
-    until: indefinite ? null : (until ? new Date(until).toISOString() : null),
+    until: indefinite ? null : (untilDate instanceof Date && !isNaN(untilDate) ? untilDate.toISOString() : null),
     indefinite,
-    disableRequestedAt: disableRequested ? new Date(disableRequested).toISOString() : null,
+    disableRequestedAt: disableRequestedDate instanceof Date && !isNaN(disableRequestedDate) ? disableRequestedDate.toISOString() : null,
     hoursLeftUntilDisableAllowed: hoursLeft,
     wellnessDaysAccumulated: rows[0].wellness_days_accumulated || 0,
   };

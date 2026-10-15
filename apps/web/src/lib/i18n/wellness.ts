@@ -158,6 +158,16 @@ const en = {
   trackerGridTooltipDayAgo: "{n} day ago",
   trackerGridTooltipDaysAgo: "{n} days ago",
 
+  // ── Wellness Break toggle (Settings + Feed banner) ─────────────────────────
+  activateWellnessBreak: "Activate Wellness Break",
+  endWellnessBreak: "End Wellness Break",
+  wellnessModeActive: "Wellness Break is active",
+  wellnessModeInactive: "Wellness Break is off",
+  wellnessModeTimeRemaining: "{hours}h remaining",
+  wellnessModeConfirm: "This will focus your feed and experience on wellness content for at least 24 hours. You won't be able to turn it off for 24 hours.",
+  wellnessBreakBanner: "Wellness Break active — showing wellness content only",
+  wellnessBreakBannerTimeRemaining: "{hours}h left",
+
   // ── relTime ────────────────────────────────────────────────────────────────
   relTimeNever: "never",
   relTimeJustNow: "just now",
@@ -335,6 +345,16 @@ const es: typeof en = {
   trackerGridTooltipToday: "hoy",
   trackerGridTooltipDayAgo: "hace {n} día",
   trackerGridTooltipDaysAgo: "hace {n} días",
+
+  // ── Wellness Break toggle (Settings + Feed banner) ─────────────────────────
+  activateWellnessBreak: "Activar Pausa de bienestar",
+  endWellnessBreak: "Terminar Pausa de bienestar",
+  wellnessModeActive: "Pausa de bienestar activa",
+  wellnessModeInactive: "Pausa de bienestar desactivada",
+  wellnessModeTimeRemaining: "{hours}h restantes",
+  wellnessModeConfirm: "Esto enfocará tu feed y experiencia en contenido de bienestar durante al menos 24 horas. No podrás desactivarlo por 24 horas.",
+  wellnessBreakBanner: "Pausa de bienestar activa — mostrando solo contenido de bienestar",
+  wellnessBreakBannerTimeRemaining: "{hours}h restantes",
 
   // ── relTime ────────────────────────────────────────────────────────────────
   relTimeNever: "nunca",

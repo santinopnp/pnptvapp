@@ -14,6 +14,7 @@ const logger = require('../utils/logger');
 const { getPool } = require('../config/postgres');
 const { chatWithCristina, isCristinaAIAvailable } = require('./cristinaAIService');
 const { buildCristinaSystemPrompt } = require('../bot/handlers/support/cristinaAI');
+const { sanitizeForPrompt } = require('./cristinaFeedService');
 const SupportTopicModel = require('../models/supportTopicModel');
 const SupportTicketMessageModel = require('../models/supportTicketMessageModel');
 
@@ -156,8 +157,14 @@ class CristinaTicketWorker {
     const language = ticket.language || 'es';
 
     // 1. Load message history
-    const messages = await SupportTicketMessageModel.getByUserId(userId);
+    let messages = await SupportTicketMessageModel.getByUserId(userId);
     if (!messages.length) return 'skipped';
+
+    // Keep only last 20 messages to avoid token overflow
+    const MAX_TICKET_HISTORY = 20;
+    if (messages.length > MAX_TICKET_HISTORY) {
+      messages = messages.slice(-MAX_TICKET_HISTORY);
+    }
 
     // Only process if the last message is from the user
     const lastMsg = messages[messages.length - 1];
@@ -202,9 +209,11 @@ REAL USER DATA FOR THIS TICKET:
     const systemPrompt = basePrompt + userContext + TICKET_WORKER_INSTRUCTIONS;
 
     // 5. Build message array for Grok (full conversation history)
+    // User messages are sanitized to strip prompt-injection attempts before
+    // being interpolated into the Grok context.
     const grokMessages = messages.map((m) => ({
       role: m.sender_type === 'user' ? 'user' : 'assistant',
-      content: m.content,
+      content: m.sender_type === 'user' ? sanitizeForPrompt(m.content) : m.content,
     }));
 
     // 6. Call Grok

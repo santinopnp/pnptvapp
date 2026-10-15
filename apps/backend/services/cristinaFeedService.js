@@ -205,19 +205,105 @@ function broadcastPost(post) {
 
 /**
  * Post a wellness tip to the social feed.
+ * Redis dedup key: cristina:feed:wellness:{date} — 24h TTL.
  */
-// Disabled — social feed posts by Cristina AI removed per admin request.
-async function postWellness() {}
+async function postWellness() {
+  const redis = getRedis();
+  const date = new Date().toISOString().slice(0, 10);
+  const dedupKey = `cristina:feed:wellness:${date}`;
+
+  if (redis) {
+    try {
+      const already = await redis.get(dedupKey);
+      if (already) {
+        logger.info('CristinaFeed: postWellness skipped (already posted today)');
+        return;
+      }
+    } catch { /* noop — fail open */ }
+  }
+
+  try {
+    const prompt = await pickPrompt('wellness');
+    if (!prompt) return;
+
+    const post = await generateAndPost(prompt, 'bilingual');
+    if (!post) return;
+
+    if (redis) {
+      await redis.set(dedupKey, '1', 'EX', 86400).catch(() => {});
+    }
+  } catch (err) {
+    logger.error('CristinaFeed: postWellness error', { error: err.message });
+  }
+}
 
 /**
  * Post a feature tutorial to the social feed.
+ * Redis dedup key: cristina:feed:tutorial:{date} — 24h TTL.
  */
-async function postFeatureTutorial() {}
+async function postFeatureTutorial() {
+  const redis = getRedis();
+  const date = new Date().toISOString().slice(0, 10);
+  const dedupKey = `cristina:feed:tutorial:${date}`;
+
+  if (redis) {
+    try {
+      const already = await redis.get(dedupKey);
+      if (already) {
+        logger.info('CristinaFeed: postFeatureTutorial skipped (already posted today)');
+        return;
+      }
+    } catch { /* noop — fail open */ }
+  }
+
+  try {
+    const prompt = await pickPrompt('feature_tutorial');
+    if (!prompt) return;
+
+    const post = await generateAndPost(prompt, 'bilingual');
+    if (!post) return;
+
+    if (redis) {
+      await redis.set(dedupKey, '1', 'EX', 86400).catch(() => {});
+    }
+  } catch (err) {
+    logger.error('CristinaFeed: postFeatureTutorial error', { error: err.message });
+  }
+}
 
 /**
  * Post a PRIME upgrade promo to the social feed.
+ * Redis dedup key: cristina:feed:promo:{date} — 24h TTL.
  */
-async function postPrimePromo() {}
+async function postPrimePromo() {
+  const redis = getRedis();
+  const date = new Date().toISOString().slice(0, 10);
+  const dedupKey = `cristina:feed:promo:${date}`;
+
+  if (redis) {
+    try {
+      const already = await redis.get(dedupKey);
+      if (already) {
+        logger.info('CristinaFeed: postPrimePromo skipped (already posted today)');
+        return;
+      }
+    } catch { /* noop — fail open */ }
+  }
+
+  try {
+    const prompt = await pickPrompt('prime_promo');
+    if (!prompt) return;
+
+    const post = await generateAndPost(prompt, 'bilingual');
+    if (!post) return;
+
+    if (redis) {
+      await redis.set(dedupKey, '1', 'EX', 86400).catch(() => {});
+    }
+  } catch (err) {
+    logger.error('CristinaFeed: postPrimePromo error', { error: err.message });
+  }
+}
 
 // ── Event-driven: Creator shoutouts ──────────────────────────────────────────
 
@@ -267,22 +353,19 @@ async function announceLiveStream(creatorId, creatorName, channelRef) {
     const streamUrl = `${APP_BASE_URL}/live/${channelRef}`;
 
     // Build branded composite image. If the snapshot fetch fails (Restreamer
-    // offline, upstream errored, channel not producing frames yet), we skip
-    // creating the feed post entirely — a text-only post without the branded
-    // card is off-brand and clutters the feed. Better to no-op than to ship
-    // a broken-looking card. DM/group/email fanout still happens via the
-    // parent broadcastGoingLive setImmediate blocks — this only gates the
-    // in-app feed post + X cross-post.
+    // offline, upstream errored, channel not producing frames yet), fall back to
+    // a text-only post so the live announcement still reaches the feed.
     const branded = await ogService.fetchAndBrandStreamSnapshot(channelRef, displayName);
-    if (!branded) {
-      logger.warn('cristinaFeed: announceLiveStream — no branded snapshot, skipping feed post', { creatorId, channelRef });
-      return;
-    }
 
-    if (!fs.existsSync(SNAPSHOTS_DIR)) fs.mkdirSync(SNAPSHOTS_DIR, { recursive: true });
-    const filename = `live-${channelRef}-${Date.now()}.jpg`;
-    fs.writeFileSync(path.join(SNAPSHOTS_DIR, filename), branded);
-    const mediaUrl = `/uploads/live-snapshots/${filename}`;
+    let mediaUrl = null;
+    if (branded) {
+      if (!fs.existsSync(SNAPSHOTS_DIR)) fs.mkdirSync(SNAPSHOTS_DIR, { recursive: true });
+      const filename = `live-${channelRef}-${Date.now()}.jpg`;
+      fs.writeFileSync(path.join(SNAPSHOTS_DIR, filename), branded);
+      mediaUrl = `/uploads/live-snapshots/${filename}`;
+    } else {
+      logger.warn('cristinaFeed: announceLiveStream — no branded snapshot, falling back to text-only post', { creatorId, channelRef });
+    }
 
     // Create in-app feed post from @pnptv system account
     const postContent = `🔴 ${displayName} is LIVE on PNPtv!\nReal Models. Real Clouds. 🌫️\n\n👉 ${streamUrl}`;
@@ -290,7 +373,7 @@ async function announceLiveStream(creatorId, creatorName, channelRef) {
       CRISTINA_USER_ID,
       postContent,
       mediaUrl,
-      'image',
+      mediaUrl ? 'image' : null,
       null, null, false, false, true,
       null, null, null, null, null,
       'social'
@@ -352,5 +435,6 @@ module.exports = {
   generateCallWellnessTip,
   generateCallReply,
   pickCallVideoSuggestion,
+  sanitizeForPrompt,
   CRISTINA_USER_ID,
 };

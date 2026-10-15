@@ -11,10 +11,12 @@ import {
   deleteSocialPost,
   updateProfile,
   getMainStageCammers,
+  getWellnessMode,
   type SocialPostItem,
   type MainStageCammer,
   type FeedFilter,
   type NewMember,
+  type WellnessModeStatus,
 } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import { useAuth } from "@/hooks/useAuth";
@@ -255,6 +257,55 @@ function FeedSkeleton() {
   );
 }
 
+function WellnessBreakBanner({
+  wellnessStatus,
+  onNavigate,
+}: {
+  wellnessStatus: WellnessModeStatus;
+  onNavigate: (path: string) => void;
+}) {
+  const { wellness: tw } = useI18n();
+
+  // Compute hours remaining (positive = still active timer, null = indefinite)
+  let hoursRemaining: number | null = null;
+  if (!wellnessStatus.indefinite && wellnessStatus.until) {
+    const ms = new Date(wellnessStatus.until).getTime() - Date.now();
+    hoursRemaining = ms > 0 ? Math.ceil(ms / 3_600_000) : 0;
+  }
+
+  return (
+    <div
+      className="relative mb-3 rounded-2xl px-4 py-3 flex items-center gap-3"
+      style={{
+        background: "linear-gradient(135deg, rgba(94,209,196,0.12), rgba(94,209,196,0.05))",
+        border: "1px solid rgba(94,209,196,0.35)",
+      }}
+      role="status"
+      aria-live="polite"
+    >
+      <span className="text-xl flex-shrink-0" aria-hidden="true">🌿</span>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-semibold" style={{ color: "#5ED1C4" }}>
+          {tw.wellnessBreakBanner}
+        </p>
+        {hoursRemaining !== null && hoursRemaining > 0 && (
+          <p className="text-xs mt-0.5" style={{ color: "rgba(94,209,196,0.75)" }}>
+            {tw.wellnessBreakBannerTimeRemaining.replace("{hours}", String(hoursRemaining))}
+          </p>
+        )}
+      </div>
+      <button
+        type="button"
+        onClick={() => onNavigate("/self-care")}
+        className="flex-shrink-0 text-xs font-semibold px-3 py-1.5 rounded-lg transition-all active:scale-95"
+        style={{ background: "rgba(94,209,196,0.20)", color: "#5ED1C4", border: "1px solid rgba(94,209,196,0.40)" }}
+      >
+        Manage
+      </button>
+    </div>
+  );
+}
+
 export default function SocialFeedTabs({
   currentUserId,
   isAdmin,
@@ -355,6 +406,20 @@ export default function SocialFeedTabs({
   const [sheetCammer, setSheetCammer] = useState<MainStageCammer | null>(null);
   const showRails = !hashtagFilter && !hangoutGroupId;
 
+  // Wellness Break Mode — checked once on mount when authenticated.
+  // Null = not yet loaded; false = off; object = loaded status (may be active).
+  const [wellnessStatus, setWellnessStatus] = useState<WellnessModeStatus | null>(null);
+  const wellnessModeActive = wellnessStatus?.active === true;
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    let cancelled = false;
+    getWellnessMode()
+      .then((res) => { if (!cancelled) setWellnessStatus(res); })
+      .catch(() => { /* fail-open: no wellness filter on error */ });
+    return () => { cancelled = true; };
+  }, [isAuthenticated]);
+
   // Custom hashtag filter input. Types a tag → navigates to /?tag=xxx. When
   // ?tag= is active the input pre-fills; a clear button drops the filter.
   const [tagInput, setTagInput] = useState(hashtagFilter || "");
@@ -387,6 +452,26 @@ export default function SocialFeedTabs({
     return Array.from(ids);
   }, [posts]);
   const nearbyDistances = useNearbyDistances(allAuthorIds);
+
+  // Wellness Break Mode post filter. When active on a regular (non-hashtag,
+  // non-hangout) feed, only show posts from @cristina or those tagged/containing
+  // wellness keywords. Falls through to the full list otherwise.
+  const WELLNESS_KEYWORDS = ["wellness", "recovery", "sober", "self-care", "selfcare", "harm reduction", "bienestar", "recuperación", "autocuidado"];
+  const visiblePosts = useMemo(() => {
+    if (!wellnessModeActive || hashtagFilter || hangoutGroupId) return posts;
+    return posts.filter((post) => {
+      const authorLower = (post.author_username || "").toLowerCase();
+      if (authorLower === "cristina") return true;
+      const contentLower = (post.content || "").toLowerCase();
+      if (WELLNESS_KEYWORDS.some((kw) => contentLower.includes(kw))) return true;
+      if (Array.isArray((post as { tags?: string[] }).tags)) {
+        const tags = (post as { tags?: string[] }).tags!;
+        if (tags.some((t) => WELLNESS_KEYWORDS.some((kw) => t.toLowerCase().includes(kw)))) return true;
+      }
+      return false;
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [posts, wellnessModeActive, hashtagFilter, hangoutGroupId]);
 
   // Sync prop changes
   useEffect(() => {
@@ -542,13 +627,18 @@ export default function SocialFeedTabs({
           the redundant "PNP Feed" title was eating ~64px of prime mobile
           real-estate before any content appeared. */}
 
+      {/* Wellness Break Mode banner — replaces PRIME/Founders banners when active */}
+      {wellnessModeActive && isAuthenticated && !hangoutGroupId && !hashtagFilter && (
+        <WellnessBreakBanner wellnessStatus={wellnessStatus!} onNavigate={onNavigate} />
+      )}
+
       {/* PRIME Channel featured CTA — non-prime users → /subscribe, prime → channel */}
-      {isAuthenticated && !hangoutGroupId && !hashtagFilter && (
+      {isAuthenticated && !hangoutGroupId && !hashtagFilter && !wellnessModeActive && (
         <PrimeChannelBanner isPrime={isPrime} onNavigate={onNavigate} />
       )}
 
       {/* Founders Edition upsell — lifetime100 link, last-week urgency */}
-      {isAuthenticated && !hangoutGroupId && !hashtagFilter && (
+      {isAuthenticated && !hangoutGroupId && !hashtagFilter && !wellnessModeActive && (
         <FoundersBanner onNavigate={onNavigate} />
       )}
 
@@ -985,7 +1075,7 @@ export default function SocialFeedTabs({
             )}
           </div>
         )
-      ) : posts.length === 0 ? (
+      ) : visiblePosts.length === 0 ? (
         <div
           className="rounded-2xl p-10 text-center"
           style={{
@@ -1012,14 +1102,16 @@ export default function SocialFeedTabs({
               />
             </svg>
           </div>
-          <p className="text-white font-semibold mb-1">{t.noPostsYet}</p>
+          <p className="text-white font-semibold mb-1">
+            {wellnessModeActive ? "No wellness posts right now" : t.noPostsYet}
+          </p>
           <p className="text-sm" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-            {t.beTheFirst}
+            {wellnessModeActive ? "Check back later, or talk to Cristina." : t.beTheFirst}
           </p>
         </div>
       ) : (
         <div className="space-y-3">
-          {posts.map((post) => {
+          {visiblePosts.map((post) => {
             // Synthetic live-stage card injected by the backend for free users
             // when Main Stage has ≥1 active participant.
             if ((post as unknown as { type?: string }).type === "main_stage_live") {

@@ -2321,8 +2321,21 @@ const startBot = async () => {
     // Cristina ticket worker — DISABLED (spam prevention per admin request)
     logger.info('• Cristina ticket worker skipped (disabled)');
 
-    // Cristina onboarding reminders — DISABLED (spam prevention per admin request)
-    logger.info('• Cristina onboarding reminders skipped (disabled)');
+    // Cristina onboarding reminders — runs daily at 11:00 UTC
+    try {
+      const cron = require('node-cron');
+      cron.schedule('0 11 * * *', async () => {
+        try {
+          const result = await CristinaOnboardingReminders.process();
+          logger.info('• Cristina onboarding reminders complete', result);
+        } catch (err) {
+          logger.warn('• Cristina onboarding reminders error', { error: err.message });
+        }
+      }, { timezone: 'UTC' });
+      logger.info('• Cristina onboarding reminders scheduled (daily 11:00 UTC)');
+    } catch (err) {
+      logger.warn('• Cristina onboarding reminders scheduler failed to start', { error: err.message });
+    }
 
 
     // NowPayments payout reconciler — rolls back earnings stuck in 'in_payout' with no active payout (every 6h)
