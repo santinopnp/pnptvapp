@@ -11,7 +11,7 @@ const { Pool } = require('pg');
 const Redis   = require('ioredis');
 
 const DRY_RUN   = process.argv.includes('--dry-run');
-const SENDER_ID = 'b13ef0bb-48fe-49e7-8330-4d179018d32b'; // CreatorsSupport
+const SENDER_ID = '8552451957'; // PNPtv! News
 const CC_ID     = '8599671840'; // Santino — receives as a regular recipient
 const CAMPAIGN  = 'pnpapp:mainstage-calls-promo-2026-10-15';
 
