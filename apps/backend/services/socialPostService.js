@@ -2008,8 +2008,9 @@ class SocialPostService {
         [userId]
       ),
       query(
-        `SELECT id, is_available, base_price, total_calls, total_rating, rating_count, availability_message
-         FROM performers WHERE user_id = $1 AND status = 'active' LIMIT 1`,
+        `SELECT p.id, p.is_available, p.base_price, p.total_rating, p.rating_count, p.availability_message,
+                (SELECT COUNT(*)::int FROM bookings b WHERE b.performer_id = p.id AND b.status = 'completed') AS total_calls
+         FROM performers p WHERE p.user_id = $1 AND p.status = 'active' LIMIT 1`,
         [userId]
       ),
       query(
