@@ -54,6 +54,7 @@ const TYPE_TO_PREF = {
   mention_post: 'mentions',
   mention_chat: 'mentions',
   main_stage_join: 'live_events',
+  new_post: 'follows',
 };
 
 // TTL constants (seconds)

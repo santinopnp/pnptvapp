@@ -48,14 +48,6 @@ const followUser = async (req, res) => {
     if (!targetRes.rows.length) return res.status(404).json({ error: 'User not found' });
     const target = targetRes.rows[0];
 
-    // Creators do not accept follows — only subscriptions. Enforced 2026-07-23.
-    if (target.creator_status === 'active') {
-      return res.status(400).json({
-        error: 'CANNOT_FOLLOW_CREATOR',
-        message: 'Creators only accept subscriptions. Subscribe to see their content.',
-      });
-    }
-
     // Block check — bidirectional: neither party can follow the other if a block exists
     const blockRes = await query(
       `SELECT 1 FROM blocked_users

@@ -587,6 +587,42 @@ const createPost = async (req, res) => {
     const io = req.app.get('io');
     emitNewPost(io, fullPost, user.id);
 
+    if (!replyToId && !repostOfId && !EntitlementAccessService.isSuperGod(user.id)) {
+      const authorId = user.id;
+      const authorUsername = user.username || '';
+      const authorDisplayName = user.firstName || user.first_name || authorUsername;
+      const postContentPreview = content.trim();
+      const newPostId = post.id;
+      setImmediate(async () => {
+        try {
+          const { rows: followers } = await dbQuery(
+            'SELECT follower_id FROM user_follows WHERE following_id = $1',
+            [authorId]
+          );
+          if (!followers.length) return;
+          for (const { follower_id } of followers) {
+            await NotificationEmitter.emit({
+              type: 'new_post',
+              category: 'social',
+              priority: 'normal',
+              actorId: authorId,
+              targetUserId: String(follower_id),
+              entityType: 'post',
+              entityId: String(newPostId),
+              message: `${authorDisplayName || authorUsername} published a new post`,
+              metadata: {
+                pushTitle: `${authorDisplayName || authorUsername} posted`,
+                pushBody: postContentPreview.slice(0, 80),
+                url: `/c/${authorUsername}`,
+              },
+            });
+          }
+        } catch (err) {
+          logger.warn('[posts] follower notification failed', { error: err.message });
+        }
+      });
+    }
+
     // Bust profile cache so the new post appears immediately on the profile wall
     setImmediate(() => bustProfileCache(user.id));
 

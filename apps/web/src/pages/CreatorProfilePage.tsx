@@ -35,6 +35,8 @@ import {
   Loader2,
   Tv2,
   Lock,
+  Bell,
+  BellOff,
 } from "lucide-react";
 import {
   getPublicCreatorProfile,
@@ -61,6 +63,9 @@ import {
   getCreatorChannelPass,
   checkoutChannelPass,
   getUserChannelPasses,
+  followUser,
+  unfollowUser,
+  getFollowStatus,
   ApiError,
   type ChannelPassViewerInfo,
   type CreatorPublicProfile,
@@ -363,6 +368,9 @@ export default function CreatorProfilePage() {
 
   const [isSubscribed, setIsSubscribed] = useState(false);
   const [viewerSub, setViewerSub] = useState<ViewerCreatorSubscription | null>(null);
+  const [isFollowing, setIsFollowing] = useState(false);
+  const [followLoading, setFollowLoading] = useState(false);
+  const [notifyEnabled, setNotifyEnabled] = useState(false);
   const [isBlocked, setIsBlocked] = useState(false);
   const [manualExpanded, setManualExpanded] = useState(false);
   const [showSubInfoModal, setShowSubInfoModal] = useState(false);
@@ -449,6 +457,7 @@ export default function CreatorProfilePage() {
         setData(res);
         setIsSubscribed(!!res.isSubscribed);
         setViewerSub(res.viewerSubscription || null);
+        setIsFollowing(!!res.isFollowing);
         if (res.creator?.id) {
           setCreatorForYouId(String(res.creator.id));
         }
@@ -534,9 +543,15 @@ export default function CreatorProfilePage() {
           .catch(() => {})
       : Promise.resolve();
 
+    const followStatusPromise = isOtherUser
+      ? getFollowStatus(creatorId)
+          .then((r) => { setIsFollowing(r.isFollowing); })
+          .catch(() => {})
+      : Promise.resolve();
+
     // Fire all in parallel — individual .catch() handlers above prevent
     // one failure from cancelling the others.
-    void Promise.all([postsPromise, blockedPromise, creditsPromise, walletPromise, channelPassPromise, callPackagesPromise]);
+    void Promise.all([postsPromise, blockedPromise, creditsPromise, walletPromise, channelPassPromise, callPackagesPromise, followStatusPromise]);
   }, [data?.creator?.id, isAuthenticated, user?.dbId, user?.id]);
 
   const unusedCredit30 = useMemo(
@@ -684,6 +699,13 @@ export default function CreatorProfilePage() {
     finally { setPostsLoading(false); }
   }, [data?.creator?.id, postsCursor, postsLoading]);
 
+  // Sync notify bell state from localStorage when creator changes.
+  useEffect(() => {
+    if (!data?.creator?.id) return;
+    const key = `pnptv:notif:creator:${data.creator.id}`;
+    setNotifyEnabled(localStorage.getItem(key) === "1");
+  }, [data?.creator?.id]);
+
   // Reset tagged-tab cache when navigating to a new creator so we don't
   // show the previous creator's tagged-in feed while fetching the new one.
   useEffect(() => {
@@ -729,6 +751,37 @@ export default function CreatorProfilePage() {
   }, [data?.creator?.id, taggedCursor, taggedLoading]);
 
   // Actions
+  async function handleFollowToggle() {
+    if (!data) return;
+    if (!isAuthenticated) { navigate("/login"); return; }
+    const nextFollowing = !isFollowing;
+    setIsFollowing(nextFollowing);
+    setFollowLoading(true);
+    try {
+      if (nextFollowing) {
+        await followUser(data.creator.id);
+      } else {
+        await unfollowUser(data.creator.id);
+      }
+    } catch {
+      setIsFollowing(!nextFollowing);
+    } finally {
+      setFollowLoading(false);
+    }
+  }
+
+  function handleNotifyToggle() {
+    if (!data) return;
+    const key = `pnptv:notif:creator:${data.creator.id}`;
+    const next = !notifyEnabled;
+    setNotifyEnabled(next);
+    if (next) {
+      localStorage.setItem(key, "1");
+    } else {
+      localStorage.removeItem(key);
+    }
+  }
+
   function handleSubscribeCta() {
     if (!isAuthenticated) { navigate("/login"); return; }
     setShowSubscribePanel((v) => !v);
@@ -802,7 +855,8 @@ export default function CreatorProfilePage() {
     if (!data) return;
     if (!isAuthenticated) { navigate("/login"); return; }
     const isAdminViewer = user?.role === "admin" || user?.role === "superadmin";
-    if (!viewerUnlocked && !isOwnProfile && !isAdminViewer) {
+    const viewerIsCreator = user?.creator_status === "active";
+    if (!viewerUnlocked && !isOwnProfile && !isAdminViewer && !viewerIsCreator) {
       if (isPrimeCreator) navigate("/subscribe");
       else handleSubscribeCta();
       return;
@@ -1153,6 +1207,21 @@ export default function CreatorProfilePage() {
           >
             <ChevronLeft size={20} className="text-white" />
           </button>
+          {/* Bell notification toggle — only for non-self viewers */}
+          {!isOwnProfile && isAuthenticated && (
+            <button
+              onClick={handleNotifyToggle}
+              aria-label={notifyEnabled ? "Turn off notifications" : "Turn on notifications"}
+              title={notifyEnabled ? "Notifications on — click to disable" : "Notify me when this creator posts or goes live"}
+              className="absolute top-3 right-14 w-9 h-9 rounded-full flex items-center justify-center transition-opacity hover:opacity-80"
+              style={{ background: "rgba(30,30,30,0.7)", backdropFilter: "blur(8px)", border: "1px solid rgba(255,255,255,0.1)" }}
+            >
+              {notifyEnabled
+                ? <Bell size={16} style={{ color: "var(--pnp-accent, #D4007A)" }} />
+                : <BellOff size={16} className="text-white/60" />
+              }
+            </button>
+          )}
           {/* Kebab / Edit */}
           <div className="absolute top-3 right-3" ref={menuRef}>
             <button
@@ -1340,7 +1409,7 @@ export default function CreatorProfilePage() {
                 <MessageCircle size={12} />
                 Message
               </button>
-              {!viewerUnlocked && !isOwnProfile && (
+              {!viewerUnlocked && !isOwnProfile && user?.creator_status !== "active" && (
                 <span className="text-[9px]" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
                   {isPrimeCreator ? "🔒 PRIME members only" : "🔒 Subscribers only"}
                 </span>
@@ -1363,8 +1432,23 @@ export default function CreatorProfilePage() {
               <div className="text-[11px]" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Followers</div>
             </div>
             <div>
-              <div className="text-[15px] font-bold text-white">{formatCompact(creator.completedCallsCount || 0)}</div>
-              <div className="text-[11px]" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Calls done</div>
+              {(() => {
+                const avgRating = (creator as { averageRating?: number }).averageRating;
+                const callCount = creator.completedCallsCount || 0;
+                return (
+                  <>
+                    <div className="text-[15px] font-bold text-white flex items-center gap-1">
+                      {formatCompact(callCount)}
+                      {avgRating && avgRating > 0 && (
+                        <span className="text-[11px] font-semibold" style={{ color: "#FFB454" }}>
+                          ⭐ {avgRating.toFixed(1)}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[11px]" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Calls done</div>
+                  </>
+                );
+              })()}
             </div>
           </div>
 
@@ -1372,6 +1456,45 @@ export default function CreatorProfilePage() {
           {creator.bio && (
             <p className="text-[13px] leading-relaxed text-white mb-4 whitespace-pre-wrap break-words">{formatBio(creator.bio)}</p>
           )}
+
+          {/* Social links */}
+          {data.socialLinks && Object.keys(data.socialLinks).length > 0 && (() => {
+            const SOCIAL_META: Record<string, { label: string; prefix: string; color: string }> = {
+              instagram:  { label: "IG",  prefix: "https://instagram.com/",       color: "#E1306C" },
+              twitter:    { label: "X",   prefix: "https://twitter.com/",         color: "#1DA1F2" },
+              x:          { label: "X",   prefix: "https://x.com/",               color: "#1DA1F2" },
+              onlyfans:   { label: "OF",  prefix: "https://onlyfans.com/",        color: "#00AFF0" },
+              tiktok:     { label: "TT",  prefix: "https://tiktok.com/@",         color: "#69C9D0" },
+              snapchat:   { label: "SC",  prefix: "https://snapchat.com/add/",    color: "#FFFC00" },
+              telegram:   { label: "TG",  prefix: "https://t.me/",               color: "#2AABEE" },
+              youtube:    { label: "YT",  prefix: "https://youtube.com/@",        color: "#FF0000" },
+              linktree:   { label: "LK",  prefix: "",                             color: "#39E09B" },
+              website:    { label: "WEB", prefix: "",                             color: "#888" },
+            };
+            const links = Object.entries(data.socialLinks).filter(([, v]) => v && v.trim());
+            if (links.length === 0) return null;
+            return (
+              <div className="flex flex-wrap gap-2 mb-4">
+                {links.map(([key, value]) => {
+                  const meta = SOCIAL_META[key.toLowerCase()] ?? { label: key.slice(0, 3).toUpperCase(), prefix: "", color: "#888" };
+                  const href = value.startsWith("http") ? value : `${meta.prefix}${value}`;
+                  return (
+                    <a
+                      key={key}
+                      href={href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold transition-opacity hover:opacity-80"
+                      style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.1)", color: meta.color }}
+                      aria-label={`${meta.label}: ${value}`}
+                    >
+                      [{meta.label}]
+                    </a>
+                  );
+                })}
+              </div>
+            );
+          })()}
 
           {/* ── Channel Pass CTA ────────────────────────────────────────────────
               Shown when: pass is enabled, viewer is not the creator, and
@@ -2077,6 +2200,26 @@ export default function CreatorProfilePage() {
             </div>
           )}
 
+          {/* Follow button — non-self authenticated viewers only */}
+          {!isOwnProfile && isAuthenticated && (
+            <button
+              onClick={handleFollowToggle}
+              disabled={followLoading}
+              className="w-full lg:max-w-md py-2.5 rounded-xl text-sm font-semibold mb-2.5 flex items-center justify-center gap-1.5 border transition-all hover:opacity-90 disabled:opacity-50"
+              style={
+                isFollowing
+                  ? { background: "rgba(255,255,255,0.08)", borderColor: "rgba(255,255,255,0.15)", color: "rgba(255,255,255,0.7)" }
+                  : { background: "transparent", borderColor: "rgba(255,255,255,0.25)", color: "#fff" }
+              }
+            >
+              {isFollowing ? (
+                <><Check size={14} strokeWidth={2.5} /> Following</>
+              ) : (
+                <>+ Follow</>
+              )}
+            </button>
+          )}
+
           {(unusedCredit30 || unusedCredit60) && (
             <div
               className="lg:max-w-md mb-2.5 px-3 py-2.5 rounded-xl text-xs flex items-center gap-2"
@@ -2515,41 +2658,79 @@ export default function CreatorProfilePage() {
                     </p>
                   </div>
                 )}
-                {posts.map((post) => {
-                  const isExclusiveUnlocked = post.is_exclusive && !post.content_locked;
-                  return (
-                    <div key={post.id} className="relative">
-                      {isExclusiveUnlocked && (
-                        <span
-                          className="absolute z-10 top-2 right-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold shadow-lg"
-                          style={{
-                            background: "linear-gradient(135deg, #D4007A, #E69138)",
-                            color: "#fff",
-                          }}
-                          aria-label="Paid content — unlocked"
-                        >
-                          <Diamond size={10} />
-                          PAID
-                        </span>
-                      )}
-                      <PostCard
-                        post={post}
-                        isOwn={String(user?.dbId || user?.id) === post.author_id}
-                        isAdmin={user?.role === "admin" || user?.role === "superadmin"}
-                        isOwnProfile={isOwnProfile}
-                        isSubscribed={canSeeExclusives}
-                        creatorPriceUsd={creator.creator_price_usd}
-                        currentUserId={String(user?.dbId || user?.id || "")}
-                        userLang={(user?.language as string) || "en"}
-                        onLike={handleLike}
-                        onDelete={() => { /* delete from Studio, not here */ }}
-                        onAuthorTap={handleAuthorTap}
-                        onSubscribeCta={handleSubscribeCta}
-                        hideCreatorCta
-                      />
-                    </div>
-                  );
-                })}
+                {(() => {
+                  const showSubscribeCta = !canSeeExclusives && !isOwnProfile && (creator.exclusiveCount || 0) > 0;
+                  const lockedPostIndices = posts.reduce<number[]>((acc, p, i) => {
+                    if (p.content_locked || p.blurred) acc.push(i);
+                    return acc;
+                  }, []);
+                  const ctaInsertAfterIndex = lockedPostIndices.length > 0 ? lockedPostIndices[Math.min(2, lockedPostIndices.length - 1)] : -1;
+                  let ctaShown = false;
+
+                  return posts.map((post, postIdx) => {
+                    const isExclusiveUnlocked = post.is_exclusive && !post.content_locked;
+                    const card = (
+                      <div key={post.id} className="relative">
+                        {isExclusiveUnlocked && (
+                          <span
+                            className="absolute z-10 top-2 right-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold shadow-lg"
+                            style={{
+                              background: "linear-gradient(135deg, #D4007A, #E69138)",
+                              color: "#fff",
+                            }}
+                            aria-label="Paid content — unlocked"
+                          >
+                            <Diamond size={10} />
+                            PAID
+                          </span>
+                        )}
+                        <PostCard
+                          post={post}
+                          isOwn={String(user?.dbId || user?.id) === post.author_id}
+                          isAdmin={user?.role === "admin" || user?.role === "superadmin"}
+                          isOwnProfile={isOwnProfile}
+                          isSubscribed={canSeeExclusives}
+                          creatorPriceUsd={creator.creator_price_usd}
+                          currentUserId={String(user?.dbId || user?.id || "")}
+                          userLang={(user?.language as string) || "en"}
+                          onLike={handleLike}
+                          onDelete={() => { /* delete from Studio, not here */ }}
+                          onAuthorTap={handleAuthorTap}
+                          onSubscribeCta={handleSubscribeCta}
+                          hideCreatorCta
+                        />
+                      </div>
+                    );
+
+                    if (showSubscribeCta && !ctaShown && ctaInsertAfterIndex >= 0 && postIdx === ctaInsertAfterIndex) {
+                      ctaShown = true;
+                      const exclusiveCount = creator.exclusiveCount || 0;
+                      const priceLabel = creator.creator_price_usd != null ? `$${creator.creator_price_usd}/mo` : null;
+                      return (
+                        <React.Fragment key={`${post.id}-with-cta`}>
+                          {card}
+                          <button
+                            type="button"
+                            onClick={handleSubscribeCta}
+                            className="w-full mt-1 mb-1 rounded-2xl p-4 flex items-center gap-3 text-left transition-opacity hover:opacity-90 active:scale-[0.99]"
+                            style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+                          >
+                            <Lock size={20} className="text-white shrink-0" />
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-bold text-white">
+                                {exclusiveCount} exclusive {exclusiveCount === 1 ? "post" : "posts"} locked
+                              </p>
+                              <p className="text-[12px] text-white/80 mt-0.5">
+                                {priceLabel ? `Subscribe for ${priceLabel} to unlock all content` : "Subscribe to unlock all content"} →
+                              </p>
+                            </div>
+                          </button>
+                        </React.Fragment>
+                      );
+                    }
+                    return card;
+                  });
+                })()}
                 {postsCursor && (
                   <button
                     onClick={loadMorePosts}

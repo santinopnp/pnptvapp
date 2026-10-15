@@ -103,11 +103,12 @@ class DmService {
     }
 
     if (!isAdmin) {
-      const recipientResult = await query(
-        'SELECT privacy, role, creator_status FROM users WHERE id = $1',
-        [resolvedRecipientId]
-      );
+      const [recipientResult, senderCreatorResult] = await Promise.all([
+        query('SELECT privacy, role, creator_status FROM users WHERE id = $1', [resolvedRecipientId]),
+        query('SELECT creator_status FROM users WHERE id = $1', [String(senderId)]),
+      ]);
       const recipientRow = recipientResult.rows[0] || {};
+      const senderCreatorStatus = senderCreatorResult.rows[0]?.creator_status;
       const privacy = recipientRow.privacy || {};
       const allowMessages = privacy.allowMessages !== undefined ? privacy.allowMessages : true;
 
@@ -122,48 +123,47 @@ class DmService {
       }
 
       if (recipientRow.role === 'model' && recipientRow.creator_status === 'active') {
-        const dmPolicy = privacy.creatorDmPolicy || 'prime_or_subscriber';
-        if (dmPolicy !== 'open') {
-          const senderTier = (options.senderTier || 'free').toLowerCase();
-          if (senderTier !== 'prime') {
-            const [subscriberCheck, creatorMsgFirst] = await Promise.all([
-              query(
-                `SELECT 1 FROM user_entitlements
-                 WHERE user_id = $1 AND add_on_id = 'creator-subscription' AND creator_id = $2
-                   AND (is_lifetime = true OR expires_at > NOW())
-                 LIMIT 1`,
-                [String(senderId), String(resolvedRecipientId)]
-              ),
-              query(
-                `SELECT 1 FROM direct_messages
-                 WHERE sender_id = $1 AND recipient_id = $2 AND is_deleted = false
-                 LIMIT 1`,
-                [resolvedRecipientId, senderId]
-              ),
-            ]);
+        if (senderCreatorStatus !== 'active') {
+          const dmPolicy = privacy.creatorDmPolicy || 'prime_or_subscriber';
+          if (dmPolicy !== 'open') {
+            const senderTier = (options.senderTier || 'free').toLowerCase();
+            if (senderTier !== 'prime') {
+              const [subscriberCheck, creatorMsgFirst] = await Promise.all([
+                query(
+                  `SELECT 1 FROM user_entitlements
+                   WHERE user_id = $1 AND add_on_id = 'creator-subscription' AND creator_id = $2
+                     AND (is_lifetime = true OR expires_at > NOW())
+                   LIMIT 1`,
+                  [String(senderId), String(resolvedRecipientId)]
+                ),
+                query(
+                  `SELECT 1 FROM direct_messages
+                   WHERE sender_id = $1 AND recipient_id = $2 AND is_deleted = false
+                   LIMIT 1`,
+                  [resolvedRecipientId, senderId]
+                ),
+              ]);
 
-            const isSubscriber = subscriberCheck.rows.length > 0;
-            const creatorReplied = creatorMsgFirst.rows.length > 0;
+              const isSubscriber = subscriberCheck.rows.length > 0;
+              const creatorReplied = creatorMsgFirst.rows.length > 0;
 
-            if (!isSubscriber && !creatorReplied) {
-              // Free users get DM_INTRO_LIMIT intro messages per creator before the upsell.
-              // Counter lives in Redis with no TTL (lifetime pool, not daily).
-              dmIntroKey = `dm:intro:${senderId}:${resolvedRecipientId}`;
-              try {
-                const { getRedis } = require('../config/redis');
-                dmIntroUsed = parseInt(await getRedis().get(dmIntroKey) || '0', 10);
-              } catch (_) {
-                // Redis unavailable — fail closed to prevent gate bypass
-                dmIntroUsed = DM_INTRO_LIMIT;
-              }
+              if (!isSubscriber && !creatorReplied) {
+                dmIntroKey = `dm:intro:${senderId}:${resolvedRecipientId}`;
+                try {
+                  const { getRedis } = require('../config/redis');
+                  dmIntroUsed = parseInt(await getRedis().get(dmIntroKey) || '0', 10);
+                } catch (_) {
+                  dmIntroUsed = DM_INTRO_LIMIT;
+                }
 
-              if (dmIntroUsed >= DM_INTRO_LIMIT) {
-                throw {
-                  statusCode: 403,
-                  message: `You've used your ${DM_INTRO_LIMIT} free intro messages with this creator. Subscribe to unlock unlimited DMs (also unlocks their private hangout and paid channel).`,
-                  code: 'CREATOR_DM_RESTRICTED',
-                  remaining: 0,
-                };
+                if (dmIntroUsed >= DM_INTRO_LIMIT) {
+                  throw {
+                    statusCode: 403,
+                    message: `You've used your ${DM_INTRO_LIMIT} free intro messages with this creator. Subscribe to unlock unlimited DMs (also unlocks their private hangout and paid channel).`,
+                    code: 'CREATOR_DM_RESTRICTED',
+                    remaining: 0,
+                  };
+                }
               }
             }
           }

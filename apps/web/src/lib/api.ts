@@ -11702,3 +11702,189 @@ export interface PublicCreatorBookingInfo {
 export function getPublicCreatorBookingInfo(handle: string): Promise<PublicCreatorBookingInfo> {
   return request<PublicCreatorBookingInfo>(`/api/webapp/book/${encodeURIComponent(handle)}/info`);
 }
+
+// ── Parche — creator collectives ──────────────────────────────────────────────
+
+export interface ParcheMember {
+  id: number;
+  creatorId: string;
+  displayName: string;
+  username: string;
+  photoUrl: string | null;
+  role: 'owner' | 'member';
+  inviteStatus: 'pending' | 'accepted' | 'declined';
+  isOnline?: boolean;
+}
+
+export interface ParchePackage {
+  id: number;
+  parcheId: string;
+  title: string;
+  description: string | null;
+  durationMinutes: number;
+  priceUsd: string;
+  sku: string;
+  isActive: boolean;
+}
+
+export interface ParchePreviewMedia {
+  type: 'photo' | 'video';
+  url: string;
+  creatorId: string;
+}
+
+export interface ParcheDetail {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  locationCity: string | null;
+  status: 'forming' | 'active' | 'paused' | 'disbanded';
+  isOpen: boolean;
+  createdBy: string;
+  maxMembers: number;
+  members: ParcheMember[];
+  packages: ParchePackage[];
+  previewMedia: ParchePreviewMedia[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ParcheListingItem {
+  id: string;
+  slug: string;
+  name: string;
+  locationCity: string | null;
+  memberCount: number;
+  memberPreviews: { photoUrl: string | null; displayName: string }[];
+  activePackageCount: number;
+  isOpen: boolean;
+}
+
+export interface ParcheBooking {
+  id: string;
+  parcheId: string;
+  packageId: number;
+  buyerId: string;
+  status: 'awaiting_payment' | 'confirmed' | 'completed' | 'cancelled' | 'no_show';
+  scheduledAt: string | null;
+  durationMinutes: number;
+  priceCents: number;
+  livekitRoomName: string | null;
+  buyerNote: string | null;
+  createdAt: string;
+}
+
+// Public
+export function getParcheInfo(slug: string): Promise<{ parche: ParcheDetail }> {
+  return request<{ parche: ParcheDetail }>(`/api/webapp/book/parche/${encodeURIComponent(slug)}/info`);
+}
+
+export function listActiveParches(): Promise<{ parches: ParcheListingItem[] }> {
+  return request<{ parches: ParcheListingItem[] }>('/api/webapp/parches');
+}
+
+// Creator management
+export function getMyParches(): Promise<{ parches: ParcheDetail[] }> {
+  return request<{ parches: ParcheDetail[] }>('/api/webapp/creator/parche');
+}
+
+export function createParche(data: {
+  name: string;
+  description?: string;
+  locationCity?: string;
+  slug?: string;
+}): Promise<{ parche: ParcheDetail }> {
+  return request<{ parche: ParcheDetail }>('/api/webapp/creator/parche', { method: 'POST', body: data });
+}
+
+export function updateParche(
+  parcheId: string,
+  data: { name?: string; description?: string; locationCity?: string }
+): Promise<{ success: boolean }> {
+  return request<{ success: boolean }>(`/api/webapp/creator/parche/${parcheId}`, { method: 'PUT', body: data });
+}
+
+export function setParcheOpen(parcheId: string, isOpen: boolean): Promise<{ success: boolean }> {
+  return request<{ success: boolean }>(`/api/webapp/creator/parche/${parcheId}/open`, {
+    method: 'POST',
+    body: { isOpen },
+  });
+}
+
+export function inviteCreatorToParche(
+  parcheId: string,
+  handle: string
+): Promise<{ success: boolean; member: ParcheMember }> {
+  return request<{ success: boolean; member: ParcheMember }>(
+    `/api/webapp/creator/parche/${parcheId}/invite`,
+    { method: 'POST', body: { handle } }
+  );
+}
+
+export function respondToParcheInvite(
+  parcheId: string,
+  accept: boolean
+): Promise<{ success: boolean; parche: ParcheDetail }> {
+  return request<{ success: boolean; parche: ParcheDetail }>(
+    `/api/webapp/creator/parche/${parcheId}/respond`,
+    { method: 'POST', body: { accept } }
+  );
+}
+
+export function leaveParche(parcheId: string): Promise<{ success: boolean }> {
+  return request<{ success: boolean }>(`/api/webapp/creator/parche/${parcheId}/leave`, { method: 'POST' });
+}
+
+export function createParchePackage(
+  parcheId: string,
+  data: { title: string; description?: string; durationMinutes: number; priceUsd: number }
+): Promise<{ package: ParchePackage }> {
+  return request<{ package: ParchePackage }>(`/api/webapp/creator/parche/${parcheId}/packages`, {
+    method: 'POST',
+    body: data,
+  });
+}
+
+export function updateParchePackage(
+  parcheId: string,
+  packageId: number,
+  data: { title?: string; description?: string; priceUsd?: number }
+): Promise<{ success: boolean }> {
+  return request<{ success: boolean }>(
+    `/api/webapp/creator/parche/${parcheId}/packages/${packageId}`,
+    { method: 'PUT', body: data }
+  );
+}
+
+export function deactivateParchePackage(
+  parcheId: string,
+  packageId: number
+): Promise<{ success: boolean }> {
+  return request<{ success: boolean }>(
+    `/api/webapp/creator/parche/${parcheId}/packages/${packageId}`,
+    { method: 'DELETE' }
+  );
+}
+
+// Booking
+export function bookParcheCall(data: {
+  parcheId: string;
+  packageId: number;
+  scheduledAt?: string;
+  buyerNote?: string;
+  provider: 'nowpayments';
+}): Promise<{ bookingId: string; checkoutUrl: string; invoiceId: string; amount: number; currency: string; sku: string }> {
+  return request<{ bookingId: string; checkoutUrl: string; invoiceId: string; amount: number; currency: string; sku: string }>(
+    '/api/webapp/book-parche/checkout',
+    { method: 'POST', body: data }
+  );
+}
+
+export function getParcheCallToken(
+  bookingId: string
+): Promise<{ token: string; roomName: string; wsUrl: string }> {
+  return request<{ token: string; roomName: string; wsUrl: string }>(
+    `/api/webapp/parche-bookings/${bookingId}/token`
+  );
+}
