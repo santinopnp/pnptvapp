@@ -244,4 +244,43 @@ const translateChatMessage = async (req, res) => {
   }
 };
 
-module.exports = { getChatHistory, sendMessage, sendMediaMessage, translateChatMessage };
+// ── Translate arbitrary text (used by main-stage ephemeral chat, which has no DB id) ──
+// POST /api/webapp/translate  body: { text, targetLang }
+const translateTextDirect = async (req, res) => {
+  const user = authGuard(req, res); if (!user) return;
+  const rawText = req.body?.text;
+  if (!rawText || typeof rawText !== 'string' || !rawText.trim()) {
+    return res.status(400).json({ error: 'Text required' });
+  }
+  const text = rawText.trim().slice(0, 2000);
+  const rawLang = req.body?.targetLang;
+  if (!rawLang || typeof rawLang !== 'string' || !/^[a-zA-Z]{2,5}$/.test(rawLang)) {
+    return res.status(400).json({ error: 'Invalid targetLang' });
+  }
+  const targetLang = rawLang.trim();
+
+  try {
+    try {
+      const redis = getRedis();
+      if (redis) {
+        const rateKey = `translate:daily:${user.id}`;
+        const count = await redis.incr(rateKey);
+        if (count === 1) await redis.expire(rateKey, 86400);
+        if (count > CHAT_TRANSLATE_DAILY_LIMIT) {
+          return res.status(429).json({ error: 'Daily translation limit reached' });
+        }
+      }
+    } catch (rateErr) {
+      logger.warn('translateTextDirect rate limit check failed (allowing)', { error: rateErr.message });
+    }
+
+    const grokService = require('../../../services/grokService');
+    const translatedText = await grokService.translateText(text, targetLang);
+    return res.json({ success: true, translatedText });
+  } catch (err) {
+    logger.error('translateTextDirect error', { error: err.message, targetLang });
+    return res.status(500).json({ error: 'Failed to translate' });
+  }
+};
+
+module.exports = { getChatHistory, sendMessage, sendMediaMessage, translateChatMessage, translateTextDirect };

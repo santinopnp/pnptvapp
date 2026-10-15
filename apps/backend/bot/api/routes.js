@@ -369,19 +369,8 @@ const bindAuthenticatedUserId = (req, res, next) => {
 
 const app = express();
 
-// Initialize Sentry for error tracking (v8+ API — Integrations.Http removed)
-if (process.env.SENTRY_DSN) {
-  Sentry.init({
-    dsn: process.env.SENTRY_DSN,
-    environment: process.env.NODE_ENV,
-    integrations: [
-      Sentry.httpIntegration?.() ?? undefined,
-      Sentry.expressIntegration?.({ app }) ?? undefined,
-    ].filter(Boolean),
-    tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.1 : 1.0,
-  });
-  logger.info('Sentry error tracking initialized');
-}
+// Sentry is initialized in bot.js before express loads; expressIntegration is
+// wired via setupExpressErrorHandler at the bottom of this file.
 
 // Trust proxy - required for secure cookies and rate limiting behind reverse proxy
 // Traefik (host mode, SSL termination) → nginx (sets X-Forwarded-Proto: https) → Express
@@ -10462,6 +10451,7 @@ app.get('/api/webapp/social/posts/:postId/reactions', asyncHandler(reactionContr
 app.post('/api/webapp/chat/messages/:messageId/react', requireSessionAuth, asyncHandler(reactionController.reactToChatMessage));
 app.get('/api/webapp/chat/messages/:messageId/reactions', asyncHandler(reactionController.getChatReactions));
 app.post('/api/webapp/chat/messages/:msgId/translate', requireSessionAuth, asyncHandler(chatController.translateChatMessage));
+app.post('/api/webapp/translate', requireSessionAuth, asyncHandler(chatController.translateTextDirect));
 // DM reactions
 app.post('/api/webapp/dm/messages/:messageId/react', requireSessionAuth, asyncHandler(reactionController.reactToDm));
 app.get('/api/webapp/dm/messages/:messageId/reactions', requireSessionAuth, asyncHandler(reactionController.getDmReactions));

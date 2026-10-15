@@ -11,7 +11,7 @@ import {
 import { ConnectionState, RoomEvent, Track } from "livekit-client";
 import { useMainStage, type MainStageState } from "@/hooks/useMainStage";
 import { useMainStageRoom } from "@/components/mainstage/MainStageProvider";
-import { getMainStageJoinCheck, acceptMainStageConsents, getWalletBalance, getMainStageViewerToken, getMainStageFreeViewerToken, getMainStageState, voteSkipMainStage, playNextMainStage, getHangoutGroup, getMainStagePin, getPublicCreatorProfile, ApiError, type MainStageJoinCheck, type MainStagePin, type TopicLite, type MainStageOnStageEntry, type CreatorPublicProfile } from "@/lib/api";
+import { getMainStageJoinCheck, acceptMainStageConsents, getWalletBalance, getMainStageViewerToken, getMainStageFreeViewerToken, getMainStageState, voteSkipMainStage, playNextMainStage, getHangoutGroup, getMainStagePin, getPublicCreatorProfile, translateText, ApiError, type MainStageJoinCheck, type MainStagePin, type TopicLite, type MainStageOnStageEntry, type CreatorPublicProfile } from "@/lib/api";
 import { getSocket } from "@/lib/socket";
 import { useAuth } from "@/hooks/useAuth";
 import { useMusicPlayer } from "@/hooks/useMusicPlayer";
@@ -921,6 +921,11 @@ export default function MainStage() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
   const chatInputRef = useRef<HTMLInputElement>(null);
+  // ── Chat message translation state ─────────────────────────────────────────
+  const [msgTranslationView, setMsgTranslationView] = useState<Map<string, "translated" | "original">>(new Map());
+  const [msgTranslationCache, setMsgTranslationCache] = useState<Map<string, string>>(new Map());
+  const [msgTranslationBusy, setMsgTranslationBusy] = useState<Set<string>>(new Set());
+  const [msgTranslationError, setMsgTranslationError] = useState<Map<string, string>>(new Map());
   // ── Sidebar tabs + People / mini-DM ─────────────────────────────────────────
   const [sidebarTab, setSidebarTab] = useState<'chat' | 'people'>('chat');
   const sidebarTabRef = useRef<'chat' | 'people'>('chat');
@@ -1055,6 +1060,29 @@ export default function MainStage() {
     getSocket().emit('mainstage:chat-send', { text });
     setChatInput("");
   }, [chatInput]);
+
+  const handleMainStageTranslate = useCallback(async (msg: ChatMessage) => {
+    if (!msg.text || !msg.text.trim()) return;
+    if (msgTranslationView.get(msg.id) === "translated") {
+      setMsgTranslationView((prev) => { const next = new Map(prev); next.set(msg.id, "original"); return next; });
+      return;
+    }
+    if (msgTranslationCache.has(msg.id)) {
+      setMsgTranslationView((prev) => { const next = new Map(prev); next.set(msg.id, "translated"); return next; });
+      return;
+    }
+    setMsgTranslationBusy((prev) => new Set(prev).add(msg.id));
+    setMsgTranslationError((prev) => { const next = new Map(prev); next.delete(msg.id); return next; });
+    try {
+      const res = await translateText(msg.text, t.lang);
+      setMsgTranslationCache((prev) => { const next = new Map(prev); next.set(msg.id, res.translatedText); return next; });
+      setMsgTranslationView((prev) => { const next = new Map(prev); next.set(msg.id, "translated"); return next; });
+    } catch {
+      setMsgTranslationError((prev) => { const next = new Map(prev); next.set(msg.id, t.chat.translationFailed); return next; });
+    } finally {
+      setMsgTranslationBusy((prev) => { const next = new Set(prev); next.delete(msg.id); return next; });
+    }
+  }, [t.lang, t.chat.translationFailed, msgTranslationView, msgTranslationCache]);
 
   useEffect(() => {
     const el = sidebarScrollRef.current;
@@ -2675,7 +2703,36 @@ export default function MainStage() {
                           )}
                         </span>
                         )}
-                        <span className="text-[12px] leading-snug text-white/90 break-words">{msg.text}</span>
+                        {(() => {
+                          const msgView = msgTranslationView.get(msg.id) ?? "original";
+                          const msgCached = msgTranslationCache.get(msg.id);
+                          const displayText = msgView === "translated" && msgCached ? msgCached : msg.text;
+                          const isMsgBusy = msgTranslationBusy.has(msg.id);
+                          const msgErr = msgTranslationError.get(msg.id);
+                          const showChip = !isAuto && msg.text.trim().length >= 10;
+                          return (
+                            <>
+                              <span className="text-[12px] leading-snug text-white/90 break-words">{displayText}</span>
+                              {showChip && (
+                                <div className="mt-0.5 flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleMainStageTranslate(msg)}
+                                    disabled={isMsgBusy}
+                                    className="text-[10px] text-white/40 hover:text-white/70 underline underline-offset-2 disabled:opacity-50 leading-snug"
+                                  >
+                                    {isMsgBusy
+                                      ? t.chat.translating
+                                      : msgView === "translated"
+                                      ? `${t.chat.translated} · ${t.chat.viewOriginal}`
+                                      : t.chat.translate}
+                                  </button>
+                                  {msgErr && <span className="text-[10px] text-red-300">{msgErr}</span>}
+                                </div>
+                              )}
+                            </>
+                          );
+                        })()}
                         {msg.cta && (
                           msg.cta.action === 'open-tip' ? (
                             <button

@@ -2671,6 +2671,16 @@ export function translateSocialPost(
   });
 }
 
+export function translateText(
+  text: string,
+  targetLang: string
+): Promise<{ success: boolean; translatedText: string }> {
+  return request(`/api/webapp/translate`, {
+    method: "POST",
+    body: { text, targetLang },
+  });
+}
+
 export function editSocialPost(
   postId: number,
   content: string,
