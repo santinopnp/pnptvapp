@@ -4,6 +4,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useI18n, type Lang } from "@/lib/i18n";
 import { getProfile, updateProfile, updatePrivacy, updateLanguage } from "@/lib/api";
 import { useNearbyToggle, toggleNearby } from "@/components/NearbyBadge";
+import { WellnessModeCard } from "@/pages/Settings";
 
 // ── Toggle Switch ─────────────────────────────────────────────────────────────
 
@@ -376,6 +377,9 @@ export default function PreferencesSettings() {
           />
         </div>
       </div>
+
+      {/* ── Wellness Break Mode ── */}
+      <WellnessModeCard />
 
       {/* ── Back to settings ── */}
       <button
