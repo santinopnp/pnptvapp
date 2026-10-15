@@ -1149,7 +1149,7 @@ export function CreatorConsents() {
       const res = await setCreatorAnnounceConsent(next);
       if (res.success) setAnnounceConsent({ consented: res.consented, consentedAt: next ? new Date().toISOString() : null });
     } catch (err) {
-      setAnnounceError(err instanceof Error ? err.message : "Failed to update — try again.");
+      setAnnounceError(err instanceof Error ? err.message : t.consentUpdateError);
     } finally {
       setAnnounceBusy(false);
     }
@@ -1163,12 +1163,12 @@ export function CreatorConsents() {
         setConsents(res.consents);
         if (res.userId !== undefined && res.userId !== null) setUserId(res.userId);
       } else {
-        setLoadError("Failed to load your consent records.");
+        setLoadError(t.consentLoadError);
       }
       setLoading(false);
     }).catch((err) => {
       if (cancelled) return;
-      setLoadError(err instanceof Error ? err.message : "Failed to load your consent records.");
+      setLoadError(err instanceof Error ? err.message : t.consentLoadError);
       setLoading(false);
     });
     return () => { cancelled = true; };
@@ -1176,49 +1176,49 @@ export function CreatorConsents() {
 
   const genericRows: ConsentRow[] = consents ? [
     {
-      label: "Terms of Service",
+      label: t.consentRowTermsLabel,
       status: consents.terms_accepted ? "accepted" : "pending",
-      detail: consents.terms_accepted ? null : "Required to keep your creator profile active.",
+      detail: consents.terms_accepted ? null : t.consentRowTermsDetail,
       date: consents.terms_accepted_at || null,
       href: "/terms",
       ...(!consents.terms_accepted
-        ? { actionLabel: "Review & Accept", onAction: () => { setAcceptError(null); setAcceptKind("terms"); } }
+        ? { actionLabel: t.consentRowReviewAccept, onAction: () => { setAcceptError(null); setAcceptKind("terms"); } }
         : {}),
     },
     {
-      label: "Privacy Policy",
+      label: t.consentRowPrivacyLabel,
       status: consents.privacy_accepted ? "accepted" : "pending",
-      detail: consents.privacy_accepted ? null : "Required to keep your creator profile active.",
+      detail: consents.privacy_accepted ? null : t.consentRowPrivacyDetail,
       date: consents.privacy_accepted_at || null,
       href: "/privacy",
-      ...(!consents.privacy_accepted ? { actionLabel: "Review & Accept", onAction: () => setPrivacyModalOpen(true) } : {}),
+      ...(!consents.privacy_accepted ? { actionLabel: t.consentRowReviewAccept, onAction: () => setPrivacyModalOpen(true) } : {}),
     },
     {
-      label: "Age Verification",
+      label: t.consentRowAgeLabel,
       status: consents.age_verified ? "accepted" : "pending",
-      detail: consents.age_verified ? null : "Required before you can publish or stream.",
+      detail: consents.age_verified ? null : t.consentRowAgeDetail,
       date: consents.age_verified_at,
       ...(!consents.age_verified
-        ? { actionLabel: "Verify Age", onAction: () => navigate("/2257") }
+        ? { actionLabel: t.consentRowAgeAction, onAction: () => navigate("/2257") }
         : {}),
     },
     {
-      label: "Content Disclaimer",
+      label: t.consentRowDisclaimerLabel,
       status: consents.content_disclaimer ? "accepted" : "pending",
-      detail: consents.content_disclaimer ? null : "Required before you can publish any video.",
+      detail: consents.content_disclaimer ? null : t.consentRowDisclaimerDetail,
       date: consents.content_disclaimer_accepted_at,
       expandContent: (
         <p className="pt-2">{t.consentDisclaimerBody}</p>
       ),
       ...(!consents.content_disclaimer
-        ? { actionLabel: "Review & Accept", onAction: () => { setAcceptError(null); setAcceptKind("disclaimer"); } }
+        ? { actionLabel: t.consentRowReviewAccept, onAction: () => { setAcceptError(null); setAcceptKind("disclaimer"); } }
         : {}),
     },
     {
-      label: "Community Guidelines",
+      label: t.consentRowGuidelinesLabel,
       status: "info",
-      detail: "Content standards, access types, strike system, and dispute rules. Review before you post.",
-      actionLabel: "Read Guidelines",
+      detail: t.consentRowGuidelinesDetail,
+      actionLabel: t.consentRowGuidelinesAction,
       onAction: () => navigate("/creators/guidelines"),
     },
   ] : [];
@@ -1239,98 +1239,98 @@ export function CreatorConsents() {
 
   const complianceRows: ConsentRow[] = consents ? [
     {
-      label: "Creator Application",
+      label: t.consentRowAppLabel,
       status: hasApplication
         ? (consents.application_status === "approved" ? "accepted"
           : consents.application_status === "rejected" ? "missing"
           : "pending")
         : "missing",
       detail: hasApplication
-        ? `${applicationTypeLabel ?? "Application"} — ${
-            consents.application_status === "approved" ? "Approved"
-            : consents.application_status === "rejected" ? "Rejected"
-            : consents.application_status === "under_review" ? "Under review"
-            : "Pending review"
+        ? `${applicationTypeLabel ?? t.consentRowAppFallback} — ${
+            consents.application_status === "approved" ? t.consentRowAppStatusApproved
+            : consents.application_status === "rejected" ? t.consentRowAppStatusRejected
+            : consents.application_status === "under_review" ? t.consentRowAppStatusReview
+            : t.consentRowAppStatusPending
           }`
-        : "Required to receive tips, Ru$h, or subscriptions.",
+        : t.consentRowAppMissingDetail,
       date: consents.application_created_at,
-      ...(!hasApplication ? { actionLabel: "Start Application", onAction: () => navigate("/creators/apply") } : {}),
+      ...(!hasApplication ? { actionLabel: t.consentRowAppAction, onAction: () => navigate("/creators/apply") } : {}),
     },
     {
-      label: "Legal Identity (2257)",
+      label: t.consentRowLegalLabel,
       status: (consents.legal_full_name && consents.date_of_birth) ? "submitted" : "missing",
       detail: consents.legal_full_name
-        ? `${consents.legal_full_name}${consents.date_of_birth ? ` — DOB ${formatDobSafe(consents.date_of_birth)}` : ""}`
-        : "Legal name + DOB — federally required (18 U.S.C. § 2257). Without it your content cannot stay public.",
+        ? `${consents.legal_full_name}${consents.date_of_birth ? ` — ${t.consentRowLegalDobPrefix}${formatDobSafe(consents.date_of_birth)}` : ""}`
+        : t.consentRowLegalMissingDetail,
       ...(!(consents.legal_full_name && consents.date_of_birth)
-        ? { actionLabel: "Complete 2257 Form", onAction: () => navigate("/2257") }
+        ? { actionLabel: t.consentRowLegalAction, onAction: () => navigate("/2257") }
         : {}),
     },
     {
-      label: "Government ID Upload",
+      label: t.consentRowGovIdLabel,
       status: govIdSubmitted ? "submitted" : "missing",
       detail: govIdSubmitted
-        ? "Front + back on file (admin-only, encrypted)."
-        : "Upload both front and back of a government-issued ID. Required for 2257.",
+        ? t.consentRowGovIdDoneDetail
+        : t.consentRowGovIdMissingDetail,
       ...(!govIdSubmitted
-        ? { actionLabel: "Upload ID", onAction: () => navigate("/2257") }
+        ? { actionLabel: t.consentRowGovIdAction, onAction: () => navigate("/2257") }
         : {}),
     },
     {
-      label: "Creator Terms Agreement",
+      label: t.consentRowCreatorTermsLabel,
       status: consents.creator_terms_agreed ? "accepted" : "pending",
       detail: consents.creator_terms_agreed
-        ? (consents.creator_terms_version ? `Version ${consents.creator_terms_version}` : null)
-        : "70/30 revenue split, payout schedule, deactivation policy. Required.",
+        ? (consents.creator_terms_version ? `${t.consentRowCreatorTermsVersionPrefix}${consents.creator_terms_version}` : null)
+        : t.consentRowCreatorTermsMissingDetail,
       date: consents.creator_terms_agreed_at,
       ...(consents.creator_terms_agreed
         ? {
             expandContent: (
               <>
-                <p className="pt-2">By enrolling as a creator, you agree to PNPtv!'s Creator Program Terms. Subscription revenue is split 70% to you / 30% to PNPtv!. Payouts are processed every Tuesday before 2:00 PM UTC via your selected payment method.</p>
-                <p>You retain ownership of all content you upload. PNPtv! reserves the right to deactivate creator profiles for violations of community standards or the strike policy (3 strikes = suspension).</p>
-                <p>You may voluntarily deactivate at any time. Active subscribers retain access until their billing period ends. PNPtv! may amend these terms with 30 days written notice.</p>
+                <p className="pt-2">{t.consentRowCreatorTermsExpand1}</p>
+                <p>{t.consentRowCreatorTermsExpand2}</p>
+                <p>{t.consentRowCreatorTermsExpand3}</p>
               </>
             ),
           }
-        : { actionLabel: "Review & Accept", onAction: () => { setAcceptError(null); setAcceptKind("creator_terms"); } }),
+        : { actionLabel: t.consentRowReviewAccept, onAction: () => { setAcceptError(null); setAcceptKind("creator_terms"); } }),
     },
     {
-      label: "Stage Name",
+      label: t.consentRowStageLabel,
       status: consents.stage_name ? "submitted" : "missing",
-      detail: consents.stage_name || "The name shown on your public profile. Editable anytime in Settings.",
+      detail: consents.stage_name || t.consentRowStageMissingDetail,
       ...(!consents.stage_name
-        ? { actionLabel: "Set Stage Name", onAction: () => navigate("/creators/settings") }
+        ? { actionLabel: t.consentRowStageAction, onAction: () => navigate("/creators/settings") }
         : {}),
     },
     {
-      label: "Location Declaration",
+      label: t.consentRowLocationLabel,
       status: consents.country ? "submitted" : "missing",
-      detail: consents.country ?? "Country of residence — required for tax and geo-compliance.",
+      detail: consents.country ?? t.consentRowLocationMissingDetail,
       ...(!consents.country
-        ? { actionLabel: "Update Location", onAction: () => navigate("/creators/settings") }
+        ? { actionLabel: t.consentRowLocationAction, onAction: () => navigate("/creators/settings") }
         : {}),
     },
   ] : [];
 
   const payoutRows: ConsentRow[] = consents ? [
     {
-      label: "Fiat Payout Method",
+      label: t.consentRowFiatLabel,
       status: consents.fiat_payout_method ? "info" : "missing",
       detail: consents.fiat_payout_method
-        ? `Configured (${String(consents.fiat_payout_method).toUpperCase()})`
-        : "Configure at least one payout method (fiat OR crypto) to receive earnings.",
-      ...(!consents.fiat_payout_method ? { actionLabel: "Configure Payouts", onAction: () => navigate("/creators/settings") } : {}),
+        ? `${t.consentRowFiatConfiguredPrefix}${String(consents.fiat_payout_method).toUpperCase()})`
+        : t.consentRowFiatMissingDetail,
+      ...(!consents.fiat_payout_method ? { actionLabel: t.consentRowFiatAction, onAction: () => navigate("/creators/settings") } : {}),
     },
     {
-      label: "Crypto Payout Wallet",
+      label: t.consentRowCryptoLabel,
       status: consents.wallet_address_set
         ? (consents.creator_wallet_verified ? "accepted" : "info")
         : "missing",
       detail: consents.wallet_address_set
-        ? (consents.creator_wallet_verified ? "Connected & verified" : "Connected — pending verification")
-        : "Configure at least one payout method (fiat OR crypto) to receive earnings.",
-      ...(!consents.wallet_address_set ? { actionLabel: "Configure Payouts", onAction: () => navigate("/creators/settings") } : {}),
+        ? (consents.creator_wallet_verified ? t.consentRowCryptoVerified : t.consentRowCryptoPending)
+        : t.consentRowFiatMissingDetail,
+      ...(!consents.wallet_address_set ? { actionLabel: t.consentRowFiatAction, onAction: () => navigate("/creators/settings") } : {}),
     },
     ...(payoutConfig ? [{
       label: "Billetera de pagos configurada",
@@ -1356,9 +1356,9 @@ export function CreatorConsents() {
     <>
       <Helmet><title>Documentation — Creator Studio — PNPtv!</title></Helmet>
       <div className="p-4 lg:p-6">
-        <h1 className="text-xl font-bold text-pnp-textPrimary mb-2">Documentation & Compliance</h1>
+        <h1 className="text-xl font-bold text-pnp-textPrimary mb-2">{t.consentPageTitle}</h1>
         <p className="text-sm text-pnp-textSecondary mb-5">
-          Every legal agreement, ID form, and payout config you need to keep your creator profile in good standing.
+          {t.consentPageSubtitle}
           {t.announceRowsPendingHint} <span className="text-amber-400 font-semibold">{t.announceRowsPendingHintPending}</span> {t.announceRowsPendingHintOr} <span className="text-red-400 font-semibold">{t.announceRowsPendingHintMissing}</span> {t.announceRowsPendingHintSuffix}
         </p>
 
@@ -1387,11 +1387,11 @@ export function CreatorConsents() {
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-bold text-white">
                     {pendingCount === 0
-                      ? "All set — everything's in order."
-                      : `${pendingCount} item${pendingCount === 1 ? "" : "s"} still need your attention`}
+                      ? t.consentAllSet
+                      : t.consentItemsNeedAttention(pendingCount)}
                   </p>
                   <p className="text-xs mt-0.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-                    {completedCount} of {totalActionable} required steps completed.
+                    {t.consentStepsCompleted(completedCount, totalActionable)}
                   </p>
                 </div>
                 <div className="flex-shrink-0" aria-hidden="true">
@@ -1544,12 +1544,12 @@ export function CreatorConsents() {
                       className="px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-50"
                       style={{ background: "linear-gradient(135deg,#5ED1C4,#2DD4BF)", color: "#04252b" }}
                     >
-                      {announceBusy ? "Saving…" : "Enable announcements"}
+                      {announceBusy ? t.consentAnnounceSaving : t.consentAnnounceEnable}
                     </button>
                   ) : (
                     <>
                       <span className="text-[11px] text-pnp-textSecondary self-center">
-                        Enabled {announceConsent.consentedAt ? new Date(announceConsent.consentedAt).toLocaleDateString() : ""}
+                        {t.consentAnnounceEnabledPrefix}{announceConsent.consentedAt ? new Date(announceConsent.consentedAt).toLocaleDateString() : ""}
                       </span>
                       <button
                         type="button"
@@ -1558,7 +1558,7 @@ export function CreatorConsents() {
                         className="px-3 py-1.5 rounded-lg text-[11px] font-semibold disabled:opacity-50"
                         style={{ background: "rgba(255,69,58,0.12)", border: "1px solid rgba(255,69,58,0.3)", color: "#FF6B6B" }}
                       >
-                        {announceBusy ? "Saving…" : "Revoke consent"}
+                        {announceBusy ? t.consentAnnounceSaving : t.consentAnnounceRevoke}
                       </button>
                     </>
                   )}
@@ -1568,24 +1568,24 @@ export function CreatorConsents() {
 
             {/* Platform consents */}
             <section>
-              <h2 className="text-xs font-bold text-white/60 uppercase tracking-wider mb-3">Platform consents</h2>
+              <h2 className="text-xs font-bold text-white/60 uppercase tracking-wider mb-3">{t.consentSectionPlatform}</h2>
               <ConsentRowList rows={genericRows} />
             </section>
 
             {/* Creator compliance */}
             <section>
-              <h2 className="text-xs font-bold text-white/60 uppercase tracking-wider mb-3">Creator compliance (required)</h2>
+              <h2 className="text-xs font-bold text-white/60 uppercase tracking-wider mb-3">{t.consentSectionCompliance}</h2>
               <ConsentRowList rows={complianceRows} />
               <p className="text-[10px] text-pnp-textSecondary/60 mt-3 px-1">
-                Government ID images are stored encrypted and only visible to platform admins for 2257 compliance review.
+                {t.consentGovIdFooter}
               </p>
             </section>
 
             {/* Payout config */}
             <section>
-              <h2 className="text-xs font-bold text-white/60 uppercase tracking-wider mb-3">Payout configuration</h2>
+              <h2 className="text-xs font-bold text-white/60 uppercase tracking-wider mb-3">{t.consentSectionPayout}</h2>
               <p className="text-[11px] mb-3 px-1" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-                Configure at least one method — fiat OR crypto — to receive your earnings. Payouts run every Tuesday.
+                {t.consentPayoutHint}
               </p>
               <ConsentRowList rows={payoutRows} />
             </section>
@@ -1594,15 +1594,15 @@ export function CreatorConsents() {
             <section className="pt-2">
               <details>
                 <summary className="text-[11px] text-pnp-textSecondary/60 cursor-pointer hover:text-pnp-textSecondary transition-colors">
-                  Support IDs (for when you contact support)
+                  {t.consentSupportIds}
                 </summary>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
                   <div className="px-3 py-2 rounded-lg bg-white/5">
-                    <p className="text-[9px] text-pnp-textSecondary uppercase tracking-wider mb-0.5">User ID</p>
+                    <p className="text-[9px] text-pnp-textSecondary uppercase tracking-wider mb-0.5">{t.consentUserIdLabel}</p>
                     <p className="text-xs font-mono text-white/80 break-all">{userId ?? "—"}</p>
                   </div>
                   <div className="px-3 py-2 rounded-lg bg-white/5">
-                    <p className="text-[9px] text-pnp-textSecondary uppercase tracking-wider mb-0.5">Application ID</p>
+                    <p className="text-[9px] text-pnp-textSecondary uppercase tracking-wider mb-0.5">{t.consentApplicationIdLabel}</p>
                     <p className="text-xs font-mono text-white/80 break-all">{consents.application_id ?? "—"}</p>
                   </div>
                 </div>
@@ -1624,7 +1624,7 @@ export function CreatorConsents() {
             {/* Header */}
             <div className="flex items-center justify-between px-5 pt-5 pb-3 flex-shrink-0">
               <div>
-                <p className="text-sm font-bold text-white">Privacy Policy</p>
+                <p className="text-sm font-bold text-white">{t.consentPrivacyModalTitle}</p>
                 <p className="text-xs mt-0.5" style={{ color: "#8E8E93" }}>pnptv.app/privacy</p>
               </div>
               <button onClick={() => setPrivacyModalOpen(false)} className="w-8 h-8 flex items-center justify-center rounded-full" style={{ background: "rgba(255,255,255,0.08)" }} aria-label="Close">
@@ -1637,23 +1637,23 @@ export function CreatorConsents() {
             {/* Policy summary */}
             <div className="flex-1 overflow-y-auto px-5 pb-3 space-y-3 text-xs" style={{ color: "#8E8E93" }}>
               <div className="rounded-xl p-3 space-y-2" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
-                <p className="font-semibold text-white">What we collect</p>
-                <p>PNPtv! collects information you provide directly (profile details, uploaded content, payment information) and data generated by your activity on the platform (interactions, usage patterns, location if granted).</p>
+                <p className="font-semibold text-white">{t.consentPrivacyCollectTitle}</p>
+                <p>{t.consentPrivacyCollectBody}</p>
               </div>
               <div className="rounded-xl p-3 space-y-2" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
-                <p className="font-semibold text-white">How we use it</p>
-                <p>Your data is used to operate and improve the platform, process payments, provide creator analytics, comply with legal obligations (including 18 U.S.C. § 2257), and communicate with you about your account.</p>
+                <p className="font-semibold text-white">{t.consentPrivacyUseTitle}</p>
+                <p>{t.consentPrivacyUseBody}</p>
               </div>
               <div className="rounded-xl p-3 space-y-2" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
-                <p className="font-semibold text-white">Sharing & disclosure</p>
-                <p>We do not sell your personal data. We share it only with service providers necessary to operate the platform, or when required by law. Creator identity documents are stored encrypted and accessed only for compliance review.</p>
+                <p className="font-semibold text-white">{t.consentPrivacySharingTitle}</p>
+                <p>{t.consentPrivacySharingBody}</p>
               </div>
               <div className="rounded-xl p-3 space-y-2" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
-                <p className="font-semibold text-white">Your rights</p>
-                <p>You may request access, correction, or deletion of your personal data at any time by contacting support@pnptv.app. Note that some data must be retained for legal compliance purposes.</p>
+                <p className="font-semibold text-white">{t.consentPrivacyRightsTitle}</p>
+                <p>{t.consentPrivacyRightsBody}</p>
               </div>
               <a href="/privacy" target="_blank" rel="noopener noreferrer" className="block text-center underline py-1" style={{ color: "#5ED1C4" }}>
-                Read the full Privacy Policy ↗
+                {t.consentPrivacyReadFull}
               </a>
               {privacyError && (
                 <p className="text-center text-red-400 text-xs pt-1">{privacyError}</p>
@@ -1671,7 +1671,7 @@ export function CreatorConsents() {
                     setConsents((c: any) => c ? { ...c, privacy_accepted: true, privacy_accepted_at: new Date().toISOString() } : c);
                     setPrivacyModalOpen(false);
                   } catch {
-                    setPrivacyError("Could not save your acceptance. Please try again.");
+                    setPrivacyError(t.consentSaveError);
                   } finally {
                     setPrivacyAccepting(false);
                   }
@@ -1680,17 +1680,17 @@ export function CreatorConsents() {
                 className="w-full py-3 rounded-xl text-sm font-bold text-white transition-all disabled:opacity-50"
                 style={{ background: "linear-gradient(135deg,#5ED1C4,#00D4E8)" }}
               >
-                {privacyAccepting ? "Saving…" : "I Accept the Privacy Policy"}
+                {privacyAccepting ? t.consentAnnounceSaving : t.consentPrivacyAcceptBtn}
               </button>
               <button
                 onClick={() => setPrivacyModalOpen(false)}
                 className="w-full py-2.5 rounded-xl text-sm font-medium text-white/50 hover:text-white/70 transition-colors"
                 style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}
               >
-                I Do Not Accept
+                {t.consentPrivacyDeclineBtn}
               </button>
               <p className="text-[10px] text-center" style={{ color: "#8E8E93" }}>
-                Declining means your creator profile cannot be activated. Contact <a href="mailto:support@pnptv.app" className="underline">support@pnptv.app</a> with questions.
+                {t.consentPrivacyDeclineNote}
               </p>
             </div>
           </div>
@@ -1709,21 +1709,21 @@ export function CreatorConsents() {
             <div className="flex items-center justify-between px-5 pt-5 pb-3 flex-shrink-0">
               <div>
                 <p className="text-sm font-bold text-white">
-                  {acceptKind === "terms" ? "Terms of Service"
-                    : acceptKind === "creator_terms" ? "Creator Program Terms"
-                    : "Content Disclaimer"}
+                  {acceptKind === "terms" ? t.consentAcceptModalTermsTitle
+                    : acceptKind === "creator_terms" ? t.consentAcceptModalCreatorTitle
+                    : t.consentAcceptModalDisclaimerTitle}
                 </p>
                 <p className="text-xs mt-0.5" style={{ color: "#8E8E93" }}>
-                  {acceptKind === "terms" ? "pnptv.app/terms"
-                    : acceptKind === "creator_terms" ? "70/30 revenue split · payouts every Tuesday"
-                    : "Required for creators"}
+                  {acceptKind === "terms" ? t.consentAcceptModalTermsSubtitle
+                    : acceptKind === "creator_terms" ? t.consentAcceptModalCreatorSubtitle
+                    : t.consentAcceptModalDisclaimerSubtitle}
                 </p>
               </div>
               <button
                 onClick={() => setAcceptKind(null)}
                 className="w-8 h-8 flex items-center justify-center rounded-full"
                 style={{ background: "rgba(255,255,255,0.08)" }}
-                aria-label="Close"
+                aria-label={t.consentAcceptClose}
               >
                 <svg className="w-4 h-4 text-white/60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -1734,21 +1734,21 @@ export function CreatorConsents() {
             <div className="flex-1 overflow-y-auto px-5 pb-3 space-y-3 text-xs" style={{ color: "#8E8E93" }}>
               {acceptKind === "terms" ? (
                 <div className="rounded-xl p-3 space-y-2" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
-                  <p>PNPtv! Terms of Service govern your use of the platform: community guidelines, content rules, the strike system, and how disputes are handled.</p>
-                  <p>By accepting you confirm you have read the full terms at <a href="/terms" target="_blank" rel="noreferrer" className="underline text-white/70">pnptv.app/terms</a> and agree to be bound by them.</p>
+                  <p>{t.consentAcceptTermsBody1}</p>
+                  <p>{t.consentAcceptTermsBody2}</p>
                 </div>
               ) : acceptKind === "creator_terms" ? (
                 <div className="rounded-xl p-3 space-y-2" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
-                  <p className="font-semibold text-white">Creator Program Terms</p>
-                  <p>Subscription revenue is split <strong className="text-white">70% to you / 30% to PNPtv!</strong>. Payouts processed every Tuesday via your selected payment method.</p>
-                  <p>You retain ownership of all content you upload. PNPtv! may deactivate profiles for community standard violations (3 strikes = suspension).</p>
-                  <p>You may deactivate at any time. Active subscribers retain access until their billing period ends. PNPtv! may amend these terms with 30 days written notice.</p>
-                  <a href="/2257" target="_blank" rel="noreferrer" className="block underline text-white/60 text-[10px]">18 U.S.C. § 2257 compliance info ↗</a>
+                  <p className="font-semibold text-white">{t.consentAcceptCreatorBody1}</p>
+                  <p>{t.consentAcceptCreatorBody2}</p>
+                  <p>{t.consentAcceptCreatorBody3}</p>
+                  <p>{t.consentAcceptCreatorBody4}</p>
+                  <a href="/2257" target="_blank" rel="noreferrer" className="block underline text-white/60 text-[10px]">{t.consentAcceptCreatorLink}</a>
                 </div>
               ) : (
                 <div className="rounded-xl p-3 space-y-2" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
-                  <p>I confirm that all objects, substances, or materials appearing in my videos are <strong className="text-white/80">props, simulated, or used solely for entertainment purposes</strong>.</p>
-                  <p>All content complies with PNPtv! community standards. No illegal content. Explicit content requires age verification to be active on my account.</p>
+                  <p>{t.consentAcceptDisclaimerBody1}</p>
+                  <p>{t.consentAcceptDisclaimerBody2}</p>
                 </div>
               )}
               {acceptError && (
@@ -1774,7 +1774,7 @@ export function CreatorConsents() {
                     }
                     setAcceptKind(null);
                   } catch {
-                    setAcceptError("Could not save your acceptance. Please try again.");
+                    setAcceptError(t.consentSaveError);
                   } finally {
                     setAcceptBusy(false);
                   }
@@ -1783,14 +1783,14 @@ export function CreatorConsents() {
                 className="w-full py-3 rounded-xl text-sm font-bold text-white transition-all disabled:opacity-50"
                 style={{ background: "linear-gradient(135deg,#5ED1C4,#00D4E8)" }}
               >
-                {acceptBusy ? "Saving…" : acceptKind === "terms" ? "I Accept the Terms" : acceptKind === "creator_terms" ? "I Accept the Creator Terms" : "I Accept"}
+                {acceptBusy ? t.consentAcceptSaving : acceptKind === "terms" ? t.consentAcceptTermsBtn : acceptKind === "creator_terms" ? t.consentAcceptCreatorBtn : t.consentAcceptBtn}
               </button>
               <button
                 onClick={() => setAcceptKind(null)}
                 className="w-full py-2.5 rounded-xl text-sm font-medium text-white/50 hover:text-white/70 transition-colors"
                 style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}
               >
-                Cancel
+                {t.consentAcceptCancel}
               </button>
             </div>
           </div>
