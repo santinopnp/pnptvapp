@@ -443,11 +443,9 @@ async function verifyPayment(req, res) {
 
   const validProviders = [
     // Current providers (match frontend dropdown in CristinaWidget)
-    'wallet_usdc', 'nowpayments', 'efipay', 'nequi_wompi', 'rush_tokens',
-    // Card/crypto (may be set programmatically by admin tooling)
-    'stripe', 'moonpay',
+    'wallet_usdc', 'nowpayments', 'rush_tokens',
     // Legacy providers (historical verification only)
-    'epayco', 'daimo', 'btcpay',
+    'epayco', 'daimo', 'btcpay', 'stripe', 'moonpay', 'efipay', 'nequi_wompi',
   ];
   if (!validProviders.includes(provider)) {
     return res.status(400).json({ success: false, error: `Invalid provider. Must be one of: ${validProviders.join(', ')}` });

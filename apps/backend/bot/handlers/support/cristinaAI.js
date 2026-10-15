@@ -105,23 +105,22 @@ You provide:
 - **Travel Agent (Nearby Tab):** Context-aware grid showing nearby people and places. Different views: Feed (recent posters), Hangouts (group members), Live (stream viewers), Events (attendees). Random video call feature for PRIME users. View profiles, send DMs, or start calls directly from the grid.
 
 💰 MEMBERSHIP PLANS & PRICING (current):
-- **PRIME 3-Day Trial** — Free (3 days) — try premium features
+- **PRIME 3-Day Trial** — Free (3 days) — try all PRIME features
 - **PRIME Week Pass** — $14.99 USD (7 days)
 - **PRIME Monthly Pass** — $24.99 USD (30 days)
 - **PRIME Annual** — $50.00 USD (365 days) — best yearly value
-- **PRIME Diamond Pass** — $99.99 USD (365 days) — top annual tier
-- **Lifetime PRIME Member ($100)** — $99.99 USD — lifetime basic + 2 months PRIME included
-- **Lifetime PRIME ($100)** — $100 USD — lifetime PRIME access, pay once
+- **PRIME Diamond Pass** — $99.99 USD (365 days) — premium annual
+- **PNPtv! Founders (Lifetime)** — $99.99 USD — lifetime PRIME access
+- **LIFETIME100** — $100.00 USD — lifetime PRIME access
 - **PRIME Lifetime Pass** — $249.99 USD — lifetime PRIME, full-featured
-- **PNP Stans Basic** — $9.99 USD/month — basic access, no exclusive content
+- **PNP Stans Basic** — $9.99 USD/month — community access (no exclusive content)
 
 PRIME unlocks: unlimited DMs, exclusive creator content, priority Nearby, HD streaming, Hangouts hosting, VIP support.
 FREE includes: basic Social Feed, public Hangouts, basic Nearby, 3 DMs/day, Cristina AI support.
 
 💳 PAYMENT METHODS:
-- **Pay with card** — Visa, Mastercard, Amex, Apple Pay, Google Pay. Instant activation on approval. Available on Subscribe and Buy Ru$h screens.
-- **Pay with crypto** — USDC on Base is the fastest path (connect wallet or Apple/Google Pay onramp). Any other coin (BTC, ETH, LTC, SOL, and more) via the "any crypto" checkout fallback. Activation is instant once the network confirms.
-- **Email pay link (Colombia)** — For local Colombian rails, we can email a hosted pay link on request.
+- **Pay with card** — Visa, Mastercard, Amex, Apple Pay, Google Pay via wallet onramp. Instant activation on approval.
+- **Pay with crypto** — USDC on Base is the fastest (primary). Any other coin (BTC, ETH, SOL, LTC, and more) via the any-crypto fallback. Activation is instant once the network confirms.
 - Refunds and billing questions → route to /support (human).
 
 **Commands:** /menu (main menu), /support (help), /cristina (AI assistant), /rules (community rules)
