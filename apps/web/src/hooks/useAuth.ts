@@ -46,6 +46,8 @@ interface PnptvUser {
   foundersPopupDismissedAt?: string | null;
   /** ISO timestamp: when the user last dismissed the Year50 popup. Null = never dismissed. */
   year50PopupDismissedAt?: string | null;
+  /** True when the user holds at least one lifetime entitlement (founders pass). */
+  isLifetimePrime?: boolean;
 }
 
 interface AuthState {
@@ -99,6 +101,7 @@ function mapTelegramUser(u: NonNullable<TelegramAuthResponse["user"]>): PnptvUse
     foundersOfferExpiresAt: (u as { founders_offer_expires_at?: string | null }).founders_offer_expires_at ?? null,
     foundersPopupDismissedAt: (u as { founders_popup_dismissed_at?: string | null }).founders_popup_dismissed_at ?? null,
     year50PopupDismissedAt: (u as { year50_popup_dismissed_at?: string | null }).year50_popup_dismissed_at ?? null,
+    isLifetimePrime: (u as { is_lifetime_prime?: boolean }).is_lifetime_prime === true,
   };
 }
 

@@ -2468,9 +2468,17 @@ const xLoginCallback = async (req, res) => {
 /**
  * GET /api/webapp/auth/status
  */
-const authStatus = (req, res) => {
+const authStatus = async (req, res) => {
   const user = req.session?.user;
   if (!user) return res.json({ authenticated: false });
+  let isLifetimePrime = false;
+  try {
+    const r = await query(
+      `SELECT 1 FROM user_entitlements WHERE user_id = $1 AND is_lifetime = true LIMIT 1`,
+      [String(user.id)]
+    );
+    isLifetimePrime = r.rows.length > 0;
+  } catch { /* non-critical — default false */ }
   return res.json({
     authenticated: true,
     user: {
@@ -2486,6 +2494,7 @@ const authStatus = (req, res) => {
       language: user.language,
       role: user.role || 'user',
       last_login_method: user.last_login_method || null,
+      is_lifetime_prime: isLifetimePrime,
     },
   });
 };

@@ -2073,7 +2073,7 @@ export function Layout() {
       <WalletLoginTip />
 
       {/* Global announcement strip — only after verification */}
-      {isAuthenticated && user?.ageVerified && user?.termsAccepted && (
+      {isAuthenticated && user?.ageVerified && user?.termsAccepted && !/^\/call\//.test(location.pathname) && (
         <div className={`fixed left-0 right-0 z-40 pointer-events-none lg:bottom-0 lg:left-72 ${
           cruiseMode
             ? "bottom-[calc(5rem+env(safe-area-inset-bottom,0px))]"

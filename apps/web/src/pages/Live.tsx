@@ -30,6 +30,7 @@ import {
 } from "@/lib/api";
 import { PerformerDrawer } from "@/components/live/PerformerDrawer";
 import { BookCallModal } from "@/components/creators/BookCallModal";
+import type { CreatorCardCreator } from "@/components/creators/CreatorCard";
 import { AppShell, RightRail, SuggestedCreatorRow, SuggestedFollowRow, useForYou } from "@/components/Layout";
 
 const ALLOWED_IMAGE_HOSTS = ["cms.pnptv.app", "app.pnptv.app", "pnptv.app"];
@@ -169,6 +170,7 @@ export default function Live() {
   const [drawerPerformer, setDrawerPerformer] = useState<FeaturedPerformer | null>(null);
   const [drawerStreamId, setDrawerStreamId] = useState<string | null>(null);
   const [drawerOpenInEditMode, setDrawerOpenInEditMode] = useState(false);
+  const [drawerBookCreator, setDrawerBookCreator] = useState<CreatorCardCreator | null>(null);
   // Album thumbnail cache: creatorId → first 2 thumbs
   const [albumThumbs, setAlbumThumbs] = useState<Record<string, CreatorMediaItem[]>>({});
   const thumbLoadedRef = useRef<Set<string>>(new Set());
@@ -1059,6 +1061,11 @@ export default function Live() {
                       {[p.city, p.country].filter(Boolean).join(", ")}
                     </p>
                   )}
+                  {p.isAvailable && (
+                    <span className="inline-block mt-1 text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: "rgba(212,0,122,0.25)", color: "#FF69B4", border: "1px solid rgba(212,0,122,0.45)" }}>
+                      📞 Book call
+                    </span>
+                  )}
                 </div>
 
                 {/* Hover CTA overlay (desktop) */}
@@ -1300,6 +1307,16 @@ export default function Live() {
         />
       )}
 
+      {/* ── Book Call Modal (from Performer Drawer — rendered here to avoid iOS stacking context) ── */}
+      {drawerBookCreator && (
+        <BookCallModal
+          creator={drawerBookCreator}
+          isOnline={!!(drawerPerformer && drawerStreamId)}
+          open={true}
+          onClose={() => setDrawerBookCreator(null)}
+        />
+      )}
+
       {/* ── Performer Drawer ── */}
       {drawerPerformer && (
         <PerformerDrawer
@@ -1310,6 +1327,11 @@ export default function Live() {
           openInEditMode={drawerOpenInEditMode}
           onAlbumUpdate={(cid, items) => {
             setAlbumThumbs((prev) => ({ ...prev, [cid]: items.slice(0, 2) }));
+          }}
+          onBookCall={(creator) => {
+            setDrawerPerformer(null);
+            setDrawerStreamId(null);
+            setDrawerBookCreator(creator);
           }}
         />
       )}

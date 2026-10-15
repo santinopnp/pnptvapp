@@ -17,6 +17,7 @@ import {
   type NewMember,
 } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
+import { useAuth } from "@/hooks/useAuth";
 import { useNearbyDistances } from "@/components/NearbyBadge";
 import { getSocket, connectSocket } from "@/lib/socket";
 
@@ -124,11 +125,35 @@ function PrimeChannelBanner({ isPrime, onNavigate }: { isPrime: boolean; onNavig
   );
 }
 
+// Friday Oct 16 2026 at midnight COT (UTC-5) = 2026-10-17T05:00:00Z
+const FOUNDERS_DEADLINE_MS = Date.UTC(2026, 9, 17, 5, 0, 0);
+
+function useFoundersCountdown() {
+  const [secsLeft, setSecsLeft] = React.useState(() =>
+    Math.max(0, Math.floor((FOUNDERS_DEADLINE_MS - Date.now()) / 1000))
+  );
+  React.useEffect(() => {
+    if (secsLeft <= 0) return;
+    const id = setInterval(() => {
+      const s = Math.max(0, Math.floor((FOUNDERS_DEADLINE_MS - Date.now()) / 1000));
+      setSecsLeft(s);
+    }, 1000);
+    return () => clearInterval(id);
+  }, [secsLeft <= 0]);
+  const d = Math.floor(secsLeft / 86400);
+  const h = Math.floor((secsLeft % 86400) / 3600);
+  const m = Math.floor((secsLeft % 3600) / 60);
+  const s = secsLeft % 60;
+  return { expired: secsLeft <= 0, label: `${d}d ${String(h).padStart(2,'0')}h ${String(m).padStart(2,'0')}m ${String(s).padStart(2,'0')}s` };
+}
+
 function FoundersBanner({ onNavigate }: { onNavigate: (path: string) => void }) {
+  const { user } = useAuth();
+  const { expired, label } = useFoundersCountdown();
   const [dismissed, setDismissed] = React.useState(() =>
     sessionStorage.getItem(FOUNDERS_BANNER_DISMISS_KEY) === '1'
   );
-  if (dismissed) return null;
+  if (dismissed || expired || user?.isLifetimePrime) return null;
 
   const handleDismiss = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -171,10 +196,10 @@ function FoundersBanner({ onNavigate }: { onNavigate: (path: string) => void }) 
               ⏳ LAST WEEK
             </span>
             <span
-              className="text-xs font-semibold"
-              style={{ color: 'rgba(230,145,56,0.80)', letterSpacing: '0.05em' }}
+              className="text-xs font-semibold font-mono"
+              style={{ color: 'rgba(230,145,56,0.90)', letterSpacing: '0.03em' }}
             >
-              FOUNDERS EDITION
+              {label}
             </span>
           </div>
           <p className="font-bold text-sm text-white leading-snug">

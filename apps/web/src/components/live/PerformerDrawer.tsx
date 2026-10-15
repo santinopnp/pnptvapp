@@ -14,7 +14,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
-import { BookCallModal } from "@/components/creators/BookCallModal";
 import { LivePlayer } from "@/components/LivePlayer";
 import {
   listCreatorMedia,
@@ -45,6 +44,8 @@ export interface PerformerDrawerProps {
   currentUserId?: string;
   openInEditMode?: boolean;
   onAlbumUpdate?: (creatorId: string, items: CreatorMediaItem[]) => void;
+  /** Called when the user taps "Buy Call" — parent renders BookCallModal at page level to avoid stacking-context issues on iOS */
+  onBookCall?: (creator: CreatorCardCreator) => void;
 }
 
 // ─── Internal: Album Grid ─────────────────────────────────────────────────────
@@ -185,7 +186,7 @@ function formatReplayDate(iso: string | null): string {
 
 // ─── Main Drawer ──────────────────────────────────────────────────────────────
 
-export function PerformerDrawer({ performer, liveStreamId, onClose, currentUserId, openInEditMode, onAlbumUpdate }: PerformerDrawerProps) {
+export function PerformerDrawer({ performer, liveStreamId, onClose, currentUserId, openInEditMode, onAlbumUpdate, onBookCall }: PerformerDrawerProps) {
   const { isAuthenticated, user } = useAuth();
   const navigate = useNavigate();
 
@@ -194,7 +195,6 @@ export function PerformerDrawer({ performer, liveStreamId, onClose, currentUserI
   const [subscribed, setSubscribed] = useState(false);
   const [subPrice, setSubPrice] = useState<number>(0);
   const [subLoading, setSubLoading] = useState(false);
-  const [showBookModal, setShowBookModal] = useState(false);
   const [showSubscribePrompt, setShowSubscribePrompt] = useState(false);
   const [showSubscribeWizard, setShowSubscribeWizard] = useState(false);
   const [recordings, setRecordings] = useState<StreamRecording[]>([]);
@@ -723,7 +723,7 @@ export function PerformerDrawer({ performer, liveStreamId, onClose, currentUserI
               </button>
             ) : (
               <button
-                onClick={() => setShowBookModal(true)}
+                onClick={() => onBookCall?.(creatorForModal)}
                 className="col-span-1 py-2.5 rounded-xl text-xs font-bold text-pnp-textPrimary bg-pnp-surface border border-pnp-border hover:border-pnp-accent/40 active:scale-95 transition-all"
               >
                 Buy Call
@@ -784,15 +784,6 @@ export function PerformerDrawer({ performer, liveStreamId, onClose, currentUserI
         </div>
       )}
 
-      {/* Book Call Modal */}
-      {showBookModal && (
-        <BookCallModal
-          creator={creatorForModal}
-          isOnline={isLive}
-          open={showBookModal}
-          onClose={() => setShowBookModal(false)}
-        />
-      )}
     </>
   );
 }
