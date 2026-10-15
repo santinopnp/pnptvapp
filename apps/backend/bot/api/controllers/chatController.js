@@ -219,7 +219,7 @@ const translateChatMessage = async (req, res) => {
 
     const cached = msg.translations?.[targetLang];
     if (cached && typeof cached === 'string') {
-      return res.json({ success: true, translated: cached, cached: true, targetLang });
+      return res.json({ success: true, translatedText: cached, cached: true, targetLang });
     }
 
     const grokService = require('../../../services/grokService');
@@ -237,7 +237,7 @@ const translateChatMessage = async (req, res) => {
       [targetLang, translated, msgId]
     );
 
-    return res.json({ success: true, translated, cached: false, targetLang });
+    return res.json({ success: true, translatedText: translated, cached: false, targetLang });
   } catch (err) {
     logger.error('translateChatMessage error', { error: err.message, msgId, targetLang });
     return res.status(500).json({ error: 'Failed to translate message' });

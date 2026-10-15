@@ -2915,7 +2915,7 @@ const translateSocialPost = async (req, res) => {
 
     const cached = post.translations?.[targetLang];
     if (cached && typeof cached === 'string') {
-      return res.json({ success: true, translated: cached, cached: true, targetLang });
+      return res.json({ success: true, translatedText: cached, cached: true, targetLang });
     }
 
     const { translateText } = require('../../../services/grokService');
@@ -2933,7 +2933,7 @@ const translateSocialPost = async (req, res) => {
       [targetLang, translated, postId]
     );
 
-    return res.json({ success: true, translated, cached: false, targetLang });
+    return res.json({ success: true, translatedText: translated, cached: false, targetLang });
   } catch (err) {
     logger.error('translateSocialPost error', { error: err.message, postId, targetLang });
     return res.status(500).json({ error: 'Failed to translate post' });
