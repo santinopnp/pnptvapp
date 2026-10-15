@@ -402,6 +402,7 @@ export interface TelegramAuthResponse {
     is_super_god?: boolean;
     super_god_eligible?: boolean;
     founders_offer_expires_at?: string | null;
+    is_lifetime_prime?: boolean;
   };
   requiresTerms?: boolean;
   error?: string;
@@ -11630,4 +11631,41 @@ export function dismissYear50Popup(): Promise<{ ok: boolean }> {
 
 export function getExchangeRates(): Promise<{ rates: Record<string, number>; ts: number }> {
   return request<{ rates: Record<string, number>; ts: number }>('/api/webapp/exchange-rates');
+}
+
+// ── Public creator booking page ───────────────────────────────────────────────
+
+export interface PublicBookingPackage {
+  id: number;
+  title: string;
+  sku: string;
+  priceUsd: number;
+  durationMinutes: number;
+  description: string | null;
+}
+
+export interface PublicBookingCreator {
+  id: string;
+  displayName: string;
+  username: string;
+  photoUrl: string | null;
+  bio: string | null;
+}
+
+export interface PublicBookingPerformer {
+  id: string;
+  userId: string;
+  isAvailable: boolean;
+  status: string;
+}
+
+export interface PublicCreatorBookingInfo {
+  success: boolean;
+  creator: PublicBookingCreator;
+  performer: PublicBookingPerformer | null;
+  packages: PublicBookingPackage[];
+}
+
+export function getPublicCreatorBookingInfo(handle: string): Promise<PublicCreatorBookingInfo> {
+  return request<PublicCreatorBookingInfo>(`/api/webapp/book/${encodeURIComponent(handle)}/info`);
 }

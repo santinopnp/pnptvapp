@@ -1555,6 +1555,106 @@ async function getUpcomingBookings(req, res) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// GET /api/webapp/book/:handle/info  (PUBLIC — no auth)
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns public booking page data for a creator identified by username/handle.
+ * This endpoint is intentionally public so the landing page renders without
+ * requiring the visitor to be logged in.
+ *
+ * Response: { creator, performer, packages }
+ *   - creator: { id, displayName, username, photoUrl, bio }
+ *   - performer: { id, userId, isAvailable, status }
+ *   - packages: [{ id, title, sku, priceUsd, durationMinutes, description }]
+ */
+async function getPublicCreatorBookingInfo(req, res) {
+  try {
+    const { handle } = req.params;
+    if (!handle || typeof handle !== 'string' || handle.length > 50) {
+      return res.status(400).json({ success: false, error: 'Invalid handle' });
+    }
+    // Normalise: lowercase, strip leading @
+    const cleanHandle = handle.replace(/^@/, '').toLowerCase();
+
+    const userResult = await query(
+      `SELECT id, username,
+              COALESCE(first_name, username) AS display_name,
+              CASE
+                WHEN photo_file_id IS NULL THEN NULL
+                WHEN photo_file_id LIKE 'http%' THEN photo_file_id
+                WHEN photo_file_id LIKE '/%' THEN photo_file_id
+                ELSE '/uploads/avatars/' || photo_file_id
+              END AS photo_url,
+              bio
+       FROM users
+       WHERE LOWER(username) = $1
+         AND creator_status IN ('approved', 'active')
+       LIMIT 1`,
+      [cleanHandle]
+    );
+
+    if (!userResult.rows[0]) {
+      return res.status(404).json({ success: false, error: 'Creator not found' });
+    }
+
+    const user = userResult.rows[0];
+    const creatorId = String(user.id);
+
+    // Look up performer row (for is_available)
+    const performerResult = await query(
+      `SELECT id, user_id, status,
+              COALESCE(is_available, false) AS is_available
+       FROM performers
+       WHERE user_id = $1
+       LIMIT 1`,
+      [creatorId]
+    );
+    const performer = performerResult.rows[0] || null;
+
+    // Fetch active call packages for this creator
+    // We surface all active packages; the frontend filters down to the canonical
+    // booking-page SKUs (Solo-60, Boytoy1-60, Boytoy2-60).
+    const pkgResult = await query(
+      `SELECT id, title, sku, price_usd, duration_minutes
+       FROM call_packages
+       WHERE creator_id = $1
+         AND is_active = true
+       ORDER BY price_usd ASC`,
+      [creatorId]
+    );
+
+    return res.json({
+      success: true,
+      creator: {
+        id: user.id,
+        displayName: user.display_name,
+        username: user.username,
+        photoUrl: user.photo_url,
+        bio: user.bio,
+      },
+      performer: performer ? {
+        id: performer.id,
+        userId: performer.user_id,
+        isAvailable: !!performer.is_available,
+        status: performer.status,
+      } : null,
+      packages: pkgResult.rows.map((p) => ({
+        id: p.id,
+        title: p.title,
+        sku: p.sku,
+        priceUsd: Number(p.price_usd),
+        durationMinutes: p.duration_minutes,
+        description: null,
+      })),
+    });
+  } catch (err) {
+    logger.error('[callBookingController] getPublicCreatorBookingInfo error', { error: err.message });
+    return res.status(500).json({ success: false, error: 'Failed to load creator info' });
+  }
+}
+
 module.exports = {
   createCheckout,
   getBooking,
@@ -1574,4 +1674,5 @@ module.exports = {
   setNextShowDate,
   getUpcomingBookings,
   createCheckoutTokens,
+  getPublicCreatorBookingInfo,
 };

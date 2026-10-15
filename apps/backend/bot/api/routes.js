@@ -22095,6 +22095,22 @@ app.delete('/api/webapp/creator/call-packages/:packageId',
 // ── Book a Call: Checkout, Booking Management & Creator Availability ─────────
 const callBookingController = require('./controllers/callBookingController');
 
+// ── Public creator booking page info ─────────────────────────────────────────
+// GET /api/webapp/book/:handle/info — no auth required.
+// Rate-limited by IP to prevent enumeration scraping.
+const publicBookInfoLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  keyGenerator: (req) => req.ip,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: 'Too many requests' },
+});
+
+app.get('/api/webapp/book/:handle/info',
+  publicBookInfoLimiter,
+  asyncHandler(callBookingController.getPublicCreatorBookingInfo));
+
 // H-08: Rate limit checkout creation — 5 attempts per 15 min, keyed by user ID.
 // Previous: 2 per 2 min — too tight; users changing crypto or retrying after a
 // popup close were immediately blocked and couldn't create a new invoice.
