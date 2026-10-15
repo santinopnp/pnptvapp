@@ -1074,7 +1074,13 @@ export default function MainStage() {
     setMsgTranslationBusy((prev) => new Set(prev).add(msg.id));
     setMsgTranslationError((prev) => { const next = new Map(prev); next.delete(msg.id); return next; });
     try {
-      const res = await translateText(msg.text, t.lang);
+      const uiLang = t.lang;
+      let res = await translateText(msg.text, uiLang);
+      // EN user sees EN message → text unchanged → fallback to ES (and vice-versa)
+      if (res.translatedText.trim() === msg.text.trim()) {
+        const fallback = uiLang === "en" ? "es" : uiLang === "es" ? "en" : null;
+        if (fallback) res = await translateText(msg.text, fallback);
+      }
       setMsgTranslationCache((prev) => { const next = new Map(prev); next.set(msg.id, res.translatedText); return next; });
       setMsgTranslationView((prev) => { const next = new Map(prev); next.set(msg.id, "translated"); return next; });
     } catch {

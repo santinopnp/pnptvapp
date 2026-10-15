@@ -356,7 +356,13 @@ function HangoutChatPanel({
     setTranslationBusy((prev) => new Set(prev).add(msg.id));
     setTranslationError((prev) => { const next = new Map(prev); next.delete(msg.id); return next; });
     try {
-      const res = await translateGroupMessage(groupId, msg.id, uiLang);
+      let res = await translateGroupMessage(groupId, msg.id, uiLang);
+      // EN users translating EN content (or ES users translating ES) get back the
+      // same text unchanged — auto-fallback to the platform's other primary language.
+      if (res.translatedText.trim() === msg.content.trim()) {
+        const fallback = uiLang === "en" ? "es" : uiLang === "es" ? "en" : null;
+        if (fallback) res = await translateGroupMessage(groupId, msg.id, fallback);
+      }
       setTranslationCache((prev) => { const next = new Map(prev); next.set(msg.id, res.translatedText); return next; });
       setTranslationView((prev) => { const next = new Map(prev); next.set(msg.id, "translated"); return next; });
     } catch {
