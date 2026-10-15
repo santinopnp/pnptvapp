@@ -10461,7 +10461,7 @@ app.get('/api/webapp/social/posts/:postId/reactions', asyncHandler(reactionContr
 // Chat message reactions + translation
 app.post('/api/webapp/chat/messages/:messageId/react', requireSessionAuth, asyncHandler(reactionController.reactToChatMessage));
 app.get('/api/webapp/chat/messages/:messageId/reactions', asyncHandler(reactionController.getChatReactions));
-app.post('/api/webapp/chat/messages/:messageId/translate', requireSessionAuth, asyncHandler(chatController.translateChatMessage));
+app.post('/api/webapp/chat/messages/:msgId/translate', requireSessionAuth, asyncHandler(chatController.translateChatMessage));
 // DM reactions
 app.post('/api/webapp/dm/messages/:messageId/react', requireSessionAuth, asyncHandler(reactionController.reactToDm));
 app.get('/api/webapp/dm/messages/:messageId/reactions', requireSessionAuth, asyncHandler(reactionController.getDmReactions));
