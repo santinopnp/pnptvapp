@@ -122,7 +122,7 @@ export async function translateText(
   if (!text.trim()) return null;
   if (postId && postId > 0) {
     try {
-      const res = await fetch(`${API_BASE}/api/webapp/posts/${postId}/translate`, {
+      const res = await fetch(`${API_BASE}/api/webapp/social/posts/${postId}/translate`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
