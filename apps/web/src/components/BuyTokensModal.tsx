@@ -345,11 +345,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
     reportWalletClientError("verifyWalletCheckoutTxAfterOnChain", new Error(lastReason || "verify_failed"), {
       surface: "rush", intentId: intent.intentId, txHash, rail: railChoice,
     });
-    throw new Error(
-      (es
-        ? `Transacción enviada pero la verificación falló. Guarda este hash y contáctanos: `
-        : `Transaction sent but verification failed. Save this hash and contact us: `) + txHash
-    );
+    throw new Error(t.subscribe.txVerifyFailed + txHash);
   };
 
   const handleWalletPay = async (pkg: TokenPackage) => {
@@ -367,9 +363,9 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
       const isCancel = /User rejected|user denied|cancel/i.test(msg);
       const isChain = /wrong network|unrecognized chain|chain mismatch|switch chain|network mismatch/i.test(msg);
       setError(isCancel
-        ? (es ? "Cancelaste la transacción." : "You cancelled the transaction.")
+        ? t.subscribe.txCancelled
         : isChain
-          ? (es ? "Cambia la red de tu billetera a Base y vuelve a intentar." : "Switch your wallet network to Base and try again.")
+          ? t.subscribe.txSwitchNetwork
           : msg);
       if (!isCancel) {
         reportWalletClientError("buyTokensWalletPay", err, {
@@ -384,7 +380,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
     if (!activeWallet) return;
     const usd = Number(customUsd);
     if (!isFinite(usd) || usd < 1 || usd > 5000) {
-      setError(es ? "Ingresa un monto entre $1 y $5000." : "Enter an amount between $1 and $5000.");
+      setError(t.subscribe.enterAmountRange);
       return;
     }
     setError(null); setPayingCustom(true);
@@ -396,9 +392,9 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
       const isCancel = /User rejected|user denied|cancel/i.test(msg);
       const isChain = /wrong network|unrecognized chain|chain mismatch|switch chain|network mismatch/i.test(msg);
       setError(isCancel
-        ? (es ? "Cancelaste la transacción." : "You cancelled the transaction.")
+        ? t.subscribe.txCancelled
         : isChain
-          ? (es ? "Cambia la red de tu billetera a Base y vuelve a intentar." : "Switch your wallet network to Base and try again.")
+          ? t.subscribe.txSwitchNetwork
           : msg);
       if (!isCancel) {
         reportWalletClientError("buyTokensCustomPay", err, {
@@ -455,7 +451,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
             try { popup?.close(); } catch (_) { /* popup may be cross-origin */ }
             return;
           }
-          if (s.failed) throw new Error(es ? "El pago falló o expiró." : "Payment failed or expired.");
+          if (s.failed) throw new Error(t.subscribe.npPaymentFailedExpired);
           if (popup && popup.closed) {
             // User closed popup — the payment may have already settled or
             // may still be in flight. Persist the invoice ID + poll for
@@ -726,20 +722,20 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
   const handleRedeemCode = async () => {
     const trimmedCode = activationCode.trim();
     if (!trimmedCode) {
-      setActivationError(es ? "Ingresa tu código de activación." : "Enter your activation code.");
+      setActivationError(t.subscribe.enterActivationCode);
       return;
     }
     setActivationError(null); setActivationLoading(true);
     try {
       const res = await activateTokenCode({ activationCode: trimmedCode });
       if (!res.ok) {
-        setActivationError(es ? "Código no válido o ya usado." : "Invalid or already-used code.");
+        setActivationError(t.subscribe.invalidOrUsedCode);
       } else {
         setActivationSuccess(res.tokensCredited);
         if (onSuccess) onSuccess(res.newBalance);
       }
     } catch (err) {
-      setActivationError(err instanceof Error ? err.message : (es ? "Error al canjear el código." : "Failed to redeem code."));
+      setActivationError(err instanceof Error ? err.message : t.subscribe.failedToRedeemCode);
     } finally {
       setActivationLoading(false);
     }

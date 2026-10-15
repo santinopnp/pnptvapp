@@ -266,6 +266,7 @@ import {
   linkPrivyIdentity,
   type WalletCheckoutSurface,
 } from "@/lib/api";
+import { useI18n } from "@/lib/i18n";
 
 // ── CCTP (Circle Cross-Chain Transfer Protocol) constants ─────────────────
 // Used to bridge native USDC from Ethereum mainnet → Base natively (no
@@ -497,6 +498,7 @@ export function WalletPayCard({
   label, onSuccess, onError, onCryptoFallback, lang = "en", compact = false, alreadyEntitled = false,
 }: WalletPayCardProps) {
   const es = lang === "es";
+  const t = useI18n();
   // Caller can pass NaN if plans haven't loaded yet or price parse fails
   // (parseFloat("") → NaN). Guard downstream .toFixed / Math.max / balance
   // comparisons — a "$NaN" button or `defaultAmount:"NaN"` addFunds call
@@ -762,7 +764,7 @@ export function WalletPayCard({
     // Without this, auto-pay fires for any non-negative balance because 0 <= bal
     // is always true, and reportWalletClientError logs amountUsd:0 into payment_errors.
     if (!priceReady) {
-      setError(es ? "Precio no disponible. Recarga la página." : "Price unavailable. Please reload.");
+      setError(t.subscribe.priceUnavailableReload);
       return;
     }
     setError(null); setGasTopupFailed(false); setPaying(true);
@@ -917,9 +919,9 @@ export function WalletPayCard({
           ? (es
             ? "Cancelaste la firma. Tus fondos están listos — toca Pagar para completar."
             : "Signing cancelled. Your funds are ready — tap Pay to complete.")
-          : (es ? "Cancelaste la transacción." : "You cancelled the transaction.")
+          : t.subscribe.txCancelled
         : isChain
-          ? (es ? "Cambia la red de tu billetera a Base y vuelve a intentar." : "Switch your wallet network to Base and try again.")
+          ? t.subscribe.txSwitchNetwork
         : isSubscriptionsPaused
           ? (es ? "Las suscripciones de este creador están pausadas temporalmente." : "This creator's subscriptions are currently paused.")
         : isCreatorLocked

@@ -107,26 +107,35 @@ export function useFeedI18n(lang?: string | null): FeedStrings {
   return strings[lang === "es" ? "es" : "en"];
 }
 
+const API_BASE = import.meta.env.VITE_API_URL || "";
+
 /**
- * Translate `text` to the target language using the MyMemory free API.
- * Source language is auto-detected by the service.
+ * Translate a social post's content via the PNPtv backend.
+ * The postId is required so the backend can cache results per-post.
  * Returns null on failure.
  */
 export async function translateText(
   text: string,
-  targetLang: string
+  targetLang: string,
+  postId?: number
 ): Promise<string | null> {
   if (!text.trim()) return null;
-  const ALLOWED_LANGS = new Set(["en","es","pt","zh","zhTW","fr","de","th","it","tr","ru","nl","vi","ja","id","ar"]);
-  const lang = ALLOWED_LANGS.has(targetLang) ? targetLang : "en";
-  const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text.slice(0, 500))}&langpair=autodetect|${encodeURIComponent(lang)}`;
-  try {
-    const res = await fetch(url);
-    const data = await res.json();
-    if (data?.responseStatus === 200 && data?.responseData?.translatedText) {
-      return data.responseData.translatedText as string;
-    }
-  } catch { /* network error */ }
+  if (postId && postId > 0) {
+    try {
+      const res = await fetch(`${API_BASE}/api/webapp/posts/${postId}/translate`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ targetLang }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.translatedText) return data.translatedText as string;
+      }
+    } catch { /* network error */ }
+    return null;
+  }
+  // Fallback: no postId provided — should not happen in normal flow
   return null;
 }
 

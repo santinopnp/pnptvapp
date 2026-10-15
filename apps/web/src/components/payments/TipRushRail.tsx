@@ -117,7 +117,7 @@ export function TipRushRail({
           onSuccess?.(typeof res.newBalance === "number" ? res.newBalance : null);
         } else {
           setResult("error");
-          setErrorMsg(es ? "No se pudo enviar la propina." : "Could not send tip.");
+          setErrorMsg(t.subscribe.couldNotSendTip);
         }
       } else {
         const res = await tipTokens(creatorId, tipAmount, message.trim() || undefined);
@@ -128,7 +128,7 @@ export function TipRushRail({
           onSuccess?.(res.newBalance);
         } else {
           setResult("error");
-          setErrorMsg(es ? "No se pudo enviar la propina." : "Could not send tip.");
+          setErrorMsg(t.subscribe.couldNotSendTip);
         }
       }
     } catch (err: unknown) {
@@ -139,7 +139,7 @@ export function TipRushRail({
       if (code === "INSUFFICIENT_TOKENS" || code === "INSUFFICIENT_FUNDS" || status === 402 || /insufficient/i.test(msg)) {
         setErrorMsg(es ? `Saldo insuficiente para ${tipAmount} Ru$h.` : `Not enough Ru$h to send ${tipAmount} 💎.`);
       } else {
-        setErrorMsg(msg || (es ? "Error al enviar." : "Send failed."));
+        setErrorMsg(msg || t.subscribe.sendFailed);
       }
     } finally {
       setSending(false);

@@ -10263,6 +10263,7 @@ app.get('/api/webapp/social/posts/:postId', asyncHandler(socialController.getPos
 app.get('/api/webapp/social/posts/:postId/replies', requireSessionAuth, asyncHandler(socialController.getReplies));
 app.get('/api/webapp/social/mentions/search', requireSessionAuth, asyncHandler(socialController.searchMentions));
 app.post('/api/webapp/social/posts/:postId/mastodon', requireSessionAuth, socialActionLimiter, asyncHandler(socialController.postToMastodon));
+app.post('/api/webapp/social/posts/:postId/translate', requireSessionAuth, socialActionLimiter, asyncHandler(socialController.translateSocialPost));
 
 // ── User Hangout Activity (for profiles) ────────────────────────────────────
 app.get('/api/webapp/social/hangout-activity/:userId', requireSessionAuth, asyncHandler(socialController.getUserHangoutActivity));
@@ -10457,9 +10458,10 @@ app.post('/api/webapp/social/posts/:postId/share-to-hangouts', requireSessionAut
 // Post reactions
 app.post('/api/webapp/social/posts/:postId/react', requireSessionAuth, socialActionLimiter, asyncHandler(reactionController.reactToPost));
 app.get('/api/webapp/social/posts/:postId/reactions', asyncHandler(reactionController.getPostReactions));
-// Chat message reactions
+// Chat message reactions + translation
 app.post('/api/webapp/chat/messages/:messageId/react', requireSessionAuth, asyncHandler(reactionController.reactToChatMessage));
 app.get('/api/webapp/chat/messages/:messageId/reactions', asyncHandler(reactionController.getChatReactions));
+app.post('/api/webapp/chat/messages/:messageId/translate', requireSessionAuth, asyncHandler(chatController.translateChatMessage));
 // DM reactions
 app.post('/api/webapp/dm/messages/:messageId/react', requireSessionAuth, asyncHandler(reactionController.reactToDm));
 app.get('/api/webapp/dm/messages/:messageId/reactions', requireSessionAuth, asyncHandler(reactionController.getDmReactions));

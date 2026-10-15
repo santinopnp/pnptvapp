@@ -2661,6 +2661,16 @@ export function deleteSocialPost(postId: number): Promise<{ success: boolean }> 
   return request(`/api/webapp/social/posts/${postId}`, { method: "DELETE" });
 }
 
+export function translateSocialPost(
+  postId: number,
+  targetLang: string
+): Promise<{ translatedText: string; targetLang: string; cached: boolean }> {
+  return request(`/api/webapp/posts/${postId}/translate`, {
+    method: "POST",
+    body: { targetLang },
+  });
+}
+
 export function editSocialPost(
   postId: number,
   content: string,
@@ -3038,6 +3048,17 @@ export function toggleMessageReaction(
   return request(`/api/webapp/hangouts/groups/${groupId}/messages/${messageId}/react`, {
     method: "POST",
     body: { emoji },
+  });
+}
+
+export function translateGroupMessage(
+  groupId: number,
+  messageId: number,
+  targetLang: string
+): Promise<{ success: boolean; translatedText: string; cached: boolean; targetLang: string }> {
+  return request(`/api/webapp/hangouts/groups/${groupId}/messages/${messageId}/translate`, {
+    method: "POST",
+    body: { targetLang },
   });
 }
 

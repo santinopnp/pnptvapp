@@ -59,6 +59,7 @@ import {
   editGroupMessage,
   deleteGroupMessage,
   toggleMessageReaction,
+  translateGroupMessage,
   getOwnChannels,
   purchaseChannelAccess,
   purchaseHangoutAccess,
@@ -291,6 +292,12 @@ function HangoutChatPanel({
   const [confirmDelete, setConfirmDelete] = useState<GroupMessage | null>(null);
   const [deleting, setDeleting] = useState(false);
 
+  // Translation state, keyed by message id — mirrors the DM translate pattern
+  const [translationView, setTranslationView] = useState<Map<number, "translated" | "original">>(new Map());
+  const [translationCache, setTranslationCache] = useState<Map<number, string>>(new Map());
+  const [translationBusy, setTranslationBusy] = useState<Set<number>>(new Set());
+  const [translationError, setTranslationError] = useState<Map<number, string>>(new Map());
+
   // Tip state
   const [tipPickerOpen, setTipPickerOpen] = useState(false);
   const [tipAmount, setTipAmount] = useState<number | null>(null);
@@ -332,6 +339,32 @@ function HangoutChatPanel({
     },
     [forwardingMsg]
   );
+
+  const handleChatTranslate = useCallback(async (msg: GroupMessage) => {
+    if (!msg.content || !msg.content.trim()) return;
+    const uiLang = tPanel.lang;
+    // Toggle back to original if already showing translated text
+    if (translationView.get(msg.id) === "translated") {
+      setTranslationView((prev) => { const next = new Map(prev); next.set(msg.id, "original"); return next; });
+      return;
+    }
+    // Use in-memory cache if we already fetched for this lang session
+    if (translationCache.has(msg.id)) {
+      setTranslationView((prev) => { const next = new Map(prev); next.set(msg.id, "translated"); return next; });
+      return;
+    }
+    setTranslationBusy((prev) => new Set(prev).add(msg.id));
+    setTranslationError((prev) => { const next = new Map(prev); next.delete(msg.id); return next; });
+    try {
+      const res = await translateGroupMessage(groupId, msg.id, uiLang);
+      setTranslationCache((prev) => { const next = new Map(prev); next.set(msg.id, res.translatedText); return next; });
+      setTranslationView((prev) => { const next = new Map(prev); next.set(msg.id, "translated"); return next; });
+    } catch {
+      setTranslationError((prev) => { const next = new Map(prev); next.set(msg.id, tPanel.chat.translationFailed); return next; });
+    } finally {
+      setTranslationBusy((prev) => { const next = new Set(prev); next.delete(msg.id); return next; });
+    }
+  }, [groupId, tPanel.lang, tPanel.chat.translationFailed, translationView, translationCache]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -1310,12 +1343,37 @@ function HangoutChatPanel({
                             );
                           })() : msg.message_type === "post_card" && msg.meta?.postId ? (
                             <SharedPostCard postId={msg.meta.postId} snapshot={msg.meta.snapshot || {}} isMe={isMe} />
-                          ) : msg.content ? (
-                            <>
-                              <div className={msg.media_url ? "mt-0.5" : ""}><MentionText text={msg.content} /></div>
-                              <PnptvLinkPreview messageContent={msg.content} />
-                            </>
-                          ) : null}
+                          ) : msg.content ? (() => {
+                            const msgView = translationView.get(msg.id) ?? "original";
+                            const msgCached = translationCache.get(msg.id);
+                            const displayText = msgView === "translated" && msgCached ? msgCached : msg.content;
+                            const isMsgBusy = translationBusy.has(msg.id);
+                            const msgErrMsg = translationError.get(msg.id);
+                            const showTranslateChip = msg.content.trim().length >= 10;
+                            return (
+                              <>
+                                <div className={msg.media_url ? "mt-0.5" : ""}><MentionText text={displayText} /></div>
+                                <PnptvLinkPreview messageContent={msg.content} />
+                                {showTranslateChip && (
+                                  <div className="mt-1 flex items-center gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => void handleChatTranslate(msg)}
+                                      disabled={isMsgBusy}
+                                      className="text-[11px] text-white/60 hover:text-white/90 underline underline-offset-2 disabled:opacity-50"
+                                    >
+                                      {isMsgBusy
+                                        ? tPanel.chat.translating
+                                        : msgView === "translated"
+                                        ? `${tPanel.chat.translated} · ${tPanel.chat.viewOriginal}`
+                                        : tPanel.chat.translate}
+                                    </button>
+                                    {msgErrMsg && <span className="text-[11px] text-red-300">{msgErrMsg}</span>}
+                                  </div>
+                                )}
+                              </>
+                            );
+                          })() : null}
                           <div className={`flex items-center gap-1 mt-0.5 ${isMe ? "justify-end" : ""}`}>
                             <span className={`text-[10px] ${isMe ? "text-white/60" : "text-pnp-textSecondary"}`}>{timeStr}</span>
                             {msg.edited_at && (

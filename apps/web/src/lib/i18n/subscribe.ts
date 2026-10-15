@@ -134,6 +134,22 @@ const strings = {
     // Dash error strings removed 2026-07-31 (Dash/BTCPay retired)
     failedToCreatePayment: "Failed to create payment",
     paymentErrorGeneric: "Payment error",
+
+    // ── Wallet / token payment inline errors ──────────────────────────────────
+    txCancelled: "You cancelled the transaction.",
+    txSwitchNetwork: "Switch your wallet network to Base and try again.",
+    txVerifyFailed: "Transaction sent but verification failed. Save this hash and contact us: ",
+    npPaymentFailedExpired: "Payment failed or expired.",
+    enterActivationCode: "Enter your activation code.",
+    invalidOrUsedCode: "Invalid or already-used code.",
+    failedToRedeemCode: "Failed to redeem code.",
+    enterAmountRange: "Enter an amount between $1 and $5000.",
+    creatorLaunchOffer: "Subscribe to get access to ALL the creator's exclusive content — channel + profile, included in one payment",
+    couldNotSendTip: "Could not send tip.",
+    sendFailed: "Send failed.",
+    npPaymentFailed: "Payment failed. Please try again.",
+    npCouldNotCreatePayment: "Could not create payment.",
+    priceUnavailableReload: "Price unavailable. Please reload.",
   },
 
   es: {
@@ -255,6 +271,22 @@ const strings = {
     // Dash error strings removed 2026-07-31
     failedToCreatePayment: "Error al crear el pago",
     paymentErrorGeneric: "Error en el pago",
+
+    // ── Wallet / token payment inline errors ──────────────────────────────────
+    txCancelled: "Cancelaste la transacción.",
+    txSwitchNetwork: "Cambia la red de tu billetera a Base y vuelve a intentar.",
+    txVerifyFailed: "Transacción enviada pero la verificación falló. Guarda este hash y contáctanos: ",
+    npPaymentFailedExpired: "El pago falló o expiró.",
+    enterActivationCode: "Ingresa tu código de activación.",
+    invalidOrUsedCode: "Código no válido o ya usado.",
+    failedToRedeemCode: "Error al canjear el código.",
+    enterAmountRange: "Ingresa un monto entre $1 y $5000.",
+    creatorLaunchOffer: "Oferta de lanzamiento: al suscribirte accedes a TODO el contenido exclusivo del creador — canal + perfil, incluidos en un solo pago",
+    couldNotSendTip: "No se pudo enviar la propina.",
+    sendFailed: "Error al enviar.",
+    npPaymentFailed: "El pago falló. Intenta de nuevo.",
+    npCouldNotCreatePayment: "No se pudo crear el pago.",
+    priceUnavailableReload: "Precio no disponible. Recarga la página.",
   },
 
   pt: {
@@ -374,6 +406,21 @@ const strings = {
     // Dash error strings removed 2026-07-31
     failedToCreatePayment: "Falha ao criar pagamento",
     paymentErrorGeneric: "Erro no pagamento",
+
+    txCancelled: "You cancelled the transaction.",
+    txSwitchNetwork: "Switch your wallet network to Base and try again.",
+    txVerifyFailed: "Transaction sent but verification failed. Save this hash and contact us: ",
+    npPaymentFailedExpired: "Payment failed or expired.",
+    enterActivationCode: "Enter your activation code.",
+    invalidOrUsedCode: "Invalid or already-used code.",
+    failedToRedeemCode: "Failed to redeem code.",
+    enterAmountRange: "Enter an amount between $1 and $5000.",
+    creatorLaunchOffer: "Subscribe to get access to ALL the creator's exclusive content — channel + profile, included in one payment",
+    couldNotSendTip: "Could not send tip.",
+    sendFailed: "Send failed.",
+    npPaymentFailed: "Payment failed. Please try again.",
+    npCouldNotCreatePayment: "Could not create payment.",
+    priceUnavailableReload: "Price unavailable. Please reload.",
   },
 
   zh: {
@@ -492,6 +539,21 @@ const strings = {
     // Dash error strings removed 2026-07-31
     failedToCreatePayment: "创建付款失败",
     paymentErrorGeneric: "付款错误",
+
+    txCancelled: "You cancelled the transaction.",
+    txSwitchNetwork: "Switch your wallet network to Base and try again.",
+    txVerifyFailed: "Transaction sent but verification failed. Save this hash and contact us: ",
+    npPaymentFailedExpired: "Payment failed or expired.",
+    enterActivationCode: "Enter your activation code.",
+    invalidOrUsedCode: "Invalid or already-used code.",
+    failedToRedeemCode: "Failed to redeem code.",
+    enterAmountRange: "Enter an amount between $1 and $5000.",
+    creatorLaunchOffer: "Subscribe to get access to ALL the creator's exclusive content — channel + profile, included in one payment",
+    couldNotSendTip: "Could not send tip.",
+    sendFailed: "Send failed.",
+    npPaymentFailed: "Payment failed. Please try again.",
+    npCouldNotCreatePayment: "Could not create payment.",
+    priceUnavailableReload: "Price unavailable. Please reload.",
   },
 
   zhTW: {
@@ -610,6 +672,21 @@ const strings = {
     // Dash error strings removed 2026-07-31
     failedToCreatePayment: "建立付款失敗",
     paymentErrorGeneric: "付款錯誤",
+
+    txCancelled: "You cancelled the transaction.",
+    txSwitchNetwork: "Switch your wallet network to Base and try again.",
+    txVerifyFailed: "Transaction sent but verification failed. Save this hash and contact us: ",
+    npPaymentFailedExpired: "Payment failed or expired.",
+    enterActivationCode: "Enter your activation code.",
+    invalidOrUsedCode: "Invalid or already-used code.",
+    failedToRedeemCode: "Failed to redeem code.",
+    enterAmountRange: "Enter an amount between $1 and $5000.",
+    creatorLaunchOffer: "Subscribe to get access to ALL the creator's exclusive content — channel + profile, included in one payment",
+    couldNotSendTip: "Could not send tip.",
+    sendFailed: "Send failed.",
+    npPaymentFailed: "Payment failed. Please try again.",
+    npCouldNotCreatePayment: "Could not create payment.",
+    priceUnavailableReload: "Price unavailable. Please reload.",
   },
 
   fr: {
@@ -728,6 +805,21 @@ const strings = {
     // Dash error strings removed 2026-07-31
     failedToCreatePayment: "Échec de la création du paiement",
     paymentErrorGeneric: "Erreur de paiement",
+
+    txCancelled: "You cancelled the transaction.",
+    txSwitchNetwork: "Switch your wallet network to Base and try again.",
+    txVerifyFailed: "Transaction sent but verification failed. Save this hash and contact us: ",
+    npPaymentFailedExpired: "Payment failed or expired.",
+    enterActivationCode: "Enter your activation code.",
+    invalidOrUsedCode: "Invalid or already-used code.",
+    failedToRedeemCode: "Failed to redeem code.",
+    enterAmountRange: "Enter an amount between $1 and $5000.",
+    creatorLaunchOffer: "Subscribe to get access to ALL the creator's exclusive content — channel + profile, included in one payment",
+    couldNotSendTip: "Could not send tip.",
+    sendFailed: "Send failed.",
+    npPaymentFailed: "Payment failed. Please try again.",
+    npCouldNotCreatePayment: "Could not create payment.",
+    priceUnavailableReload: "Price unavailable. Please reload.",
   },
 
   de: {
@@ -846,6 +938,21 @@ const strings = {
     // Dash error strings removed 2026-07-31
     failedToCreatePayment: "Zahlung konnte nicht erstellt werden",
     paymentErrorGeneric: "Zahlungsfehler",
+
+    txCancelled: "You cancelled the transaction.",
+    txSwitchNetwork: "Switch your wallet network to Base and try again.",
+    txVerifyFailed: "Transaction sent but verification failed. Save this hash and contact us: ",
+    npPaymentFailedExpired: "Payment failed or expired.",
+    enterActivationCode: "Enter your activation code.",
+    invalidOrUsedCode: "Invalid or already-used code.",
+    failedToRedeemCode: "Failed to redeem code.",
+    enterAmountRange: "Enter an amount between $1 and $5000.",
+    creatorLaunchOffer: "Subscribe to get access to ALL the creator's exclusive content — channel + profile, included in one payment",
+    couldNotSendTip: "Could not send tip.",
+    sendFailed: "Send failed.",
+    npPaymentFailed: "Payment failed. Please try again.",
+    npCouldNotCreatePayment: "Could not create payment.",
+    priceUnavailableReload: "Price unavailable. Please reload.",
   },
 
   th: {
@@ -964,6 +1071,21 @@ const strings = {
     // Dash error strings removed 2026-07-31
     failedToCreatePayment: "สร้างการชำระเงินล้มเหลว",
     paymentErrorGeneric: "ข้อผิดพลาดในการชำระเงิน",
+
+    txCancelled: "You cancelled the transaction.",
+    txSwitchNetwork: "Switch your wallet network to Base and try again.",
+    txVerifyFailed: "Transaction sent but verification failed. Save this hash and contact us: ",
+    npPaymentFailedExpired: "Payment failed or expired.",
+    enterActivationCode: "Enter your activation code.",
+    invalidOrUsedCode: "Invalid or already-used code.",
+    failedToRedeemCode: "Failed to redeem code.",
+    enterAmountRange: "Enter an amount between $1 and $5000.",
+    creatorLaunchOffer: "Subscribe to get access to ALL the creator's exclusive content — channel + profile, included in one payment",
+    couldNotSendTip: "Could not send tip.",
+    sendFailed: "Send failed.",
+    npPaymentFailed: "Payment failed. Please try again.",
+    npCouldNotCreatePayment: "Could not create payment.",
+    priceUnavailableReload: "Price unavailable. Please reload.",
   },
 
   it: {
@@ -1082,6 +1204,21 @@ const strings = {
     // Dash error strings removed 2026-07-31
     failedToCreatePayment: "Impossibile creare il pagamento",
     paymentErrorGeneric: "Errore di pagamento",
+
+    txCancelled: "You cancelled the transaction.",
+    txSwitchNetwork: "Switch your wallet network to Base and try again.",
+    txVerifyFailed: "Transaction sent but verification failed. Save this hash and contact us: ",
+    npPaymentFailedExpired: "Payment failed or expired.",
+    enterActivationCode: "Enter your activation code.",
+    invalidOrUsedCode: "Invalid or already-used code.",
+    failedToRedeemCode: "Failed to redeem code.",
+    enterAmountRange: "Enter an amount between $1 and $5000.",
+    creatorLaunchOffer: "Subscribe to get access to ALL the creator's exclusive content — channel + profile, included in one payment",
+    couldNotSendTip: "Could not send tip.",
+    sendFailed: "Send failed.",
+    npPaymentFailed: "Payment failed. Please try again.",
+    npCouldNotCreatePayment: "Could not create payment.",
+    priceUnavailableReload: "Price unavailable. Please reload.",
   },
 
   tr: {
@@ -1200,6 +1337,21 @@ const strings = {
     // Dash error strings removed 2026-07-31
     failedToCreatePayment: "Ödeme oluşturulamadı",
     paymentErrorGeneric: "Ödeme hatası",
+
+    txCancelled: "You cancelled the transaction.",
+    txSwitchNetwork: "Switch your wallet network to Base and try again.",
+    txVerifyFailed: "Transaction sent but verification failed. Save this hash and contact us: ",
+    npPaymentFailedExpired: "Payment failed or expired.",
+    enterActivationCode: "Enter your activation code.",
+    invalidOrUsedCode: "Invalid or already-used code.",
+    failedToRedeemCode: "Failed to redeem code.",
+    enterAmountRange: "Enter an amount between $1 and $5000.",
+    creatorLaunchOffer: "Subscribe to get access to ALL the creator's exclusive content — channel + profile, included in one payment",
+    couldNotSendTip: "Could not send tip.",
+    sendFailed: "Send failed.",
+    npPaymentFailed: "Payment failed. Please try again.",
+    npCouldNotCreatePayment: "Could not create payment.",
+    priceUnavailableReload: "Price unavailable. Please reload.",
   },
 
   ru: {
@@ -1318,6 +1470,21 @@ const strings = {
     // Dash error strings removed 2026-07-31
     failedToCreatePayment: "Не удалось создать платёж",
     paymentErrorGeneric: "Ошибка оплаты",
+
+    txCancelled: "You cancelled the transaction.",
+    txSwitchNetwork: "Switch your wallet network to Base and try again.",
+    txVerifyFailed: "Transaction sent but verification failed. Save this hash and contact us: ",
+    npPaymentFailedExpired: "Payment failed or expired.",
+    enterActivationCode: "Enter your activation code.",
+    invalidOrUsedCode: "Invalid or already-used code.",
+    failedToRedeemCode: "Failed to redeem code.",
+    enterAmountRange: "Enter an amount between $1 and $5000.",
+    creatorLaunchOffer: "Subscribe to get access to ALL the creator's exclusive content — channel + profile, included in one payment",
+    couldNotSendTip: "Could not send tip.",
+    sendFailed: "Send failed.",
+    npPaymentFailed: "Payment failed. Please try again.",
+    npCouldNotCreatePayment: "Could not create payment.",
+    priceUnavailableReload: "Price unavailable. Please reload.",
   },
 
   nl: {
@@ -1436,6 +1603,21 @@ const strings = {
     // Dash error strings removed 2026-07-31
     failedToCreatePayment: "Betaling kon niet worden aangemaakt",
     paymentErrorGeneric: "Betalingsfout",
+
+    txCancelled: "You cancelled the transaction.",
+    txSwitchNetwork: "Switch your wallet network to Base and try again.",
+    txVerifyFailed: "Transaction sent but verification failed. Save this hash and contact us: ",
+    npPaymentFailedExpired: "Payment failed or expired.",
+    enterActivationCode: "Enter your activation code.",
+    invalidOrUsedCode: "Invalid or already-used code.",
+    failedToRedeemCode: "Failed to redeem code.",
+    enterAmountRange: "Enter an amount between $1 and $5000.",
+    creatorLaunchOffer: "Subscribe to get access to ALL the creator's exclusive content — channel + profile, included in one payment",
+    couldNotSendTip: "Could not send tip.",
+    sendFailed: "Send failed.",
+    npPaymentFailed: "Payment failed. Please try again.",
+    npCouldNotCreatePayment: "Could not create payment.",
+    priceUnavailableReload: "Price unavailable. Please reload.",
   },
 
   vi: {
@@ -1554,6 +1736,21 @@ const strings = {
     // Dash error strings removed 2026-07-31
     failedToCreatePayment: "Tạo thanh toán thất bại",
     paymentErrorGeneric: "Lỗi thanh toán",
+
+    txCancelled: "You cancelled the transaction.",
+    txSwitchNetwork: "Switch your wallet network to Base and try again.",
+    txVerifyFailed: "Transaction sent but verification failed. Save this hash and contact us: ",
+    npPaymentFailedExpired: "Payment failed or expired.",
+    enterActivationCode: "Enter your activation code.",
+    invalidOrUsedCode: "Invalid or already-used code.",
+    failedToRedeemCode: "Failed to redeem code.",
+    enterAmountRange: "Enter an amount between $1 and $5000.",
+    creatorLaunchOffer: "Subscribe to get access to ALL the creator's exclusive content — channel + profile, included in one payment",
+    couldNotSendTip: "Could not send tip.",
+    sendFailed: "Send failed.",
+    npPaymentFailed: "Payment failed. Please try again.",
+    npCouldNotCreatePayment: "Could not create payment.",
+    priceUnavailableReload: "Price unavailable. Please reload.",
   },
 
   ja: {
@@ -1672,6 +1869,21 @@ const strings = {
     // Dash error strings removed 2026-07-31
     failedToCreatePayment: "支払いの作成に失敗",
     paymentErrorGeneric: "支払いエラー",
+
+    txCancelled: "You cancelled the transaction.",
+    txSwitchNetwork: "Switch your wallet network to Base and try again.",
+    txVerifyFailed: "Transaction sent but verification failed. Save this hash and contact us: ",
+    npPaymentFailedExpired: "Payment failed or expired.",
+    enterActivationCode: "Enter your activation code.",
+    invalidOrUsedCode: "Invalid or already-used code.",
+    failedToRedeemCode: "Failed to redeem code.",
+    enterAmountRange: "Enter an amount between $1 and $5000.",
+    creatorLaunchOffer: "Subscribe to get access to ALL the creator's exclusive content — channel + profile, included in one payment",
+    couldNotSendTip: "Could not send tip.",
+    sendFailed: "Send failed.",
+    npPaymentFailed: "Payment failed. Please try again.",
+    npCouldNotCreatePayment: "Could not create payment.",
+    priceUnavailableReload: "Price unavailable. Please reload.",
   },
 
   id: {
@@ -1790,6 +2002,21 @@ const strings = {
     // Dash error strings removed 2026-07-31
     failedToCreatePayment: "Gagal membuat pembayaran",
     paymentErrorGeneric: "Kesalahan pembayaran",
+
+    txCancelled: "You cancelled the transaction.",
+    txSwitchNetwork: "Switch your wallet network to Base and try again.",
+    txVerifyFailed: "Transaction sent but verification failed. Save this hash and contact us: ",
+    npPaymentFailedExpired: "Payment failed or expired.",
+    enterActivationCode: "Enter your activation code.",
+    invalidOrUsedCode: "Invalid or already-used code.",
+    failedToRedeemCode: "Failed to redeem code.",
+    enterAmountRange: "Enter an amount between $1 and $5000.",
+    creatorLaunchOffer: "Subscribe to get access to ALL the creator's exclusive content — channel + profile, included in one payment",
+    couldNotSendTip: "Could not send tip.",
+    sendFailed: "Send failed.",
+    npPaymentFailed: "Payment failed. Please try again.",
+    npCouldNotCreatePayment: "Could not create payment.",
+    priceUnavailableReload: "Price unavailable. Please reload.",
   },
 
   ar: {
@@ -1908,6 +2135,21 @@ const strings = {
     // Dash error strings removed 2026-07-31
     failedToCreatePayment: "فشل إنشاء الدفع",
     paymentErrorGeneric: "خطأ في الدفع",
+
+    txCancelled: "You cancelled the transaction.",
+    txSwitchNetwork: "Switch your wallet network to Base and try again.",
+    txVerifyFailed: "Transaction sent but verification failed. Save this hash and contact us: ",
+    npPaymentFailedExpired: "Payment failed or expired.",
+    enterActivationCode: "Enter your activation code.",
+    invalidOrUsedCode: "Invalid or already-used code.",
+    failedToRedeemCode: "Failed to redeem code.",
+    enterAmountRange: "Enter an amount between $1 and $5000.",
+    creatorLaunchOffer: "Subscribe to get access to ALL the creator's exclusive content — channel + profile, included in one payment",
+    couldNotSendTip: "Could not send tip.",
+    sendFailed: "Send failed.",
+    npPaymentFailed: "Payment failed. Please try again.",
+    npCouldNotCreatePayment: "Could not create payment.",
+    priceUnavailableReload: "Price unavailable. Please reload.",
   },
 } as const;
 

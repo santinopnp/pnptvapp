@@ -646,10 +646,10 @@ export default function SocialPostCard({
     if (translatedContent) { setTranslatedContent(null); return; }
     if (!post.content) return;
     setIsTranslating(true);
-    const result = await translateText(post.content, userLang || "en");
+    const result = await translateText(post.content, userLang || "en", Number(post.id));
     if (result) setTranslatedContent(result);
     setIsTranslating(false);
-  }, [isTranslating, translatedContent, post.content, userLang]);
+  }, [isTranslating, translatedContent, post.content, userLang, post.id]);
 
   useEffect(() => {
     if (!showMenu) return;
@@ -1384,10 +1384,10 @@ export default function SocialPostCard({
               {translatedContent && !isEditing && (
                 <button
                   onClick={(e) => { e.stopPropagation(); setTranslatedContent(null); }}
-                  className="text-xs mt-0.5"
+                  className="text-xs mt-0.5 underline underline-offset-2"
                   style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}
                 >
-                  {t.showOriginal}
+                  {t.translatedShowOriginal}
                 </button>
               )}
 

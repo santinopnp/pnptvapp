@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { NowPaymentsOrder } from "@/hooks/useNowPayments";
 import { prepareOnchainSubscription, getUsdcSubscriptionStatus } from "@/lib/api";
+import { useI18n } from "@/lib/i18n";
 
 
 interface NowPaymentsWaitingPanelProps {
@@ -188,6 +189,7 @@ export function NpAppPickerSheet({
   launching?: boolean;
 }) {
   const es = (lang || 'es').startsWith('es');
+  const t = useI18n();
 
   type Phase = 'picking' | 'loading' | 'ready' | 'success' | 'error';
   const [phase, setPhase] = useState<Phase>('picking');
@@ -241,7 +243,7 @@ export function NpAppPickerSheet({
                 } else if (status.failed) {
                   if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
                   try { sessionStorage.removeItem('pnpapp:np:pending'); } catch { /* */ }
-                  setInvoiceError(es ? 'El pago falló. Intenta de nuevo.' : 'Payment failed. Please try again.');
+                  setInvoiceError(t.subscribe.npPaymentFailed);
                   setPhase('error');
                 }
               } catch { /* swallow poll errors */ }
@@ -263,7 +265,7 @@ export function NpAppPickerSheet({
     try {
       const res = await prepareOnchainSubscription(planId, asset);
       if (!res.success || !res.payAddress || !res.orderId) {
-        throw new Error(res.error || (es ? 'No se pudo crear el pago.' : 'Could not create payment.'));
+        throw new Error(res.error || t.subscribe.npCouldNotCreatePayment);
       }
       setOrderId(res.orderId);
       setPayAddress(res.payAddress);
@@ -294,7 +296,7 @@ export function NpAppPickerSheet({
         } catch { /* swallow poll errors */ }
       }, 8000);
     } catch (err) {
-      setInvoiceError(err instanceof Error ? err.message : (es ? 'Error al crear el pago.' : 'Could not create payment.'));
+      setInvoiceError(err instanceof Error ? err.message : t.subscribe.npCouldNotCreatePayment);
       setPhase('error');
     }
   }, [planId, es, onSuccess, onClose]);
@@ -589,6 +591,7 @@ export const NowPaymentsWaitingPanel: React.FC<NowPaymentsWaitingPanelProps> = (
   payCurrency = null,
 }) => {
   const es = lang === "es";
+  const t = useI18n();
   const isTg = typeof window !== 'undefined' && !!window.Telegram?.WebApp?.initData;
   const isBsc = payCurrency === "usdtbsc" || payCurrency === "usdcbsc";
   const isSolana = payCurrency === "usdcsol";

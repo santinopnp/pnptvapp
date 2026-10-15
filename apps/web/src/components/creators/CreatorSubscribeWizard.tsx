@@ -10,6 +10,7 @@
  * channel, private hangout, and unlimited DMs with that creator.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useI18n } from "@/lib/i18n";
 import {
   getCreatorSubscriptionPreview,
   getCreatorSubscriptionStatus,
@@ -73,6 +74,8 @@ export default function CreatorSubscribeWizard({
   // used; kept in props for backwards compatibility.
   void storageKey;
   void returnUrl;
+
+  const t = useI18n();
 
   const [loading, setLoading] = useState<"tokens" | "verify" | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -236,7 +239,7 @@ export default function CreatorSubscribeWizard({
           >
             <span className="text-base leading-none flex-shrink-0" aria-hidden="true">🔥</span>
             <p className="text-[11px] leading-relaxed" style={{ color: "#E69138" }}>
-              Oferta de lanzamiento: al suscribirte accedes a TODO el contenido exclusivo del creador — canal + perfil, incluidos en un solo pago
+              {t.subscribe.creatorLaunchOffer}
             </p>
           </div>
         )}

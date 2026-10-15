@@ -36,6 +36,7 @@ const strings = {
     // Post actions
     translate: "Translate",
     showOriginal: "Show original",
+    translatedShowOriginal: "Translated · Show original",
     translating: "...",
     // Comments / Replies
     writeComment: "Write a comment...",
@@ -111,6 +112,7 @@ const strings = {
     loading: "Cargando...",
     translate: "Traducir",
     showOriginal: "Ver original",
+    translatedShowOriginal: "Traducido · Ver original",
     translating: "...",
     writeComment: "Escribe un comentario...",
     send: "Enviar",

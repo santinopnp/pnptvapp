@@ -103,6 +103,13 @@ const strings = {
     noMessagesYet: "No messages yet",
     beFirstToSay: "Be the first to say something!",
 
+    // Translation
+    translate: "Translate",
+    translating: "Translating…",
+    translated: "Translated",
+    viewOriginal: "View original",
+    translationFailed: "Couldn't translate",
+
     // Typing indicator
     isTyping: (name: string) => `${name} is typing`,
     areTyping: (name: string, name2: string) =>
@@ -254,6 +261,13 @@ const strings = {
     // Messages area
     noMessagesYet: "Sin mensajes todavía",
     beFirstToSay: "¡Sé el primero en decir algo!",
+
+    // Translation
+    translate: "Traducir",
+    translating: "Traduciendo…",
+    translated: "Traducido",
+    viewOriginal: "Ver original",
+    translationFailed: "No se pudo traducir",
 
     // Typing indicator
     isTyping: (name: string) => `${name} está escribiendo`,

@@ -2,6 +2,7 @@
 
 const { query } = require('../../../config/postgres');
 const logger = require('../../../utils/logger');
+const { getRedis } = require('../../../config/redis');
 const { processChatMedia } = require('../../../services/chatMediaService');
 const mentionService = require('../../../services/mentionService');
 
@@ -161,4 +162,86 @@ const sendMediaMessage = async (req, res) => {
   }
 };
 
-module.exports = { getChatHistory, sendMessage, sendMediaMessage };
+// ── Translate a chat message on-demand ───────────────────────────────────────
+// Cached per-message in chat_messages.translations[lang] so repeated views
+// of the same translation don't re-hit Grok.
+// POST /api/webapp/chat/messages/:msgId/translate  body: { targetLang }
+const CHAT_TRANSLATE_DAILY_LIMIT = 100;
+const CHAT_TRANSLATE_MAX_LEN = 2000;
+
+const translateChatMessage = async (req, res) => {
+  const user = authGuard(req, res); if (!user) return;
+  const msgId = parseInt(req.params.msgId, 10);
+  if (!Number.isFinite(msgId) || msgId <= 0) {
+    return res.status(400).json({ error: 'Invalid message ID' });
+  }
+  const rawLang = req.body?.targetLang;
+  if (!rawLang || typeof rawLang !== 'string' || !/^[a-zA-Z]{2,5}$/.test(rawLang)) {
+    return res.status(400).json({ error: 'Invalid targetLang' });
+  }
+  const targetLang = rawLang.trim();
+
+  try {
+    // Per-user daily rate limit — Grok isn't free.
+    try {
+      const redis = getRedis();
+      if (redis) {
+        const rateKey = `chat:translate:daily:${user.id}`;
+        const count = await redis.incr(rateKey);
+        if (count === 1) await redis.expire(rateKey, 86400);
+        if (count > CHAT_TRANSLATE_DAILY_LIMIT) {
+          return res.status(429).json({ error: 'Daily translation limit reached' });
+        }
+      }
+    } catch (rateErr) {
+      logger.warn('translateChatMessage rate limit check failed (allowing)', { error: rateErr.message });
+    }
+
+    const { rows } = await query(
+      `SELECT id, room, user_id, content, is_deleted, translations
+       FROM chat_messages WHERE id = $1`,
+      [msgId]
+    );
+    if (rows.length === 0) return res.status(404).json({ error: 'Message not found' });
+    const msg = rows[0];
+
+    // Access check: user must be a member of the message's room
+    const validRoom = await validateRoomAccess(msg.room, user.id);
+    if (!validRoom) return res.status(403).json({ error: 'Not authorized to translate this message' });
+
+    if (msg.is_deleted) return res.status(410).json({ error: 'Message deleted' });
+    if (!msg.content || !msg.content.trim()) {
+      return res.status(400).json({ error: 'No text to translate' });
+    }
+    if (msg.content.length > CHAT_TRANSLATE_MAX_LEN) {
+      return res.status(413).json({ error: 'Message too long to translate' });
+    }
+
+    const cached = msg.translations?.[targetLang];
+    if (cached && typeof cached === 'string') {
+      return res.json({ success: true, translated: cached, cached: true, targetLang });
+    }
+
+    const grokService = require('../../../services/grokService');
+    const translated = await grokService.translateText(msg.content, targetLang);
+
+    await query(
+      `UPDATE chat_messages
+       SET translations = jsonb_set(
+         COALESCE(translations, '{}'::jsonb),
+         ARRAY[$1],
+         to_jsonb($2::text),
+         true
+       )
+       WHERE id = $3`,
+      [targetLang, translated, msgId]
+    );
+
+    return res.json({ success: true, translated, cached: false, targetLang });
+  } catch (err) {
+    logger.error('translateChatMessage error', { error: err.message, msgId, targetLang });
+    return res.status(500).json({ error: 'Failed to translate message' });
+  }
+};
+
+module.exports = { getChatHistory, sendMessage, sendMediaMessage, translateChatMessage };

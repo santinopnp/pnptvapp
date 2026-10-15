@@ -2864,4 +2864,80 @@ const sharePostToHangouts = async (req, res) => {
   return res.json({ success: true, results });
 };
 
-module.exports = { getFeed, getHomeFeed, getWall, createPost, toggleLike, toggleHype, getHypers, deletePost, editPost, getReplies, postToMastodon, createPostWithMedia, createPostWithMultiMedia, getPublicProfile, bulkCreateVideos, getPost, getPublicPost, searchMentions, assignPostToChannel, unassignPostFromChannel, getHangoutFeed, dropToFeed, getUserHangoutActivity, getHashtagFeed, sharePostToHangouts, getTaggedIn };
+// ── Translate a social post on-demand ─────────────────────────────────────────
+// Cached per-post in social_posts.translations[lang] so repeated views of the
+// same translation don't re-hit Grok.
+// POST /api/webapp/social/posts/:postId/translate  body: { targetLang }
+const SOCIAL_TRANSLATE_DAILY_LIMIT = 100;
+const SOCIAL_TRANSLATE_MAX_LEN = 2000;
+
+const translateSocialPost = async (req, res) => {
+  const user = authGuard(req, res); if (!user) return;
+  const postId = parsePostId(req, res); if (!postId) return;
+  const rawLang = req.body?.targetLang;
+  if (!rawLang || typeof rawLang !== 'string' || !/^[a-zA-Z]{2,5}$/.test(rawLang)) {
+    return res.status(400).json({ error: 'Invalid targetLang' });
+  }
+  const targetLang = rawLang.trim();
+
+  try {
+    // Per-user daily rate limit — Grok isn't free.
+    try {
+      const { getRedis } = require('../../../config/redis');
+      const redis = getRedis();
+      if (redis) {
+        const rateKey = `social:translate:daily:${user.id}`;
+        const count = await redis.incr(rateKey);
+        if (count === 1) await redis.expire(rateKey, 86400);
+        if (count > SOCIAL_TRANSLATE_DAILY_LIMIT) {
+          return res.status(429).json({ error: 'Daily translation limit reached' });
+        }
+      }
+    } catch (rateErr) {
+      logger.warn('translateSocialPost rate limit check failed (allowing)', { error: rateErr.message });
+    }
+
+    const { rows } = await dbQuery(
+      `SELECT id, user_id, content, is_deleted, content_tier, translations
+       FROM social_posts WHERE id = $1`,
+      [postId]
+    );
+    if (rows.length === 0) return res.status(404).json({ error: 'Post not found' });
+    const post = rows[0];
+
+    if (post.is_deleted) return res.status(410).json({ error: 'Post deleted' });
+    if (!post.content || !post.content.trim()) {
+      return res.status(400).json({ error: 'No text to translate' });
+    }
+    if (post.content.length > SOCIAL_TRANSLATE_MAX_LEN) {
+      return res.status(413).json({ error: 'Post too long to translate' });
+    }
+
+    const cached = post.translations?.[targetLang];
+    if (cached && typeof cached === 'string') {
+      return res.json({ success: true, translated: cached, cached: true, targetLang });
+    }
+
+    const { translateText } = require('../../../services/grokService');
+    const translated = await translateText(post.content, targetLang);
+
+    await dbQuery(
+      `UPDATE social_posts
+       SET translations = jsonb_set(
+         COALESCE(translations, '{}'::jsonb),
+         ARRAY[$1],
+         to_jsonb($2::text),
+         true
+       )
+       WHERE id = $3`,
+      [targetLang, translated, postId]
+    );
+
+    return res.json({ success: true, translated, cached: false, targetLang });
+  } catch (err) {
+    logger.error('translateSocialPost error', { error: err.message, postId, targetLang });
+    return res.status(500).json({ error: 'Failed to translate post' });
+  }
+};
+
+module.exports = { getFeed, getHomeFeed, getWall, createPost, toggleLike, toggleHype, getHypers, deletePost, editPost, getReplies, postToMastodon, createPostWithMedia, createPostWithMultiMedia, getPublicProfile, bulkCreateVideos, getPost, getPublicPost, searchMentions, assignPostToChannel, unassignPostFromChannel, getHangoutFeed, dropToFeed, getUserHangoutActivity, getHashtagFeed, sharePostToHangouts, getTaggedIn, translateSocialPost };
