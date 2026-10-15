@@ -1349,7 +1349,7 @@ function HangoutChatPanel({
                             const displayText = msgView === "translated" && msgCached ? msgCached : msg.content;
                             const isMsgBusy = translationBusy.has(msg.id);
                             const msgErrMsg = translationError.get(msg.id);
-                            const showTranslateChip = msg.content.trim().length >= 10;
+                            const showTranslateChip = msg.content.trim().length >= 4;
                             return (
                               <>
                                 <div className={msg.media_url ? "mt-0.5" : ""}><MentionText text={displayText} /></div>

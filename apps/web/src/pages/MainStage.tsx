@@ -2709,7 +2709,7 @@ export default function MainStage() {
                           const displayText = msgView === "translated" && msgCached ? msgCached : msg.text;
                           const isMsgBusy = msgTranslationBusy.has(msg.id);
                           const msgErr = msgTranslationError.get(msg.id);
-                          const showChip = !isAuto && msg.text.trim().length >= 10;
+                          const showChip = !isAuto && msg.text.trim().length >= 4;
                           return (
                             <>
                               <span className="text-[12px] leading-snug text-white/90 break-words">{displayText}</span>
