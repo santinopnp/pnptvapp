@@ -192,7 +192,7 @@ async function findOrLinkUser({ telegramId, twitterHandle, xId, email, firstName
   }
 
   if (!user && twitterHandle) {
-    const { rows } = await query(`SELECT ${RETURN_COLS} FROM users WHERE twitter = $1 AND is_deleted = false`, [twitterHandle]);
+    const { rows } = await query(`SELECT ${RETURN_COLS} FROM users WHERE (twitter = $1 OR x_username = $1) AND is_deleted = false`, [twitterHandle]);
     if (rows.length > 0) user = rows[0];
   }
 
@@ -2462,7 +2462,9 @@ const xLoginCallback = async (req, res) => {
     await query(
       `UPDATE users
        SET x_username                = $1,
+           twitter                   = COALESCE(twitter, $1),
            x_user_id                 = COALESCE(x_user_id, $2),
+           x_id                      = COALESCE(x_id, $2),
            x_access_token_encrypted  = $3,
            x_refresh_token_encrypted = COALESCE($4, x_refresh_token_encrypted),
            x_token_expires_at        = $5,
