@@ -105,10 +105,11 @@ class DmService {
     if (!isAdmin) {
       const [recipientResult, senderCreatorResult] = await Promise.all([
         query('SELECT privacy, role, creator_status FROM users WHERE id = $1', [resolvedRecipientId]),
-        query('SELECT creator_status FROM users WHERE id = $1', [String(senderId)]),
+        query('SELECT creator_status, role FROM users WHERE id = $1', [String(senderId)]),
       ]);
       const recipientRow = recipientResult.rows[0] || {};
-      const senderCreatorStatus = senderCreatorResult.rows[0]?.creator_status;
+      const senderRow = senderCreatorResult.rows[0] || {};
+      const senderCreatorStatus = senderRow.creator_status;
       const privacy = recipientRow.privacy || {};
       const allowMessages = privacy.allowMessages !== undefined ? privacy.allowMessages : true;
 
@@ -123,7 +124,7 @@ class DmService {
       }
 
       if (recipientRow.role === 'model' && recipientRow.creator_status === 'active') {
-        if (senderCreatorStatus !== 'active') {
+        if (senderCreatorStatus !== 'active' || senderRow.role !== 'model') {
           const dmPolicy = privacy.creatorDmPolicy || 'prime_or_subscriber';
           if (dmPolicy !== 'open') {
             const senderTier = (options.senderTier || 'free').toLowerCase();

@@ -37,7 +37,7 @@ import { wellness, type WellnessStrings } from "./wellness";
 import { home, type HomeStrings } from "./home";
 import { onboarding, type OnboardingStrings } from "./onboarding";
 
-export type Lang = "en" | "es" | "pt" | "zh" | "zhTW" | "fr" | "de" | "th" | "it" | "tr" | "ru" | "nl" | "vi" | "ja" | "id" | "ar";
+export type Lang = "en" | "es" | "pt" | "zh" | "zhTW" | "fr" | "de" | "th" | "it" | "tr" | "ru" | "nl" | "vi" | "ja" | "id" | "ar" | "ko";
 
 /** Widen literal string types to plain string for i18n compatibility across languages. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -128,10 +128,10 @@ const LANG_MAP: Record<string, Lang> = {
   en: "en", es: "es", pt: "pt", "pt-br": "pt", fr: "fr", de: "de",
   it: "it", ja: "ja", zh: "zh", "zh-hans": "zh", "zh-hant": "zhTW",
   "zh-tw": "zhTW", ru: "ru", ar: "ar", th: "th", nl: "nl",
-  vi: "vi", id: "id", tr: "tr",
+  vi: "vi", id: "id", tr: "tr", ko: "ko", "ko-kr": "ko",
 };
 
-const SUPPORTED_LANGS = new Set<Lang>(["en","es","pt","zh","zhTW","fr","de","th","it","tr","ru","nl","vi","ja","id","ar"]);
+const SUPPORTED_LANGS = new Set<Lang>(["en","es","pt","zh","zhTW","fr","de","th","it","tr","ru","nl","vi","ja","id","ar","ko"]);
 
 const GEO_LANG_KEY = "pnptv_geo_lang";
 
@@ -202,7 +202,7 @@ function _fireGeoLangDetection() {
       _geoLangResolved = mapped;
       _geoListeners.forEach((cb) => cb(mapped));
     })
-    .catch(() => { /* fail silently — never block on geo */ });
+    .catch(() => { _geoFired = false; /* allow retry on next mount */ });
 }
 
 /** Save language preference to localStorage (for unauthenticated visitors). */
@@ -220,20 +220,21 @@ export function useI18n(): I18n {
   );
 
   useEffect(() => {
-    // Only fire geo detection when the browser/user lang is English — no point
-    // in overriding a non-English preference that's already been detected.
+    // Authenticated users keep their saved profile preference — no geo override.
     if (user?.language) return;
-    if (baseLang !== "en") return;
 
-    // If already resolved, apply immediately
+    // If the user explicitly picked a language via the selector, respect that choice.
+    try { if (localStorage.getItem("pnptv_lang")) return; } catch { /* private browsing */ }
+
+    // For all new / unauthenticated visitors: geo-IP is the priority signal.
+    // Fire detection regardless of what the browser locale says.
     if (_geoLangResolved) { setGeoLang(_geoLangResolved); return; }
 
-    // Subscribe to future resolution
     const cb = (l: Lang) => setGeoLang(l);
     _geoListeners.add(cb);
     _fireGeoLangDetection();
     return () => { _geoListeners.delete(cb); };
-  }, [user?.language, baseLang]);
+  }, [user?.language]);
 
   const lang = (!user?.language && geoLang) ? geoLang : baseLang;
   return useMemo(() => resolve(lang), [lang]);

@@ -747,7 +747,7 @@ async function generateImprovedVideoDescription({ title, currentDescription, tag
 const TRANSLATE_LANG_NAMES = {
   en: 'English', es: 'Spanish', pt: 'Portuguese', fr: 'French', de: 'German',
   it: 'Italian', tr: 'Turkish', ru: 'Russian', nl: 'Dutch', vi: 'Vietnamese',
-  ja: 'Japanese', id: 'Indonesian', ar: 'Arabic', th: 'Thai',
+  ja: 'Japanese', id: 'Indonesian', ar: 'Arabic', th: 'Thai', ko: 'Korean',
   zh: 'Simplified Chinese', zhTW: 'Traditional Chinese',
 };
 

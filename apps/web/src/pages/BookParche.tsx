@@ -8,6 +8,7 @@ import { WalletPayCard } from "@/components/payments/PayInWalletChips";
 import {
   getParcheInfo,
   bookParcheCall,
+  assertPaymentUrl,
   type ParcheDetail,
   type ParchePackage,
 } from "@/lib/api";
@@ -130,7 +131,8 @@ function NpParcheCheckout({
     try {
       const res = await bookParcheCall({ parcheId, packageId, provider: "nowpayments" });
       if (!res.bookingId) throw new Error(t.parcheBookCryptoError);
-      const invoiceUrl = (res as any).checkoutUrl || (res as any).paymentUrl;
+      const rawUrl = (res as any).checkoutUrl || (res as any).paymentUrl;
+      const invoiceUrl = rawUrl ? assertPaymentUrl(rawUrl) : null;
       const w = invoiceUrl
         ? window.open(invoiceUrl, "np_parche_checkout", "width=480,height=720,left=200,top=100")
         : null;

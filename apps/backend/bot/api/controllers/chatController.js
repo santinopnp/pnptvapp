@@ -186,7 +186,7 @@ const translateChatMessage = async (req, res) => {
     try {
       const redis = getRedis();
       if (redis) {
-        const rateKey = `chat:translate:daily:${user.id}`;
+        const rateKey = `translate:daily:${user.id}`;
         const count = await redis.incr(rateKey);
         if (count === 1) await redis.expire(rateKey, 86400);
         if (count > CHAT_TRANSLATE_DAILY_LIMIT) {

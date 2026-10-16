@@ -11591,9 +11591,12 @@ export interface AdsConfigResponse {
 }
 
 let adsConfigCache: Promise<AdsConfigResponse> | null = null;
+let adsConfigCacheTs = 0;
+const ADS_CACHE_TTL_MS = 60_000;
 
 export function getAdsConfig(): Promise<AdsConfigResponse> {
-  if (!adsConfigCache) {
+  if (!adsConfigCache || Date.now() - adsConfigCacheTs > ADS_CACHE_TTL_MS) {
+    adsConfigCacheTs = Date.now();
     adsConfigCache = request<AdsConfigResponse>(`/api/ads/config`).catch(() => ({
       ok: false, showAds: false, slots: {}, scriptUrl: null,
     }));
@@ -11601,7 +11604,7 @@ export function getAdsConfig(): Promise<AdsConfigResponse> {
   return adsConfigCache;
 }
 
-export function invalidateAdsConfig() { adsConfigCache = null; }
+export function invalidateAdsConfig() { adsConfigCache = null; adsConfigCacheTs = 0; }
 
 export interface AdminMonetizationSlot {
   slot_id: string;

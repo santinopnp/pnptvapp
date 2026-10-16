@@ -19,6 +19,7 @@ const LANG_OPTIONS: { code: Lang; flag: string; label: string }[] = [
   { code: "vi", flag: "🇻🇳", label: "Tiếng Việt" },
   { code: "id", flag: "🇮🇩", label: "Indonesia" },
   { code: "ar", flag: "🇸🇦", label: "العربية" },
+  { code: "ko", flag: "🇰🇷", label: "한국어" },
   { code: "zhTW", flag: "🇹🇼", label: "中文（繁）" },
 ];
 

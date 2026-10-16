@@ -2922,7 +2922,7 @@ const translateSocialPost = async (req, res) => {
       const { getRedis } = require('../../../config/redis');
       const redis = getRedis();
       if (redis) {
-        const rateKey = `social:translate:daily:${user.id}`;
+        const rateKey = `translate:daily:${user.id}`;
         const count = await redis.incr(rateKey);
         if (count === 1) await redis.expire(rateKey, 86400);
         if (count > SOCIAL_TRANSLATE_DAILY_LIMIT) {
@@ -2942,6 +2942,23 @@ const translateSocialPost = async (req, res) => {
     const post = rows[0];
 
     if (post.is_deleted) return res.status(410).json({ error: 'Post deleted' });
+
+    // Content-tier gate — mirrors the feed entitlement check.
+    // Prevents free-tier users from using translate as a paywall bypass.
+    const postTier = (post.content_tier || 'free').toLowerCase();
+    const isExclusivePost = post.is_exclusive === true || postTier === 'prime';
+    const isOwn = String(post.user_id) === String(user.id);
+    if (isExclusivePost && !isOwn) {
+      const EAS = require('../../../services/entitlementAccessService');
+      const [cofounder, entitled] = await Promise.all([
+        Promise.resolve(EAS.isPrimeCoFounder(user.id)),
+        EAS.hasEntitlement(user.id, 'prime'),
+      ]);
+      if (!cofounder && !entitled) {
+        return res.status(403).json({ error: 'Content locked' });
+      }
+    }
+
     if (!post.content || !post.content.trim()) {
       return res.status(400).json({ error: 'No text to translate' });
     }

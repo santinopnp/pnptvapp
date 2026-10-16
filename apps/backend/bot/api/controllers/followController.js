@@ -224,9 +224,14 @@ const getFollowers = async (req, res) => {
        WHERE uf.following_id = $1
          AND u.is_deleted = false
          AND ($2::timestamptz IS NULL OR uf.created_at < $2::timestamptz)
+         AND NOT EXISTS (
+           SELECT 1 FROM blocked_users
+           WHERE (user_id = $4 AND blocked_user_id = u.id)
+              OR (user_id = u.id AND blocked_user_id = $4)
+         )
        ORDER BY uf.created_at DESC
        LIMIT $3`,
-      [targetId, cursor, limit + 1]
+      [targetId, cursor, limit + 1, actor.id]
     );
 
     const hasMore = rows.rows.length > limit;
@@ -266,9 +271,14 @@ const getFollowing = async (req, res) => {
        WHERE uf.follower_id = $1
          AND u.is_deleted = false
          AND ($2::timestamptz IS NULL OR uf.created_at < $2::timestamptz)
+         AND NOT EXISTS (
+           SELECT 1 FROM blocked_users
+           WHERE (user_id = $4 AND blocked_user_id = u.id)
+              OR (user_id = u.id AND blocked_user_id = $4)
+         )
        ORDER BY uf.created_at DESC
        LIMIT $3`,
-      [targetId, cursor, limit + 1]
+      [targetId, cursor, limit + 1, actor.id]
     );
 
     const hasMore = rows.rows.length > limit;

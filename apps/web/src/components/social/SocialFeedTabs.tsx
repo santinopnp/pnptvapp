@@ -134,14 +134,15 @@ function useFoundersCountdown() {
   const [secsLeft, setSecsLeft] = React.useState(() =>
     Math.max(0, Math.floor((FOUNDERS_DEADLINE_MS - Date.now()) / 1000))
   );
+  const expired = secsLeft <= 0;
   React.useEffect(() => {
-    if (secsLeft <= 0) return;
+    if (expired) return;
     const id = setInterval(() => {
       const s = Math.max(0, Math.floor((FOUNDERS_DEADLINE_MS - Date.now()) / 1000));
       setSecsLeft(s);
     }, 1000);
     return () => clearInterval(id);
-  }, [secsLeft <= 0]);
+  }, [expired]);
   const d = Math.floor(secsLeft / 86400);
   const h = Math.floor((secsLeft % 86400) / 3600);
   const m = Math.floor((secsLeft % 3600) / 60);

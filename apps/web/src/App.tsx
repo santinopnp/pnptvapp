@@ -276,15 +276,19 @@ function useGlobalSocketEvents() {
       if (callDismissTimer.current) { clearTimeout(callDismissTimer.current); callDismissTimer.current = null; }
     };
 
+    const onAppReload = () => window.location.reload();
+
     socket.on("auth:session_expired", onSessionExpired);
     socket.on("auth:suspended", onSuspended);
     socket.on("dm:call:incoming", onDmCallIncoming);
     socket.on("dm:call:missed", onDmCallMissed);
+    socket.on("app:reload", onAppReload);
     return () => {
       socket.off("auth:session_expired", onSessionExpired);
       socket.off("auth:suspended", onSuspended);
       socket.off("dm:call:incoming", onDmCallIncoming);
       socket.off("dm:call:missed", onDmCallMissed);
+      socket.off("app:reload", onAppReload);
     };
   }, [isAuthenticated, logout, user?.dbId, user?.id]);
 

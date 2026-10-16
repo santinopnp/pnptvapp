@@ -4,6 +4,7 @@ const { query, getPool } = require('../config/postgres');
 const { getRedis } = require('../config/redis');
 const { v4: uuidv4 } = require('uuid');
 const logger = require('../utils/logger');
+const axios = require('axios');
 const PaymentModel = require('../models/paymentModel');
 const PaymentSecurityService = require('./paymentSecurityService');
 const livekitService = require('./livekitService');
@@ -708,6 +709,15 @@ async function createBooking(parcheId, packageId, buyerId, { scheduledAt, buyerN
     throw Object.assign(new Error('Parche members cannot book their own Parche'), { code: 'MEMBER_SELF_BOOKING', status: 400 });
   }
 
+  // Guard: idempotency — buyer already has a pending/confirmed booking for this Parche
+  const { rows: existingBooking } = await query(
+    `SELECT id FROM parche_bookings WHERE parche_id = $1 AND buyer_id = $2 AND status IN ('awaiting_payment', 'confirmed') LIMIT 1`,
+    [parcheId, buyerId]
+  );
+  if (existingBooking.length > 0) {
+    throw Object.assign(new Error('You already have an active booking for this Parche'), { code: 'DUPLICATE_BOOKING', status: 409 });
+  }
+
   // Validate package
   const { rows: pkgRows } = await query(
     `SELECT * FROM parche_packages WHERE id = $1 AND parche_id = $2 AND is_active = true`,
@@ -766,7 +776,6 @@ async function createBooking(parcheId, packageId, buyerId, { scheduledAt, buyerN
 
   let checkoutUrl;
   try {
-    const axios = require('axios');
     const invoiceResp = await axios.post(`${npUrl}/invoice`, {
       price_amount: priceUsd,
       price_currency: 'usd',

@@ -870,6 +870,8 @@ const COUNTRY_LANG = {
   TR:'tr',
   // Japanese
   JP:'ja',
+  // Korean
+  KR:'ko',
   // Thai
   TH:'th',
   // Chinese (Simplified)
@@ -8778,6 +8780,30 @@ app.post('/api/webapp/admin/notifications/push', adminGuard, asyncHandler(webapp
 // Admin Telegram broadcast — send a message to all bot users
 // Body: { message: string, messageEs?: string }
 // messageEs is optional; if provided, users with language='es' get the Spanish version
+// POST /api/webapp/admin/broadcast/reload — force all connected clients to reload.
+// Use after hotfixes that must reach users with cached JS bundles.
+// Accepts either a valid admin session OR Authorization: Bearer <ADMIN_RELOAD_TOKEN>.
+// Uses a dedicated token (not SESSION_SECRET) to avoid dual-use of the session signing key.
+const _reloadTokenGuard = (req, res, next) => {
+  const bearer = (req.headers.authorization || '').replace(/^Bearer\s+/, '');
+  const secret = process.env.ADMIN_RELOAD_TOKEN;
+  if (bearer && secret) {
+    try {
+      const a = Buffer.from(bearer);
+      const b = Buffer.from(secret);
+      if (a.length === b.length && crypto.timingSafeEqual(a, b)) return next();
+    } catch { /* length mismatch — fall through to adminGuard */ }
+  }
+  return adminGuard(req, res, next);
+};
+app.post('/api/webapp/admin/broadcast/reload', _reloadTokenGuard, asyncHandler(async (req, res) => {
+  const io = require('../../services/socketSingleton').get();
+  const connected = io ? io.engine.clientsCount : 0;
+  if (io) io.emit('app:reload');
+  logger.info('[admin] app:reload broadcast', { connected });
+  return res.json({ ok: true, connected });
+}));
+
 app.post('/api/webapp/admin/broadcast/telegram', adminGuard, asyncHandler(async (req, res) => {
   const { message, messageEs } = req.body;
   if (!message || typeof message !== 'string' || !message.trim()) {
@@ -10450,8 +10476,8 @@ app.get('/api/webapp/social/posts/:postId/reactions', asyncHandler(reactionContr
 // Chat message reactions + translation
 app.post('/api/webapp/chat/messages/:messageId/react', requireSessionAuth, asyncHandler(reactionController.reactToChatMessage));
 app.get('/api/webapp/chat/messages/:messageId/reactions', asyncHandler(reactionController.getChatReactions));
-app.post('/api/webapp/chat/messages/:msgId/translate', requireSessionAuth, asyncHandler(chatController.translateChatMessage));
-app.post('/api/webapp/translate', requireSessionAuth, asyncHandler(chatController.translateTextDirect));
+app.post('/api/webapp/chat/messages/:msgId/translate', requireSessionAuth, socialActionLimiter, asyncHandler(chatController.translateChatMessage));
+app.post('/api/webapp/translate', requireSessionAuth, socialActionLimiter, asyncHandler(chatController.translateTextDirect));
 // DM reactions
 app.post('/api/webapp/dm/messages/:messageId/react', requireSessionAuth, asyncHandler(reactionController.reactToDm));
 app.get('/api/webapp/dm/messages/:messageId/reactions', requireSessionAuth, asyncHandler(reactionController.getDmReactions));

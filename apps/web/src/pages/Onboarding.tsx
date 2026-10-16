@@ -15,6 +15,7 @@ import {
 } from "@/lib/api";
 import { WalletPayCard } from "@/components/payments/PayInWalletChips";
 import { NpAppPickerSheet } from "@/components/payments/NowPaymentsWaitingPanel";
+import { LanguageSelector } from "@/components/LanguageSelector";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -1300,6 +1301,7 @@ export default function Onboarding() {
               >
                 PNPtv!
               </span>
+              <LanguageSelector position="topbar" variant="chip" />
             </div>
             <ProgressBar current={totalSteps} total={totalSteps} />
           </div>
@@ -1337,7 +1339,10 @@ export default function Onboarding() {
             >
               PNPtv!
             </span>
-            <span className="text-xs text-pnp-textSecondary tabular-nums">{stepLabel}</span>
+            <div className="flex items-center gap-2">
+              <LanguageSelector position="topbar" variant="chip" />
+              <span className="text-xs text-pnp-textSecondary tabular-nums">{stepLabel}</span>
+            </div>
           </div>
           <ProgressBar current={currentStepNumber} total={totalSteps} />
         </div>
