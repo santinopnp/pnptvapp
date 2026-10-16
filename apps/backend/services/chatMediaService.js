@@ -33,6 +33,9 @@ const ALLOWED_IMAGE_MIMES = new Set([
 const ALLOWED_VIDEO_MIMES = new Set([
   'video/mp4',
   'video/webm',
+  'video/quicktime',  // iOS .MOV files
+  'video/x-m4v',     // iPhone M4V variant
+  'video/3gpp',      // Android 3GP videos
 ]);
 
 const ALLOWED_AUDIO_MIMES = new Set([
