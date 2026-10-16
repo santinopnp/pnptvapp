@@ -994,6 +994,77 @@ function _wrap(fnName, origFn) {
  * @param {any} [opts.scriptUrl]
  * @param {string} [opts.detail]           1-2 line human explanation
  */
+/**
+ * DM threat detection alert — fires when a user sends a message matching
+ * law-enforcement threats, legal threats, violence, extortion, or underage claims.
+ * @param {object} opts
+ * @param {string} opts.senderId
+ * @param {string} [opts.senderUsername]
+ * @param {string} opts.recipientId
+ * @param {string} [opts.recipientUsername]
+ * @param {string} opts.messageText        raw message content (will be truncated)
+ * @param {string[]} opts.matchedPatterns   human-readable labels of what matched
+ * @param {string} [opts.messageId]
+ */
+async function notifyDmThreat(opts) {
+  const channel = _moderationChannel();
+  if (!_tok() || !channel) return;
+  try {
+    const {
+      senderId = 'N/A',
+      senderUsername = null,
+      recipientId = 'N/A',
+      recipientUsername = null,
+      messageText = '',
+      matchedPatterns = [],
+      messageId = null,
+    } = opts || {};
+
+    const senderLabel  = senderUsername  ? `@${senderUsername}`  : `\`${senderId}\``;
+    const recipientLabel = recipientUsername ? `@${recipientUsername}` : `\`${recipientId}\``;
+    const snippet = messageText.length > 300 ? `${messageText.slice(0, 300)}…` : messageText;
+    const patternList = matchedPatterns.slice(0, 8).map(p => `\`${p}\``).join(', ');
+    const text = `🚨 DM threat detected — ${senderLabel} → ${recipientLabel}`;
+
+    const blocks = [
+      {
+        type: 'header',
+        text: { type: 'plain_text', text: ':rotating_light: DM Threat Detected', emoji: true },
+      },
+      {
+        type: 'section',
+        fields: [
+          { type: 'mrkdwn', text: `*From:*\n${senderLabel}` },
+          { type: 'mrkdwn', text: `*Sender ID:*\n\`${senderId}\`` },
+          { type: 'mrkdwn', text: `*To:*\n${recipientLabel}` },
+          { type: 'mrkdwn', text: `*Matched:*\n${patternList || '(see message)'}` },
+        ],
+      },
+      {
+        type: 'section',
+        text: { type: 'mrkdwn', text: `*Message:*\n\`\`\`${snippet.replace(/`/g, "'")}\`\`\`` },
+      },
+      {
+        type: 'context',
+        elements: [
+          {
+            type: 'mrkdwn',
+            text: [
+              `<https://pnptv.app/admin/users/${senderId}|Open sender in admin>`,
+              messageId ? `· msg id \`${messageId}\`` : '',
+              `· <!date^${Math.floor(Date.now() / 1000)}^{date_short_pretty} at {time}|${_nowTs()} ET>`,
+            ].filter(Boolean).join(' '),
+          },
+        ],
+      },
+    ];
+
+    await _post(channel, text, blocks);
+  } catch (e) {
+    logger.warn('[slackOps] notifyDmThreat error', { error: e.message });
+  }
+}
+
 async function notifyAdsHealthFail(opts) {
   const channel = _adsChannel();
   if (!channel) return;
@@ -1025,6 +1096,7 @@ module.exports = {
   notifyBan: _wrap('notifyBan', notifyBan),
   notifyNewTelegramUser: _wrap('notifyNewTelegramUser', notifyNewTelegramUser),
   notifyLeakageDetected: _wrap('notifyLeakageDetected', notifyLeakageDetected),
+  notifyDmThreat: _wrap('notifyDmThreat', notifyDmThreat),
   notifyAdsHealthFail: _wrap('notifyAdsHealthFail', notifyAdsHealthFail),
   // Direct originals — used ONLY by the BullMQ worker to avoid infinite loops
   _direct_notifyPaymentSuccess: notifyPaymentSuccess,

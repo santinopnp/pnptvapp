@@ -6,6 +6,50 @@ const NotificationEmitter = require('./notificationEmitter');
 const { resolveUserId } = require('../bot/utils/helpers');
 const { normalizeImageUrl } = require('./imageUrlHelper');
 
+// Threat pattern definitions — label → regex
+// Ordered roughly by severity. Each label is what appears in the Slack alert.
+const DM_THREAT_PATTERNS = [
+  // Law enforcement
+  ['law enforcement',   /\blaw\s+enforcement\b/i],
+  ['FBI',               /\bfbi\b/i],
+  ['Interpol',          /\binterpol\b/i],
+  ['police report',     /\bpolic(e|ía)\b.*\breport\b|\breport\b.*\bpolic(e|ía)\b/i],
+  ['report to cops',    /\breport\b.{0,30}\bcops?\b|\bcops?\b.{0,30}\btrack\b/i],
+  ['track via site',    /\b(site|app|platform|website)\b.{0,40}\b(cops?|fbi|police|track|report)\b/i],
+  // Legal threats
+  ['lawsuit',           /\blawsuit\b/i],
+  ['will sue',          /\b(will|gonna|going to|i'll|i will)\s+sue\b/i],
+  ['legal action',      /\blegal\s+action\b/i],
+  ['my lawyer',         /\bmy\s+(lawyer|attorney|solicitor|abogad[oa])\b/i],
+  ['take to court',     /\b(take|taking|bring|bringing)\b.{0,20}\bcourt\b/i],
+  // Underage / minors
+  ['underage claim',    /\bunderage\b/i],
+  ['minor claim',       /\bi(\'m| am| m)\s+(a\s+)?(minor|underage|16|17|15|14|13)\b/i],
+  // Violence / personal threats
+  ['kill threat',       /\b(kill|murder|harm|hurt)\s+(you|u|yourself|urself)\b/i],
+  ['find you threat',   /\b(find|locate|track)\s+(you|u|ur)\b.{0,30}\b(address|home|house|irl)\b/i],
+  ['doxx threat',       /\bdox(x)?(ing|ed|er)?\b/i],
+  // Extortion
+  ['blackmail',         /\bblackmail\b/i],
+  ['expose threat',     /\bexpose\s+(you|this|the\s+site|the\s+app|pnp)\b/i],
+  ['leak threat',       /\bleak\b.{0,30}\b(you|this|data|info|pics|photos)\b/i],
+  ['report to authorities', /\breport\b.{0,40}\bauthorities\b|\bauthorities\b.{0,40}\breport\b/i],
+];
+
+/**
+ * Returns an array of matched pattern labels, or empty array if clean.
+ * @param {string} text
+ * @returns {string[]}
+ */
+function _scanDmForThreats(text) {
+  if (!text || typeof text !== 'string') return [];
+  const matched = [];
+  for (const [label, re] of DM_THREAT_PATTERNS) {
+    if (re.test(text)) matched.push(label);
+  }
+  return matched;
+}
+
 /**
  * DM Service
  * Centralizes direct messaging logic for REST and Socket.IO
@@ -236,7 +280,7 @@ class DmService {
 
     (async () => {
       try {
-        const senderResult = await query('SELECT username, first_name FROM users WHERE id = $1', [senderId]);
+        const senderResult = await query('SELECT username, first_name, role FROM users WHERE id = $1', [senderId]);
         const sender = senderResult.rows[0];
         const senderName = sender?.first_name || sender?.username || 'Someone';
 
@@ -251,6 +295,30 @@ class DmService {
           message: `${senderName} sent you a message`,
           metadata: { senderId, senderName, messageId: message.id, preview: threadPreview, url: `/dm/${senderId}` }
         });
+
+        // Threat detection — skip system/admin senders to avoid false alerts
+        if (text && sender?.role !== 'superadmin' && sender?.role !== 'admin') {
+          const matched = _scanDmForThreats(text);
+          if (matched.length > 0) {
+            const redis = require('../config/redis').getRedis();
+            const dedupKey = `dm:threat:dedup:${senderId}`;
+            const alreadyAlerted = redis ? await redis.get(dedupKey).catch(() => null) : null;
+            if (!alreadyAlerted) {
+              if (redis) redis.set(dedupKey, '1', 'EX', 3600).catch(() => {});
+              const [recipRow] = (await query('SELECT username FROM users WHERE id = $1', [resolvedRecipientId]).catch(() => ({ rows: [] }))).rows;
+              const slackOps = require('./slackOpsService');
+              slackOps.notifyDmThreat({
+                senderId,
+                senderUsername: sender?.username || null,
+                recipientId: resolvedRecipientId,
+                recipientUsername: recipRow?.username || null,
+                messageText: text,
+                matchedPatterns: matched,
+                messageId: message.id,
+              }).catch(() => {});
+            }
+          }
+        }
       } catch (notifErr) {
         logger.warn('DM push notification error', { error: notifErr.message, messageId: message.id });
       }
