@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback } from "react";
-import { getCallAnalytics as fetchCallAnalytics } from "@/lib/api";
+import React, { useState, useEffect, useCallback, useRef } from "react";
+import { getCallAnalytics as fetchCallAnalytics, searchUsers, adminCreateManualBooking } from "@/lib/api";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -321,6 +321,192 @@ function TipsSection({ data }: { data: CallAnalyticsData["tipAnalytics"] }) {
   );
 }
 
+// ── Manual Booking Form ───────────────────────────────────────────────────────
+
+interface UserHit { id: string; username: string; first_name: string }
+interface PkgOption { id: number; duration_minutes: number; price_usd: string }
+
+function UserPicker({ label, onSelect }: { label: string; onSelect: (u: UserHit | null) => void }) {
+  const [q, setQ] = useState("");
+  const [hits, setHits] = useState<UserHit[]>([]);
+  const [chosen, setChosen] = useState<UserHit | null>(null);
+  const [open, setOpen] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const search = (val: string) => {
+    setQ(val);
+    setChosen(null);
+    onSelect(null);
+    if (timerRef.current) clearTimeout(timerRef.current);
+    if (!val.trim()) { setHits([]); return; }
+    timerRef.current = setTimeout(async () => {
+      try {
+        const res = await searchUsers(val, 8);
+        setHits(res.users);
+        setOpen(true);
+      } catch { setHits([]); }
+    }, 300);
+  };
+
+  const pick = (u: UserHit) => {
+    setChosen(u);
+    setQ(`@${u.username}`);
+    setHits([]);
+    setOpen(false);
+    onSelect(u);
+  };
+
+  return (
+    <div className="relative">
+      <label className="block text-xs text-zinc-400 mb-1">{label}</label>
+      <input
+        type="text"
+        value={q}
+        onChange={(e) => search(e.target.value)}
+        placeholder="Search by username…"
+        className="w-full rounded bg-zinc-800 border border-zinc-600 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-pnp-accent"
+      />
+      {chosen && (
+        <div className="mt-1 text-xs text-green-400">✓ {chosen.first_name} (@{chosen.username})</div>
+      )}
+      {open && hits.length > 0 && (
+        <ul className="absolute z-20 mt-1 w-full bg-zinc-900 border border-zinc-700 rounded shadow-lg max-h-48 overflow-auto">
+          {hits.map((u) => (
+            <li
+              key={u.id}
+              onMouseDown={() => pick(u)}
+              className="px-3 py-2 text-sm text-zinc-200 cursor-pointer hover:bg-zinc-800"
+            >
+              @{u.username} — {u.first_name}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function ManualBookingForm() {
+  const [member, setMember] = useState<UserHit | null>(null);
+  const [creator, setCreator] = useState<UserHit | null>(null);
+  const [packages, setPackages] = useState<PkgOption[]>([]);
+  const [packageId, setPackageId] = useState<number | "">("");
+  const [startAt, setStartAt] = useState("");
+  const [notes, setNotes] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [result, setResult] = useState<{ bookingId: string; roomUrl: string; durationMinutes: number } | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!creator) { setPackages([]); setPackageId(""); return; }
+    fetch(`/api/webapp/creators/${creator.id}/call-packages`)
+      .then((r) => r.json())
+      .then((d) => {
+        const pkgs: PkgOption[] = (d.packages || []).filter((p: PkgOption & { is_active?: boolean }) => p.is_active !== false);
+        setPackages(pkgs);
+        setPackageId(pkgs.length === 1 ? pkgs[0].id : "");
+      })
+      .catch(() => setPackages([]));
+  }, [creator]);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!member || !creator || !packageId || !startAt) return;
+    setSubmitting(true);
+    setErr(null);
+    setResult(null);
+    try {
+      const res = await adminCreateManualBooking({
+        memberId: member.id,
+        creatorId: creator.id,
+        packageId: Number(packageId),
+        startAt: new Date(startAt).toISOString(),
+        clientNotes: notes || undefined,
+      });
+      setResult(res);
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : "Failed to create booking");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const reset = () => { setMember(null); setCreator(null); setPackages([]); setPackageId(""); setStartAt(""); setNotes(""); setResult(null); setErr(null); };
+
+  return (
+    <section className="space-y-4">
+      <h2 className="text-lg font-semibold text-zinc-100">Book a Call — Manual Entry</h2>
+      <p className="text-xs text-zinc-400">For calls paid outside the platform. Creates a confirmed booking, admin-granted credit, and sends notifications to both parties.</p>
+
+      {result ? (
+        <div className="rounded-lg border border-green-600 bg-green-950/40 p-4 space-y-2">
+          <p className="text-green-400 font-medium">Booking created</p>
+          <p className="text-sm text-zinc-300">ID: <span className="font-mono text-xs">{result.bookingId}</span></p>
+          <p className="text-sm text-zinc-300">Duration: {result.durationMinutes} min</p>
+          <a href={result.roomUrl} target="_blank" rel="noreferrer" className="inline-block text-sm text-pnp-accent underline">{result.roomUrl}</a>
+          <div><button onClick={reset} className="mt-2 px-3 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-sm text-zinc-300">Book another</button></div>
+        </div>
+      ) : (
+        <form onSubmit={submit} className="grid grid-cols-1 gap-4 md:grid-cols-2 max-w-2xl">
+          <UserPicker label="Member (buyer)" onSelect={setMember} />
+          <UserPicker label="Creator (performer)" onSelect={setCreator} />
+
+          <div>
+            <label className="block text-xs text-zinc-400 mb-1">Package</label>
+            <select
+              value={packageId}
+              onChange={(e) => setPackageId(e.target.value ? Number(e.target.value) : "")}
+              disabled={!packages.length}
+              className="w-full rounded bg-zinc-800 border border-zinc-600 px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-pnp-accent disabled:opacity-50"
+            >
+              <option value="">{packages.length ? "Select package…" : "Select creator first"}</option>
+              {packages.map((p) => (
+                <option key={p.id} value={p.id}>{p.duration_minutes} min — ${p.price_usd}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs text-zinc-400 mb-1">Start time (your local time)</label>
+            <input
+              type="datetime-local"
+              value={startAt}
+              onChange={(e) => setStartAt(e.target.value)}
+              className="w-full rounded bg-zinc-800 border border-zinc-600 px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-pnp-accent"
+            />
+            {startAt && (
+              <p className="text-xs text-zinc-500 mt-0.5">UTC: {new Date(startAt).toISOString()}</p>
+            )}
+          </div>
+
+          <div className="md:col-span-2">
+            <label className="block text-xs text-zinc-400 mb-1">Notes (optional)</label>
+            <input
+              type="text"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="e.g. paid via Telegram transfer"
+              className="w-full rounded bg-zinc-800 border border-zinc-600 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-pnp-accent"
+            />
+          </div>
+
+          {err && <p className="md:col-span-2 text-sm text-red-400">{err}</p>}
+
+          <div className="md:col-span-2">
+            <button
+              type="submit"
+              disabled={submitting || !member || !creator || !packageId || !startAt}
+              className="px-4 py-2 rounded bg-pnp-accent text-white text-sm font-medium hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {submitting ? "Creating…" : "Create booking"}
+            </button>
+          </div>
+        </form>
+      )}
+    </section>
+  );
+}
+
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 export default function CallAnalytics() {
@@ -374,6 +560,7 @@ export default function CallAnalytics() {
         </button>
       </div>
 
+      <ManualBookingForm />
       <SurveySection data={data.callAnalytics} />
       <TipsSection data={data.tipAnalytics} />
     </div>

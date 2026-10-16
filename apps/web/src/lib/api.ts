@@ -11894,3 +11894,13 @@ export function getParcheCallToken(
     `/api/webapp/parche-bookings/${bookingId}/token`
   );
 }
+
+export function adminCreateManualBooking(data: {
+  memberId: string;
+  creatorId: string;
+  packageId: number;
+  startAt: string;
+  clientNotes?: string;
+}): Promise<{ success: boolean; bookingId: string; roomUrl: string; startAt: string; endAt: string; durationMinutes: number }> {
+  return request('/api/webapp/admin/bookings/manual', { method: 'POST', body: data });
+}

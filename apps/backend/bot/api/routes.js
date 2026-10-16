@@ -22082,6 +22082,113 @@ app.post('/api/webapp/admin/creators/:creatorId/call-packages',
   requireSessionAuth, adminGuard,
   asyncHandler(callPackageController.createPackage));
 
+// Admin: create a manual (externally-paid) booking
+app.post('/api/webapp/admin/bookings/manual', requireSessionAuth, adminGuard, asyncHandler(async (req, res) => {
+  const { memberId, creatorId, packageId, startAt, clientNotes } = req.body;
+  if (!memberId || !creatorId || !packageId || !startAt) {
+    return res.status(400).json({ error: 'memberId, creatorId, packageId, and startAt are required' });
+  }
+
+  const { query: dbQuery, getPool } = require('../../config/postgres');
+  const { v4: uuidv4Generator } = require('uuid');
+  const moment = require('moment-timezone');
+  const CallBookingService = require('../../services/CallBookingService');
+  const callNotificationService = require('../../services/callNotificationService');
+
+  const startMoment = moment.utc(startAt);
+  if (!startMoment.isValid()) return res.status(400).json({ error: 'Invalid startAt timestamp' });
+
+  // Resolve performer
+  const { rows: perfRows } = await dbQuery(
+    `SELECT id FROM performers WHERE user_id = $1 AND status = 'active'`,
+    [creatorId]
+  );
+  if (!perfRows.length) return res.status(404).json({ error: 'Creator not found or not an active performer' });
+  const performerId = perfRows[0].id;
+
+  // Resolve package
+  const { rows: pkgRows } = await dbQuery(
+    `SELECT id, duration_minutes, price_usd FROM call_packages WHERE id = $1 AND creator_id = $2 AND is_active = true`,
+    [packageId, creatorId]
+  );
+  if (!pkgRows.length) return res.status(404).json({ error: 'Package not found or inactive' });
+  const pkg = pkgRows[0];
+
+  const endAt = startMoment.clone().add(pkg.duration_minutes, 'minutes').toISOString();
+
+  // Check for slot conflicts
+  const { rows: conflicts } = await dbQuery(
+    `SELECT 1 FROM bookings
+     WHERE performer_id = $1
+       AND status IN ('confirmed', 'held', 'awaiting_payment')
+       AND (start_time_utc, end_time_utc) OVERLAPS ($2::timestamptz, $3::timestamptz)`,
+    [performerId, startAt, endAt]
+  );
+  if (conflicts.length) return res.status(409).json({ error: 'Creator already has a booking in that slot' });
+
+  const pool = getPool();
+  const client = await pool.connect();
+  let bookingId;
+  let creditId;
+  try {
+    await client.query('BEGIN');
+
+    const { rows: creditRows } = await client.query(
+      `INSERT INTO call_credits
+         (member_id, creator_id, package_id, quantity_total, quantity_used,
+          quantity_scheduled, status, source, expires_at)
+       VALUES ($1, $2, $3, 1, 0, 1, 'partial', 'admin_grant', NOW() + INTERVAL '30 days')
+       RETURNING id`,
+      [memberId, creatorId, packageId]
+    );
+    creditId = creditRows[0].id;
+
+    bookingId = uuidv4Generator();
+    await client.query(
+      `INSERT INTO bookings
+         (id, user_id, performer_id, price_cents, start_time_utc, end_time_utc,
+          duration_minutes, credit_id, status, call_type, client_notes)
+       VALUES ($1, $2, $3, 0, $4, $5, $6, $7, 'confirmed', 'video', $8)`,
+      [bookingId, memberId, performerId, startAt, endAt, pkg.duration_minutes, creditId, clientNotes || null]
+    );
+
+    await client.query(
+      `INSERT INTO call_sessions
+         (booking_id, room_provider, room_id, room_name, max_participants, recording_disabled, status)
+       VALUES ($1, 'jitsi', $2, 'Private Call', 2, true, 'scheduled')`,
+      [bookingId, `booking-${bookingId}`]
+    );
+
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    logger.error('[admin manual booking] transaction failed', { error: err.message });
+    return res.status(500).json({ error: 'Failed to create booking' });
+  } finally {
+    client.release();
+  }
+
+  // Fire notifications + reminders async (non-blocking)
+  CallBookingService._notifyBookingConfirmed(
+    { id: bookingId, start_time_utc: startAt },
+    memberId, creatorId
+  ).catch((e) => logger.warn('[admin manual booking] notify failed', { error: e.message }));
+
+  callNotificationService.scheduleCallReminders(
+    creditId, creatorId, memberId, startAt, null, pkg.duration_minutes
+  );
+
+  logger.info('[admin manual booking] created', { bookingId, memberId, creatorId, packageId });
+  return res.status(201).json({
+    success: true,
+    bookingId,
+    roomUrl: `/call/${bookingId}`,
+    startAt,
+    endAt,
+    durationMinutes: pkg.duration_minutes,
+  });
+}));
+
 // Admin: deactivate a call package
 app.delete('/api/webapp/admin/creators/:creatorId/call-packages/:packageId',
   requireSessionAuth, adminGuard,
