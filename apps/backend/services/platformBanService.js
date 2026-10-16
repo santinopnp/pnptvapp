@@ -1,5 +1,10 @@
+'use strict';
+
 const { query } = require('../config/postgres');
 const logger = require('../utils/logger');
+
+// Max accounts allowed from one IP before registration is blocked.
+const MAX_ACCOUNTS_PER_IP = 3;
 
 class PlatformBanService {
   static async isBanned({ userId, telegramId, pnptvId, email, xId } = {}) {
@@ -37,8 +42,53 @@ class PlatformBanService {
     }
   }
 
+  /**
+   * Returns the matching platform_bans row if the IP is explicitly banned,
+   * or a synthetic object if the IP has exceeded the per-IP account cap.
+   * Returns null if the IP is clean.
+   */
   static async isIpBanned(ip) {
-    return false;
+    if (!ip) return null;
+    // Strip IPv6-mapped IPv4 prefix (e.g. "::ffff:1.2.3.4" → "1.2.3.4")
+    const cleanIp = ip.replace(/^::ffff:/, '');
+    try {
+      // 1. Explicit IP ban in platform_bans.known_ips
+      const explicit = await query(
+        `SELECT user_id, username, reason FROM platform_bans
+         WHERE is_active = true AND $1 = ANY(known_ips)
+         LIMIT 1`,
+        [cleanIp]
+      ).catch(() => null);
+      if (explicit?.rows?.length > 0) {
+        return { ...explicit.rows[0], group_id: 'global', ip: cleanIp };
+      }
+
+      // 2. Per-IP registration cap — block if ≥ MAX_ACCOUNTS_PER_IP accounts already exist
+      const countRes = await query(
+        `SELECT COUNT(*) AS cnt FROM users
+         WHERE (
+           terms_accepted_ip = $1
+           OR content_disclaimer_accepted_ip = $1
+           OR privacy_accepted_ip = $1
+         )
+         AND is_deleted IS DISTINCT FROM true`,
+        [cleanIp]
+      ).catch(() => null);
+      const count = parseInt(countRes?.rows?.[0]?.cnt || '0', 10);
+      if (count >= MAX_ACCOUNTS_PER_IP) {
+        logger.warn('PlatformBanService: IP registration cap exceeded', { ip: cleanIp, count });
+        return {
+          group_id: 'global',
+          reason: `IP ${cleanIp} has ${count} existing accounts (cap: ${MAX_ACCOUNTS_PER_IP})`,
+          ip: cleanIp,
+        };
+      }
+
+      return null;
+    } catch (err) {
+      logger.error('PlatformBanService.isIpBanned error:', err);
+      return null;
+    }
   }
 
   static async ban({ userId, reason, bannedBy, duration } = {}) {

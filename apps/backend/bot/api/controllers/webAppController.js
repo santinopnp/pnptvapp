@@ -15,6 +15,7 @@ const { generateRegistrationOptions, verifyRegistrationResponse, generateAuthent
 const { enforceDefaultFollows } = require('../../../services/followService');
 const AuthentikService = require('../../../services/authentikService');
 const XOAuthService = require('../../../services/xOAuthService');
+const PlatformBanService = require('../../../services/platformBanService');
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -133,7 +134,7 @@ async function createWebUser({ id, firstName, lastName, username, email, passwor
  * @param {string} [opts.photoFileId]
  * @returns {{ user: object, isNew: boolean }}
  */
-async function findOrLinkUser({ telegramId, twitterHandle, xId, email, firstName, lastName, username, photoFileId } = {}) {
+async function findOrLinkUser({ telegramId, twitterHandle, xId, email, firstName, lastName, username, photoFileId, ip } = {}) {
   const RETURN_COLS = `id, pnptv_id, first_name, last_name, username, email,
     subscription_status, tier, terms_accepted, photo_file_id, bio, language, telegram, twitter, x_id, role, is_pnptv_fam`;
 
@@ -238,10 +239,19 @@ async function findOrLinkUser({ telegramId, twitterHandle, xId, email, firstName
     return { user, isNew: false };
   }
 
-  // No match — create new user. Guard against the race condition where two
-  // concurrent first-logins for the same Telegram ID both pass the SELECT
-  // above and then both try to INSERT: the loser gets a 23505 unique violation.
-  // In that case, fetch the row the winner just created and return it as-is.
+  // No match — check IP ban before creating a new account
+  if (ip) {
+    const cleanIp = ip.replace(/^::ffff:/, '');
+    const ipBan = await PlatformBanService.isIpBanned(cleanIp);
+    if (ipBan) {
+      logger.warn('findOrLinkUser: IP-banned address attempted new registration', { ip: cleanIp, reason: ipBan.reason });
+      return { user: null, isNew: false, ipBanned: true };
+    }
+  }
+
+  // Guard against the race condition where two concurrent first-logins for the
+  // same Telegram ID both pass the SELECT above and both try to INSERT: the
+  // loser gets a 23505 unique violation — fetch the row the winner just created.
   let newUser;
   try {
     newUser = await createWebUser({ telegramId, twitterHandle, xId, email, firstName, lastName, username, photoFileId });
@@ -504,13 +514,18 @@ const telegramCheckToken = async (req, res) => {
       logger.warn(`[DeepLink] Authentik sync failed for Telegram ${telegramId}, continuing login`);
     }
 
-    const { user, isNew } = await findOrLinkUser({
+    const { user, isNew, ipBanned: deepLinkIpBanned } = await findOrLinkUser({
       telegramId,
       firstName: telegramUser.first_name,
       lastName: telegramUser.last_name,
       username: telegramUser.username,
       photoFileId: telegramUser.photo_url || null,
+      ip: req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress,
     });
+
+    if (deepLinkIpBanned) {
+      return redirectToCanonicalAuthError(res);
+    }
 
     // Persist Authentik UUID if available and not yet stored
     if (pnptvId && (!user.pnptv_id || user.pnptv_id !== pnptvId)) {
@@ -1044,13 +1059,18 @@ const passkeyFinish = async (req, res) => {
     }
 
     const { authentikUser } = flowResult;
-    const { user } = await findOrLinkUser({
+    const { user, ipBanned: passkeyIpBanned } = await findOrLinkUser({
       email: authentikUser.email && !authentikUser.email.endsWith('@telegram.pnptv.app') && !authentikUser.email.endsWith('@x.pnptv.app')
         ? authentikUser.email.toLowerCase().trim()
         : undefined,
       username: authentikUser.username,
       firstName: authentikUser.name || authentikUser.username,
+      ip: req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress,
     });
+
+    if (passkeyIpBanned) {
+      return res.status(403).json({ authenticated: false, error: 'account_banned' });
+    }
 
     if (!user) {
       logger.error('[Passkey] passkeyFinish: findOrLinkUser returned null for', authentikUser.username);
@@ -1405,13 +1425,18 @@ const telegramCallback = async (req, res) => {
       return redirectToCanonicalAuthError(res);
     }
 
-    const { user, isNew } = await findOrLinkUser({
+    const { user, isNew, ipBanned: callbackIpBanned } = await findOrLinkUser({
       telegramId,
       firstName: telegramUser.first_name,
       lastName: telegramUser.last_name,
       username: telegramUser.username,
       photoFileId: telegramUser.photo_url || null,
+      ip: req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress,
     });
+
+    if (callbackIpBanned) {
+      return redirectToCanonicalAuthError(res);
+    }
 
     if (isNew) {
       logger.info(`Created new user via Telegram callback: ${user.id} (@${user.username})`);
@@ -1485,13 +1510,18 @@ const telegramLogin = async (req, res) => {
 
     const telegramId = String(telegramUser.id);
 
-    const { user, isNew } = await findOrLinkUser({
+    const { user, isNew, ipBanned: widgetIpBanned } = await findOrLinkUser({
       telegramId,
       firstName: telegramUser.first_name,
       lastName: telegramUser.last_name,
       username: telegramUser.username,
       photoFileId: telegramUser.photo_url || null,
+      ip: req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress,
     });
+
+    if (widgetIpBanned) {
+      return redirectToCanonicalAuthError(res);
+    }
 
     if (isNew) {
       logger.info(`Created new user via Telegram widget login: ${user.id} (@${user.username})`);
@@ -1565,6 +1595,15 @@ const emailRegister = async (req, res) => {
     const existing = await query('SELECT id FROM users WHERE email = $1', [emailLower]);
     if (existing.rows.length > 0) {
       return res.status(409).json({ error: 'An account with this email already exists. Please log in.' });
+    }
+
+    const regIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress;
+    if (regIp) {
+      const regIpBan = await PlatformBanService.isIpBanned(regIp);
+      if (regIpBan) {
+        logger.warn('[emailRegister] IP-banned address attempted registration', { ip: regIp });
+        return res.status(403).json({ error: 'Registration blocked. Contact legal@pnptv.app if you believe this is an error.' });
+      }
     }
 
     const passwordHash = await hashPassword(password);
@@ -1766,7 +1805,15 @@ const oidcTokenExchange = async (req, res) => {
     }
 
     if (!user) {
-      // 3. Create new user from Authentik profile
+      // 3. Create new user from Authentik profile — check IP ban first
+      const oidcIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress;
+      if (oidcIp) {
+        const oidcIpBan = await PlatformBanService.isIpBanned(oidcIp);
+        if (oidcIpBan) {
+          logger.warn('[OIDC] IP-banned address attempted registration', { ip: oidcIp });
+          return res.status(403).json({ error: 'Registration blocked. Contact legal@pnptv.app if you believe this is an error.' });
+        }
+      }
       user = await createWebUser({
         firstName: profile.given_name || profile.name || profile.preferred_username || 'Member',
         lastName: profile.family_name || null,
@@ -2380,13 +2427,18 @@ const xLoginCallback = async (req, res) => {
     }
 
     const [firstName, ...nameParts] = (xName || xHandle).split(' ');
-    const { user, isNew } = await findOrLinkUser({
+    const { user, isNew, ipBanned: xLoginIpBanned } = await findOrLinkUser({
       twitterHandle: xHandle,
       xId,
       firstName,
       lastName: nameParts.join(' ') || null,
       username: xHandle,
+      ip: req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress,
     });
+
+    if (xLoginIpBanned) {
+      return redirectToCanonicalAuthError(res);
+    }
 
     // Persist Authentik UUID if available and not yet stored
     if (pnptvId && (!user.pnptv_id || user.pnptv_id !== pnptvId)) {
@@ -3542,13 +3594,18 @@ const telegramWidgetAuth = async (req, res) => {
       logger.warn(`[TelegramWidget] Authentik sync failed for Telegram ${telegramId}, continuing login`);
     }
 
-    const { user, isNew } = await findOrLinkUser({
+    const { user, isNew, ipBanned: tgWidgetIpBanned } = await findOrLinkUser({
       telegramId,
       firstName: first_name || null,
       lastName: last_name || null,
       username: username || null,
       photoFileId: photo_url || null,
+      ip: req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress,
     });
+
+    if (tgWidgetIpBanned) {
+      return res.status(403).json({ success: false, error: 'Account suspended' });
+    }
 
     if (user.tier === 'banned') {
       logger.warn('[TelegramWidget] Banned user attempted login', { userId: user.id });
