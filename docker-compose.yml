@@ -389,12 +389,9 @@ services:
     image: livekit/livekit-server:latest
     container_name: livekit-pnptv
     restart: unless-stopped
+    network_mode: host
     env_file:
       - .env
-    ports:
-      - "7881:7881"
-      - "50000-50060:50000-50060/udp"
-      - "3478:3478/udp"
     volumes:
       - ./infrastructure/configs/livekit/livekit.yaml:/etc/livekit.yaml:ro
     entrypoint:
@@ -406,8 +403,6 @@ services:
             -e "s|__REDIS_PNPTV_PASSWORD__|$${REDIS_PNPTV_PASSWORD}|g" \
             /etc/livekit.yaml > /tmp/livekit.yaml && \
         exec /livekit-server --config /tmp/livekit.yaml
-    networks:
-      - pnptvapp_net
     depends_on:
       redis-pnptv:
         condition: service_healthy
@@ -572,6 +567,8 @@ services:
     container_name: redis-pnptv
     restart: unless-stopped
     command: redis-server --requirepass ${REDIS_PNPTV_PASSWORD} --maxmemory 384mb --maxmemory-policy noeviction --appendonly yes --appendfsync everysec
+    ports:
+      - "127.0.0.1:6379:6379"
     volumes:
       - vol_redis_pnptv:/data
     networks:
@@ -669,14 +666,15 @@ services:
     image: livekit/ingress:latest
     container_name: livekit-ingress
     restart: unless-stopped
+    network_mode: host
     environment:
       INGRESS_CONFIG_BODY: |
         log_level: info
         api_key: ${LIVEKIT_API_KEY}
         api_secret: ${LIVEKIT_API_SECRET}
-        ws_url: ws://livekit-pnptv:7880
+        ws_url: ws://localhost:7880
         redis:
-          address: redis-pnptv:6379
+          address: localhost:6379
           password: ${REDIS_PNPTV_PASSWORD}
         rtmp_port: 1936
         whip_port: 8090
@@ -686,8 +684,6 @@ services:
           whip_cpu_cost: 2
           whip_bypass_transcoding_cpu_cost: 0.1
           url_cpu_cost: 1
-    networks:
-      - pnptvapp_net
     depends_on:
       livekit:
         condition: service_started

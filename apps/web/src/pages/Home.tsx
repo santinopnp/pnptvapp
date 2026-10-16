@@ -223,6 +223,7 @@ export default function Home() {
         )}
       </div>
     )}
+    <div className="hidden md:flex justify-center py-2 bg-black/20"><AdSlot slot="members_leaderboard" /></div>
     <div className="max-w-5xl mx-auto px-4 py-6">
       <Helmet>
         <title>{t.home.pageTitle}</title>

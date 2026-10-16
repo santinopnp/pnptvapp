@@ -19685,6 +19685,7 @@ app.get('/api/ads/config', softAuth, asyncHandler(async (req, res) => {
     { id: 'outstream_video',       format: 'outstream_video',       zone: process.env.EXO_ZONE_OUTSTREAM_VIDEO,       vastEnv: 'EXO_VAST_URL_OUTSTREAM_VIDEO',  capPerSession: 0 },
     { id: 'sidebar_desktop',       format: 'banner',                zone: process.env.EXO_ZONE_SIDEBAR_DESKTOP,       size: '300x250',  capPerSession: 0 },
     { id: 'landing_hero',          format: 'banner',                zone: process.env.EXO_ZONE_LANDING_HERO,          size: '728x90',   capPerSession: 0 },
+    { id: 'members_leaderboard',   format: 'banner',                zone: process.env.EXO_ZONE_MEMBERS_LEADERBOARD || process.env.EXO_ZONE_LANDING_HERO, size: '728x90', capPerSession: 0 },
     { id: 'sticky_footer_desktop', format: 'sticky_banner',         zone: process.env.EXO_ZONE_STICKY_FOOTER_DESKTOP, size: '728x90',   capPerSession: 0 },
     { id: 'sticky_footer_mobile',  format: 'mobile_banner',         zone: process.env.EXO_ZONE_STICKY_FOOTER_MOBILE,  size: '300x50',   capPerSession: 0 },
     { id: 'feed_native',           format: 'in_content_banner',     zone: process.env.EXO_ZONE_FEED_NATIVE,           size: '300x100',  capPerSession: 0 },
@@ -19712,7 +19713,7 @@ app.get('/api/ads/config', softAuth, asyncHandler(async (req, res) => {
   const MINIMAL_SLOTS = new Set(['sticky_footer_desktop', 'sticky_footer_mobile']);
   const LIGHT_SLOTS = new Set([
     'sticky_footer_desktop', 'sticky_footer_mobile',
-    'landing_hero', 'feed_native', 'sidebar_desktop',
+    'landing_hero', 'feed_native', 'sidebar_desktop', 'members_leaderboard',
   ]);
   for (const s of slotDefs) {
     if (!s.zone) continue;
@@ -22175,7 +22176,7 @@ app.post('/api/webapp/admin/bookings/manual', requireSessionAuth, adminGuard, as
   ).catch((e) => logger.warn('[admin manual booking] notify failed', { error: e.message }));
 
   callNotificationService.scheduleCallReminders(
-    creditId, creatorId, memberId, startAt, null, pkg.duration_minutes
+    bookingId, creatorId, memberId, startAt, null, pkg.duration_minutes
   );
 
   logger.info('[admin manual booking] created', { bookingId, memberId, creatorId, packageId });

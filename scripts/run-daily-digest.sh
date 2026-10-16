@@ -12,6 +12,9 @@ SCRIPT=/opt/pnptvapp/apps/backend/scripts/daily-revenue-digest.js
 
   eval "$(docker exec pnptv-bot printenv | grep -E '^(DATABASE_URL|POSTGRES_HOST|POSTGRES_USER|POSTGRES_PASSWORD|POSTGRES_DATABASE|POSTGRES_PORT|POSTGRES_SSL|SLACK_BOT_TOKEN|SLACK_OPS_ADMIN_CHANNEL)=' | sed 's/^/export /')"
 
+  SCRIPT_BASENAME=$(basename "$SCRIPT")
+  SCRIPT_IN_CONTAINER="/app/apps/backend/scripts/$SCRIPT_BASENAME"
+
   docker run --rm \
     --network pnptvapp_pnptvapp_net \
     -e "DATABASE_URL=$DATABASE_URL" \
@@ -24,7 +27,7 @@ SCRIPT=/opt/pnptvapp/apps/backend/scripts/daily-revenue-digest.js
     -e "SLACK_BOT_TOKEN=$SLACK_BOT_TOKEN" \
     -e "SLACK_OPS_ADMIN_CHANNEL=$SLACK_OPS_ADMIN_CHANNEL" \
     -e NODE_ENV=production \
-    -v "$SCRIPT:$SCRIPT:ro" \
+    -v "$SCRIPT:$SCRIPT_IN_CONTAINER:ro" \
     pnptv-bot:latest \
-    node "$SCRIPT"
+    node "$SCRIPT_IN_CONTAINER"
 } >>"$LOG" 2>&1
