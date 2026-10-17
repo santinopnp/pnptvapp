@@ -728,8 +728,7 @@ export function PostComposer({
   const canAddVideo = canAddMoreVideos;
   const isOverCharLimit = text.length > MAX_CHARS;
   const hasVideoFile = files.some((f) => isVideoType(f.file));
-  // Creators must pick a category for video posts; members can post freely
-  const canPost = (text.trim().length > 0 || files.length > 0) && !isPosting && !isOverCharLimit && (!isActiveCreator || !hasVideoFile || category !== null);
+  const canPost = (text.trim().length > 0 || files.length > 0) && !isPosting && !isOverCharLimit;
   const resolvedPlaceholder = placeholder ?? tFeed.whatOnYourMind;
   const displayName = user?.displayName || user?.username || "U";
 
@@ -989,31 +988,6 @@ export function PostComposer({
           {/* Creator-only options */}
           {isActiveCreator && (
             <>
-              <div className="mt-3 flex flex-wrap gap-1.5">
-                {POST_CATEGORIES.map((cat) => {
-                  const active = category === cat.value;
-                  return (
-                    <button
-                      key={cat.value}
-                      type="button"
-                      onClick={() => setCategory(active ? null : cat.value)}
-                      disabled={isPosting}
-                      className="px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-all disabled:opacity-40"
-                      style={{
-                        background: active ? `${cat.color}22` : "transparent",
-                        borderColor: active ? cat.color : "rgba(255,255,255,0.12)",
-                        color: active ? cat.color : "#8E8E93",
-                      }}
-                    >
-                      {cat.label}
-                    </button>
-                  );
-                })}
-              </div>
-              {hasVideoFile && !category && (
-                <p className="mt-1 text-[11px]" style={{ color: "#FF9500" }}>Select a category to post your video</p>
-              )}
-
               <div className="mt-3">
                 <ToggleSwitch
                   id={exclusiveId}
