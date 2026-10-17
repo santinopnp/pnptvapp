@@ -119,6 +119,8 @@ function PackageRow({
 
   return (
     <div
+      role="button"
+      tabIndex={0}
       className="rounded-2xl overflow-hidden transition-all duration-200 cursor-pointer"
       style={{
         background: selected
@@ -127,8 +129,11 @@ function PackageRow({
         border: selected
           ? "1.5px solid rgba(212,0,122,0.50)"
           : "1.5px solid rgba(255,255,255,0.08)",
+        touchAction: "manipulation",
+        WebkitTapHighlightColor: "transparent",
       }}
       onClick={onSelect}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelect(); } }}
     >
       <div className="p-4">
         <div className="flex items-start gap-3">
@@ -340,6 +345,14 @@ export default function BookCreator() {
   const [promoMuted, setPromoMuted] = useState(true);
   const promoVideoRef = useRef<HTMLVideoElement>(null);
 
+  // Allow landscape on this page — the hero video and checkout should be usable
+  // in any orientation. Without this, globals.css hides the whole page behind a
+  // "rotate to portrait" overlay on Android Chrome in landscape (z-index 99999).
+  useEffect(() => {
+    document.body.classList.add("allow-landscape");
+    return () => { document.body.classList.remove("allow-landscape"); };
+  }, []);
+
   useEffect(() => {
     if (!handle) {
       setError("Creator not found.");
@@ -486,7 +499,7 @@ export default function BookCreator() {
                   loop
                   muted={promoMuted}
                   playsInline
-                  className="absolute inset-0 w-full h-full object-cover"
+                  className="absolute inset-0 w-full h-full object-cover pointer-events-none"
                   onError={() => {
                     // Skip broken video to next
                     if (promoVideos.length > 1) setPromoIndex((i) => (i + 1) % promoVideos.length);
