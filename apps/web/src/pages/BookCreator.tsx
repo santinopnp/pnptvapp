@@ -93,8 +93,8 @@ function BoytoySelector({
   );
 }
 
-// ── Package card ──────────────────────────────────────────────────────────────
-function PackageCard({
+// ── Package row (radio-style) ────────────────────────────────────────────────
+function PackageRow({
   pkg,
   variant,
   creatorName,
@@ -127,63 +127,58 @@ function PackageCard({
       className="rounded-2xl overflow-hidden transition-all duration-200 cursor-pointer"
       style={{
         background: selected
-          ? "linear-gradient(135deg, rgba(212,0,122,0.15), rgba(123,97,255,0.10))"
+          ? "linear-gradient(135deg, rgba(212,0,122,0.12), rgba(123,97,255,0.08))"
           : "rgba(255,255,255,0.04)",
         border: selected
-          ? "1.5px solid rgba(212,0,122,0.55)"
+          ? "1.5px solid rgba(212,0,122,0.50)"
           : "1.5px solid rgba(255,255,255,0.08)",
-        boxShadow: selected ? "0 0 24px rgba(212,0,122,0.15)" : "none",
       }}
       onClick={onSelect}
     >
-      <div className="p-4 space-y-2.5">
-        <div className="flex items-start justify-between gap-3">
+      <div className="p-4">
+        <div className="flex items-start gap-3">
+          {/* Radio indicator */}
+          <div
+            className="mt-0.5 flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center transition-all"
+            style={{
+              border: selected ? "2px solid #D4007A" : "2px solid rgba(255,255,255,0.22)",
+              background: selected ? "rgba(212,0,122,0.12)" : "transparent",
+            }}
+          >
+            {selected && (
+              <div className="w-2.5 h-2.5 rounded-full" style={{ background: "#D4007A" }} />
+            )}
+          </div>
+
+          {/* Label + price */}
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-black text-white leading-tight">{pkg.title}</p>
-            <p className="text-xs leading-relaxed mt-1" style={{ color: "rgba(255,255,255,0.60)" }}>
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-sm font-black text-white leading-tight">{pkg.title}</p>
+              <span className="flex-shrink-0 inline-flex items-start leading-none">
+                <span className="text-[10px] font-bold mt-[2px] opacity-70 text-white">$</span>
+                <span className="text-xl font-black text-white tracking-tight">
+                  {Math.floor(pkg.priceUsd)}
+                </span>
+              </span>
+            </div>
+            <p className="text-xs mt-0.5 leading-relaxed" style={{ color: "rgba(255,255,255,0.55)" }}>
               {descriptionMap[variant]}
             </p>
           </div>
-          <div className="flex-shrink-0 text-right">
-            <span className="inline-flex items-start leading-none">
-              <span className="text-xs font-bold mt-[3px] opacity-80 text-white">$</span>
-              <span className="text-2xl font-black text-white tracking-tight">
-                {Math.floor(pkg.priceUsd)}
-              </span>
-            </span>
-          </div>
         </div>
 
-        {/* Boytoy selectors — shown only when this card is selected */}
+        {/* Boytoy selectors — shown inline when selected */}
         {selected && variant === "boytoy1" && (
-          <BoytoySelector label="Choose your boytoy" value={boytoy1} onChange={onBoytoy1Change} />
+          <div className="mt-3 ml-8">
+            <BoytoySelector label="Choose your boytoy" value={boytoy1} onChange={onBoytoy1Change} />
+          </div>
         )}
         {selected && variant === "boytoy2" && (
-          <>
+          <div className="mt-3 ml-8 space-y-2">
             <BoytoySelector label="Choose boytoy 1" value={boytoy1} onChange={onBoytoy1Change} />
             <BoytoySelector label="Choose boytoy 2" value={boytoy2} onChange={onBoytoy2Change} />
-          </>
+          </div>
         )}
-
-        <button
-          type="button"
-          className="w-full min-h-[44px] rounded-xl text-sm font-bold text-white transition-all active:scale-[0.98] mt-1"
-          style={{
-            background: selected
-              ? "linear-gradient(135deg, #D4007A, #7B61FF)"
-              : "rgba(212,0,122,0.18)",
-            border: selected
-              ? "none"
-              : "1.5px solid rgba(212,0,122,0.40)",
-            boxShadow: selected ? "0 4px 20px rgba(212,0,122,0.30)" : "none",
-          }}
-          onClick={(e) => {
-            e.stopPropagation();
-            onSelect();
-          }}
-        >
-          {selected ? "Selected — Choose Payment" : "Book Now"}
-        </button>
       </div>
     </div>
   );
@@ -631,7 +626,7 @@ export default function BookCreator() {
             </p>
           </div>
 
-          {/* Package cards */}
+          {/* Package rows */}
           {packages.length === 0 ? (
             <div
               className="rounded-2xl p-6 text-center"
@@ -642,11 +637,11 @@ export default function BookCreator() {
               </p>
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-2.5">
               {packages.map((pkg) => {
                 const variant = classifyPackage(pkg);
                 return (
-                  <PackageCard
+                  <PackageRow
                     key={pkg.id}
                     pkg={pkg}
                     variant={variant}
@@ -663,130 +658,127 @@ export default function BookCreator() {
             </div>
           )}
 
-          {/* ── Payment panel ─────────────────────────────────────────── */}
-          {selectedPkg && payStep !== "idle" && payStep !== "success" && (
+          {/* ── Persistent checkout panel ──────────────────────────────── */}
+          {payStep !== "success" && packages.length > 0 && (
             <div
-              className="rounded-2xl p-5 space-y-4"
+              className="rounded-2xl overflow-hidden"
               style={{
-                background: "rgba(255,255,255,0.04)",
+                background: "rgba(255,255,255,0.03)",
                 border: "1px solid rgba(255,255,255,0.10)",
               }}
             >
-              <div className="flex items-center justify-between">
-                <p className="text-sm font-black text-white">Complete your booking</p>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedPkgId(null);
-                    setBoytoy1(null);
-                    setBoytoy2(null);
-                    setPayStep("idle");
-                    setPayError(null);
-                  }}
-                  className="text-xs"
-                  style={{ color: "rgba(255,255,255,0.40)" }}
-                  aria-label="Close payment panel"
-                >
-                  Cancel
-                </button>
-              </div>
-
-              {/* Summary row */}
               <div
-                className="flex items-center justify-between px-3 py-2.5 rounded-xl"
-                style={{ background: "rgba(212,0,122,0.08)", border: "1px solid rgba(212,0,122,0.20)" }}
+                className="px-5 py-3.5"
+                style={{ borderBottom: "1px solid rgba(255,255,255,0.08)" }}
               >
-                <span className="text-xs font-semibold text-white">{selectedPkg.title}</span>
-                <span className="text-xs font-black text-white">${selectedPkg.priceUsd}</span>
+                <p className="text-sm font-black text-white">Your booking</p>
               </div>
 
-              {/* Auth gate */}
-              {!isAuthenticated ? (
-                <div className="space-y-3 text-center">
-                  <p className="text-sm" style={{ color: "rgba(255,255,255,0.65)" }}>
-                    You need to be logged in to book a call.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      try {
-                        sessionStorage.setItem("pnptv:post_login_redirect", window.location.pathname);
-                        if (selectedPkgId) {
-                          sessionStorage.setItem("pnptv:book_pending_pkg", String(selectedPkgId));
-                        }
-                      } catch (_) {}
-                      navigate("/login");
-                    }}
-                    className="w-full min-h-[48px] rounded-xl text-sm font-bold text-white transition-all active:scale-[0.98]"
-                    style={{ background: "linear-gradient(135deg, #D4007A, #7B61FF)" }}
+              <div className="p-5 space-y-4">
+                {!selectedPkg ? (
+                  <p
+                    className="text-sm text-center py-3"
+                    style={{ color: "rgba(255,255,255,0.35)" }}
                   >
-                    Log in to continue
-                  </button>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {(() => {
-                    const variant = selectedPkg ? classifyPackage(selectedPkg) : "other";
-                    const boytoyIncomplete =
-                      (variant === "boytoy1" && !boytoy1) ||
-                      (variant === "boytoy2" && (!boytoy1 || !boytoy2));
-                    return boytoyIncomplete ? (
-                      <p className="text-center text-xs py-3" style={{ color: "rgba(255,183,0,0.85)" }}>
-                        Please choose your boytoy above to continue.
-                      </p>
-                    ) : (
-                      <>
-                        {/* Wallet USDC */}
-                        <WalletPayCard
-                          surface="call"
-                          amountUsd={selectedPkg.priceUsd}
-                          entitlementSpec={{
-                            packageId: selectedPkg.id,
-                            creator_id: creator.id,
-                            clientNotes: buildClientNotes(selectedPkg) ?? undefined,
-                          }}
-                          metadata={{ source: "book_creator_page", handle: creator.username }}
-                          label={`Pay $${selectedPkg.priceUsd.toFixed(2)}`}
-                          lang="en"
-                          onSuccess={(result) => {
-                            handlePaySuccess((result as any)?.bookingId ?? null);
-                          }}
-                        />
-
-                        {/* Divider */}
-                        <div className="flex items-center gap-3">
-                          <div className="flex-1 h-px" style={{ background: "rgba(255,255,255,0.08)" }} />
-                          <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: "rgba(255,255,255,0.30)" }}>
-                            or pay with crypto
-                          </span>
-                          <div className="flex-1 h-px" style={{ background: "rgba(255,255,255,0.08)" }} />
-                        </div>
-
-                        {/* NowPayments crypto popup */}
-                        <NpCallCheckout
-                          packageId={selectedPkg.id}
-                          clientNotes={buildClientNotes(selectedPkg)}
-                          onSuccess={handlePaySuccess}
-                          onError={handlePayError}
-                        />
-
-                        <p className="text-[10px] text-center" style={{ color: "rgba(255,255,255,0.30)" }}>
-                          BTC · ETH · USDT · USDC · and more
-                        </p>
-                      </>
-                    );
-                  })()}
-
-                  {payStep === "error" && payError && (
+                    Select a session above ↑
+                  </p>
+                ) : (
+                  <>
+                    {/* Order summary row */}
                     <div
-                      className="rounded-xl px-3 py-2.5 text-xs"
-                      style={{ background: "rgba(239,68,68,0.10)", border: "1px solid rgba(239,68,68,0.30)", color: "#f87171" }}
+                      className="flex items-center justify-between px-3 py-2.5 rounded-xl"
+                      style={{ background: "rgba(212,0,122,0.08)", border: "1px solid rgba(212,0,122,0.20)" }}
                     >
-                      {payError}
+                      <span className="text-xs font-semibold text-white">{selectedPkg.title}</span>
+                      <span className="text-xs font-black text-white">${selectedPkg.priceUsd}</span>
                     </div>
-                  )}
-                </div>
-              )}
+
+                    {!isAuthenticated ? (
+                      <div className="space-y-3 text-center">
+                        <p className="text-sm" style={{ color: "rgba(255,255,255,0.65)" }}>
+                          Log in to complete your booking.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            try {
+                              sessionStorage.setItem("pnptv:post_login_redirect", window.location.pathname);
+                              if (selectedPkgId) {
+                                sessionStorage.setItem("pnptv:book_pending_pkg", String(selectedPkgId));
+                              }
+                            } catch (_) {}
+                            navigate("/login");
+                          }}
+                          className="w-full min-h-[48px] rounded-xl text-sm font-bold text-white transition-all active:scale-[0.98]"
+                          style={{ background: "linear-gradient(135deg, #D4007A, #7B61FF)" }}
+                        >
+                          Log in to continue
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {(() => {
+                          const variant = classifyPackage(selectedPkg);
+                          const boytoyIncomplete =
+                            (variant === "boytoy1" && !boytoy1) ||
+                            (variant === "boytoy2" && (!boytoy1 || !boytoy2));
+                          return boytoyIncomplete ? (
+                            <p className="text-center text-xs py-3" style={{ color: "rgba(255,183,0,0.85)" }}>
+                              Please choose your boytoy above to continue.
+                            </p>
+                          ) : (
+                            <>
+                              <WalletPayCard
+                                surface="call"
+                                amountUsd={selectedPkg.priceUsd}
+                                entitlementSpec={{
+                                  packageId: selectedPkg.id,
+                                  creator_id: creator.id,
+                                  clientNotes: buildClientNotes(selectedPkg) ?? undefined,
+                                }}
+                                metadata={{ source: "book_creator_page", handle: creator.username }}
+                                label={`Pay $${selectedPkg.priceUsd.toFixed(2)}`}
+                                lang="en"
+                                onSuccess={(result) => {
+                                  handlePaySuccess((result as any)?.bookingId ?? null);
+                                }}
+                              />
+
+                              <div className="flex items-center gap-3">
+                                <div className="flex-1 h-px" style={{ background: "rgba(255,255,255,0.08)" }} />
+                                <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: "rgba(255,255,255,0.30)" }}>
+                                  or pay with crypto
+                                </span>
+                                <div className="flex-1 h-px" style={{ background: "rgba(255,255,255,0.08)" }} />
+                              </div>
+
+                              <NpCallCheckout
+                                packageId={selectedPkg.id}
+                                clientNotes={buildClientNotes(selectedPkg)}
+                                onSuccess={handlePaySuccess}
+                                onError={handlePayError}
+                              />
+
+                              <p className="text-[10px] text-center" style={{ color: "rgba(255,255,255,0.30)" }}>
+                                BTC · ETH · USDT · USDC · and more
+                              </p>
+                            </>
+                          );
+                        })()}
+
+                        {payStep === "error" && payError && (
+                          <div
+                            className="rounded-xl px-3 py-2.5 text-xs"
+                            style={{ background: "rgba(239,68,68,0.10)", border: "1px solid rgba(239,68,68,0.30)", color: "#f87171" }}
+                          >
+                            {payError}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
             </div>
           )}
 
