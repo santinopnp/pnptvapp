@@ -22407,7 +22407,7 @@ app.get('/api/webapp/book/:handle/promo-videos', publicBookInfoLimiter, asyncHan
       })
       .filter(Boolean)
       .sort((a, b) => b.mtime - a.mtime)
-      .slice(0, 3)
+      .slice(0, 2)
       .map((x) => `${WEBAPP_ORIGIN}/promos/${encodeURIComponent(x.f)}`);
   } catch {
     files = [];
