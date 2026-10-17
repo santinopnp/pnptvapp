@@ -88,6 +88,7 @@ interface DmMessage {
       type: 'buy-rush' | 'bridge-to-base';
       amountUsd: number;
       label: string;
+      url?: string;
     };
   } | null;
 }
