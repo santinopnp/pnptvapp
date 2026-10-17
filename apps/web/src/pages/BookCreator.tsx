@@ -481,9 +481,10 @@ export default function BookCreator() {
         {/* ── Hero ──────────────────────────────────────────────────────── */}
         <div className="relative w-full overflow-hidden" style={{ background: "#000" }}>
           {/* Video hero — autoplays muted; shows placeholder if no promos */}
+          <div className="max-w-4xl mx-auto">
           <div
             className="w-full relative"
-            style={{ aspectRatio: "16/9", maxHeight: "55vh", background: "#0a0a0a" }}
+            style={{ aspectRatio: "16/9", background: "#0a0a0a" }}
           >
             {promoVideos.length > 0 ? (
               <>
@@ -558,6 +559,7 @@ export default function BookCreator() {
               </>
             )}
           </div>
+          </div>{/* /max-w-4xl */}
 
           {/* Creator name overlay at bottom */}
           <div
