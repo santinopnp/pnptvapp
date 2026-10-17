@@ -98,6 +98,11 @@ export default function FoundersPage() {
   const isAnnual = selectedPlan === "annual";
 
   useEffect(() => {
+    document.body.classList.add("allow-landscape");
+    return () => { document.body.classList.remove("allow-landscape"); };
+  }, []);
+
+  useEffect(() => {
     try { localStorage.setItem(LANG_KEY, lang); } catch { /* ignore */ }
   }, [lang]);
 
@@ -242,6 +247,7 @@ export default function FoundersPage() {
               lang={es ? "es" : "en"}
               label={t.payWallet}
               onSuccess={handleSuccess}
+              onCryptoFallback={() => setShowCrypto(true)}
             />
           </WalletLoginGate>
 

@@ -223,6 +223,11 @@ export default function BookParche() {
   const [confirmedBookingId, setConfirmedBookingId] = useState<string | null>(null);
 
   useEffect(() => {
+    document.body.classList.add("allow-landscape");
+    return () => { document.body.classList.remove("allow-landscape"); };
+  }, []);
+
+  useEffect(() => {
     if (!slug) {
       setError(t.parcheBookNotFound);
       setLoading(false);

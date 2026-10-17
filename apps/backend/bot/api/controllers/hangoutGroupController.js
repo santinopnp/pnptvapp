@@ -178,7 +178,7 @@ const listGroups = async (req, res) => {
     // active_call resolves with one index scan per row instead of two.
     const { rows } = await query(
       `SELECT g.id, g.name, g.description, g.avatar_url, g.creator_id,
-              g.is_main, g.is_wall_of_fame, g.is_public, g.max_members, g.created_at, g.feed_visibility,
+              g.is_main, g.is_wall_of_fame, g.is_public, g.access_level, g.max_members, g.created_at, g.feed_visibility,
               g.is_read_only, g.slow_mode_seconds, g.tags, g.rules,
               g.telegram_chat_id, g.telegram_invite_link, g.is_paid, g.price_usd, g.channel_id,
               (SELECT COUNT(*)::int FROM hangout_group_members m WHERE m.group_id = g.id) as member_count,
@@ -253,6 +253,7 @@ const listGroups = async (req, res) => {
         isMain: r.is_main,
         isWallOfFame: r.is_wall_of_fame,
         isPublic: r.is_public,
+        accessLevel: r.access_level || 'public',
         maxMembers: r.max_members,
         memberCount: r.member_count,
         createdAt: r.created_at,
@@ -288,7 +289,10 @@ const listGroups = async (req, res) => {
 // POST /api/webapp/hangouts/groups
 const createGroup = async (req, res) => {
   const user = authGuard(req, res); if (!user) return;
-  const { name, description = '', isPublic = true, isPaid = false, priceUsd = 0, rules, channelId: rawChannelId } = req.body;
+  const { name, description = '', accessLevel = 'public', isPaid = false, priceUsd = 0, rules, channelId: rawChannelId } = req.body;
+  const safeAccessLevel = ['public', 'free', 'exclusive'].includes(accessLevel) ? accessLevel : 'public';
+  // public → anyone joins freely; free/exclusive → invite/subscription gate
+  const derivedIsPublic = safeAccessLevel === 'public';
 
   if (!name?.trim()) return res.status(400).json({ error: 'Group name is required' });
 
@@ -348,10 +352,10 @@ const createGroup = async (req, res) => {
 
       // Hangout creation is open to all authenticated users
       const { rows } = await createClient.query(
-        `INSERT INTO hangout_groups (name, description, creator_id, is_main, is_public, max_members, rules, is_paid, price_usd)
-         VALUES ($1, $2, $3, false, $4, 200000, $5, $6, $7)
+        `INSERT INTO hangout_groups (name, description, creator_id, is_main, is_public, access_level, max_members, rules, is_paid, price_usd)
+         VALUES ($1, $2, $3, false, $4, $5, 200000, $6, $7, $8)
          RETURNING *`,
-        [name.trim().slice(0, 100), description.trim().slice(0, 500), user.id, isPublic !== false, sanitizedRules, finalIsPaid, finalPrice]
+        [name.trim().slice(0, 100), description.trim().slice(0, 500), user.id, derivedIsPublic, safeAccessLevel, sanitizedRules, finalIsPaid, finalPrice]
       );
       group = rows[0];
 
@@ -427,6 +431,7 @@ const createGroup = async (req, res) => {
         creatorId: group.creator_id,
         isMain: group.is_main,
         isPublic: group.is_public,
+        accessLevel: group.access_level || 'public',
         maxMembers: group.max_members,
         memberCount: 1,
         createdAt: group.created_at,
@@ -546,6 +551,7 @@ const getGroup = async (req, res) => {
         creatorId: g.creator_id,
         isMain: g.is_main,
         isPublic: g.is_public,
+        accessLevel: g.access_level || 'public',
         maxMembers: g.max_members,
         memberCount: g.member_count,
         createdAt: g.created_at,
@@ -652,7 +658,27 @@ const joinGroup = async (req, res) => {
     const group = rows[0];
     const isOwner = String(group.creator_id) === String(user.id);
 
-    // Private hangouts block direct joins — EXCEPT PRIME co-founder hangout 719
+    // Exclusive hangouts require an active creator subscription to join.
+    if (group.access_level === 'exclusive' && !isOwner && !isPrimeCoFounderHangout(groupId, group.parent_group_id)) {
+      const { rows: subRows } = await query(
+        `SELECT 1 FROM creator_subscriptions cs
+         WHERE cs.subscriber_id = $1 AND cs.creator_id = $2
+           AND cs.status = 'active'
+           AND (cs.expires_at IS NULL OR cs.expires_at > NOW())`,
+        [user.id, group.creator_id]
+      );
+      if (!subRows.length) {
+        return res.status(402).json({
+          error: 'Creator subscription required',
+          errorEs: 'Debes suscribirte al creator para unirte',
+          message: 'This exclusive hangout is only accessible to subscribers of this creator.',
+          requiresCreatorSub: true,
+          creatorId: group.creator_id,
+        });
+      }
+    }
+
+    // Private (free/invite-only) hangouts block direct joins — EXCEPT PRIME co-founder hangout 719
     // which gates by entitlement rather than invite. PRIME members self-join;
     // non-PRIME get a 402 from the entitlement check below instead of a 403.
     if (!group.is_public && !isOwner && !isPrimeCoFounderHangout(groupId, group.parent_group_id)) {
@@ -1654,10 +1680,10 @@ const discoverGroups = async (req, res) => {
                  AND (cs.expires_at IS NULL OR cs.expires_at > NOW())
              ))
            ))
-           -- no-channel + is_public=true → community room, visible
-           OR (g.channel_id IS NULL AND g.is_public = true AND g.id != ALL($2::int[]))
-           -- no-channel + is_public=false → private, require active creator sub
-           OR (g.channel_id IS NULL AND g.is_public = false AND g.id != ALL($2::int[]) AND EXISTS (
+           -- no-channel + public/free → visible to all members
+           OR (g.channel_id IS NULL AND g.access_level IN ('public', 'free') AND g.id != ALL($2::int[]))
+           -- no-channel + exclusive → ONLY visible to active creator subscribers
+           OR (g.channel_id IS NULL AND g.access_level = 'exclusive' AND g.id != ALL($2::int[]) AND EXISTS (
              SELECT 1 FROM creator_subscriptions cs
              WHERE cs.subscriber_id = $1 AND cs.creator_id = g.creator_id
                AND cs.status = 'active'
@@ -1667,7 +1693,7 @@ const discoverGroups = async (req, res) => {
     const queryParams = isAdmin ? [user.id] : [user.id, primeHangoutIds];
     const { rows } = await query(
       `SELECT g.id, g.name, g.description, g.avatar_url, g.creator_id,
-              g.is_public, g.is_paid, g.price_usd, g.created_at, g.channel_id,
+              g.is_public, g.access_level, g.is_paid, g.price_usd, g.created_at, g.channel_id,
               cc.name as channel_name,
               cc.slug as channel_slug,
               cc.access_type as channel_access_type,
@@ -1697,6 +1723,7 @@ const discoverGroups = async (req, res) => {
       avatarUrl: r.avatar_url,
       creatorId: r.creator_id,
       isPublic: r.is_public,
+      accessLevel: r.access_level || 'public',
       memberCount: r.member_count,
       createdAt: r.created_at,
       myRequestStatus: r.my_request_status || null,
@@ -2351,10 +2378,10 @@ const updateGroupSettings = async (req, res) => {
   try {
     if (!(await isOwnerOrMod(groupId, user.id))) return res.status(403).json({ error: 'Not authorized' });
 
-    const { slowModeSeconds, isReadOnly, allowMedia, allowMemberInvites, autoDeleteHours, tags, isPublic, name, description, feedVisibility, rules } = req.body;
+    const { slowModeSeconds, isReadOnly, allowMedia, allowMemberInvites, autoDeleteHours, tags, isPublic, accessLevel, name, description, feedVisibility, rules } = req.body;
 
-    // Only owners can change visibility and name — moderators cannot
-    if (isPublic !== undefined || name !== undefined) {
+    // Only owners can change visibility, access level, and name — moderators cannot
+    if (isPublic !== undefined || accessLevel !== undefined || name !== undefined) {
       const { rows: ownerRows } = await query(
         `SELECT 1 FROM hangout_group_members WHERE group_id=$1 AND user_id=$2 AND role='owner'`,
         [groupId, user.id]
@@ -2373,6 +2400,11 @@ const updateGroupSettings = async (req, res) => {
     if (autoDeleteHours !== undefined) { sets.push(`auto_delete_hours = $${idx++}`); vals.push(Math.max(0, Math.min(autoDeleteHours, 8760))); }
     if (tags !== undefined && Array.isArray(tags)) { sets.push(`tags = $${idx++}`); vals.push(tags.slice(0, 5).map(t => String(t).slice(0, 30))); }
     if (isPublic !== undefined) { sets.push(`is_public = $${idx++}`); vals.push(!!isPublic); }
+    if (accessLevel !== undefined && ['public', 'free', 'exclusive'].includes(accessLevel)) {
+      sets.push(`access_level = $${idx++}`); vals.push(accessLevel);
+      // Keep is_public in sync: public → true, free/exclusive → false
+      sets.push(`is_public = $${idx++}`); vals.push(accessLevel === 'public');
+    }
     if (name !== undefined && name.trim()) { sets.push(`name = $${idx++}`); vals.push(name.trim().slice(0, 100)); }
     if (description !== undefined) { sets.push(`description = $${idx++}`); vals.push((description || '').trim().slice(0, 500)); }
     if (feedVisibility !== undefined && ['public', 'shadow', 'ghost'].includes(feedVisibility)) { sets.push(`feed_visibility = $${idx++}`); vals.push(feedVisibility); }
@@ -2383,7 +2415,7 @@ const updateGroupSettings = async (req, res) => {
     vals.push(groupId);
     const { rows } = await query(
       `UPDATE hangout_groups SET ${sets.join(', ')} WHERE id = $${idx} AND is_main = false
-       RETURNING id, name, description, is_public, slow_mode_seconds, is_read_only, allow_media, allow_member_invites, auto_delete_hours, tags, feed_visibility, rules`,
+       RETURNING id, name, description, is_public, access_level, slow_mode_seconds, is_read_only, allow_media, allow_member_invites, auto_delete_hours, tags, feed_visibility, rules`,
       vals
     );
     if (rows.length === 0) return res.status(404).json({ error: 'Group not found or is main' });

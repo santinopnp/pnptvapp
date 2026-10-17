@@ -979,6 +979,11 @@ export function Layout() {
   const needsUsername = isAuthenticated && !isLoading && typeof user?.username === 'string' && user.username.startsWith('TG_');
 
   useEffect(() => {
+    document.body.classList.add("allow-landscape");
+    return () => { document.body.classList.remove("allow-landscape"); };
+  }, []);
+
+  useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth < 1024);
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);

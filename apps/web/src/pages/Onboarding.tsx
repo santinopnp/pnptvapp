@@ -1146,6 +1146,11 @@ export default function Onboarding() {
   const [showFollowStep, setShowFollowStep] = useState(false);
 
   useEffect(() => {
+    document.body.classList.add("allow-landscape");
+    return () => { document.body.classList.remove("allow-landscape"); };
+  }, []);
+
+  useEffect(() => {
     try { sessionStorage.setItem("pnptv:onboarding:stepIndex", String(stepIndex)); } catch {}
   }, [stepIndex]);
 

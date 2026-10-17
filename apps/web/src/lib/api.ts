@@ -2777,6 +2777,7 @@ export interface HangoutGroup {
   isMain: boolean;
   isWallOfFame?: boolean;
   isPublic: boolean;
+  accessLevel?: "public" | "free" | "exclusive";
   maxMembers: number;
   memberCount: number;
   createdAt: string;
@@ -2895,7 +2896,7 @@ export function getHangoutGroups(): Promise<{ success: boolean; groups: HangoutG
 export function createHangoutGroup(
   name: string,
   description?: string,
-  isPublic?: boolean,
+  accessLevel?: "public" | "free" | "exclusive",
   isPaid?: boolean,
   priceUsd?: number,
   rules?: string,
@@ -2903,7 +2904,7 @@ export function createHangoutGroup(
 ): Promise<{ success: boolean; group: HangoutGroup }> {
   return request("/api/webapp/hangouts/groups", {
     method: "POST",
-    body: { name, description, isPublic, isPaid, priceUsd, rules, channelId },
+    body: { name, description, accessLevel, isPaid, priceUsd, rules, channelId },
   });
 }
 
@@ -2925,6 +2926,7 @@ export interface DiscoverGroup {
   channelAccessType?: string | null;
   channelPriceUsd?: number | null;
   channelVideoCount?: number;
+  accessLevel?: "public" | "free" | "exclusive";
 }
 
 export function discoverHangoutGroups(): Promise<{ success: boolean; groups: DiscoverGroup[] }> {
@@ -3215,6 +3217,7 @@ export function updateHangoutSettings(groupId: number, settings: {
   autoDeleteHours?: number;
   tags?: string[];
   isPublic?: boolean;
+  accessLevel?: "public" | "free" | "exclusive";
   name?: string;
   description?: string;
   feedVisibility?: "public" | "shadow" | "ghost";

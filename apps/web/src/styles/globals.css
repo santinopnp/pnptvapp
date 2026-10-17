@@ -4,13 +4,17 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Force portrait: show a "rotate device" overlay when in landscape outside video calls.
-   Only targets touch devices (pointer: coarse) — desktop mice (pointer: fine) are excluded. */
+/* Opt-in portrait lock: show a "rotate device" overlay only when a page explicitly
+   adds class "block-landscape". The old opt-out pattern (body:not(.allow-landscape))
+   was fragile — page cleanup hooks could remove allow-landscape mid-session, causing
+   the z-index:99999 overlay to block all taps (Subscribe, social posts, etc.).
+   No page currently sets block-landscape, so the overlay is effectively disabled
+   app-wide until explicitly needed. */
 @media screen and (orientation: landscape) and (max-height: 600px) and (pointer: coarse) {
-  body:not(.allow-landscape) {
+  body.block-landscape {
     overflow: hidden;
   }
-  body:not(.allow-landscape)::after {
+  body.block-landscape::after {
     content: "Please rotate your device to portrait mode";
     position: fixed;
     inset: 0;

@@ -11,6 +11,7 @@ import {
   isMetaMaskCompatible,
   WalletPayCard,
 } from "@/components/payments/PayInWalletChips";
+import { NpAppPickerSheet } from "@/components/payments/NowPaymentsWaitingPanel";
 import { useAuth } from "@/hooks/useAuth";
 import { magicLinkStart } from "@/lib/api";
 
@@ -909,6 +910,7 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
   const cfg = usePlanConfig();
   const [modalOpen, setModalOpen] = useState(false);
   const [walletModalOpen, setWalletModalOpen] = useState(false);
+  const [showCrypto, setShowCrypto] = useState(false);
   const [signupPanelOpen, setSignupPanelOpen] = useState(false);
   const { isAuthenticated, refreshUser } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1601,8 +1603,18 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
           s={s}
           lang={lang}
           onClose={() => setWalletModalOpen(false)}
+          onCryptoFallback={() => { setWalletModalOpen(false); setShowCrypto(true); }}
         />
       )}
+
+      <NpAppPickerSheet
+        isOpen={showCrypto}
+        onClose={() => setShowCrypto(false)}
+        planId={showCrypto ? cfg.planId : null}
+        lang={lang}
+        planLabel={`${cfg.planId} · $${cfg.priceUsd}`}
+        onSuccess={() => { setShowCrypto(false); setTimeout(() => { window.location.href = "/"; }, 1200); }}
+      />
 
       {/* Inline signup panel — shown to unauth users who tap "Pay with card".
           Telegram runs entirely on this page (no navigation). X uses OAuth
@@ -1815,9 +1827,10 @@ interface WalletPaymentModalProps {
   s: Lifetime100Strings;
   lang: string;
   onClose: () => void;
+  onCryptoFallback?: () => void;
 }
 
-function WalletPaymentModal({ s, lang, onClose }: WalletPaymentModalProps) {
+function WalletPaymentModal({ s, lang, onClose, onCryptoFallback }: WalletPaymentModalProps) {
   const cfg = usePlanConfig();
   const uiLang: "es" | "en" = lang.toLowerCase().startsWith("en") ? "en" : "es";
   return (
@@ -1840,6 +1853,7 @@ function WalletPaymentModal({ s, lang, onClose }: WalletPaymentModalProps) {
             onClose();
             setTimeout(() => { window.location.href = "/"; }, 1200);
           }}
+          onCryptoFallback={onCryptoFallback}
           compact
         />
         <button
@@ -2515,6 +2529,11 @@ export default function Lifetime100() {
 
   // Bottom-sheet state — pills open an in-place sheet instead of navigating
   const [activeSheet, setActiveSheet] = useState<string | null>(null);
+  useEffect(() => {
+    document.body.classList.add("allow-landscape");
+    return () => { document.body.classList.remove("allow-landscape"); };
+  }, []);
+
   useEffect(() => {
     document.body.style.overflow = activeSheet ? "hidden" : "";
     return () => { document.body.style.overflow = ""; };

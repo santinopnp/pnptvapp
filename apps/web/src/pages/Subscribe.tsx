@@ -792,6 +792,7 @@ export default function Subscribe() {
                   {isWalletOpen && usdcAvailable !== false && (
                     <div className="px-3 pb-3">
                       <WalletPayCard
+                        key={`wallet-promo-${plan.id}`}
                         surface="prime"
                         amountUsd={parseFloat(String(plan.price))}
                         entitlementSpec={{ planId: plan.id }}
@@ -914,6 +915,7 @@ export default function Subscribe() {
                   ? `border-[#D4007A] bg-[#D4007A]/10${isPanelActive ? " border-b-transparent" : ""}`
                   : "border-white/10 bg-white/5 hover:border-white/20"
               }`}
+              style={{ touchAction: "manipulation", WebkitTapHighlightColor: "transparent" }}
             >
               <div className="flex items-start justify-between mb-2">
                 <div>
@@ -992,8 +994,10 @@ export default function Subscribe() {
               <div className="mt-3 pt-3 border-t border-white/5 space-y-2" onClick={(e) => e.stopPropagation()}>
                 <div className="flex gap-2">
                   <button
+                    type="button"
                     onClick={(e) => { e.stopPropagation(); setWalletPanelPlanId(walletPanelPlanId === plan.id ? null : plan.id); }}
                     className={`flex-1 py-3 rounded-lg font-bold text-xs text-white transition-all leading-tight ${walletPanelPlanId === plan.id ? "bg-gradient-to-r from-emerald-400 to-emerald-500 ring-2 ring-emerald-300" : "bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500"}`}
+                    style={{ touchAction: "manipulation", WebkitTapHighlightColor: "transparent" }}
                   >
                     {t.lang === "es" ? "💳 Tarjeta · Apple Pay · Wallet" : "💳 Card · Apple Pay · Wallet"}
                   </button>
@@ -1041,6 +1045,7 @@ export default function Subscribe() {
                       const alreadyEnt = (pLabel === 'PRIME' && user?.tier === 'prime') || (pLabel === 'BASIC' && user?.tier === 'member');
                       return (
                         <WalletPayCard
+                          key={`wallet-${plan.id}`}
                           surface={MEMBER_PLAN_IDS.has(plan.id) ? "membership" : "prime"}
                           amountUsd={parseFloat(String(plan.price))}
                           entitlementSpec={{ planId: plan.id }}
@@ -1096,6 +1101,7 @@ export default function Subscribe() {
               onClick={() => setSelectedPlan(plan.id)}
               onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelectedPlan(plan.id); } }}
               className={`cursor-pointer ${primeBtnClass}`}
+              style={{ touchAction: "manipulation", WebkitTapHighlightColor: "transparent" }}
             >
               <div className="flex items-start justify-between mb-2">
                 <div>
@@ -1193,8 +1199,10 @@ export default function Subscribe() {
               <div className="mt-3 pt-3 border-t border-white/5 space-y-2" onClick={(e) => e.stopPropagation()}>
                 <div className="flex gap-2">
                   <button
+                    type="button"
                     onClick={(e) => { e.stopPropagation(); setWalletPanelPlanId(walletPanelPlanId === plan.id ? null : plan.id); }}
                     className={`flex-1 py-3 rounded-lg font-bold text-xs text-white transition-all leading-tight ${walletPanelPlanId === plan.id ? "bg-gradient-to-r from-emerald-400 to-emerald-500 ring-2 ring-emerald-300" : "bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500"}`}
+                    style={{ touchAction: "manipulation", WebkitTapHighlightColor: "transparent" }}
                   >
                     {t.lang === "es" ? "💳 Tarjeta · Apple Pay · Wallet" : "💳 Card · Apple Pay · Wallet"}
                   </button>
@@ -1242,6 +1250,7 @@ export default function Subscribe() {
                       const alreadyEnt = (pLabel === 'PRIME' && user?.tier === 'prime') || (pLabel === 'BASIC' && user?.tier === 'member');
                       return (
                         <WalletPayCard
+                          key={`wallet-${plan.id}`}
                           surface={MEMBER_PLAN_IDS.has(plan.id) ? "membership" : "prime"}
                           amountUsd={parseFloat(String(plan.price))}
                           entitlementSpec={{ planId: plan.id }}

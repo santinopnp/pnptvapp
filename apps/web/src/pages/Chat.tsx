@@ -2207,7 +2207,7 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState("");
   const [newDesc, setNewDesc] = useState("");
-  const [newIsPublic, setNewIsPublic] = useState(true);
+  const [newAccessLevel, setNewAccessLevel] = useState<"public" | "free" | "exclusive">("public");
   const [creating, setCreating] = useState(false);
   const [newTags, setNewTags] = useState<string[]>([]);
   const [newIsPaid, setNewIsPaid] = useState(false);
@@ -2861,7 +2861,7 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
       const result = await createHangoutGroup(
         newName.trim(),
         newDesc.trim(),
-        newIsPublic,
+        newAccessLevel,
         isPaidEffective,
         paidPrice,
         newRules.trim() || undefined,
@@ -2887,7 +2887,7 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
       }
       setNewName("");
       setNewDesc("");
-      setNewIsPublic(true);
+      setNewAccessLevel("public");
       setNewIsPaid(false);
       setNewPriceUsd(5);
       setNewPrice("");
@@ -4308,21 +4308,40 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                             </button>
                           </div>
 
-                          {/* Public/Private Toggle */}
-                          <button
-                            onClick={async () => {
-                              const newVal = !(groupDetail?.isPublic ?? activeGroup.isPublic);
-                              await updateHangoutSettings(activeGroup.id, { isPublic: newVal });
-                              loadGroupDetail(activeGroup.id);
-                              loadGroups();
-                            }}
-                            className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg bg-white/5 mb-2"
-                          >
-                            <span className="text-sm text-white">{(groupDetail?.isPublic ?? activeGroup.isPublic) ? "Public" : "Private"}</span>
-                            <div className={`w-9 h-5 rounded-full transition-colors relative ${(groupDetail?.isPublic ?? activeGroup.isPublic) ? "bg-pnp-accent" : "bg-white/20"}`}>
-                              <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${(groupDetail?.isPublic ?? activeGroup.isPublic) ? "left-[18px]" : "left-0.5"}`} />
+                          {/* Access level selector */}
+                          <div className="rounded-lg bg-white/5 px-3 py-2.5 mb-2">
+                            <p className="text-xs text-pnp-textSecondary mb-2 font-medium">{t.chat.accessLevelLabel}</p>
+                            <div className="grid grid-cols-3 gap-1">
+                              {(["public", "free", "exclusive"] as const).map((lvl) => {
+                                const current = (groupDetail as any)?.accessLevel ?? (activeGroup as any).accessLevel ?? (activeGroup.isPublic ? "public" : "free");
+                                const selected = current === lvl;
+                                const accentColor = lvl === "exclusive" ? "#D4007A" : "#5ED1C4";
+                                return (
+                                  <button
+                                    key={lvl}
+                                    type="button"
+                                    onClick={async () => {
+                                      await updateHangoutSettings(activeGroup.id, { accessLevel: lvl });
+                                      loadGroupDetail(activeGroup.id);
+                                      loadGroups();
+                                    }}
+                                    className="flex flex-col items-center gap-0.5 px-1.5 py-2 rounded-lg transition-all text-center"
+                                    style={{
+                                      background: selected ? (lvl === "exclusive" ? "rgba(212,0,122,0.18)" : "rgba(94,209,196,0.13)") : "rgba(255,255,255,0.04)",
+                                      border: selected ? `1px solid ${accentColor}80` : "1px solid transparent",
+                                    }}
+                                  >
+                                    <span style={{ fontSize: 12 }}>
+                                      {lvl === "public" ? "🌐" : lvl === "free" ? "🔒" : "⭐"}
+                                    </span>
+                                    <span className="text-[9px] font-semibold" style={{ color: selected ? accentColor : "#8E8E93" }}>
+                                      {lvl === "public" ? t.chat.accessLevelPublic : lvl === "free" ? t.chat.accessLevelFree : t.chat.accessLevelExclusive}
+                                    </span>
+                                  </button>
+                                );
+                              })}
                             </div>
-                          </button>
+                          </div>
 
                           {/* Read-Only Toggle */}
                           <button
@@ -5201,7 +5220,8 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                   creatorId: user?.dbId ?? "",
                   isMain: false,
                   isWallOfFame: false,
-                  isPublic: newIsPublic,
+                  isPublic: newAccessLevel === "public",
+                  accessLevel: newAccessLevel,
                   maxMembers: 200000,
                   memberCount: 1,
                   createdAt: new Date().toISOString(),
@@ -5318,35 +5338,38 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
             </div>
           </div>
 
-          {/* Public/Private toggle */}
-          <button
-            type="button"
-            onClick={() => setNewIsPublic(!newIsPublic)}
-            className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-white/5 transition-colors hover:bg-white/10"
-          >
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: newIsPublic ? "rgba(94,209,196,0.15)" : "rgba(255,255,255,0.08)" }}>
-                <svg className="w-4 h-4" style={{ color: newIsPublic ? "#5ED1C4" : "#8E8E93" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  {newIsPublic ? (
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 21a9.004 9.004 0 008.716-6.747M12 21a9.004 9.004 0 01-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 017.843 4.582M12 3a8.997 8.997 0 00-7.843 4.582m15.686 0A11.953 11.953 0 0112 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0121 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0112 16.5a17.92 17.92 0 01-8.716-2.247m0 0A9.015 9.015 0 003 12c0-1.605.42-3.113 1.157-4.418" />
-                  ) : (
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
-                  )}
-                </svg>
-              </div>
-              <div className="text-left">
-                <span className="text-sm text-pnp-textPrimary font-medium block">
-                  {newIsPublic ? "Public Hangout" : "Private Hangout"}
-                </span>
-                <span className="text-[11px] text-pnp-textSecondary">
-                  {newIsPublic ? t.chat.anyoneCanJoin : t.chat.approvalRequired}
-                </span>
-              </div>
+          {/* Access level selector */}
+          <div className="rounded-xl bg-white/5 p-3">
+            <p className="text-xs text-pnp-textSecondary mb-2.5 font-medium">{t.chat.accessLevelLabel}</p>
+            <div className="grid grid-cols-3 gap-1.5">
+              {(["public", "free", "exclusive"] as const).map((lvl) => {
+                const selected = newAccessLevel === lvl;
+                const accentColor = lvl === "exclusive" ? "#D4007A" : "#5ED1C4";
+                return (
+                  <button
+                    key={lvl}
+                    type="button"
+                    onClick={() => setNewAccessLevel(lvl)}
+                    className="flex flex-col items-center gap-1 px-2 py-2.5 rounded-lg transition-all text-center"
+                    style={{
+                      background: selected ? (lvl === "exclusive" ? "rgba(212,0,122,0.18)" : "rgba(94,209,196,0.13)") : "rgba(255,255,255,0.04)",
+                      border: selected ? `1px solid ${accentColor}80` : "1px solid transparent",
+                    }}
+                  >
+                    <span style={{ fontSize: 14 }}>
+                      {lvl === "public" ? "🌐" : lvl === "free" ? "🔒" : "⭐"}
+                    </span>
+                    <span className="text-[10px] font-semibold leading-tight" style={{ color: selected ? accentColor : "#8E8E93" }}>
+                      {lvl === "public" ? t.chat.accessLevelPublic : lvl === "free" ? t.chat.accessLevelFree : t.chat.accessLevelExclusive}
+                    </span>
+                    <span className="text-[9px] leading-tight" style={{ color: "rgba(255,255,255,0.35)" }}>
+                      {lvl === "public" ? t.chat.accessLevelPublicDesc : lvl === "free" ? t.chat.accessLevelFreeDesc : t.chat.accessLevelExclusiveDesc}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
-            <div className={`w-10 h-5.5 rounded-full transition-colors relative ${newIsPublic ? "bg-pnp-accent" : "bg-white/20"}`} style={{ width: 40, height: 22 }}>
-              <div className={`absolute top-0.5 w-[18px] h-[18px] rounded-full bg-white transition-transform shadow-sm ${newIsPublic ? "translate-x-[19px]" : "translate-x-[2px]"}`} />
-            </div>
-          </button>
+          </div>
 
           {/* Link to Channel — only when the creator has unlinked channels */}
           {ownChannels.length > 0 && (
@@ -5824,9 +5847,14 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                           {t.chat.labelWallOfFame}
                         </span>
                       )}
-                      {!group.isPublic && !group.isMain && !group.isWallOfFame && (
+                      {!group.isPublic && !group.isMain && !group.isWallOfFame && (group as any).accessLevel !== "exclusive" && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-pnp-textSecondary">
                           {t.chat.labelPrivate}
+                        </span>
+                      )}
+                      {!group.isMain && !group.isWallOfFame && (group as any).accessLevel === "exclusive" && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded font-semibold" style={{ background: "rgba(212,0,122,0.15)", color: "#D4007A", border: "1px solid rgba(212,0,122,0.3)" }}>
+                          {t.chat.labelExclusive}
                         </span>
                       )}
                       {group.channelId && group.channelAccessType && group.channelAccessType !== "free" ? (
@@ -6233,11 +6261,15 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
                             <span className="font-semibold text-pnp-textPrimary text-sm truncate">{group.name}</span>
-                            {!group.isPublic && (
+                            {(group as any).accessLevel === "exclusive" ? (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded font-semibold flex-shrink-0" style={{ background: "rgba(212,0,122,0.15)", color: "#D4007A", border: "1px solid rgba(212,0,122,0.3)" }}>
+                                {t.chat.labelExclusive}
+                              </span>
+                            ) : !group.isPublic ? (
                               <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-pnp-textSecondary flex-shrink-0">
                                 {t.chat.labelPrivate}
                               </span>
-                            )}
+                            ) : null}
                             {(group as any).channelId && (group as any).channelAccessType && (group as any).channelAccessType !== "free" ? (
                               <span className="text-[10px] px-1.5 py-0.5 rounded font-semibold flex-shrink-0"
                                 style={
