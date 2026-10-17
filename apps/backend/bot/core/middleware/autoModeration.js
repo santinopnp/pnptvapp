@@ -309,7 +309,7 @@ async function enforceWarningAction(ctx, warningResult) {
   const { warningCount, action, isMaxWarnings } = warningResult;
 
   try {
-    if (isMaxWarnings || action.type === 'ban') {
+    if (isMaxWarnings || action?.type === 'ban') {
       // BAN the user
       await ctx.telegram.banChatMember(chatId, userId);
       const msg = await ctx.telegram.sendMessage(
@@ -327,7 +327,7 @@ async function enforceWarningAction(ctx, warningResult) {
       });
 
       logger.info('User auto-banned', { userId, username, warningCount });
-    } else if (action.type === 'mute') {
+    } else if (action?.type === 'mute') {
       // MUTE the user
       const muteDuration = action.duration || 24 * 60 * 60 * 1000;
       const until = Math.floor((Date.now() + muteDuration) / 1000);

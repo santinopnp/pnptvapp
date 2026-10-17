@@ -157,6 +157,16 @@ async function notificationsProcessor(job) {
       return;
     }
 
+    case 'stage-promo': {
+      const mainStageService = _safeRequire('../mainStageService');
+      if (!mainStageService || typeof mainStageService.runStagePromo !== 'function') {
+        logger.warn('[BullMQ] notificationsProcessor: mainStageService.runStagePromo not available');
+        return;
+      }
+      await mainStageService.runStagePromo(job.data.performerId);
+      return;
+    }
+
     case 'year50_funnel_promo': {
       // Two Workers are attached to 'notifications' (this one + queueService's);
       // BullMQ picks one at random per job. Without this case, ~50% of year50

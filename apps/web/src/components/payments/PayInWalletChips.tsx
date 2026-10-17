@@ -599,7 +599,14 @@ export function WalletPayCard({
   }, [authenticated, activeWallet?.address]);
 
   _useEffect(() => {
-    if (!authenticated || !activeWallet) return;
+    if (!authenticated || !activeWallet) {
+      // Wallet disappeared (Privy re-sync on Android). Clear cached balances so
+      // canAfford resets to false and the Pay button doesn't show while the
+      // wallet is gone — otherwise tapping it exits handlePay() silently.
+      setUsdc(null);
+      setEth(null);
+      return;
+    }
     let cancelled = false;
     setBalanceError(false);
     setLoading(true);
@@ -759,7 +766,14 @@ export function WalletPayCard({
   };
 
   const handlePay = async () => {
-    if (!activeWallet) return;
+    if (!activeWallet) {
+      // Wallet not ready — never silently no-op. Show a reload prompt so the
+      // user understands why the button didn't respond.
+      setError(es
+        ? "Billetera no disponible. Recargá la página e intentá de nuevo."
+        : "Wallet not available. Reload the page and try again.");
+      return;
+    }
     // Guard: price not yet resolved (amountUsd=0 means parent passed null/NaN/0).
     // Without this, auto-pay fires for any non-negative balance because 0 <= bal
     // is always true, and reportWalletClientError logs amountUsd:0 into payment_errors.
