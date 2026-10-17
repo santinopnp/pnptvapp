@@ -146,26 +146,18 @@ async function settleIfEligible(creatorId, context = {}) {
   );
   if (claim.rowCount === 0) return { settled: false, reason: 'claim_lost' };
 
+  let dispatch;
   try {
     const { dispatchRushSplit } = require('./payoutSplitService');
-    const dispatch = await dispatchRushSplit({
+    dispatch = await dispatchRushSplit({
       rushSpendId: context.rushSpendId || `batch:${creatorId}:${Date.now()}`,
       creatorId: String(creatorId),
       amountUsd: settleAmount,
       creatorAddress: row.wallet_address,
     });
-    await query(
-      `UPDATE rush_creator_ledger
-          SET total_settled_usd = total_settled_usd + $2,
-              last_settled_at   = NOW(),
-              updated_at        = NOW()
-        WHERE creator_id = $1`,
-      [String(creatorId), settleAmount],
-    );
-    logger.info('[rushLedger] settled', { creatorId, settleAmount, ...dispatch });
-    return { settled: true, amountUsd: settleAmount, txs: dispatch };
-  } catch (err) {
-    // Restore the claim so the next attempt tries again.
+  } catch (dispatchErr) {
+    // Nothing was sent — dispatchRushSplit only throws after exhausting its
+    // own retries — so it's still safe to restore the claim for next attempt.
     await query(
       `UPDATE rush_creator_ledger
           SET pending_usd = pending_usd + $2, updated_at = NOW()
@@ -173,9 +165,72 @@ async function settleIfEligible(creatorId, context = {}) {
       [String(creatorId), settleAmount],
     ).catch(() => {});
     logger.error('[rushLedger] settle send failed — pending restored', {
-      creatorId, settleAmount, err: err.message,
+      creatorId, settleAmount, err: dispatchErr.message,
     });
-    throw err;
+    throw dispatchErr;
+  }
+
+  // The USDC is on-chain now. This write must NEVER trigger a restore of
+  // pending_usd on failure — that would let the next sweep tick resend
+  // money that's already gone (same risk cashoutService._dispatchAndFinalize
+  // and refundService.approveRefund guard against). Retry the bookkeeping
+  // write instead, and alert ops for manual reconciliation if it still fails.
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await query(
+        `UPDATE rush_creator_ledger
+            SET total_settled_usd = total_settled_usd + $2,
+                last_settled_at   = NOW(),
+                updated_at        = NOW()
+          WHERE creator_id = $1`,
+        [String(creatorId), settleAmount],
+      );
+      logger.info('[rushLedger] settled', { creatorId, settleAmount, ...dispatch });
+      return { settled: true, amountUsd: settleAmount, txs: dispatch };
+    } catch (writeErr) {
+      logger.error('[rushLedger] USDC sent but ledger update failed — retrying', {
+        creatorId, settleAmount, txs: dispatch, attempt, err: writeErr.message,
+      });
+      if (attempt === 3) {
+        _notifyOpsPaidButUnrecorded({ creatorId, settleAmount, dispatch }).catch(() => {});
+        throw Object.assign(
+          new Error('RUSH settlement paid on-chain but the ledger update failed — needs manual reconciliation'),
+          { code: 'PAID_BUT_UNRECORDED', creatorId, settleAmount, txs: dispatch },
+        );
+      }
+      await new Promise((res) => setTimeout(res, 500 * attempt));
+    }
+  }
+}
+
+async function _notifyOpsPaidButUnrecorded({ creatorId, settleAmount, dispatch }) {
+  // This is the only alert ops gets for a PAID_BUT_UNRECORDED incident — the
+  // caller fire-and-forgets this (`.catch(...)`), so swallowing a failure
+  // here silently (missing config, a non-2xx response, or Slack's own
+  // `ok: false`) would mean the incident never reaches a human. Log loudly
+  // on every failure mode instead of just returning.
+  const channel = process.env.SLACK_OPS_ADMIN_CHANNEL || process.env.SLACK_OPS_INCIDENTS_CHANNEL;
+  const token = process.env.SLACK_BOT_TOKEN;
+  const context = { creatorId, settleAmount, txs: dispatch };
+  if (!channel || !token) {
+    logger.error('[rushLedger] PAID_BUT_UNRECORDED alert NOT sent — Slack not configured (SLACK_OPS_ADMIN_CHANNEL/SLACK_OPS_INCIDENTS_CHANNEL/SLACK_BOT_TOKEN)', context);
+    return;
+  }
+  try {
+    const res = await fetch('https://slack.com/api/chat.postMessage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json; charset=utf-8', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        channel,
+        text: `🚨 RUSH settlement for creator \`${creatorId}\` — USDC SENT ($${settleAmount}, tx \`${dispatch?.txCreator}\`) but the ledger update failed 3x. Needs manual reconciliation: add $${settleAmount} to total_settled_usd by hand once verified — do NOT let pending_usd be re-settled.`,
+      }),
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok || !body?.ok) {
+      logger.error('[rushLedger] PAID_BUT_UNRECORDED alert NOT delivered — Slack rejected it', { ...context, httpStatus: res.status, slackError: body?.error });
+    }
+  } catch (fetchErr) {
+    logger.error('[rushLedger] PAID_BUT_UNRECORDED alert NOT delivered — Slack request failed', { ...context, error: fetchErr.message });
   }
 }
 
