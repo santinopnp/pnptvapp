@@ -23,9 +23,8 @@ import React, {
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useI18n } from "@/lib/i18n";
-import { getCreatorEligibilityStatus, getXStatus, sharePostToX, getOwnChannels, getProfile, searchCreators, createXEmbedPost, getSocialMuxUploadUrl, finalizeSocialMuxPost, generateAiVideoMetadata, type SocialPostItem, type CreatorChannel, type MentionUser } from "@/lib/api";
+import { getCreatorEligibilityStatus, getOwnChannels, getSocialMuxUploadUrl, finalizeSocialMuxPost, generateCreatorPost, type SocialPostItem, type CreatorChannel, type MentionUser } from "@/lib/api";
 import { MentionInput } from "@/components/MentionInput";
-import { MentionText } from "@/components/MentionText";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -263,15 +262,13 @@ export function PostComposer({
   initialTaggedPerformers,
 }: PostComposerProps) {
   const { user, isAuthenticated } = useAuth();
-  const { feed: tFeed, profile: tProfile, lang } = useI18n();
+  const { feed: tFeed, profile: tProfile } = useI18n();
   const navigate = useNavigate();
 
   // ── Unique IDs for ARIA ────────────────────────────────────────────────────
   const baseId = useId();
   const textareaId = `${baseId}-textarea`;
   const exclusiveId = `${baseId}-exclusive`;
-  const shareableId = `${baseId}-shareable`;
-  const aiGeneratedId = `${baseId}-ai-generated`;
   const dropzoneId = `${baseId}-dropzone`;
 
   // ── State ──────────────────────────────────────────────────────────────────
@@ -285,55 +282,36 @@ export function PostComposer({
   const [isActiveCreator, setIsActiveCreator] = useState(false);
   const [canPostExclusive, setCanPostExclusive] = useState(false);
   const [isExclusive, setIsExclusive] = useState(false);
-  const [isShareable, setIsShareable] = useState(true);
-  const [isAiGenerated, setIsAiGenerated] = useState(false);
-  const [xHasWriteScope, setXHasWriteScope] = useState(false);
-  const [crossPostX, setCrossPostX] = useState(false);
-  const [videoTitle, setVideoTitle] = useState("");
-  const [videoDescription, setVideoDescription] = useState("");
   const [channels, setChannels] = useState<CreatorChannel[]>([]);
   const [selectedChannelId, setSelectedChannelId] = useState<number | null>(null);
   const [category, setCategory] = useState<PostCategory | null>(null);
-  const [taggedPerformers, setTaggedPerformers] = useState<MentionUser[]>(() => initialTaggedPerformers ?? []);
-  const [showTagPicker, setShowTagPicker] = useState(false);
-  const [tagQuery, setTagQuery] = useState("");
-  const [tagResults, setTagResults] = useState<MentionUser[]>([]);
-  const [tagSearching, setTagSearching] = useState(false);
-  const [xEmbedOpen, setXEmbedOpen] = useState(false);
-  const [xEmbedUrl, setXEmbedUrl] = useState("");
-  const [xEmbedPosting, setXEmbedPosting] = useState(false);
-  const [xEmbedError, setXEmbedError] = useState<string | null>(null);
+  const [taggedPerformers] = useState<MentionUser[]>(() => initialTaggedPerformers ?? []);
+  const [creatorTemplate, setCreatorTemplate] = useState<"promote" | "calls" | "free" | null>(null);
+  const [showAiInput, setShowAiInput] = useState(false);
   const [aiPrompt, setAiPrompt] = useState("");
   const [isGeneratingAi, setIsGeneratingAi] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
-  const [showAiBox, setShowAiBox] = useState(false);
-  const [previewMode, setPreviewMode] = useState(false);
 
-  const handleGenerateAiMetadata = useCallback(async () => {
+  const handleGeneratePost = useCallback(async () => {
     const promptText = aiPrompt.trim();
-    if (!promptText || isGeneratingAi) return;
+    if (!promptText || isGeneratingAi || !creatorTemplate || creatorTemplate === "free") return;
     setIsGeneratingAi(true);
     setAiError(null);
     try {
-      const res = await generateAiVideoMetadata(promptText, user?.language || "en");
-      if (res.success) {
-        if (res.title) setVideoTitle(res.title);
-        if (res.description) setVideoDescription(res.description);
-        if (res.tags && res.tags.length > 0) {
-          const hashtags = res.tags.join(" ");
-          setText((prev) => (prev ? `${prev}\n\n${hashtags}` : hashtags));
-        }
+      const res = await generateCreatorPost(creatorTemplate, promptText);
+      if (res.success && res.post) {
+        setText(res.post);
         setAiPrompt("");
-        setShowAiBox(false);
+        setShowAiInput(false);
       } else {
-        setAiError("Could not generate metadata");
+        setAiError("Could not generate post");
       }
     } catch {
-      setAiError("Could not generate metadata — please try again in a moment");
+      setAiError("Could not generate post — please try again in a moment");
     } finally {
       setIsGeneratingAi(false);
     }
-  }, [aiPrompt, isGeneratingAi, user?.language]);
+  }, [aiPrompt, isGeneratingAi, creatorTemplate]);
 
   // ── Refs ───────────────────────────────────────────────────────────────────
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -341,7 +319,7 @@ export function PostComposer({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dragCounterRef = useRef(0); // tracks nested drag-enter/leave pairs
 
-  // ── Creator status + X write-scope check ──────────────────────────────────
+  // ── Creator status check ──────────────────────────────────────────────────
   useEffect(() => {
     if (!isAuthenticated) return;
     getCreatorEligibilityStatus()
@@ -353,22 +331,6 @@ export function PostComposer({
       })
       .catch(() => {
         // Non-critical — exclusive toggle stays hidden
-      });
-    getXStatus()
-      .then((res) => {
-        const hasScope = res.status.linked && res.status.hasWriteScope;
-        setXHasWriteScope(hasScope);
-        if (hasScope) {
-          // Pre-check cross-post if user has enabled "share to X by default"
-          getProfile()
-            .then((profileRes) => {
-              if (profileRes.profile.autoShareToX) setCrossPostX(true);
-            })
-            .catch(() => {});
-        }
-      })
-      .catch(() => {
-        setXHasWriteScope(false);
       });
   }, [isAuthenticated]);
 
@@ -391,23 +353,6 @@ export function PostComposer({
     el.style.height = "auto";
     el.style.height = `${el.scrollHeight}px`;
   }, [text]);
-
-  // ── Tag performer search — debounced ───────────────────────────────────────
-  useEffect(() => {
-    if (!tagQuery.trim()) { setTagResults([]); return; }
-    let cancelled = false;
-    const id = setTimeout(async () => {
-      setTagSearching(true);
-      try {
-        const res = await searchCreators(tagQuery.trim());
-        if (!cancelled && res.success) {
-          setTagResults(res.users.filter(u => !taggedPerformers.some(t => t.id === u.id)));
-        }
-      } catch { /* silent */ }
-      if (!cancelled) setTagSearching(false);
-    }, 300);
-    return () => { cancelled = true; clearTimeout(id); };
-  }, [tagQuery, taggedPerformers]);
 
   // ── Cleanup object URLs on unmount ─────────────────────────────────────────
   useEffect(() => {
@@ -577,18 +522,12 @@ export function PostComposer({
     setError(null);
     setUploadProgress(null);
     setIsExclusive(false);
-    setIsShareable(true);
-    setIsAiGenerated(false);
-    setCrossPostX(false);
-    setVideoTitle("");
-    setVideoDescription("");
     setSelectedChannelId(null);
     setCategory(null);
-    setTaggedPerformers([]);
-    setShowTagPicker(false);
-    setTagQuery("");
-    setTagResults([]);
-    setPreviewMode(false);
+    setCreatorTemplate(null);
+    setShowAiInput(false);
+    setAiPrompt("");
+    setAiError(null);
     if (compact) setIsExpanded(false);
   }, [compact]);
 
@@ -612,12 +551,10 @@ export function PostComposer({
             formData.append("content", trimmed);
             files.forEach((f) => formData.append("media", f.file));
             if (isExclusive) formData.append("isExclusive", "true");
-            if (!isShareable) formData.append("isShareable", "false");
-            if (isAiGenerated) formData.append("isAiGenerated", "true");
             if (selectedChannelId !== null) formData.append("channelId", String(selectedChannelId));
             if (hangoutGroupId) formData.append("hangoutGroupId", String(hangoutGroupId));
             if (category) formData.append("category", category);
-            if (taggedPerformers.length) formData.append("taggedPerformerIds", JSON.stringify(taggedPerformers.map(p => p.id)));
+            if (taggedPerformers.length) formData.append("taggedPerformerIds", JSON.stringify(taggedPerformers.map((p) => p.id)));
 
             const xhr = new XMLHttpRequest();
             xhr.open("POST", `${API_BASE}/api/webapp/social/posts/with-multi-media`);
@@ -682,8 +619,8 @@ export function PostComposer({
             uploadId,
             content: trimmed,
             isExclusive,
-            isShareable,
-            isAiGenerated,
+            isShareable: true,
+            isAiGenerated: false,
             hangoutGroupId: hangoutGroupId ?? null,
             category: category ?? null,
             channelId: selectedChannelId ?? null,
@@ -697,10 +634,6 @@ export function PostComposer({
               formData.append("content", trimmed);
               formData.append("media", singleFile);
               if (isExclusive) formData.append("isExclusive", "true");
-              if (!isShareable) formData.append("isShareable", "false");
-              if (isAiGenerated) formData.append("isAiGenerated", "true");
-              if (videoTitle.trim()) formData.append("videoTitle", videoTitle.trim());
-              if (videoDescription.trim()) formData.append("videoDescription", videoDescription.trim());
               if (selectedChannelId !== null) formData.append("channelId", String(selectedChannelId));
               if (hangoutGroupId) formData.append("hangoutGroupId", String(hangoutGroupId));
               if (category) formData.append("category", category);
@@ -747,13 +680,11 @@ export function PostComposer({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             content: trimmed,
-            isExclusive: isExclusive,
-            isShareable: isShareable,
-            ...(isAiGenerated ? { isAiGenerated: true } : {}),
+            isExclusive,
             ...(selectedChannelId !== null ? { channelId: selectedChannelId } : {}),
             ...(hangoutGroupId ? { hangoutGroupId } : {}),
             ...(category ? { category } : {}),
-            ...(taggedPerformers.length ? { taggedPerformerIds: taggedPerformers.map(p => p.id) } : {}),
+            ...(taggedPerformers.length ? { taggedPerformerIds: taggedPerformers.map((p) => p.id) } : {}),
           }),
         });
         if (!res.ok) {
@@ -764,10 +695,6 @@ export function PostComposer({
       }
 
       if (result.success && result.post) {
-        // Fire X cross-post in the background — non-blocking, errors are silently dropped
-        if (crossPostX) {
-          sharePostToX(result.post.id).catch(() => { /* non-critical */ });
-        }
         onPostCreated?.(result.post);
         clearForm();
       } else {
@@ -779,7 +706,7 @@ export function PostComposer({
     } finally {
       setIsPosting(false);
     }
-  }, [text, files, isPosting, isExclusive, isShareable, isAiGenerated, crossPostX, videoTitle, videoDescription, selectedChannelId, hangoutGroupId, category, taggedPerformers, isActiveCreator, onPostCreated, clearForm]);
+  }, [text, files, isPosting, isExclusive, selectedChannelId, hangoutGroupId, category, taggedPerformers, isActiveCreator, onPostCreated, clearForm]);
 
   // ── Keyboard submit (Ctrl/Cmd + Enter) ────────────────────────────────────
   const handleKeyDown = useCallback(
@@ -792,50 +719,17 @@ export function PostComposer({
     [handleSubmit]
   );
 
-  // ── X embed submit ────────────────────────────────────────────────────────
-  const handleXEmbed = useCallback(async () => {
-    const trimmedUrl = xEmbedUrl.trim();
-    if (!trimmedUrl || xEmbedPosting) return;
-
-    const isValidXUrl =
-      trimmedUrl.startsWith("https://x.com/") ||
-      trimmedUrl.startsWith("https://twitter.com/");
-
-    if (!isValidXUrl) {
-      setXEmbedError("URL must start with https://x.com/ or https://twitter.com/");
-      return;
-    }
-
-    setXEmbedPosting(true);
-    setXEmbedError(null);
-
-    try {
-      const result = await createXEmbedPost(trimmedUrl);
-      if (result.success && result.post) {
-        onPostCreated?.(result.post);
-        setXEmbedOpen(false);
-        setXEmbedUrl("");
-      } else {
-        throw new Error("Embed post creation failed");
-      }
-    } catch (err: unknown) {
-      setXEmbedError(err instanceof Error ? err.message : "Failed to embed post");
-    } finally {
-      setXEmbedPosting(false);
-    }
-  }, [xEmbedUrl, xEmbedPosting, onPostCreated]);
-
   // ── Derived values ─────────────────────────────────────────────────────────
   const hasVideo = files.some((f) => isVideoType(f.file));
   const imageCount = files.filter((f) => isImageType(f.file)).length;
   const canAddMoreImages = !hasVideo && imageCount < MAX_IMAGES;
   const videoCount = files.filter((f) => isVideoType(f.file)).length;
   const canAddMoreVideos = !files.some((f) => isImageType(f.file)) && videoCount < MAX_VIDEOS;
-  // Kept for backward-compat with existing UI conditionals; matches new limit.
   const canAddVideo = canAddMoreVideos;
   const isOverCharLimit = text.length > MAX_CHARS;
   const hasVideoFile = files.some((f) => isVideoType(f.file));
-  const canPost = (text.trim().length > 0 || files.length > 0) && !isPosting && !isOverCharLimit && (!hasVideoFile || category !== null);
+  // Creators must pick a category for video posts; members can post freely
+  const canPost = (text.trim().length > 0 || files.length > 0) && !isPosting && !isOverCharLimit && (!isActiveCreator || !hasVideoFile || category !== null);
   const resolvedPlaceholder = placeholder ?? tFeed.whatOnYourMind;
   const displayName = user?.displayName || user?.username || "U";
 
@@ -872,707 +766,303 @@ export function PostComposer({
     );
   }
 
+
   // ── Full composer ──────────────────────────────────────────────────────────
+  const TEMPLATE_PLACEHOLDERS: Record<"promote" | "calls" | "free", string> = {
+    promote: "Drop a hook that stops the scroll, build it out, then tell them what to do...",
+    calls: "Set the vibe — what kind of energy are you bringing to the call?",
+    free: resolvedPlaceholder,
+  };
+  const AI_PROMPT_PLACEHOLDERS: Record<"promote" | "calls", string> = {
+    promote: "e.g. new exclusive video with Lex, wild pool session...",
+    calls: "e.g. feeling spicy tonight, open for 1-on-1 video calls...",
+  };
+  const activePlaceholder = isActiveCreator && creatorTemplate && creatorTemplate !== "free"
+    ? TEMPLATE_PLACEHOLDERS[creatorTemplate]
+    : resolvedPlaceholder;
+
   return (
     <div
       className={`glass-card-sm p-4 transition-all ${className}`}
-      // Drag-and-drop handlers (only in full mode)
       onDragEnter={compact ? undefined : handleDragEnter}
       onDragLeave={compact ? undefined : handleDragLeave}
       onDragOver={compact ? undefined : handleDragOver}
       onDrop={compact ? undefined : handleDrop}
-      style={
-        isDragging
-          ? { borderColor: "rgba(212,0,122,0.6)", background: "rgba(212,0,122,0.04)" }
-          : undefined
-      }
+      style={isDragging ? { borderColor: "rgba(212,0,122,0.6)", background: "rgba(212,0,122,0.04)" } : undefined}
       id={dropzoneId}
       aria-label={isDragging ? "Drop files here" : undefined}
     >
-      {/* Drag overlay hint */}
       {isDragging && (
         <div
           className="absolute inset-0 rounded-2xl flex items-center justify-center pointer-events-none z-10"
           style={{ border: "2px dashed rgba(212,0,122,0.6)", background: "rgba(212,0,122,0.06)" }}
           aria-hidden="true"
         >
-          <p className="text-sm font-semibold" style={{ color: "#D4007A" }}>
-            Drop to attach
-          </p>
+          <p className="text-sm font-semibold" style={{ color: "#D4007A" }}>Drop to attach</p>
         </div>
       )}
 
       <div className="flex gap-3">
-        {/* Avatar */}
         <button onClick={() => navigate("/profile")} className="flex-shrink-0">
           <ComposerAvatar photoUrl={user?.photoUrl} displayName={displayName} />
         </button>
 
-        {/* Composer body */}
         <div className="flex-1 min-w-0">
-
           {/* Hidden file inputs */}
-          <input id="pnp-postcomposer-1"
-            ref={imageInputRef}
-            type="file"
-            accept={ACCEPTED_IMAGE_TYPES.join(",")}
-            multiple
-            className="hidden"
-            onChange={handleImageInputChange}
-            aria-hidden="true"
-            tabIndex={-1}
-          />
-          <input id="pnp-postcomposer-2"
-            ref={videoInputRef}
-            type="file"
-            accept={ACCEPTED_VIDEO_TYPES.join(",")}
-            multiple
-            className="hidden"
-            onChange={handleVideoInputChange}
-            aria-hidden="true"
-            tabIndex={-1}
-          />
+          <input id="pnp-postcomposer-1" ref={imageInputRef} type="file" accept={ACCEPTED_IMAGE_TYPES.join(",")} multiple className="hidden" onChange={handleImageInputChange} aria-hidden="true" tabIndex={-1} />
+          <input id="pnp-postcomposer-2" ref={videoInputRef} type="file" accept={ACCEPTED_VIDEO_TYPES.join(",")} multiple className="hidden" onChange={handleVideoInputChange} aria-hidden="true" tabIndex={-1} />
 
-          {/* Write / Preview tab toggle */}
-          <div className="flex items-center gap-1 mb-2">
-            <button
-              type="button"
-              onClick={() => setPreviewMode(false)}
-              className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${!previewMode ? "bg-white/15 text-white" : "text-white/40 hover:text-white/60"}`}
-            >
-              Write
-            </button>
-            <button
-              type="button"
-              onClick={() => setPreviewMode(true)}
-              disabled={!text.trim()}
-              className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors disabled:opacity-30 ${previewMode ? "bg-white/15 text-white" : "text-white/40 hover:text-white/60"}`}
-            >
-              Preview
-            </button>
-          </div>
-
-          {/* Textarea — MentionInput adds @-autocomplete dropdown on top of a
-              plain textarea. We keep the same visual chrome, sizing, and
-              maxLength cap (MAX_CHARS + 50 for the soft overflow) as before. */}
-          {previewMode ? (
-            <div
-              className="w-full py-2 border-b border-white/10 mb-2 text-sm text-white/90 leading-relaxed min-h-[44px]"
-              onClick={() => setPreviewMode(false)}
-              title="Click to edit"
-            >
-              <MentionText text={text} />
+          {/* Creator template pills */}
+          {isActiveCreator && (
+            <div className="flex gap-2 mb-3 flex-wrap">
+              {(["promote", "calls", "free"] as const).map((t) => {
+                const labels = { promote: "📣 Promote", calls: "📞 Available", free: "✍️ Free post" };
+                const active = creatorTemplate === t;
+                return (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => { setCreatorTemplate(active ? null : t); setShowAiInput(false); setAiPrompt(""); setAiError(null); }}
+                    disabled={isPosting}
+                    className="px-3 py-1 rounded-full text-xs font-semibold border transition-all disabled:opacity-40"
+                    style={{
+                      background: active ? "rgba(212,0,122,0.15)" : "transparent",
+                      borderColor: active ? "rgba(212,0,122,0.5)" : "rgba(255,255,255,0.12)",
+                      color: active ? "#D4007A" : "#8E8E93",
+                    }}
+                  >
+                    {labels[t]}
+                  </button>
+                );
+              })}
             </div>
-          ) : (
-            <>
-              <label htmlFor={textareaId} className="sr-only">
-                {resolvedPlaceholder}
-              </label>
-              <MentionInput
-                id={textareaId}
-                textareaRef={textareaRef}
-                value={text}
-                onChange={(v) => setText(v.slice(0, MAX_CHARS + 50))}
-                onKeyDown={handleKeyDown}
-                placeholder={resolvedPlaceholder}
-                rows={compact ? 2 : 3}
-                disabled={isPosting}
-                maxLength={MAX_CHARS + 50}
-                className="w-full bg-transparent text-white py-2 border-b border-white/10 mb-2 resize-none outline-none placeholder:text-white/40 disabled:opacity-60 overflow-hidden"
-                style={{ minHeight: "44px", fontSize: "16px" }}
-                aria-describedby={error ? `${baseId}-error` : undefined}
-              />
-            </>
           )}
+
+          {/* Textarea */}
+          <label htmlFor={textareaId} className="sr-only">{activePlaceholder}</label>
+          <MentionInput
+            id={textareaId}
+            textareaRef={textareaRef}
+            value={text}
+            onChange={(v) => setText(v.slice(0, MAX_CHARS + 50))}
+            onKeyDown={handleKeyDown}
+            placeholder={activePlaceholder}
+            rows={compact ? 2 : 3}
+            disabled={isPosting}
+            maxLength={MAX_CHARS + 50}
+            className="w-full bg-transparent text-white py-2 border-b border-white/10 mb-2 resize-none outline-none placeholder:text-white/40 disabled:opacity-60 overflow-hidden"
+            style={{ minHeight: "44px", fontSize: "16px" }}
+            aria-describedby={error ? `${baseId}-error` : undefined}
+          />
 
           {/* Character counter */}
           <div className="flex justify-end mb-2">
-            <span
-              className="text-xs tabular-nums"
-              style={{ color: isOverCharLimit ? "#FF453A" : "#8E8E93" }}
-              aria-live="polite"
-              aria-atomic="true"
-            >
+            <span className="text-xs tabular-nums" style={{ color: isOverCharLimit ? "#FF453A" : "#8E8E93" }} aria-live="polite" aria-atomic="true">
               {text.length}/{MAX_CHARS}
             </span>
           </div>
 
-          {/* Media preview grid */}
-          <MediaPreviewGrid files={files} onRemove={removeFile} disabled={isPosting} />
-
-          {/* AI Title, Description & Tags Generator */}
-          <div className="mb-3">
-            {!showAiBox ? (
-              <button
-                type="button"
-                onClick={() => setShowAiBox(true)}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-gradient-to-r from-pink-600/80 to-amber-600/80 hover:from-pink-600 hover:to-amber-600 transition-all shadow-sm"
-              >
-                <span>✨</span> AI Title, Description & Tags Generator
-              </button>
-            ) : (
-              <div className="p-3 rounded-xl bg-gradient-to-r from-pink-500/15 via-purple-500/10 to-amber-500/15 border border-pink-500/30 space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5 text-xs font-bold text-pink-400">
-                    <span>✨</span> AI Title, Description & Tags Generator
+          {/* Creator AI write post */}
+          {isActiveCreator && creatorTemplate && creatorTemplate !== "free" && (
+            <div className="mb-3">
+              {!showAiInput ? (
+                <button
+                  type="button"
+                  onClick={() => setShowAiInput(true)}
+                  disabled={isPosting}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white transition-all disabled:opacity-40"
+                  style={{ background: "linear-gradient(135deg, rgba(212,0,122,0.25), rgba(230,145,56,0.2))", border: "1px solid rgba(212,0,122,0.3)" }}
+                >
+                  ✨ Write post for me
+                </button>
+              ) : (
+                <div className="rounded-xl p-3 space-y-2" style={{ background: "rgba(212,0,122,0.06)", border: "1px solid rgba(212,0,122,0.2)" }}>
+                  <div className="flex gap-2">
+                    <input
+                      id="pnp-postcomposer-ai"
+                      type="text"
+                      value={aiPrompt}
+                      onChange={(e) => setAiPrompt(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") { e.preventDefault(); handleGeneratePost(); }
+                        if (e.key === "Escape") { setShowAiInput(false); setAiPrompt(""); }
+                      }}
+                      placeholder={AI_PROMPT_PLACEHOLDERS[creatorTemplate as "promote" | "calls"]}
+                      autoFocus
+                      disabled={isGeneratingAi}
+                      className="flex-1 bg-black/40 text-white text-xs rounded-lg px-3 py-2 border border-white/15 outline-none focus:border-pnp-pink/50 placeholder:text-white/30 disabled:opacity-60"
+                      style={{ fontSize: "14px" }}
+                    />
+                    <button
+                      type="button"
+                      onClick={handleGeneratePost}
+                      disabled={isGeneratingAi || !aiPrompt.trim()}
+                      className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white btn-gradient disabled:opacity-40 transition-all whitespace-nowrap"
+                    >
+                      {isGeneratingAi ? "Writing…" : "✨ Write"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setShowAiInput(false); setAiPrompt(""); setAiError(null); }}
+                      className="px-2 py-1.5 rounded-lg text-xs text-white/40 hover:text-white transition-colors"
+                    >
+                      ✕
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setShowAiBox(false)}
-                    className="text-white/40 hover:text-white text-xs px-1"
-                  >
-                    ✕
-                  </button>
+                  {aiError && <p className="text-[11px]" style={{ color: "#FF453A" }}>{aiError}</p>}
                 </div>
-                <p className="text-[11px] text-white/60">
-                  Type a short description, and AI will auto-generate your Title, Description, and Tags!
-                </p>
-                <div className="flex gap-2">
-                  <input id="pnp-postcomposer-3"
-                    type="text"
-                    value={aiPrompt}
-                    onChange={(e) => setAiPrompt(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        handleGenerateAiMetadata();
-                      }
-                    }}
-                    placeholder="e.g. Hot session in Miami beach with Lex and Santino..."
-                    className="flex-1 bg-black/50 text-white text-xs rounded-lg px-3 py-2 border border-white/15 outline-none focus:border-pink-500 placeholder:text-white/35"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleGenerateAiMetadata}
-                    disabled={isGeneratingAi || !aiPrompt.trim()}
-                    className="px-3 py-2 rounded-lg text-xs font-bold text-white bg-gradient-to-r from-pink-600 to-amber-600 hover:opacity-90 disabled:opacity-40 transition-all flex items-center gap-1.5 whitespace-nowrap shadow"
-                  >
-                    {isGeneratingAi ? "Generating..." : "✨ Generate"}
-                  </button>
-                </div>
-                {aiError && <p className="text-[11px] text-red-400">{aiError}</p>}
-              </div>
-            )}
-          </div>
-
-          {/* Video title & description — shown when a video is attached */}
-          {hasVideo && (
-            <div className="mb-3 space-y-2">
-              <div>
-                <input id="pnp-postcomposer-4"
-                  type="text"
-                  value={videoTitle}
-                  onChange={(e) => setVideoTitle(e.target.value.slice(0, 150))}
-                  placeholder="Video title (optional)"
-                  disabled={isPosting}
-                  maxLength={150}
-                  className="w-full bg-white/5 text-white text-sm rounded-lg px-3 py-2 border border-white/10 outline-none placeholder:text-white/30 focus:border-pnp-pink/50 disabled:opacity-60 transition-colors"
-                />
-                <div className="flex justify-end mt-0.5">
-                  <span
-                    className="text-[11px] tabular-nums"
-                    style={{ color: videoTitle.length >= 150 ? "#FF453A" : "#555" }}
-                  >
-                    {videoTitle.length}/150
-                  </span>
-                </div>
-              </div>
-              <div>
-                <textarea id="pnp-postcomposer-5"
-                  value={videoDescription}
-                  onChange={(e) => setVideoDescription(e.target.value.slice(0, 500))}
-                  placeholder="Video description (optional)"
-                  disabled={isPosting}
-                  rows={2}
-                  maxLength={500}
-                  className="w-full bg-white/5 text-white rounded-lg px-3 py-2 border border-white/10 outline-none placeholder:text-white/30 focus:border-pnp-pink/50 disabled:opacity-60 resize-none transition-colors"
-                  style={{ fontSize: "16px" }}
-                />
-                <div className="flex justify-end mt-0.5">
-                  <span
-                    className="text-[11px] tabular-nums"
-                    style={{ color: videoDescription.length >= 500 ? "#FF453A" : "#555" }}
-                  >
-                    {videoDescription.length}/500
-                  </span>
-                </div>
-              </div>
+              )}
             </div>
           )}
 
-          {/* Upload progress bar */}
+          {/* Media preview */}
+          <MediaPreviewGrid files={files} onRemove={removeFile} disabled={isPosting} />
+
+          {/* Upload progress */}
           {uploadProgress !== null && (
             <div className="mb-3 rounded-lg overflow-hidden" style={{ background: "rgba(212,0,122,0.06)", border: "1px solid rgba(212,0,122,0.15)" }}>
               <div className="flex justify-between items-center px-3 pt-2 pb-1">
-                <span className="text-xs" style={{ color: "#D4007A" }}>
-                  {isPosting ? "Uploading..." : "Upload complete"}
-                </span>
-                <span className="text-xs font-semibold tabular-nums" style={{ color: "#D4007A" }}>
-                  {uploadProgress}%
-                </span>
+                <span className="text-xs" style={{ color: "#D4007A" }}>{isPosting ? "Uploading..." : "Upload complete"}</span>
+                <span className="text-xs font-semibold tabular-nums" style={{ color: "#D4007A" }}>{uploadProgress}%</span>
               </div>
               <div className="h-1 mx-3 mb-2 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.08)" }}>
-                <div
-                  className="h-full rounded-full transition-all duration-300"
-                  style={{ width: `${uploadProgress}%`, background: "linear-gradient(90deg, #D4007A, #E69138)" }}
-                  role="progressbar"
-                  aria-valuenow={uploadProgress}
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                />
+                <div className="h-full rounded-full transition-all duration-300" style={{ width: `${uploadProgress}%`, background: "linear-gradient(90deg, #D4007A, #E69138)" }} role="progressbar" aria-valuenow={uploadProgress} aria-valuemin={0} aria-valuemax={100} />
               </div>
             </div>
           )}
 
-          {/* Error message */}
+          {/* Error */}
           {error && (
-            <p
-              id={`${baseId}-error`}
-              className="text-xs mb-2"
-              style={{ color: "#FF453A" }}
-              role="alert"
-              aria-live="assertive"
-            >
+            <p id={`${baseId}-error`} className="text-xs mb-2" style={{ color: "#FF453A" }} role="alert" aria-live="assertive">
               {error}
             </p>
           )}
 
-          {/* X embed panel — shown when xEmbedOpen */}
-          {xEmbedOpen && (
-            <div
-              className="mb-3 rounded-xl px-3 py-3"
-              style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.12)" }}
-            >
-              <div className="flex items-center justify-between mb-2.5">
-                <div className="flex items-center gap-1.5">
-                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style={{ color: "#FFFFFF" }}>
-                    <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.73-8.835L1.254 2.25H8.08l4.253 5.622 5.911-5.622Zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-                  </svg>
-                  <span className="text-xs font-semibold text-white">Embed X post</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => { setXEmbedOpen(false); setXEmbedUrl(""); setXEmbedError(null); }}
-                  className="w-6 h-6 flex items-center justify-center rounded-full transition-colors hover:bg-white/10 active:scale-90 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-black"
-                  style={{ color: "#8E8E93" }}
-                  aria-label="Close embed panel"
-                >
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-
-              <div className="flex gap-2">
-                <input id="pnp-postcomposer-6"
-                  type="url"
-                  value={xEmbedUrl}
-                  onChange={(e) => { setXEmbedUrl(e.target.value); setXEmbedError(null); }}
-                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleXEmbed(); } }}
-                  placeholder="Paste X post URL (x.com/...)"
-                  disabled={xEmbedPosting}
-                  className="flex-1 min-w-0 bg-white/5 text-white text-xs rounded-lg px-3 py-2 border border-white/10 outline-none placeholder:text-white/30 focus:border-white/30 disabled:opacity-60 transition-colors"
-                  style={{ fontSize: "14px", minHeight: "36px" }}
-                  aria-label="X post URL"
-                  aria-describedby={xEmbedError ? `${baseId}-xembed-error` : undefined}
-                />
-                <button
-                  type="button"
-                  onClick={handleXEmbed}
-                  disabled={xEmbedPosting || !xEmbedUrl.trim()}
-                  className="flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold text-white border border-white/20 hover:bg-white/10 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-black"
-                  style={{ minHeight: "36px", background: xEmbedPosting ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.08)" }}
-                >
-                  {xEmbedPosting ? "Publishing…" : "Publish"}
-                </button>
-              </div>
-
-              {xEmbedError && (
-                <p
-                  id={`${baseId}-xembed-error`}
-                  className="mt-2 text-xs"
-                  style={{ color: "#FF453A" }}
-                  role="alert"
-                  aria-live="assertive"
-                >
-                  {xEmbedError}
-                </p>
-              )}
-            </div>
-          )}
-
-          {/* Category chips */}
-          <div className="mb-1 flex flex-wrap gap-1.5">
-            {POST_CATEGORIES.map((cat) => {
-              const active = category === cat.value;
-              return (
-                <button
-                  key={cat.value}
-                  type="button"
-                  onClick={() => setCategory(active ? null : cat.value)}
-                  disabled={isPosting}
-                  className="px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-all disabled:opacity-40"
-                  style={{
-                    background: active ? `${cat.color}22` : "transparent",
-                    borderColor: active ? cat.color : "rgba(255,255,255,0.12)",
-                    color: active ? cat.color : "#8E8E93",
-                  }}
-                >
-                  {cat.label}
-                </button>
-              );
-            })}
-          </div>
-          {hasVideoFile && !category && (
-            <p className="mb-3 text-[11px]" style={{ color: "#FF9500" }}>
-              Select a category to post your video
-            </p>
-          )}
-
-          {/* Tag performers section */}
-          {(showTagPicker || taggedPerformers.length > 0) && (
-            <div
-              className="mb-3 rounded-lg px-3 py-2.5"
-              style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.1)" }}
-            >
-              {/* Tagged performer chips */}
-              {taggedPerformers.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 mb-2">
-                  {taggedPerformers.map((p) => (
-                    <span
-                      key={p.id}
-                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium"
-                      style={{ background: "rgba(94,209,196,0.12)", color: "#5ED1C4", border: "1px solid rgba(94,209,196,0.25)" }}
-                    >
-                      @{p.username}
-                      <button
-                        type="button"
-                        onClick={() => setTaggedPerformers(prev => prev.filter(t => t.id !== p.id))}
-                        className="ml-0.5 hover:text-white transition-colors"
-                        aria-label={`Remove @${p.username}`}
-                      >
-                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              )}
-              {/* Search input */}
-              {showTagPicker && (
-                <div className="relative">
-                  <input id="pnp-postcomposer-7"
-                    type="text"
-                    value={tagQuery}
-                    onChange={(e) => setTagQuery(e.target.value)}
-                    placeholder="Search performers…"
-                    autoFocus
-                    disabled={isPosting}
-                    className="w-full bg-white/5 text-white text-xs rounded-lg px-3 py-2 border border-white/10 outline-none placeholder:text-white/30 focus:border-white/30 disabled:opacity-60 transition-colors"
-                    style={{ fontSize: "14px" }}
-                  />
-                  {/* Dropdown results */}
-                  {(tagResults.length > 0 || tagSearching) && (
-                    <div
-                      className="absolute left-0 right-0 top-full mt-1 rounded-xl overflow-hidden z-20"
-                      style={{ background: "var(--pnp-surface, #1C1C1E)", border: "1px solid rgba(255,255,255,0.12)", boxShadow: "0 8px 24px rgba(0,0,0,0.5)" }}
-                    >
-                      {tagSearching && !tagResults.length ? (
-                        <div className="px-3 py-2.5 text-xs" style={{ color: "#8E8E93" }}>Searching…</div>
-                      ) : (
-                        tagResults.map((u) => (
-                          <button
-                            key={u.id}
-                            type="button"
-                            onClick={() => {
-                              setTaggedPerformers(prev => [...prev, u]);
-                              setTagQuery("");
-                              setTagResults([]);
-                            }}
-                            className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-white/5 text-left transition-colors"
-                          >
-                            {u.avatar_url ? (
-                              <img src={u.avatar_url} alt="" className="w-6 h-6 rounded-full object-cover flex-shrink-0" />
-                            ) : (
-                              <div className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0" style={{ background: "linear-gradient(135deg,#D4007A,#E69138)", color: "#fff" }}>
-                                {(u.username || "?")[0].toUpperCase()}
-                              </div>
-                            )}
-                            <span className="text-xs text-white truncate">@{u.username}</span>
-                          </button>
-                        ))
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Action row — media buttons + post button */}
+          {/* Action row: media + post */}
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-1.5">
-              {/* Photo button */}
               <div className="relative">
                 <button
                   type="button"
                   onClick={() => imageInputRef.current?.click()}
                   disabled={isPosting || !canAddMoreImages}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-white/10 hover:bg-white/5 hover:border-white/20 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-white/10 hover:bg-white/5 hover:border-white/20 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                   style={{ color: "#D4007A", minHeight: "36px" }}
                   aria-label={`Attach photo${imageCount > 0 ? ` (${imageCount}/${MAX_IMAGES})` : ""}`}
-                  title={`Photo (${imageCount}/${MAX_IMAGES})`}
                 >
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3.75 21h16.5A2.25 2.25 0 0022.5 18.75V5.25A2.25 2.25 0 0020.25 3H3.75A2.25 2.25 0 001.5 5.25v13.5A2.25 2.25 0 003.75 21z" />
                   </svg>
                   <span className="hidden sm:inline">{tFeed.photo}</span>
                   {imageCount > 0 && (
-                    <span
-                      className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full text-[10px] font-bold flex items-center justify-center text-white"
-                      style={{ background: "#D4007A" }}
-                      aria-hidden="true"
-                    >
+                    <span className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full text-[10px] font-bold flex items-center justify-center text-white" style={{ background: "#D4007A" }} aria-hidden="true">
                       {imageCount}
                     </span>
                   )}
                 </button>
               </div>
-
-              {/* Video button */}
               <button
                 type="button"
                 onClick={() => videoInputRef.current?.click()}
                 disabled={isPosting || !canAddVideo}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-white/10 hover:bg-white/5 hover:border-white/20 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-white/10 hover:bg-white/5 hover:border-white/20 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                 style={{ color: "#E69138", minHeight: "36px" }}
                 aria-label={`Attach video${videoCount > 0 ? ` (${videoCount}/${MAX_VIDEOS})` : ""}`}
-                title={`Video (${videoCount}/${MAX_VIDEOS})`}
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
                   <path strokeLinecap="round" strokeLinejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z" />
                 </svg>
                 <span className="hidden sm:inline">{tFeed.video}</span>
               </button>
-
-              {/* Tag performers button */}
-              <button
-                type="button"
-                onClick={() => setShowTagPicker(v => !v)}
-                disabled={isPosting}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-black"
-                style={{
-                  color: (showTagPicker || taggedPerformers.length > 0) ? "#5ED1C4" : "#8E8E93",
-                  borderColor: (showTagPicker || taggedPerformers.length > 0) ? "rgba(94,209,196,0.35)" : "rgba(255,255,255,0.1)",
-                  background: (showTagPicker || taggedPerformers.length > 0) ? "rgba(94,209,196,0.06)" : "transparent",
-                  minHeight: "36px",
-                }}
-                aria-label="Tag performers"
-                title="Tag performers"
-              >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9.568 3H5.25A2.25 2.25 0 003 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 005.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 009.568 3z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 6h.008v.008H6V6z" />
-                </svg>
-                <span className="hidden sm:inline">
-                  {taggedPerformers.length > 0 ? `${taggedPerformers.length} tagged` : "Tag"}
-                </span>
-              </button>
-
-              {/* Embed X post button — creators and admins only */}
-              {(user?.creator_status === "active" || user?.role === "admin" || user?.role === "superadmin") && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setXEmbedOpen(v => !v);
-                    setXEmbedError(null);
-                  }}
-                  disabled={isPosting}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-black"
-                  style={{
-                    color: xEmbedOpen ? "#FFFFFF" : "#8E8E93",
-                    borderColor: xEmbedOpen ? "rgba(255,255,255,0.35)" : "rgba(255,255,255,0.1)",
-                    background: xEmbedOpen ? "rgba(255,255,255,0.08)" : "transparent",
-                    minHeight: "36px",
-                  }}
-                  aria-label="Embed X post"
-                  aria-expanded={xEmbedOpen}
-                  title="Embed X post"
-                >
-                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                    <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.73-8.835L1.254 2.25H8.08l4.253 5.622 5.911-5.622Zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-                  </svg>
-                  <span className="hidden sm:inline">Embed</span>
-                </button>
-              )}
             </div>
-
-            {/* Post button */}
             <button
               type="button"
               onClick={handleSubmit}
               disabled={!canPost}
-              className="btn-gradient px-5 py-1.5 rounded-lg text-white text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 transition-all focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+              className="btn-gradient px-5 py-1.5 rounded-lg text-white text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 transition-all"
               style={{ minHeight: "36px" }}
             >
               {isPosting ? tFeed.posting : tFeed.post}
             </button>
           </div>
 
-          {/* Exclusive toggle — active creators only; disabled for Ice tier (<10 followers) */}
+          {/* Creator-only options */}
           {isActiveCreator && (
-            <div className="mt-3">
-              <ToggleSwitch
-                id={exclusiveId}
-                checked={isExclusive}
-                onChange={canPostExclusive ? setIsExclusive : () => {}}
-                disabled={isPosting || !canPostExclusive}
-                activeColor="#D4007A"
-                label={tFeed.exclusiveToggle}
-                icon={
-                  <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} className="w-4 h-4">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
-                  </svg>
-                }
-              />
-              {!canPostExclusive && (
-                <p className="mt-1 text-[11px]" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-                  Reach 10 followers to unlock exclusive posts
-                </p>
+            <>
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                {POST_CATEGORIES.map((cat) => {
+                  const active = category === cat.value;
+                  return (
+                    <button
+                      key={cat.value}
+                      type="button"
+                      onClick={() => setCategory(active ? null : cat.value)}
+                      disabled={isPosting}
+                      className="px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-all disabled:opacity-40"
+                      style={{
+                        background: active ? `${cat.color}22` : "transparent",
+                        borderColor: active ? cat.color : "rgba(255,255,255,0.12)",
+                        color: active ? cat.color : "#8E8E93",
+                      }}
+                    >
+                      {cat.label}
+                    </button>
+                  );
+                })}
+              </div>
+              {hasVideoFile && !category && (
+                <p className="mt-1 text-[11px]" style={{ color: "#FF9500" }}>Select a category to post your video</p>
               )}
-            </div>
-          )}
 
-          {/* AI-generated disclosure — everyone can flag. Self-declared,
-              non-punitive; renders a 🤖 badge on the card. Off by default. */}
-          <div className="mt-2">
-            <ToggleSwitch
-              id={aiGeneratedId}
-              checked={isAiGenerated}
-              onChange={setIsAiGenerated}
-              disabled={isPosting}
-              activeColor="#A78BFA"
-              label={lang === "es" ? "Contiene contenido generado por IA" : "Contains AI-generated content"}
-              icon={<span className="text-base leading-none" aria-hidden="true">🤖</span>}
-            />
-          </div>
+              <div className="mt-3">
+                <ToggleSwitch
+                  id={exclusiveId}
+                  checked={isExclusive}
+                  onChange={canPostExclusive ? setIsExclusive : () => {}}
+                  disabled={isPosting || !canPostExclusive}
+                  activeColor="#D4007A"
+                  label={tFeed.exclusiveToggle}
+                  icon={
+                    <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} className="w-4 h-4">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+                    </svg>
+                  }
+                />
+                {!canPostExclusive && (
+                  <p className="mt-1 text-[11px]" style={{ color: "#8E8E93" }}>Reach 10 followers to unlock exclusive posts</p>
+                )}
+              </div>
 
-          {/* Channel selector — active creators with channels only */}
-          {isActiveCreator && channels.length > 0 && (
-            <div
-              className="mt-2 flex items-center justify-between rounded-lg px-3 py-2.5"
-              style={{
-                background: selectedChannelId !== null ? "rgba(212,0,122,0.06)" : "rgba(255,255,255,0.03)",
-                border: `1px solid ${selectedChannelId !== null ? "rgba(212,0,122,0.2)" : "rgba(255,255,255,0.1)"}`,
-              }}
-            >
-              <label
-                htmlFor={`${baseId}-channel`}
-                className="flex items-center gap-2 flex-shrink-0"
-              >
-                <span className="w-4 h-4 flex-shrink-0" style={{ color: selectedChannelId !== null ? "#D4007A" : "#8E8E93" }}>
-                  <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} className="w-4 h-4">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 8.25h16.5" />
-                  </svg>
-                </span>
-                <span className="text-xs font-medium" style={{ color: selectedChannelId !== null ? "#D4007A" : "#8E8E93" }}>
-                  Channel
-                </span>
-              </label>
-              <select
-                id={`${baseId}-channel`}
-                value={selectedChannelId ?? ""}
-                onChange={(e) => setSelectedChannelId(e.target.value === "" ? null : Number(e.target.value))}
-                disabled={isPosting}
-                className="ml-3 flex-1 min-w-0 bg-transparent text-xs outline-none text-right disabled:opacity-40 cursor-pointer"
-                style={{ color: selectedChannelId !== null ? "#D4007A" : "#8E8E93" }}
-              >
-                <option value="">No channel</option>
-                {channels.map((ch) => (
-                  <option key={ch.id} value={ch.id} style={{ background: "var(--pnp-surface, #1C1C1E)", color: "#fff" }}>
-                    {ch.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          {/* Creator wall visibility hint — always visible for active creators so
-              they understand that every post from the app lands on their public
-              /c/@handle wall (there is no separate "feed only" scope). */}
-          {isActiveCreator && user?.username && (
-            <div className="mt-2 flex items-center gap-1.5 text-[11px]" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} className="w-3.5 h-3.5 flex-shrink-0">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-              <span>{tFeed.creatorWallHint}</span>
-              <a
-                href={`/c/@${user.username}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={(e) => e.stopPropagation()}
-                className="underline hover:text-white transition-colors"
-                style={{ color: "#D4007A" }}
-              >
-                /c/@{user.username}
-              </a>
-            </div>
-          )}
-
-          {/* Allow sharing toggle */}
-          <div className="mt-2">
-            <ToggleSwitch
-              id={shareableId}
-              checked={isShareable}
-              onChange={setIsShareable}
-              disabled={isPosting}
-              activeColor="#34D399"
-              label={tFeed.allowSharing}
-              icon={
-                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} className="w-4 h-4">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0-12.814a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0 12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z" />
-                </svg>
-              }
-            />
-          </div>
-
-          {/* Also post to X toggle — only shown when X is linked with write scope */}
-          {xHasWriteScope && (
-            <div className="mt-2">
-              <ToggleSwitch
-                id={`${baseId}-crosspost-x`}
-                checked={crossPostX}
-                onChange={setCrossPostX}
-                disabled={isPosting}
-                activeColor="#FFFFFF"
-                label={tFeed.alsoPostX}
-                icon={
-                  <svg
-                    viewBox="0 0 1200 1227"
-                    fill="currentColor"
-                    className="w-4 h-4"
-                    aria-hidden="true"
-                  >
-                    <path d="M714.163 519.284L1160.89 0H1055.03L667.137 450.887L357.328 0H0L468.492 681.821L0 1226.37H105.866L515.491 750.218L842.672 1226.37H1200L714.163 519.284ZM569.165 687.828L521.697 619.934L144.011 79.6944H306.615L611.412 515.685L658.88 583.579L1055.08 1150.3H892.476L569.165 687.828Z" />
-                  </svg>
-                }
-              />
-              {crossPostX && (
-                <p className="text-[11px] mt-1 px-1" style={{ color: "#555" }}>
-                  {tFeed.crosspostXTimeline}
-                </p>
+              {channels.length > 0 && (
+                <div className="mt-2 flex items-center justify-between rounded-lg px-3 py-2.5" style={{ background: selectedChannelId !== null ? "rgba(212,0,122,0.06)" : "rgba(255,255,255,0.03)", border: `1px solid ${selectedChannelId !== null ? "rgba(212,0,122,0.2)" : "rgba(255,255,255,0.1)"}` }}>
+                  <label htmlFor={`${baseId}-channel`} className="flex items-center gap-2 flex-shrink-0">
+                    <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} className="w-4 h-4 flex-shrink-0" style={{ color: selectedChannelId !== null ? "#D4007A" : "#8E8E93" }}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 8.25h16.5" />
+                    </svg>
+                    <span className="text-xs font-medium" style={{ color: selectedChannelId !== null ? "#D4007A" : "#8E8E93" }}>Channel</span>
+                  </label>
+                  <select id={`${baseId}-channel`} value={selectedChannelId ?? ""} onChange={(e) => setSelectedChannelId(e.target.value === "" ? null : Number(e.target.value))} disabled={isPosting} className="ml-3 flex-1 min-w-0 bg-transparent text-xs outline-none text-right disabled:opacity-40 cursor-pointer" style={{ color: selectedChannelId !== null ? "#D4007A" : "#8E8E93" }}>
+                    <option value="">No channel</option>
+                    {channels.map((ch) => (
+                      <option key={ch.id} value={ch.id} style={{ background: "var(--pnp-surface, #1C1C1E)", color: "#fff" }}>{ch.name}</option>
+                    ))}
+                  </select>
+                </div>
               )}
-            </div>
-          )}
 
-          {/* Format hint — shown when no files attached and not uploading */}
-          {files.length === 0 && !isPosting && (
-            <p className="text-[11px] mt-2 text-center" style={{ color: "#555" }}>
-              {tFeed.uploadHint.replace("{max}", String(MAX_IMAGES))}
-              {!compact && ` \u00b7 ${tFeed.uploadHintDragDrop}`}
-            </p>
+              {user?.username && (
+                <div className="mt-2 flex items-center gap-1.5 text-[11px]" style={{ color: "#8E8E93" }}>
+                  <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} className="w-3.5 h-3.5 flex-shrink-0">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                  <span>{tFeed.creatorWallHint}</span>
+                  <a href={`/c/@${user.username}`} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="underline hover:text-white transition-colors" style={{ color: "#D4007A" }}>
+                    /c/@{user.username}
+                  </a>
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>

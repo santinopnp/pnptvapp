@@ -1591,6 +1591,16 @@ export function generateAiVideoMetadata(
   });
 }
 
+export function generateCreatorPost(
+  template: "promote" | "calls",
+  prompt: string
+): Promise<{ success: boolean; post: string; en: string; es: string }> {
+  return request("/api/webapp/creator/ai/generate-social-post", {
+    method: "POST",
+    body: { template, prompt },
+  });
+}
+
 export function sharePostToHangouts(
   postId: number,
   groupIds: number[],

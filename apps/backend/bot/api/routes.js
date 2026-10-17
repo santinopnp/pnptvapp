@@ -21810,6 +21810,34 @@ app.post('/api/creators/:id/services/:serviceId/book',
     })
   );
 
+  // POST /api/webapp/creator/ai/generate-social-post
+  // Generates a hook-body-CTA bilingual post for creators (promote or calls template)
+  app.post(
+    '/api/webapp/creator/ai/generate-social-post',
+    requireSessionAuth,
+    aiGenerationLimiter,
+    asyncHandler(async (req, res) => {
+      const { template, prompt } = req.body || {};
+      const promptText = typeof prompt === 'string' ? prompt.trim() : '';
+      if (!promptText) {
+        return res.status(400).json({ success: false, error: 'prompt is required' });
+      }
+      const grokService = require('../../services/grokService');
+      let builtPrompt;
+      if (template === 'calls') {
+        builtPrompt = `Write a social media post for an adult creator on PNPtv announcing availability for private calls. Context: "${promptText}". Structure: 1 hook line (vibe/energy) → 1-2 body lines about what's available → 1 CTA to DM or book. Max 280 chars. Authentic, playful, unapologetic tone. No hashtags in body.`;
+      } else {
+        builtPrompt = `Write a social media post for an adult creator on PNPtv promoting their content. What to promote: "${promptText}". Structure: 1 bold hook line that stops the scroll → 2 body lines about what makes it hot/special → 1 clear CTA (subscribe, watch, tip). Max 280 chars. Sexy but not robotic. No hashtags in body.`;
+      }
+      try {
+        const result = await grokService.generateSharePost({ prompt: builtPrompt });
+        res.json({ success: true, post: result.combined, en: result.en, es: result.es });
+      } catch (err) {
+        res.status(500).json({ success: false, error: 'Could not generate post — try again in a moment' });
+      }
+    })
+  );
+
   // GET /api/webapp/creator/hangouts/mine — list the caller's own top-level
   // hangout groups, for the Creator Studio "link my subscriber hangout" picker.
   app.get(
