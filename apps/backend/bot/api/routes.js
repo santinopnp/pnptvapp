@@ -20042,6 +20042,16 @@ app.post('/api/complete-onboarding', asyncHandler(async (req, res) => {
 // ==========================================
 // Static storage mounts (Gap 2 & 4 — stream thumbnails and local recording uploads)
 // ==========================================
+// Promo videos — read-only mount from /root/promos on the host (no auth required;
+// files are long-lived marketing content, not user uploads).
+app.use('/promos', express.static('/app/promos', {
+  maxAge: '1h',
+  dotfiles: 'deny',
+  setHeaders(res) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  },
+}));
+
 app.use('/static/stream-thumbs', requireSessionAuth, express.static('/opt/pnptvapp/storage/stream-thumbs', {
   maxAge: '7d',
   dotfiles: 'deny',
@@ -22376,6 +22386,35 @@ const publicBookInfoLimiter = rateLimit({
 app.get('/api/webapp/book/:handle/info',
   publicBookInfoLimiter,
   asyncHandler(callBookingController.getPublicCreatorBookingInfo));
+
+// GET /api/webapp/book/:handle/promo-videos — returns newest promo MP4 URLs (no auth).
+// Currently only santinofurioso has a promos directory on the host.
+app.get('/api/webapp/book/:handle/promo-videos', publicBookInfoLimiter, asyncHandler(async (req, res) => {
+  const fs = require('fs');
+  const PROMOS_DIR = '/app/promos';
+  const WEBAPP_ORIGIN = process.env.WEBAPP_URL || 'https://pnptv.app';
+
+  // For now only santinofurioso has promos. Return empty for everyone else.
+  const handle = (req.params.handle || '').toLowerCase();
+  if (handle !== 'santinofurioso') return res.json({ success: true, videos: [] });
+
+  let files;
+  try {
+    files = fs.readdirSync(PROMOS_DIR)
+      .filter((f) => /\.(mp4|webm|mov)$/i.test(f))
+      .map((f) => {
+        try { return { f, mtime: fs.statSync(`${PROMOS_DIR}/${f}`).mtimeMs }; } catch { return null; }
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.mtime - a.mtime)
+      .slice(0, 3)
+      .map((x) => `${WEBAPP_ORIGIN}/promos/${encodeURIComponent(x.f)}`);
+  } catch {
+    files = [];
+  }
+
+  res.json({ success: true, videos: files });
+}));
 
 // H-08: Rate limit checkout creation — 5 attempts per 15 min, keyed by user ID.
 // Previous: 2 per 2 min — too tight; users changing crypto or retrying after a

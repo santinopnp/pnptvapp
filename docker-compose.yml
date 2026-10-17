@@ -602,6 +602,7 @@ services:
       - ./config/yoti-private-key.pem:/app/config/yoti-private-key.pem:ro
       - ./infrastructure/data/directus/uploads:/directus-uploads
       - ./tmp/chunks:/tmp/pnp-chunks
+      - /root/promos:/app/promos:ro
     env_file:
       - .env
       - .env.production

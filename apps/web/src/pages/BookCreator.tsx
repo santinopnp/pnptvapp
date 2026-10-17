@@ -5,6 +5,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { WalletPayCard } from "@/components/payments/PayInWalletChips";
 import {
   getPublicCreatorBookingInfo,
+  getPromoVideos,
   prepareCallNowPayments,
   getBookingPaymentStatus,
   type PublicBookingPackage,
@@ -343,12 +344,20 @@ export default function BookCreator() {
   const [payError, setPayError] = useState<string | null>(null);
   const [confirmedBookingId, setConfirmedBookingId] = useState<string | number | null>(null);
 
+  // Promo video carousel
+  const [promoVideos, setPromoVideos] = useState<string[]>([]);
+  const [promoIndex, setPromoIndex] = useState(0);
+  const [promoMuted, setPromoMuted] = useState(true);
+  const promoVideoRef = useRef<HTMLVideoElement>(null);
+
   useEffect(() => {
     if (!handle) {
       setError("Creator not found.");
       setLoading(false);
       return;
     }
+    // Fetch promo videos in parallel (non-blocking — failures ignored)
+    getPromoVideos(handle).then((r) => { if (r.success && r.videos.length) setPromoVideos(r.videos); }).catch(() => {});
     getPublicCreatorBookingInfo(handle)
       .then((res) => {
         if (!res.success) {
@@ -471,28 +480,83 @@ export default function BookCreator() {
       >
         {/* ── Hero ──────────────────────────────────────────────────────── */}
         <div className="relative w-full overflow-hidden" style={{ background: "#000" }}>
-          {/* Video placeholder */}
+          {/* Video hero — autoplays muted; shows placeholder if no promos */}
           <div
-            className="w-full flex items-center justify-center relative"
+            className="w-full relative"
             style={{ aspectRatio: "16/9", maxHeight: "55vh", background: "#0a0a0a" }}
           >
-            {/* Subtle radial glow */}
-            <div
-              className="absolute inset-0"
-              style={{
-                background: "radial-gradient(ellipse at 50% 50%, rgba(212,0,122,0.12) 0%, transparent 70%)",
-              }}
-            />
-            {/* Play icon */}
-            <div
-              className="relative flex flex-col items-center gap-3"
-              style={{ color: "rgba(255,255,255,0.25)" }}
-            >
-              <svg className="w-14 h-14" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M8 5v14l11-7z" />
-              </svg>
-              <span className="text-xs font-medium tracking-wide uppercase">Video coming soon</span>
-            </div>
+            {promoVideos.length > 0 ? (
+              <>
+                <video
+                  ref={promoVideoRef}
+                  key={promoVideos[promoIndex]}
+                  src={promoVideos[promoIndex]}
+                  autoPlay
+                  loop
+                  muted={promoMuted}
+                  playsInline
+                  className="absolute inset-0 w-full h-full object-cover"
+                  onError={() => {
+                    // Skip broken video to next
+                    if (promoVideos.length > 1) setPromoIndex((i) => (i + 1) % promoVideos.length);
+                  }}
+                />
+
+                {/* Mute/unmute button */}
+                <button
+                  type="button"
+                  aria-label={promoMuted ? "Unmute video" : "Mute video"}
+                  onClick={() => setPromoMuted((m) => !m)}
+                  className="absolute bottom-3 right-3 z-10 flex items-center justify-center w-8 h-8 rounded-full transition-all active:scale-90"
+                  style={{ background: "rgba(0,0,0,0.55)", border: "1px solid rgba(255,255,255,0.18)" }}
+                >
+                  {promoMuted ? (
+                    <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
+                    </svg>
+                  ) : (
+                    <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15.536 8.464a5 5 0 010 7.072M12 6v12m0 0l-3-3m3 3l3-3M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                    </svg>
+                  )}
+                </button>
+
+                {/* Carousel dots — only when more than one video */}
+                {promoVideos.length > 1 && (
+                  <div className="absolute bottom-3 left-0 right-0 flex justify-center gap-1.5 z-10">
+                    {promoVideos.map((_, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        aria-label={`Play video ${i + 1}`}
+                        onClick={() => setPromoIndex(i)}
+                        className="rounded-full transition-all"
+                        style={{
+                          width: i === promoIndex ? "20px" : "6px",
+                          height: "6px",
+                          background: i === promoIndex ? "#D4007A" : "rgba(255,255,255,0.35)",
+                        }}
+                      />
+                    ))}
+                  </div>
+                )}
+              </>
+            ) : (
+              /* Fallback placeholder */
+              <>
+                <div
+                  className="absolute inset-0"
+                  style={{ background: "radial-gradient(ellipse at 50% 50%, rgba(212,0,122,0.12) 0%, transparent 70%)" }}
+                />
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-3" style={{ color: "rgba(255,255,255,0.25)" }}>
+                  <svg className="w-14 h-14" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M8 5v14l11-7z" />
+                  </svg>
+                  <span className="text-xs font-medium tracking-wide uppercase">Video coming soon</span>
+                </div>
+              </>
+            )}
           </div>
 
           {/* Creator name overlay at bottom */}

@@ -11732,6 +11732,10 @@ export function getPublicCreatorBookingInfo(handle: string): Promise<PublicCreat
   return request<PublicCreatorBookingInfo>(`/api/webapp/book/${encodeURIComponent(handle)}/info`);
 }
 
+export function getPromoVideos(handle: string): Promise<{ success: boolean; videos: string[] }> {
+  return request(`/api/webapp/book/${encodeURIComponent(handle)}/promo-videos`);
+}
+
 // ── Parche — creator collectives ──────────────────────────────────────────────
 
 export interface ParcheMember {
