@@ -4711,6 +4711,7 @@ export interface CreatorApplication {
   user_id: string;
   username: string;
   first_name: string;
+  email: string | null;
   photo_file_id: string | null;
   application_type: "live" | "content_creator" | "both";
   stage_name: string;
@@ -5342,6 +5343,18 @@ export function listActiveCreators(): Promise<{
   creators: ActiveCreator[];
 }> {
   return request("/api/webapp/creator/active");
+}
+
+// Admin edits a user's email on their behalf. Used to backfill creators/
+// performers missing an email so Zoho + Slack sync can proceed.
+export function adminSetUserEmail(
+  userId: string,
+  email: string,
+): Promise<{ success: boolean; user: { id: string; email: string } }> {
+  return request(`/api/webapp/admin/users/${userId}/email`, {
+    method: "PATCH",
+    body: { email },
+  });
 }
 
 export function issueCreatorStrike(

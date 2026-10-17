@@ -331,10 +331,27 @@ function PrivyReadinessBreadcrumb() {
 function PrivyAutoLogin() {
   const { ready, authenticated, login } = usePrivy();
   const { isAuthenticated, user } = useAuth();
+  // Fase 1 of "wallets on-demand": only auto-login users who ALREADY have a
+  // Privy identity linked in our DB. Users without one skip the modal
+  // entirely — they'll see it only when they hit an explicit wallet flow
+  // (Pay with wallet, Create wallet, etc.). Stops us from creating Privy
+  // identities for users who never touch crypto (was inflating the orphan
+  // count into the thousands). `null` = still checking; `true` = auto-login
+  // allowed; `false` = skip.
+  const [hasPrivyId, setHasPrivyId] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!isAuthenticated) { setHasPrivyId(null); return; }
+    let cancelled = false;
+    getLinkedWallet()
+      .then((r) => { if (!cancelled) setHasPrivyId(!!r.hasPrivyId); })
+      .catch(() => { if (!cancelled) setHasPrivyId(false); });
+    return () => { cancelled = true; };
+  }, [isAuthenticated]);
   useEffect(() => {
     if (!isAuthenticated) return;   // PNPtv not logged in yet
     if (!ready) return;             // Privy SDK still initializing
     if (authenticated) return;      // Already connected — nothing to do
+    if (hasPrivyId !== true) return; // Gate on existing Privy identity (Fase 1)
     const flag = "__pnptv_privy_autologin";
     // If a 409 was detected this session (Privy identity belongs to a different
     // PNPtv account), don't auto-trigger Privy login — user would just loop back
@@ -357,7 +374,7 @@ function PrivyAutoLogin() {
       else login();
     }, 1800);
     return () => clearTimeout(t);
-  }, [isAuthenticated, ready, authenticated, login, user?.lastLoginMethod]);
+  }, [isAuthenticated, ready, authenticated, login, user?.lastLoginMethod, hasPrivyId]);
   return null;
 }
 
@@ -750,9 +767,13 @@ export default function App() {
                       // out of Ethereum → Base without needing to export the key
                       // or install MetaMask. The wallet UI still defaults to Base.
                       supportedChains: [base, mainnet],
+                      // Privy-only auth. External wallet imports (MetaMask, Coinbase,
+                      // WalletConnect / Trust / Rabby, etc.) are intentionally NOT
+                      // offered — every wallet lives inside Privy so we can enforce
+                      // single-wallet-per-user, gas top-ups, and never-log-out flows
+                      // without depending on an external signer the user might lose.
                       loginMethodsAndOrder: {
                         primary: ["email", "google", "telegram", "twitter"],
-                        overflow: ["metamask", "coinbase_wallet"],
                       },
                       // "off" prevents auto-creating a Privy embedded wallet at login for
                       // every user — free tier has a wallet-slot cap and most users never

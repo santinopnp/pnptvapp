@@ -232,10 +232,31 @@ async function runSync({ delta = false, dryRun = false, mode = 'creators' } = {}
   }
 
   const started = Date.now();
-  const rows = await _loadCreators({ delta, mode });
-  logger.info('[zohoSync] loaded users', { count: rows.length, delta, dryRun, mode });
+  const allRows = await _loadCreators({ delta, mode });
+  // Mandatory email enforcement: skip rows without an email and alert ops.
+  // Zoho v2 accepts null Email but the record becomes un-mergeable with
+  // Campaigns/Books and un-searchable in the UI — treat missing email as
+  // an ops issue, not a silent pass-through.
+  const missingEmail = allRows.filter(r => !r.email || !String(r.email).trim());
+  const rows = allRows.filter(r => r.email && String(r.email).trim());
+  logger.info('[zohoSync] loaded users', {
+    count: rows.length, skipped_no_email: missingEmail.length, delta, dryRun, mode,
+  });
+  if (missingEmail.length > 0 && !dryRun) {
+    // Fire-and-forget — never block the sync on Slack.
+    setImmediate(() => {
+      try {
+        const alerts = require('./slackService');
+        alerts.postMissingEmailBatch({
+          source: 'zoho-sync',
+          mode,
+          missing: missingEmail.map(r => ({ id: String(r.id), username: r.username, creator_status: r.creator_status, performer_status: r.performer_status })),
+        }).catch(() => {});
+      } catch (_) { /* slack optional */ }
+    });
+  }
 
-  const stats = { total: rows.length, batches: 0, upserted: 0, failed: 0, errors: [] };
+  const stats = { total: rows.length, batches: 0, upserted: 0, failed: 0, errors: [], skipped_no_email: missingEmail.length };
   if (rows.length === 0) {
     logger.info('[zohoSync] nothing to sync');
     return stats;
@@ -338,7 +359,25 @@ async function syncOneUser(userId) {
       GROUP BY u.id, p.status, sub.active_count
     `, [String(userId)]);
     if (!rows.length) return;
-    const contact = _toZohoContact(rows[0]);
+    const row = rows[0];
+    // Mandatory email — skip + alert. Callers (approveApplication etc) already
+    // guard against missing email at write time; this catches legacy rows that
+    // slipped through before the guard existed.
+    if (!row.email || !String(row.email).trim()) {
+      logger.info('[zohoSync] single-user skipped — no email', { userId });
+      setImmediate(() => {
+        try {
+          const alerts = require('./slackService');
+          alerts.postMissingEmailBatch({
+            source: 'zoho-sync-jit',
+            mode: 'single',
+            missing: [{ id: String(row.id), username: row.username, creator_status: row.creator_status, performer_status: row.performer_status }],
+          }).catch(() => {});
+        } catch (_) {}
+      });
+      return;
+    }
+    const contact = _toZohoContact(row);
     const result = await zoho.upsertContactByPnptvId(String(userId), contact);
     logger.info('[zohoSync] single-user sync', { userId, action: result?.action || 'skipped' });
   } catch (err) {

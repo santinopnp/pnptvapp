@@ -129,6 +129,11 @@ class IdentityVerificationService {
     if (!userId) throw new Error('userId is required');
     if (!adminId) throw new Error('adminId is required');
 
+    // Mandatory email — 2257 approval fires Slack ext-<handle> onboarding
+    // and Zoho CRM sync fire-and-forget; both silently no-op without email.
+    const { requireUserEmail } = require('./creatorService');
+    await requireUserEmail(userId);
+
     const { rows: recordRows } = await query(
       `UPDATE creator_2257_records
          SET verification_status = 'approved',

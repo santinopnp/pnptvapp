@@ -33,7 +33,6 @@ const USDC_CHAINS = [
   { name: 'polygon',  chain: 'polygon', address: '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359', rpcHost: 'polygon-mainnet.g.alchemy.com', fallback: 'https://polygon-rpc.com' },
   { name: 'arbitrum', chain: 'arbitrum', address: '0xaf88d065e77c8cc2239327c5edb3a432268e5831', rpcHost: 'arb-mainnet.g.alchemy.com', fallback: 'https://arb1.arbitrum.io/rpc' },
 ];
-
 const USDC_BALANCE_ABI = [{
   name: 'balanceOf', type: 'function', stateMutability: 'view',
   inputs: [{ name: 'account', type: 'address' }],
