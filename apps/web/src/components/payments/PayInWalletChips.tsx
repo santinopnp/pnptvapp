@@ -1792,6 +1792,38 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
   const [usdcAttestation, setUsdcAttestation] = _useState<{ message: string; attestation: string } | null>(null);
   const [usdcBridgeError, setUsdcBridgeError] = _useState<string | null>(null);
 
+  // Direct mainnet USDC send to Santino (simpler than CCTP bridge — 1 tx)
+  const [usdcSendStage, setUsdcSendStage] = _useState<"idle" | "sending" | "done" | "error">("idle");
+  const [usdcSendError, setUsdcSendError] = _useState<string | null>(null);
+  const _SANTINO_RECEIVING = "0xd74b4d6b535676dadbcbf4efd0572871de032cc8" as const;
+  const _USDC_TRANSFER_ABI = [{ name: "transfer", type: "function" as const, stateMutability: "nonpayable" as const, inputs: [{ name: "to", type: "address" }, { name: "amount", type: "uint256" }], outputs: [{ type: "bool" }] }];
+
+  const handleUsdcSendToSantino = async () => {
+    if (!activeWallet || !usdcMainnet || usdcMainnet <= 0) return;
+    setUsdcSendError(null);
+    setUsdcSendStage("sending");
+    try {
+      const amountRaw = BigInt(Math.floor(usdcMainnet * 1_000_000));
+      const data = encodeFunctionData({ abi: _USDC_TRANSFER_ABI, functionName: "transfer", args: [_SANTINO_RECEIVING, amountRaw] });
+      if (isActiveEmbedded) {
+        await privySendTransaction(
+          { chainId: 1, to: _USDC_ETHEREUM, data, value: "0" },
+          { sponsor: false, address: activeWallet.address, uiOptions: { showWalletUIs: true } }
+        );
+      } else {
+        const provider = await activeWallet.getEthereumProvider();
+        try { await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x1" }] }); } catch (_) {}
+        const wc = createWalletClient({ account: activeWallet.address as `0x${string}`, chain: mainnet, transport: custom(provider) });
+        await wc.sendTransaction({ to: _USDC_ETHEREUM as `0x${string}`, data, value: 0n });
+      }
+      setUsdcSendStage("done");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setUsdcSendError(/User rejected|user denied|cancel/i.test(msg) ? "Cancelled." : msg);
+      setUsdcSendStage("error");
+    }
+  };
+
   // Send-crypto sub-panel state. Replaces the home body when sendOpen. Keeps
   // the widget one-file (no new component) per project convention.
   const [sendOpen, setSendOpen] = _useState(false);
@@ -3279,20 +3311,41 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
                       <button
                         type="button"
                         onClick={handleUsdcBridgeStart}
-                        disabled={!ethMainnet || ethMainnet < 0.002}
+                        disabled={!ethMainnet || ethMainnet < 0.00005}
                         className="w-full min-h-[44px] rounded-xl text-sm font-bold text-white transition active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
                         style={{ background: "linear-gradient(135deg,#E69138,#D4007A)" }}
                       >
                         🌉 Bridge {usdcMainnet?.toFixed(2)} USDC → Base
                       </button>
-                      {(!ethMainnet || ethMainnet < 0.002) && (
+                      {(!ethMainnet || ethMainnet < 0.00005) && (
                         <p className="text-[10px] text-red-200/80 leading-snug">
-                          Necesitás ~0.002 ETH en Ethereum para el gas de approve + burn (2 txs). Enviate un poco de ETH primero.
+                          Necesitás una pequeña cantidad de ETH en Ethereum para el gas. Enviate un poco de ETH primero.
                         </p>
                       )}
                       <p className="text-[9px] text-amber-100/60 leading-snug">
                         Circle CCTP oficial (2 txs en Ethereum + 1 tx en Base). El USDC llega como <b>USDC nativo</b> en Base en ~15 min.
                       </p>
+
+                      {/* Faster alternative: direct transfer to Santino on mainnet */}
+                      <div className="border-t border-amber-500/20 pt-2 mt-1">
+                        <p className="text-[9px] text-amber-100/60 mb-1.5">Or send directly to Santino right now (instant, 1 tap):</p>
+                        {usdcSendStage === "done" ? (
+                          <p className="text-[11px] text-green-300 font-semibold">✓ Sent! Santino received your USDC.</p>
+                        ) : (
+                          <>
+                            {usdcSendError && <p className="text-[10px] text-red-300 mb-1">{usdcSendError}</p>}
+                            <button
+                              type="button"
+                              onClick={handleUsdcSendToSantino}
+                              disabled={usdcSendStage === "sending" || !ethMainnet || ethMainnet < 0.00005}
+                              className="w-full min-h-[44px] rounded-xl text-sm font-bold text-white transition active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
+                              style={{ background: "linear-gradient(135deg,#1a6b4a,#0ea5e9)" }}
+                            >
+                              {usdcSendStage === "sending" ? "Sending…" : `💸 Send ${usdcMainnet?.toFixed(2)} USDC to Santino`}
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </>
                   )}
 

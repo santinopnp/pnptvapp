@@ -1856,7 +1856,7 @@ function DmChatView({ userId, myDbId, myUserId, isAdmin, onBack, panelMode }: { 
                         )}
                         {msg.meta?.action?.type === 'bridge-to-base' && (
                           <a
-                            href="https://bridge.base.org/deposit"
+                            href={msg.meta.action.url || "https://bridge.base.org/deposit"}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="mt-2 w-full rounded-xl bg-blue-600 hover:bg-blue-500 active:scale-95 transition-all px-4 py-2.5 text-sm font-bold text-white flex items-center justify-center gap-2 no-underline"

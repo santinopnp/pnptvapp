@@ -296,7 +296,7 @@ async function sendBookingConfirmationToMember(memberId, booking, callInfo) {
 
   // Push notification with deep link to call room
   try {
-    const callId = booking.creditId || booking.credit_id || booking.bookingId || booking.booking_id || null;
+    const callId = booking.bookingId || booking.booking_id || booking.creditId || booking.credit_id || null;
     await PushNotificationService.sendToUser(memberId, {
       title: '📞 Your call is confirmed!',
       body: `Call with ${creatorName} is booked. Tap to view details.`,
@@ -312,7 +312,7 @@ async function sendBookingConfirmationToMember(memberId, booking, callInfo) {
     const timeStr = booking.start_at
       ? new Date(booking.start_at).toLocaleString('es-CO', { timeZone: 'America/Bogota', dateStyle: 'medium', timeStyle: 'short' })
       : 'por coordinar';
-    const callId = booking.creditId || booking.credit_id || booking.bookingId || booking.booking_id || null;
+    const callId = booking.bookingId || booking.booking_id || booking.creditId || booking.credit_id || null;
     const callUrl = callId ? `${APP_URL}/call/${callId}` : `${APP_URL}/my-access`;
     await sendSystemDM(SYSTEM_DM_SENDER_ID, String(memberId), `📞 Tu llamada privada con ${escHtml(creatorName)} está confirmada!\n\n⏰ Horario: ${timeStr}\n\n👉 Únete aquí: ${callUrl}`, query);
   } catch (dmErr) {
@@ -320,7 +320,7 @@ async function sendBookingConfirmationToMember(memberId, booking, callInfo) {
   }
 
   // Admin group — Video Calls topic
-  const callId = booking.creditId || booking.credit_id || booking.bookingId || booking.booking_id || null;
+  const callId = booking.bookingId || booking.booking_id || booking.creditId || booking.credit_id || null;
   const timeLabel = booking.start_at ? formatDateTime(booking.start_at) : 'TBD';
   const callUrl = callId ? `${APP_URL}/call/${callId}` : `${APP_URL}/my-access`;
   notifyAdminVideoCall(
@@ -377,7 +377,7 @@ async function sendBookingConfirmationToCreator(creatorId, booking, memberInfo, 
 
   // Push notification
   try {
-    const callId = booking.creditId || booking.credit_id || booking.bookingId || booking.booking_id || null;
+    const callId = booking.bookingId || booking.booking_id || booking.creditId || booking.credit_id || null;
     await PushNotificationService.sendToUser(creatorId, {
       title: '📞 Nueva llamada privada reservada',
       body: `${memberUsername} reservó una llamada contigo. Revisa los detalles.`,
@@ -393,7 +393,7 @@ async function sendBookingConfirmationToCreator(creatorId, booking, memberInfo, 
     const timeStr = booking.start_at
       ? new Date(booking.start_at).toLocaleString('es-CO', { timeZone: 'America/Bogota', dateStyle: 'medium', timeStyle: 'short' })
       : 'por coordinar';
-    const callId = booking.creditId || booking.credit_id || booking.bookingId || booking.booking_id || null;
+    const callId = booking.bookingId || booking.booking_id || booking.creditId || booking.credit_id || null;
     const callUrl = callId ? `${APP_URL}/call/${callId}` : `${APP_URL}/my-access`;
     await sendSystemDM(SYSTEM_DM_SENDER_ID, String(creatorId), `📞 Nueva llamada privada!\n\n${escHtml(memberUsername)} reservó una sesión contigo.\n⏰ Horario: ${timeStr}\n\n👉 Entra aquí: ${callUrl}`, query);
   } catch (dmErr) {
