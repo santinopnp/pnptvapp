@@ -351,7 +351,7 @@ export function classifyOnrampError(msg: string): OnrampErrorKind {
   if (/unable to open payment window|pop-?up.*blocked/i.test(msg)) return "popup_blocked";
   if (/not available in your region/i.test(msg)) return "provider_region";
   if (/unable to check payment status|could not confirm payment status/i.test(msg)) return "status_timeout";
-  if (/identity verification|kyc|transaction_limit_reached|link authentication|something went wrong setting up checkout|stripe crypto sdk|failed to fetch/i.test(msg)) return "stripe_failed";
+  if (/identity verification|kyc|transaction_limit_reached|link authentication|something went wrong setting up checkout|stripe crypto sdk|failed to fetch|rate limit exceeded/i.test(msg)) return "stripe_failed";
   if (/user exited|cancel|reject/i.test(msg)) return "cancel";
   if (/^(error: )?transaction failed/i.test(msg)) return "provider_failed";
   if (/existing fiat onramp flow in progress/i.test(msg)) return "flow_in_progress";
@@ -775,6 +775,17 @@ export function WalletPayCard({
       // wallets here — external wallets pay their own gas, so there's no
       // treasury cost for them attempting a transfer that reverts.
       if (isEmbedded) {
+        // Fast path: if cached balance is already insufficient, call handleFund()
+        // BEFORE any await to preserve the user-gesture chain. Android Chrome
+        // blocks window.open() (MoonPay popup) after any async operation, so
+        // doing the live balance fetch first silently kills the popup.
+        if (usdc != null && usdc < amountUsd) {
+          setPaying(false);
+          handleFund();
+          return;
+        }
+        // Cached balance looks sufficient (or unknown) — do a live check before
+        // spending treasury gas on a topup that would revert immediately.
         let liveUsdc: number | null = usdc;
         try {
           const fresh = await getWalletUsdcBalance(activeWallet.address);
@@ -783,8 +794,6 @@ export function WalletPayCard({
         } catch { /* keep component-level value if fetch fails */ }
         if (liveUsdc == null || liveUsdc < amountUsd) {
           setPaying(false);
-          // addFunds opens Privy's in-page modal (no popup), so this needs no
-          // user gesture; provider popups are opened by Privy's own click.
           handleFund();
           return;
         }
