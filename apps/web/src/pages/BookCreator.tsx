@@ -16,11 +16,6 @@ import {
 // ── Boytoy selection type ────────────────────────────────────────────────────
 type BoytoyChoice = "colombian" | "venezuelan";
 
-interface BoytoySlot {
-  slot: 1 | 2;
-  choice: BoytoyChoice | null;
-}
-
 // ── Package variant classification ──────────────────────────────────────────
 type PackageVariant = "solo" | "boytoy1" | "boytoy2" | "other";
 
@@ -61,7 +56,7 @@ function BoytoySelector({
   onChange: (v: BoytoyChoice) => void;
 }) {
   return (
-    <div className="mt-3 space-y-1.5">
+    <div className="space-y-1.5">
       <p className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: "rgba(255,255,255,0.45)" }}>
         {label}
       </p>
@@ -72,7 +67,7 @@ function BoytoySelector({
             <button
               key={choice}
               type="button"
-              onClick={() => onChange(choice)}
+              onClick={(e) => { e.stopPropagation(); onChange(choice); }}
               className="py-2.5 px-3 rounded-xl text-xs font-bold transition-all active:scale-[0.97]"
               style={{
                 background: active
@@ -116,7 +111,7 @@ function PackageRow({
   onBoytoy2Change: (v: BoytoyChoice) => void;
 }) {
   const descriptionMap: Record<PackageVariant, string> = {
-    solo: `An intimate ${pkg.durationMinutes}-minute private video call with just you and ${creatorName}.`,
+    solo: `An intimate ${pkg.durationMinutes ?? 60}-minute private video call with just you and ${creatorName}.`,
     boytoy1: `A 60-minute private video call with ${creatorName} and one of their handpicked boytoys.`,
     boytoy2: `The full experience — ${creatorName} plus two boytoys for 60 minutes of private time.`,
     other: pkg.description || `A private video call with ${creatorName}.`,
@@ -321,7 +316,7 @@ function NpCallCheckout({
 export default function BookCreator() {
   const { handle } = useParams<{ handle: string }>();
   const navigate = useNavigate();
-  const { user, isAuthenticated } = useAuth();
+  const { isAuthenticated } = useAuth();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -690,7 +685,7 @@ export default function BookCreator() {
                       style={{ background: "rgba(212,0,122,0.08)", border: "1px solid rgba(212,0,122,0.20)" }}
                     >
                       <span className="text-xs font-semibold text-white">{selectedPkg.title}</span>
-                      <span className="text-xs font-black text-white">${selectedPkg.priceUsd}</span>
+                      <span className="text-xs font-black text-white">${selectedPkg.priceUsd.toFixed(2)}</span>
                     </div>
 
                     {!isAuthenticated ? (
@@ -729,6 +724,7 @@ export default function BookCreator() {
                           ) : (
                             <>
                               <WalletPayCard
+                                key={`wallet-${selectedPkg.id}`}
                                 surface="call"
                                 amountUsd={selectedPkg.priceUsd}
                                 entitlementSpec={{
@@ -753,6 +749,7 @@ export default function BookCreator() {
                               </div>
 
                               <NpCallCheckout
+                                key={`np-${selectedPkg.id}`}
                                 packageId={selectedPkg.id}
                                 clientNotes={buildClientNotes(selectedPkg)}
                                 onSuccess={handlePaySuccess}
