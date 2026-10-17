@@ -1003,7 +1003,29 @@ class SocialPostService {
       }
       if (!added) break;
     }
-    return [...pinned, ...result];
+
+    // Enforce minimum spacing for the platform news account so its posts
+    // don't clump when it dominates the recent post window.
+    const NEWS_ID = '8552451957';
+    const NEWS_MIN_GAP = 5;
+    const spaced = [];
+    let lastNewsPos = -(NEWS_MIN_GAP + 1);
+    const deferred = [];
+    for (const p of result) {
+      if (String(p.author_id) === NEWS_ID) {
+        if (spaced.length - lastNewsPos > NEWS_MIN_GAP) {
+          lastNewsPos = spaced.length;
+          spaced.push(p);
+        } else {
+          deferred.push(p);
+        }
+      } else {
+        spaced.push(p);
+      }
+    }
+    spaced.push(...deferred);
+
+    return [...pinned, ...spaced];
   }
 
   /**
