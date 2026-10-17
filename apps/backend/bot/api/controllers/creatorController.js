@@ -764,7 +764,8 @@ const listActiveCreators = async (req, res) => {
   try {
     const { rows } = await query(
       `SELECT id, username, first_name, last_name, photo_file_id, creator_type, creator_status,
-              creator_strikes, creator_subscriber_count, creator_price_usd, creator_locked, role
+              creator_strikes, creator_subscriber_count, creator_price_usd, creator_locked, role,
+              email, telegram
        FROM users
        WHERE (creator_status IN ('active', 'suspended', 'pending_review', 'eligible')
           OR role = 'model') AND creator_status IS NOT NULL

@@ -14,6 +14,26 @@ const TEASER_SECRET = process.env.TEASER_SECRET || (() => {
   return 'pnptv-teaser-salt-2026';
 })();
 
+// Mandatory email guard. Every creator/performer activation path calls this
+// so users.email is non-null before Zoho CRM sync + Slack #ext-<handle>
+// onboarding fire — both silently drop rows/users without an email.
+class EmailRequiredError extends Error {
+  constructor(userId) {
+    super(`EMAIL_REQUIRED: user ${userId} has no email on file. Creators and performers must add an email before activation.`);
+    this.code = 'EMAIL_REQUIRED';
+    this.userId = String(userId);
+    this.statusCode = 422;
+  }
+}
+
+async function requireUserEmail(userId) {
+  const { rows } = await query('SELECT email FROM users WHERE id = $1', [userId]);
+  if (!rows.length) throw new Error('User not found');
+  const email = (rows[0].email || '').trim();
+  if (!email) throw new EmailRequiredError(userId);
+  return email;
+}
+
 function isTeaserPost(postId, viewerId) {
   const hash = crypto.createHmac('sha256', TEASER_SECRET)
     .update(`${postId}:${viewerId}`)
@@ -308,6 +328,10 @@ class CreatorService {
     const app = appRes.rows[0];
     if (!app) throw new Error('Application not found');
     if (app.status === 'approved') throw new Error('Application already approved');
+
+    // Mandatory email on the underlying user — no exceptions. Without email
+    // Zoho CRM sync + Slack ext-<handle> onboarding both silently skip.
+    await requireUserEmail(app.user_id);
 
     await query(
       `UPDATE model_applications SET
@@ -1727,7 +1751,7 @@ class CreatorService {
               ma.status, ma.admin_notes, ma.reviewed_by, ma.reviewed_at,
               ma.requested_price_usd, ma.call_scheduled, ma.call_scheduled_at,
               ma.created_at, ma.updated_at,
-              u.username, u.first_name, u.photo_file_id
+              u.username, u.first_name, u.photo_file_id, u.email
        FROM model_applications ma
        JOIN users u ON ma.user_id = u.id
        ${appWhere}
@@ -1752,7 +1776,8 @@ class CreatorService {
          u.updated_at,
          u.username,
          u.first_name,
-         u.photo_file_id
+         u.photo_file_id,
+         u.email
        FROM users u
        WHERE u.creator_status = 'active'
          AND NOT EXISTS (SELECT 1 FROM model_applications ma2 WHERE ma2.user_id = u.id)
@@ -2329,6 +2354,9 @@ class CreatorService {
     const enrollment = rows[0];
     if (!enrollment) throw new Error('Enrollment not found');
     if (enrollment.status === 'approved') throw new Error('Already approved');
+
+    // Mandatory email — same guard as approveApplication.
+    await requireUserEmail(enrollment.user_id);
 
     const validTiers = { ice: 5.00, crystal: 10.00, diamond: 15.00 };
     const price = validTiers[enrollment.tier] || 5.00;
@@ -3113,3 +3141,5 @@ class CreatorService {
 }
 
 module.exports = CreatorService;
+module.exports.EmailRequiredError = EmailRequiredError;
+module.exports.requireUserEmail = requireUserEmail;

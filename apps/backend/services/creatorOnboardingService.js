@@ -284,13 +284,31 @@ async function sendOnboarding(userId, opts = {}) {
   if (!_tok()) return { sent: false, reason: 'no_slack_token' };
 
   const { rows } = await query(
-    `SELECT id, username, first_name, language, slack_channel_id, slack_onboarded_at
+    `SELECT id, username, first_name, language, email, slack_channel_id, slack_onboarded_at, creator_status
        FROM users
       WHERE id = $1`,
     [String(userId)]
   );
   const creator = rows[0];
   if (!creator) return { sent: false, reason: 'user_not_found' };
+  // Mandatory email — surface as an ops alert (once per user) instead of
+  // silently skipping. Legacy creators without email are the only path here now
+  // that approveApplication / approve2257Record guard against new missing-email
+  // rows. Without an email the ext-<handle> channel isn't provisionable and
+  // Zoho lookup by email fails downstream.
+  if (!creator.email || !String(creator.email).trim()) {
+    logger.info('[creatorOnboardingService] skipped — creator has no email on file', { userId });
+    setImmediate(() => {
+      try {
+        const slack = require('./slackService');
+        slack.postMissingEmailBatch({
+          source: 'slack-onboarding',
+          missing: [{ id: String(creator.id), username: creator.username, creator_status: creator.creator_status }],
+        }).catch(() => {});
+      } catch (_) {}
+    });
+    return { sent: false, reason: 'no_email' };
+  }
   if (!creator.slack_channel_id) return { sent: false, reason: 'no_slack_channel' };
   if (creator.slack_onboarded_at && !force) return { sent: false, reason: 'already_onboarded' };
 

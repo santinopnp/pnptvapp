@@ -8,6 +8,7 @@ import {
   promoteCreator,
   setCreatorEligible,
   getCreatorEngagement,
+  adminSetUserEmail,
   type ActiveCreator,
   type CreatorStrike,
   type CreatorEngagementScore,
@@ -501,6 +502,38 @@ export default function ActiveCreatorsTab() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkLoading, setBulkLoading] = useState(false);
   const [bulkMsg, setBulkMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const [emailEditOpen, setEmailEditOpen] = useState<string | null>(null);
+  const [emailDraft, setEmailDraft] = useState<string>("");
+  const [emailSaving, setEmailSaving] = useState<string | null>(null);
+  const [emailError, setEmailError] = useState<string | null>(null);
+
+  const missingEmailCount = creators.filter(c => !c.email || !c.email.trim()).length;
+
+  const openEmailEdit = (creator: ActiveCreator) => {
+    setEmailEditOpen(creator.id);
+    setEmailDraft(creator.email || "");
+    setEmailError(null);
+  };
+
+  const saveEmail = async (creator: ActiveCreator) => {
+    const trimmed = emailDraft.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+      setEmailError("Enter a valid email address.");
+      return;
+    }
+    setEmailSaving(creator.id);
+    setEmailError(null);
+    try {
+      const res = await adminSetUserEmail(creator.id, trimmed);
+      setCreators(prev => prev.map(c => c.id === creator.id ? { ...c, email: res.user.email } : c));
+      setEmailEditOpen(null);
+      setEmailDraft("");
+    } catch (err) {
+      setEmailError(err instanceof Error ? err.message : "Failed to save email");
+    } finally {
+      setEmailSaving(null);
+    }
+  };
 
   const toggleSelect = (id: string) => {
     setSelected((prev) => {
@@ -656,6 +689,19 @@ export default function ActiveCreatorsTab() {
           .filter(Boolean)
           .join(" · ")}
       </p>
+
+      {/* Missing-email banner — enforcement gate for Zoho + Slack sync */}
+      {missingEmailCount > 0 && (
+        <div
+          className="px-4 py-2.5 rounded-lg text-xs font-semibold flex items-center gap-2"
+          style={{ background: "rgba(239,68,68,0.10)", color: "#EF4444", border: "1px solid rgba(239,68,68,0.25)" }}
+        >
+          <span>⚠</span>
+          <span>
+            {missingEmailCount} creator{missingEmailCount === 1 ? "" : "s"} missing email — cannot sync to Zoho CRM or Slack until fixed. Click a row's email badge to edit.
+          </span>
+        </div>
+      )}
 
       {lockError && (
         <div
@@ -832,6 +878,62 @@ export default function ActiveCreatorsTab() {
                     {(creator.creator_subscriber_count ?? 0) !== 1 ? "s" : ""}
                   </span>
                 </p>
+
+                {/* Email row — inline edit, red badge if missing */}
+                <div className="text-xs mb-2 flex items-center gap-1.5 flex-wrap">
+                  <span style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Email:</span>
+                  {emailEditOpen === creator.id ? (
+                    <>
+                      <input
+                        type="email"
+                        value={emailDraft}
+                        onChange={(e) => setEmailDraft(e.target.value)}
+                        placeholder="user@example.com"
+                        style={{ fontSize: "14px" }}
+                        className="flex-1 min-w-[180px] bg-white/5 text-white rounded px-2 py-1 outline-none border border-white/10 focus:border-white/30 placeholder:text-white/20"
+                        autoFocus
+                      />
+                      <button
+                        onClick={() => saveEmail(creator)}
+                        disabled={emailSaving === creator.id}
+                        className="px-2 py-1 rounded text-[11px] font-semibold disabled:opacity-40"
+                        style={{ background: "rgba(94,209,196,0.15)", color: "#5ED1C4", border: "1px solid rgba(94,209,196,0.3)" }}
+                      >
+                        {emailSaving === creator.id ? "…" : "Save"}
+                      </button>
+                      <button
+                        onClick={() => { setEmailEditOpen(null); setEmailError(null); }}
+                        disabled={emailSaving === creator.id}
+                        className="px-2 py-1 rounded text-[11px] disabled:opacity-40"
+                        style={{ background: "rgba(255,255,255,0.05)", color: "var(--pnp-text-secondary, #8E8E93)" }}
+                      >
+                        Cancel
+                      </button>
+                      {emailError && <span className="text-red-400 text-[11px] basis-full">{emailError}</span>}
+                    </>
+                  ) : creator.email && creator.email.trim() ? (
+                    <>
+                      <span className="text-white/85">{creator.email}</span>
+                      <button
+                        onClick={() => openEmailEdit(creator)}
+                        className="text-[10px] px-1.5 py-0.5 rounded transition-colors hover:bg-white/10"
+                        style={{ color: "var(--pnp-text-secondary, #8E8E93)", background: "rgba(255,255,255,0.04)" }}
+                        title="Edit email on this creator's behalf"
+                      >
+                        edit
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      onClick={() => openEmailEdit(creator)}
+                      className="px-2 py-0.5 rounded font-semibold text-[11px]"
+                      style={{ background: "rgba(239,68,68,0.14)", color: "#EF4444", border: "1px solid rgba(239,68,68,0.25)" }}
+                      title="Required for Zoho CRM + Slack #ext-<handle> sync. Click to set."
+                    >
+                      missing — add email
+                    </button>
+                  )}
+                </div>
 
                 {/* Action buttons — varies by creator_status */}
                 {!isStrikeOpen && !isPromoteOpen && (
