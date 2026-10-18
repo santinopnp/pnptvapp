@@ -5,6 +5,20 @@ import { useAuth } from "@/hooks/useAuth";
 import { ApiError, getSocialPost, togglePostLike, updateProfile, type SocialPostItem } from "@/lib/api";
 import SocialPostCard from "@/components/social/SocialPostCard";
 
+// Walk the reply_to_id chain up to 5 hops, returning ancestors in reverse
+// (oldest first) so we can render them as a thread above the focused post.
+async function fetchAncestorChain(post: SocialPostItem, depth = 0): Promise<SocialPostItem[]> {
+  if (depth >= 5 || !post.reply_to_id) return [];
+  try {
+    const res = await getSocialPost(String(post.reply_to_id));
+    if (!res?.post) return [];
+    const above = await fetchAncestorChain(res.post, depth + 1);
+    return [...above, res.post];
+  } catch {
+    return [];
+  }
+}
+
 const APP_BASE = "https://pnptv.app";
 
 function PostSkeleton() {
@@ -39,6 +53,7 @@ export default function PostDetail() {
   const [post, setPost] = useState<SocialPostItem | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [ancestors, setAncestors] = useState<SocialPostItem[]>([]);
   // When the post is gated (403 from the API or scoped resource lock), capture
   // the upsell context so we render the "Upgrade to PRIME" card instead of a
   // generic "Post Not Found" message.
@@ -56,10 +71,16 @@ export default function PostDetail() {
     setError(null);
     setLocked(null);
     getSocialPost(postId)
-      .then((res) => {
+      .then(async (res) => {
         if (!cancelled) {
           setPost(res.post);
           setLoading(false);
+          // Load parent chain asynchronously — non-blocking, errors silently ignored
+          if (res.post?.reply_to_id) {
+            fetchAncestorChain(res.post).then((chain) => {
+              if (!cancelled) setAncestors(chain);
+            }).catch(() => {});
+          }
         }
       })
       .catch((err: unknown) => {
@@ -205,6 +226,47 @@ export default function PostDetail() {
 
       {!loading && post && (
         <>
+          {/* Parent chain — shown above focused post when it's a reply */}
+          {ancestors.length > 0 && (
+            <div className="mb-2 space-y-2">
+              {ancestors.map((ancestor, i) => (
+                <div
+                  key={ancestor.id}
+                  className="relative"
+                  style={{ opacity: 0.75 + (i / ancestors.length) * 0.25 }}
+                >
+                  {/* Thread connector line */}
+                  {i < ancestors.length - 1 && (
+                    <div
+                      className="absolute left-[18px] top-full w-0.5 h-3 z-10"
+                      style={{ background: "rgba(255,255,255,0.12)" }}
+                      aria-hidden="true"
+                    />
+                  )}
+                  <SocialPostCard
+                    post={ancestor}
+                    currentUserId={String(user?.dbId || "")}
+                    isAdmin={isAdmin}
+                    userLang={user?.language || "en"}
+                    onLike={(id) => { togglePostLike(id).catch(() => {}); }}
+                    onDelete={() => {}}
+                    onNavigate={navigate}
+                    contentDisclaimerAccepted={contentDisclaimer}
+                    onAcceptDisclaimer={handleAcceptDisclaimer}
+                    viewerCity={user?.city ?? null}
+                    viewerCountry={user?.country ?? null}
+                    hideCreatorCta
+                  />
+                </div>
+              ))}
+              {/* Final connector into focused post */}
+              <div
+                className="ml-[18px] w-0.5 h-3"
+                style={{ background: "rgba(255,255,255,0.12)" }}
+                aria-hidden="true"
+              />
+            </div>
+          )}
           <SocialPostCard
             post={post}
             currentUserId={String(user?.dbId || "")}

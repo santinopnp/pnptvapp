@@ -2015,6 +2015,7 @@ class SocialPostService {
                 wellness_days_accumulated,
                 badges, is_pnptv_fam, pnptv_fam_since,
                 crystal_creator_active_until, partner_badge_color,
+                pinned_post_id,
                 (SELECT il.color FROM invite_link_uses ilu JOIN invite_links il ON il.code = ilu.code
                   WHERE ilu.user_id = users.id AND il.color IS NOT NULL ORDER BY ilu.redeemed_at ASC LIMIT 1) AS profile_color
          FROM users WHERE id = $1 AND is_deleted = false`,
@@ -2131,7 +2132,24 @@ class SocialPostService {
     const exclusiveVideoCount = exclusiveCountRes.rows[0]?.exclusive_videos || 0;
     const exclusivePhotoCount = exclusiveCountRes.rows[0]?.exclusive_photos || 0;
 
-    return { profile, posts, nextCursor, postCount, performerData, exclusiveVideoCount, exclusivePhotoCount };
+    // Hydrate pinned_post if the profile owner has one set
+    let pinnedPost = null;
+    const pinnedPostId = profile?.pinned_post_id ? parseInt(profile.pinned_post_id, 10) : null;
+    if (pinnedPostId && Number.isFinite(pinnedPostId)) {
+      try {
+        pinnedPost = await SocialPostService.getPostById(pinnedPostId, viewerId);
+      } catch (_) {
+        // Non-fatal — profile still returns without pinned post
+      }
+    }
+
+    // Remove the pinned post from the posts array so it is not duplicated when
+    // the frontend renders it separately at the top of the profile wall.
+    const postsWithoutPin = pinnedPost
+      ? posts.filter(p => p.id !== pinnedPostId)
+      : posts;
+
+    return { profile, posts: postsWithoutPin, nextCursor, postCount, performerData, exclusiveVideoCount, exclusivePhotoCount, pinnedPost };
   }
 
   // ── Admin List Posts ──────────────────────────────────────────────────────
@@ -2383,6 +2401,434 @@ class SocialPostService {
       : (posts.length > lim ? String(posts[lim - 1].id) : null);
 
     return { posts: page, nextCursor };
+  }
+
+  // ── Repost (pure, no content) ─────────────────────────────────────────────
+
+  /**
+   * Idempotent toggle: if a pure repost row exists → delete it (unrepost).
+   * Otherwise insert a new one and increment the original's reposts_count.
+   * Returns { reposted, reposts_count, newPost }.
+   */
+  static async toggleRepost(userId, postId) {
+    // Check for an existing pure repost by this user
+    const existing = await query(
+      `SELECT id FROM social_posts
+        WHERE user_id = $1
+          AND repost_of_id = $2
+          AND content IS NULL
+          AND quoted_post_id IS NULL
+          AND is_deleted = false
+        LIMIT 1`,
+      [userId, postId]
+    );
+
+    if (existing.rows.length > 0) {
+      // Unrepost: soft-delete and decrement
+      await query(
+        `UPDATE social_posts SET is_deleted = true WHERE id = $1`,
+        [existing.rows[0].id]
+      );
+      const { rows: countRows } = await query(
+        `UPDATE social_posts
+            SET reposts_count = GREATEST(0, reposts_count - 1)
+          WHERE id = $1 AND is_deleted = false
+          RETURNING reposts_count`,
+        [postId]
+      );
+      return { reposted: false, reposts_count: countRows[0]?.reposts_count ?? 0, newPost: null };
+    }
+
+    // Repost: insert bare row (no content, no quoted_post_id)
+    const { rows } = await query(
+      `INSERT INTO social_posts (user_id, repost_of_id, content, is_shareable)
+       VALUES ($1, $2, NULL, true)
+       RETURNING id`,
+      [userId, postId]
+    );
+    const { rows: countRows } = await query(
+      `UPDATE social_posts
+          SET reposts_count = reposts_count + 1
+        WHERE id = $1 AND is_deleted = false
+        RETURNING reposts_count`,
+      [postId]
+    );
+    return {
+      reposted: true,
+      reposts_count: countRows[0]?.reposts_count ?? 0,
+      newPost: rows[0] || null,
+    };
+  }
+
+  // ── Quote-post ────────────────────────────────────────────────────────────
+
+  /**
+   * Create a quote-post that embeds another post. Increments original's
+   * reposts_count. Returns the new post row (not yet sanitized).
+   */
+  static async createQuotePost(userId, quotedPostId, content, mediaUrls, category, replyControl) {
+    const VALID_CATEGORIES = new Set(['fun', 'wellness', 'chemsex', 'slam', 'clouds', 'non_pnp', 'community', 'social', 'media', 'adult']);
+    const resolvedCategory = (category && VALID_CATEGORIES.has(category))
+      ? category
+      : SocialPostService._classifyByKeywords(content);
+
+    const mediaUrlsJson = Array.isArray(mediaUrls) && mediaUrls.length > 0
+      ? JSON.stringify(mediaUrls)
+      : null;
+
+    const { rows } = await query(
+      `INSERT INTO social_posts
+         (user_id, quoted_post_id, content, media_urls, category, reply_control, is_shareable)
+       VALUES ($1, $2, $3, $4::jsonb, $5, $6, true)
+       RETURNING id, content, media_urls, quoted_post_id, category, reply_control,
+                 likes_count, reposts_count, replies_count, is_exclusive, is_shareable,
+                 content_tier, created_at`,
+      [userId, quotedPostId, content || null, mediaUrlsJson, resolvedCategory, replyControl || null]
+    );
+    const post = rows[0];
+
+    // Increment original's reposts_count
+    await query(
+      `UPDATE social_posts
+          SET reposts_count = reposts_count + 1
+        WHERE id = $1 AND is_deleted = false`,
+      [quotedPostId]
+    );
+
+    return post;
+  }
+
+  // ── Bookmark toggle ────────────────────────────────────────────────────────
+
+  /**
+   * Toggle bookmark on a post for the given user.
+   * Relies on a DB trigger to keep social_posts.bookmarks_count in sync
+   * (see migration); if the trigger is absent we do an in-place +/-1 here too.
+   */
+  static async toggleBookmark(userId, postId) {
+    const existing = await query(
+      `SELECT 1 FROM social_post_bookmarks WHERE post_id = $1 AND user_id = $2`,
+      [postId, userId]
+    );
+
+    if (existing.rows.length > 0) {
+      await query(
+        `DELETE FROM social_post_bookmarks WHERE post_id = $1 AND user_id = $2`,
+        [postId, userId]
+      );
+      const { rows } = await query(
+        `UPDATE social_posts
+            SET bookmarks_count = GREATEST(0, COALESCE(bookmarks_count, 0) - 1)
+          WHERE id = $1
+          RETURNING COALESCE(bookmarks_count, 0) AS bookmarks_count`,
+        [postId]
+      );
+      return { bookmarked: false, bookmarks_count: rows[0]?.bookmarks_count ?? 0 };
+    }
+
+    await query(
+      `INSERT INTO social_post_bookmarks (post_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+      [postId, userId]
+    );
+    const { rows } = await query(
+      `UPDATE social_posts
+          SET bookmarks_count = COALESCE(bookmarks_count, 0) + 1
+        WHERE id = $1
+        RETURNING COALESCE(bookmarks_count, 0) AS bookmarks_count`,
+      [postId]
+    );
+    return { bookmarked: true, bookmarks_count: rows[0]?.bookmarks_count ?? 0 };
+  }
+
+  // ── Bookmarks feed ────────────────────────────────────────────────────────
+
+  /**
+   * Return paginated bookmarked posts for the given user, cursor on bookmark
+   * created_at DESC, same shape as getFeed rows (sanitized).
+   */
+  static async getBookmarksFeed(userId, cursor, limit = 20, viewerTier, isAdmin = false) {
+    const lim = Math.min(Number(limit) || 20, 50);
+    const params = [userId, lim + 1];
+    let cursorClause = '';
+
+    if (cursor) {
+      params.push(cursor);
+      cursorClause = `AND b.created_at < $${params.length}`;
+    }
+
+    const { rows } = await query(
+      `SELECT sp.id, sp.content, sp.media_url, sp.media_type, sp.media_urls,
+              sp.video_thumbnail_url, sp.video_title, sp.video_description,
+              sp.metadata, sp.mux_playback_id, sp.mux_status,
+              sp.content_type, sp.x_embed_url, sp.channel_id, sp.source_channel,
+              sp.hangout_group_id, sp.category, sp.is_ai_generated,
+              sp.reply_to_id, sp.repost_of_id, sp.quoted_post_id,
+              sp.likes_count, sp.reposts_count, sp.replies_count,
+              COALESCE(sp.bookmarks_count, 0) AS bookmarks_count,
+              sp.is_exclusive, sp.is_shareable, sp.is_wof, sp.created_at, sp.pinned_at,
+              COALESCE(sp.content_tier, 'free') AS content_tier,
+              cc_gate.access_type AS channel_access_type,
+              cc_gate.creator_id   AS channel_creator_id,
+              u.id AS author_id, u.username AS author_username,
+              u.first_name AS author_first_name, u.photo_file_id AS author_photo,
+              u.city AS author_city, u.country AS author_country,
+              u.tier AS author_tier,
+              u.creator_status AS author_creator_status,
+              u.creator_type   AS author_creator_type,
+              u.creator_verified AS author_creator_verified,
+              u.creator_price_usd AS author_creator_price,
+              EXISTS(SELECT 1 FROM social_post_likes l
+                      WHERE l.post_id = sp.id AND l.user_id = $1) AS liked_by_me,
+              true AS bookmarked_by_me,
+              COALESCE(sp.hype_score, 0) AS hype_score,
+              b.created_at AS bookmark_created_at
+         FROM social_post_bookmarks b
+         JOIN social_posts sp ON sp.id = b.post_id
+         JOIN users u ON u.id = sp.user_id
+         LEFT JOIN creator_channels cc_gate ON cc_gate.id = sp.channel_id
+        WHERE b.user_id = $1
+          AND sp.is_deleted = false
+          ${cursorClause}
+        ORDER BY b.created_at DESC
+        LIMIT $2`,
+      params
+    );
+
+    const hasMore = rows.length > lim;
+    const page = rows.slice(0, lim);
+    let posts = await sanitizePostRows(page);
+    if (viewerTier !== undefined) {
+      posts = await CreatorService.filterFeedExclusivePosts(posts, userId, viewerTier);
+      posts = SocialPostService._applyContentTierBlur(posts, viewerTier, isAdmin);
+    }
+    posts = await SocialPostService._applyChannelAccessLock(posts, userId, { isAdmin });
+    posts = await SocialPostService.hydrateTopHypers(posts);
+
+    const nextCursor = hasMore ? String(page[page.length - 1].bookmark_created_at) : null;
+    return { posts, nextCursor };
+  }
+
+  // ── Hashtag extraction (fire-and-forget) ──────────────────────────────────
+
+  /**
+   * Extract #hashtags from content and bulk-insert into social_post_hashtags.
+   * Fire-and-forget — never awaited by the caller.
+   */
+  static extractAndStoreHashtags(postId, content) {
+    if (!postId || typeof content !== 'string' || !content) return;
+    setImmediate(async () => {
+      try {
+        const tagRe = /#([a-z0-9_]{2,32})/gi;
+        const tags = [...new Set(
+          [...content.matchAll(tagRe)].map(m => m[1].toLowerCase())
+        )];
+        if (tags.length === 0) return;
+        // Build multi-row VALUES list
+        const valuePlaceholders = tags.map((_, i) => `($${i * 2 + 1}, $${i * 2 + 2})`).join(', ');
+        const flatParams = tags.flatMap(t => [t, postId]);
+        await query(
+          `INSERT INTO social_post_hashtags (tag, post_id)
+           VALUES ${valuePlaceholders}
+           ON CONFLICT DO NOTHING`,
+          flatParams
+        );
+      } catch (err) {
+        logger.warn('extractAndStoreHashtags: failed', { postId, error: err.message });
+      }
+    });
+  }
+
+  // ── Hashtag feed ──────────────────────────────────────────────────────────
+
+  /**
+   * Posts matching a specific hashtag, cursor-paginated by post id DESC.
+   */
+  static async getHashtagPostsFeed(tag, userId, cursor, limit = 20, viewerTier, isAdmin = false, blockedIds = []) {
+    const lim = Math.min(Number(limit) || 20, 50);
+    const normalizedTag = tag.toLowerCase().replace(/^#/, '');
+    const params = [normalizedTag, userId, lim + 1];
+    let cursorClause = '';
+
+    if (cursor) {
+      const cursorId = parseInt(cursor, 10);
+      if (Number.isFinite(cursorId)) {
+        params.push(cursorId);
+        cursorClause = `AND sp.id < $${params.length}`;
+      }
+    }
+
+    const blockedParam = blockedIds.length > 0 ? blockedIds.map(Number) : [];
+    params.push(blockedParam);
+    const blockedParamIdx = params.length;
+
+    const { rows } = await query(
+      `SELECT sp.id, sp.content, sp.media_url, sp.media_type, sp.media_urls,
+              sp.video_thumbnail_url, sp.video_title, sp.video_description,
+              sp.metadata, sp.mux_playback_id, sp.mux_status,
+              sp.content_type, sp.x_embed_url, sp.channel_id, sp.source_channel,
+              sp.hangout_group_id, sp.category, sp.is_ai_generated,
+              sp.reply_to_id, sp.repost_of_id, sp.quoted_post_id,
+              sp.likes_count, sp.reposts_count, sp.replies_count,
+              COALESCE(sp.bookmarks_count, 0) AS bookmarks_count,
+              sp.is_exclusive, sp.is_shareable, sp.is_wof, sp.created_at, sp.pinned_at,
+              COALESCE(sp.content_tier, 'free') AS content_tier,
+              cc_gate.access_type AS channel_access_type,
+              cc_gate.creator_id   AS channel_creator_id,
+              u.id AS author_id, u.username AS author_username,
+              u.first_name AS author_first_name, u.photo_file_id AS author_photo,
+              u.city AS author_city, u.country AS author_country,
+              u.tier AS author_tier,
+              u.creator_status AS author_creator_status,
+              u.creator_type   AS author_creator_type,
+              u.creator_verified AS author_creator_verified,
+              u.creator_price_usd AS author_creator_price,
+              EXISTS(SELECT 1 FROM social_post_likes l
+                      WHERE l.post_id = sp.id AND l.user_id = $2) AS liked_by_me,
+              COALESCE(sp.hype_score, 0) AS hype_score
+         FROM social_post_hashtags ht
+         JOIN social_posts sp ON sp.id = ht.post_id
+         JOIN users u ON u.id = sp.user_id
+         LEFT JOIN creator_channels cc_gate ON cc_gate.id = sp.channel_id
+        WHERE ht.tag = $1
+          AND sp.is_deleted = false
+          AND sp.reply_to_id IS NULL
+          ${cursorClause}
+          AND sp.user_id != ALL($${blockedParamIdx}::text[])
+          AND (
+            u.role NOT IN ('model', 'creator')
+            OR (u.creator_status = 'active' AND u.creator_locked = FALSE)
+            OR u.role IN ('admin', 'superadmin')
+          )
+        ORDER BY sp.id DESC
+        LIMIT $3`,
+      params
+    );
+
+    const hasMore = rows.length > lim;
+    const page = rows.slice(0, lim);
+    let posts = await sanitizePostRows(page, { hideDeletedHypeOriginals: true });
+    if (viewerTier !== undefined) {
+      posts = await CreatorService.filterFeedExclusivePosts(posts, userId, viewerTier);
+      posts = SocialPostService._applyContentTierBlur(posts, viewerTier, isAdmin);
+    }
+    posts = await SocialPostService._applyChannelAccessLock(posts, userId, { isAdmin });
+    posts = await SocialPostService.hydrateTopHypers(posts);
+
+    const nextCursor = hasMore ? String(page[page.length - 1].id) : null;
+    return { posts, nextCursor };
+  }
+
+  // ── Reply control check ───────────────────────────────────────────────────
+
+  /**
+   * Returns null if replying is allowed; otherwise returns the control value
+   * that blocked it. Used by the createPost path when replyToId is set.
+   *
+   * Controls:
+   *   'everyone'   → always allow
+   *   'following'  → parent author must follow the replier
+   *   'mentioned'  → replier must appear in post_mentions for the parent post
+   */
+  static async checkReplyControl(parentPostId, replierId) {
+    const { rows } = await query(
+      `SELECT sp.reply_control, sp.user_id AS author_id
+         FROM social_posts sp
+        WHERE sp.id = $1 AND sp.is_deleted = false`,
+      [parentPostId]
+    );
+    if (!rows.length) return null; // Post not found — let caller handle
+
+    const { reply_control: control, author_id: authorId } = rows[0];
+
+    // No control set or 'everyone' → allow all
+    if (!control || control === 'everyone') return null;
+
+    if (control === 'following') {
+      // Author must follow the replier
+      const { rowCount } = await query(
+        `SELECT 1 FROM user_follows WHERE follower_id = $1 AND following_id = $2 LIMIT 1`,
+        [authorId, replierId]
+      );
+      return rowCount > 0 ? null : control;
+    }
+
+    if (control === 'mentioned') {
+      const { rowCount } = await query(
+        `SELECT 1 FROM post_mentions
+          WHERE post_id = $1 AND mentioned_user_id = $2
+          LIMIT 1`,
+        [parentPostId, replierId]
+      );
+      return rowCount > 0 ? null : control;
+    }
+
+    // Unknown control value — fail open
+    return null;
+  }
+
+  // ── Pinned post ───────────────────────────────────────────────────────────
+
+  /**
+   * Set the viewer's pinned_post_id. Post must belong to the user.
+   */
+  static async setPinnedPost(userId, postId) {
+    const { rowCount } = await query(
+      `SELECT 1 FROM social_posts WHERE id = $1 AND user_id = $2 AND is_deleted = false`,
+      [postId, userId]
+    );
+    if (rowCount === 0) {
+      const err = new Error('Post not found or does not belong to user');
+      err.code = 'POST_NOT_FOUND';
+      throw err;
+    }
+    await query(
+      `UPDATE users SET pinned_post_id = $1 WHERE id = $2`,
+      [postId, userId]
+    );
+    return { pinned_post_id: postId };
+  }
+
+  /**
+   * Unset the viewer's pinned_post_id.
+   */
+  static async unsetPinnedPost(userId) {
+    await query(`UPDATE users SET pinned_post_id = NULL WHERE id = $1`, [userId]);
+    return { pinned_post_id: null };
+  }
+
+  /**
+   * Fetch a single post by id, sanitized. Returns null if not found/deleted.
+   * Used to hydrate the pinned_post on profile responses.
+   */
+  static async getPostById(postId, viewerId) {
+    const params = [postId];
+    let likedSubquery = '';
+    if (viewerId) {
+      params.push(viewerId);
+      likedSubquery = `, EXISTS(SELECT 1 FROM social_post_likes l WHERE l.post_id = sp.id AND l.user_id = $${params.length}) AS liked_by_me`;
+    }
+    const { rows } = await query(
+      `SELECT sp.id, sp.content, sp.media_url, sp.media_type, sp.media_urls,
+              sp.video_thumbnail_url, sp.video_title, sp.video_description,
+              sp.metadata, sp.mux_playback_id, sp.mux_status,
+              sp.content_type, sp.x_embed_url, sp.channel_id, sp.source_channel,
+              sp.reply_to_id, sp.repost_of_id, sp.quoted_post_id,
+              sp.likes_count, sp.reposts_count, sp.replies_count,
+              COALESCE(sp.bookmarks_count, 0) AS bookmarks_count,
+              sp.is_exclusive, sp.is_shareable, sp.is_wof, sp.created_at, sp.pinned_at,
+              COALESCE(sp.content_tier, 'free') AS content_tier,
+              u.id AS author_id, u.username AS author_username,
+              u.first_name AS author_first_name, u.photo_file_id AS author_photo,
+              COALESCE(sp.hype_score, 0) AS hype_score
+              ${likedSubquery}
+         FROM social_posts sp
+         JOIN users u ON u.id = sp.user_id
+        WHERE sp.id = $1 AND sp.is_deleted = false`,
+      params
+    );
+    if (!rows.length) return null;
+    const sanitized = await sanitizePostRows(rows);
+    return sanitized[0] || null;
   }
 }
 

@@ -988,6 +988,30 @@ app.options('/api/webapp/creator/media/tus', (req, res) => {
   return res.status(204).end();
 });
 
+// tus preflight for social post uploads — same headers as creator/media/tus above
+app.options(['/api/webapp/social/uploads/tus', '/api/webapp/social/uploads/tus/*'], (req, res) => {
+  const ALLOWED_TUS_ORIGINS = new Set([
+    'https://pnptv.app',
+    'https://www.pnptv.app',
+    'https://app.pnptv.app',
+    ...(process.env.NODE_ENV !== 'production' ? ['http://localhost:5173'] : []),
+  ]);
+  const origin = req.headers.origin;
+  if (origin && ALLOWED_TUS_ORIGINS.has(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  }
+  res.setHeader('Tus-Resumable', '1.0.0');
+  res.setHeader('Tus-Version', '1.0.0');
+  res.setHeader('Tus-Max-Size', String(500 * 1024 * 1024));
+  res.setHeader('Tus-Extension', 'creation,termination');
+  res.setHeader('Access-Control-Allow-Methods', 'OPTIONS, POST, HEAD, PATCH, DELETE');
+  res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, Tus-Resumable, Upload-Length, Upload-Metadata, Upload-Offset, Content-Length, X-CSRF-Token, Upload-Location');
+  res.setHeader('Access-Control-Expose-Headers', 'Location, Tus-Resumable, Upload-Offset, Upload-Length, Upload-Location');
+  res.setHeader('Access-Control-Max-Age', '86400');
+  return res.status(204).end();
+});
+
 // CORS with whitelist (security fix: prevent cross-origin attacks)
 app.use(conditionalMiddleware(cors({
   origin: [
@@ -9986,6 +10010,368 @@ app.post('/api/webapp/creator/posts/x-embed', requireSessionAuth, roleGuard('mod
 
 app.post('/api/webapp/social/posts/with-media', requireSessionAuth, uploadLimiter, attachCreatorStatus, postMediaUploadMiddleware, verifyDiskFileType, require2257ForCreators, asyncHandler(socialController.createPostWithMedia));
 app.post('/api/webapp/social/posts/with-multi-media', requireSessionAuth, uploadLimiter, attachCreatorStatus, postMultiMediaUploadMiddleware, verifyDiskFileType, require2257ForCreators, asyncHandler(socialController.createPostWithMultiMedia));
+
+// ── TUS resumable upload server for social post media ────────────────────────
+// Frontend composer uploads directly via tus protocol; on completion the file
+// is moved to /public/uploads/posts/ and the public URL returned via Upload-Location.
+// The second endpoint accepts those pre-uploaded URLs to create the post row.
+(function mountSocialTusServer() {
+  const { Server: TusServer } = require('@tus/server');
+  const { FileStore: TusFileStore } = require('@tus/file-store');
+  const fsSync = require('fs');
+  const pathMod = require('path');
+  const cryptoMod = require('crypto');
+
+  // TUS staging dir — files land here during upload, then renamed on completion
+  const TUS_SOCIAL_DIR = pathMod.join(__dirname, '../../../../public/uploads/tus');
+  fsSync.mkdirSync(TUS_SOCIAL_DIR, { recursive: true });
+
+  const TUS_SOCIAL_ALLOWED_MIMES = new Set([
+    'image/jpeg', 'image/png', 'image/webp', 'image/gif',
+    'video/mp4', 'video/webm', 'video/quicktime',
+  ]);
+  const TUS_SOCIAL_EXT_MAP = {
+    'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif',
+    'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov',
+  };
+
+  const socialTusServer = new TusServer({
+    path: '/api/webapp/social/uploads/tus',
+    datastore: new TusFileStore({ directory: TUS_SOCIAL_DIR }),
+    respectForwardedHeaders: true,
+    maxSize: 500 * 1024 * 1024, // 500 MB per file
+    async onIncomingRequest(req, _res, _upload) {
+      // Block requests without a valid session — requireSessionAuth runs before
+      // tusServer.handle(), so req.session is already validated by that point.
+      // This hook is an extra defence-in-depth check.
+      if (!req.session?.user?.id) {
+        const err = new Error('Unauthorized');
+        err.status_code = 401;
+        throw err;
+      }
+    },
+    async onUploadCreate(req, res, upload) {
+      // Validate MIME type declared in metadata before accepting the upload
+      const rawMeta = upload.metadata || {};
+      const declaredMime = rawMeta.filetype || rawMeta.type || '';
+      if (!TUS_SOCIAL_ALLOWED_MIMES.has(declaredMime)) {
+        const err = new Error(`Unsupported file type: ${declaredMime || '(none)'}`);
+        err.status_code = 400;
+        throw err;
+      }
+      return { res };
+    },
+    async onUploadFinish(req, res, upload) {
+      const userId = req.session?.user?.id || 'anon';
+      const rawMeta = upload.metadata || {};
+      const declaredMime = rawMeta.filetype || rawMeta.type || 'application/octet-stream';
+      const ext = TUS_SOCIAL_EXT_MAP[declaredMime] || 'bin';
+      const rand = cryptoMod.randomBytes(3).toString('hex');
+      const finalName = `tus-${userId}-${Date.now()}-${rand}.${ext}`;
+      const postsDir = pathMod.join(__dirname, '../../../../public/uploads/posts');
+      fsSync.mkdirSync(postsDir, { recursive: true });
+      const finalPath = pathMod.join(postsDir, finalName);
+      const stagedPath = pathMod.join(TUS_SOCIAL_DIR, upload.id);
+      try {
+        fsSync.renameSync(stagedPath, finalPath);
+        // Also remove the .json info sidecar that @tus/file-store creates
+        const infoPath = stagedPath + '.json';
+        if (fsSync.existsSync(infoPath)) fsSync.unlinkSync(infoPath);
+      } catch (mvErr) {
+        logger.error('socialTusServer: failed to move completed upload', { uploadId: upload.id, finalPath, error: mvErr.message });
+        const err = new Error('Failed to finalize upload');
+        err.status_code = 500;
+        throw err;
+      }
+      const publicUrl = `/uploads/posts/${finalName}`;
+      return { res, status_code: 200, headers: { 'Upload-Location': publicUrl } };
+    },
+  });
+
+  // Mount — requireSessionAuth runs first, then the tus handler for all methods
+  app.all(
+    ['/api/webapp/social/uploads/tus', '/api/webapp/social/uploads/tus/*'],
+    requireSessionAuth,
+    socialActionLimiter,
+    (req, res) => socialTusServer.handle(req, res)
+  );
+})();
+
+// POST /api/webapp/social/posts/with-tus-media
+// Accepts pre-uploaded media URLs (from the tus server above) and creates a post.
+// Mirrors /with-multi-media auth + moderation + DB flow without multer file handling.
+app.post('/api/webapp/social/posts/with-tus-media',
+  requireSessionAuth,
+  socialActionLimiter,
+  attachCreatorStatus,
+  require2257ForCreators,
+  asyncHandler(async (req, res) => {
+    const user = req.session.user;
+    if (!user?.id) return res.status(401).json({ error: 'Not authenticated' });
+
+    const fsPromises = require('fs').promises;
+    const fsSyncMod = require('fs');
+    const pathMod2 = require('path');
+    const { assertCleanText } = require('../../services/contentModerationFilter');
+
+    const {
+      content,
+      media_urls: rawMediaUrls,
+      media_type: rawMediaType,
+      category: rawCategory,
+      reply_to_id,
+      quoted_post_id,
+      reply_control,
+      media_alt_texts,
+      tagged_user_ids,
+      is_exclusive,
+      allow_sharing,
+      channel_id: rawChannelId,
+      hangout_group_id,
+    } = req.body;
+
+    // Validate media_urls
+    if (!Array.isArray(rawMediaUrls) || rawMediaUrls.length === 0) {
+      return res.status(400).json({ error: 'media_urls is required and must be a non-empty array' });
+    }
+    if (rawMediaUrls.length > 4) {
+      return res.status(400).json({ error: 'Maximum 4 media files per post' });
+    }
+    const VALID_URL_PREFIX = '/uploads/posts/tus-';
+    for (const u of rawMediaUrls) {
+      if (typeof u !== 'string' || !u.startsWith(VALID_URL_PREFIX)) {
+        return res.status(400).json({ error: `Invalid media URL: ${u}` });
+      }
+    }
+    if (!rawMediaType || !['image', 'video'].includes(rawMediaType)) {
+      return res.status(400).json({ error: 'media_type must be "image" or "video"' });
+    }
+
+    // Verify each file exists on disk and belongs to this user
+    const publicRoot = pathMod2.join(__dirname, '../../../../public');
+    for (const u of rawMediaUrls) {
+      const diskPath = pathMod2.join(publicRoot, u);
+      if (!fsSyncMod.existsSync(diskPath)) {
+        return res.status(400).json({ error: `Media file not found: ${u}` });
+      }
+      // Filename format: tus-<userId>-<ts>-<rand>.<ext>
+      const basename = pathMod2.basename(u); // e.g. tus-abc-123-def.jpg
+      const parts = basename.split('-');
+      // parts[0]=tus, parts[1]=userId (may contain hyphens — UUIDs have 5 segments)
+      // Reconstruct userId: everything between first '-' and the timestamp segment
+      // UUID format: 8-4-4-4-12 = 5 hyphen-separated groups
+      // filename: tus-<g1>-<g2>-<g3>-<g4>-<g5>-<ts>-<rand>.<ext>
+      // So parts[1..5] = UUID groups, parts[6]=ts, parts[7]=rand+ext
+      const fileUserId = parts.slice(1, 6).join('-');
+      if (fileUserId !== String(user.id)) {
+        return res.status(403).json({ error: `Media file does not belong to you: ${u}` });
+      }
+    }
+
+    // Content validation
+    const hasContent = content && content.toString().trim().length > 0;
+    const contentStr = hasContent ? content.toString().trim() : '';
+    if (!hasContent && rawMediaUrls.length === 0) {
+      return res.status(400).json({ error: 'Content or media required' });
+    }
+    if (hasContent) {
+      try {
+        assertCleanText(contentStr, 'content');
+      } catch (err) {
+        if (err.code === 'FORBIDDEN_CONTENT') {
+          return res.status(400).json({ error: err.message, code: err.code, field: err.field, categories: err.categories });
+        }
+        throw err;
+      }
+    }
+
+    // Parse optional IDs
+    let replyToId = reply_to_id ? parseInt(reply_to_id, 10) : null;
+    const quotedPostId = quoted_post_id ? parseInt(quoted_post_id, 10) : null;
+    if (reply_to_id && (!Number.isFinite(replyToId) || replyToId <= 0)) {
+      return res.status(400).json({ error: 'Invalid reply_to_id' });
+    }
+    const maxLen = replyToId ? 500 : 5000;
+    if (contentStr.length > maxLen) {
+      return res.status(400).json({ error: `Content too long (max ${maxLen} chars)` });
+    }
+
+    // Flatten threading: if replying to a reply, reparent to top-level
+    if (replyToId) {
+      const parentCheck = await dbQuery('SELECT id, user_id, reply_to_id FROM social_posts WHERE id = $1 AND is_deleted = false', [replyToId]);
+      if (!parentCheck.rows.length) return res.status(404).json({ error: 'Parent post not found' });
+      if (parentCheck.rows[0].reply_to_id !== null) replyToId = parentCheck.rows[0].reply_to_id;
+      // Bidirectional block check
+      const parentAuthorId = parentCheck.rows[0].user_id;
+      if (String(parentAuthorId) !== String(user.id)) {
+        const [blockedByAuthor, authorBlocked] = await Promise.all([
+          dbQuery(`SELECT 1 FROM users WHERE id = $1 AND blocked @> ARRAY[$2::text] LIMIT 1`, [parentAuthorId, String(user.id)]),
+          dbQuery(`SELECT 1 FROM users WHERE id = $1 AND blocked @> ARRAY[$2::text] LIMIT 1`, [user.id, String(parentAuthorId)]),
+        ]);
+        if (blockedByAuthor.rows.length || authorBlocked.rows.length) {
+          return res.status(403).json({ error: 'Cannot reply to this post', code: 'BLOCKED' });
+        }
+      }
+    }
+
+    // Exclusive gate
+    const exclusive = is_exclusive === true || is_exclusive === 'true';
+    if (exclusive) {
+      const isAdminUser = user.role === 'admin' || user.role === 'superadmin';
+      if (!isAdminUser) {
+        const creatorCheck = await dbQuery(
+          'SELECT creator_status, creator_role, followers_count FROM users WHERE id = $1',
+          [user.id]
+        );
+        const crow = creatorCheck.rows[0] || {};
+        if (crow.creator_status !== 'active') {
+          return res.status(403).json({ error: 'Only active creators can post exclusive content' });
+        }
+        if (crow.creator_role !== 'creator' && crow.creator_role !== 'both') {
+          return res.status(403).json({ success: false, error: 'Exclusive paid content requires the Creator role.', code: 'CREATOR_ROLE_REQUIRED' });
+        }
+        if ((crow.followers_count ?? 0) < 10) {
+          return res.status(403).json({ success: false, error: 'Reach 10 followers on your free profile to unlock exclusive content.', code: 'creator_ice_tier' });
+        }
+        if (rawMediaType !== 'video') {
+          return res.status(400).json({ error: 'Exclusive content must include a video', code: 'EXCLUSIVE_VIDEO_REQUIRED' });
+        }
+      }
+    }
+
+    // Channel validation
+    let channelId = null;
+    if (!replyToId && rawChannelId) {
+      channelId = parseInt(rawChannelId, 10);
+      if (!Number.isFinite(channelId) || channelId <= 0) {
+        return res.status(400).json({ error: 'Invalid channel_id' });
+      }
+      const chRes = await dbQuery('SELECT creator_id, collaborators FROM creator_channels WHERE id = $1 AND is_active = true', [channelId]);
+      if (!chRes.rows.length) return res.status(404).json({ error: 'Channel not found' });
+      const ch = chRes.rows[0];
+      const isOwner = ch.creator_id === user.id;
+      const isCollab = Array.isArray(ch.collaborators) && ch.collaborators.includes(String(user.id));
+      if (!isOwner && !isCollab) return res.status(403).json({ error: 'Channel not found or not yours' });
+    }
+
+    // Auto-mirror to creator channel
+    const SocialPostService = require('../../services/socialPostService');
+    if (!channelId && !replyToId && !quotedPostId && user.creator_status === 'active') {
+      const resolveCreatorChannel = require('../../services/socialPostService').resolveCreatorChannel;
+      if (typeof resolveCreatorChannel === 'function') {
+        channelId = await resolveCreatorChannel(user.id, exclusive).catch(() => null);
+      }
+    }
+    if (exclusive && !channelId && user.creator_status === 'active') {
+      return res.status(400).json({ error: 'Set up your paid channel before posting exclusive content.', code: 'NO_PAID_CHANNEL' });
+    }
+
+    // Build mediaItems array from pre-uploaded URLs
+    const mediaItems = rawMediaUrls.map((u, idx) => ({
+      url: u,
+      type: rawMediaType,
+      alt: Array.isArray(media_alt_texts) ? (media_alt_texts[idx] || null) : null,
+    }));
+
+    const VALID_CATS = new Set(['fun', 'wellness', 'adult', 'community', 'social', 'media']);
+    const resolvedCategory = (rawCategory && VALID_CATS.has(rawCategory))
+      ? rawCategory
+      : SocialPostService._classifyByKeywords(contentStr);
+
+    const shareable = allow_sharing !== false && allow_sharing !== 'false';
+    const contentTier = exclusive ? 'PRIME' : 'free';
+
+    const result = await dbQuery(
+      `INSERT INTO social_posts
+         (user_id, content, media_url, media_type, media_urls, reply_to_id, repost_of_id,
+          is_wof, is_exclusive, is_shareable, content_tier, channel_id, category)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, false, $8, $9, $10, $11, $12)
+       RETURNING id, content, media_url, media_type, media_urls, video_thumbnail_url,
+                 reply_to_id, repost_of_id, channel_id,
+                 likes_count, reposts_count, replies_count, is_wof, is_exclusive, is_shareable, content_tier, created_at, category`,
+      [
+        user.id,
+        contentStr || null,
+        mediaItems[0].url,
+        mediaItems[0].type,
+        JSON.stringify(mediaItems),
+        replyToId || null,
+        quotedPostId || null,
+        exclusive,
+        shareable,
+        contentTier,
+        channelId || null,
+        resolvedCategory,
+      ]
+    );
+
+    const post = result.rows[0];
+
+    if (channelId) {
+      await dbQuery(
+        'UPDATE creator_channels SET post_count = (SELECT COUNT(*) FROM social_posts WHERE channel_id = $1 AND is_deleted = false) WHERE id = $1',
+        [channelId]
+      );
+    }
+
+    if (!replyToId && !quotedPostId && !exclusive) {
+      SocialPostService.mirrorToMastodon(contentStr, post.id);
+    }
+
+    // Reply notification
+    if (replyToId) {
+      const parentRow = await dbQuery('SELECT user_id FROM social_posts WHERE id = $1', [replyToId]);
+      const parentAuthorId = parentRow.rows[0]?.user_id;
+      if (parentAuthorId && String(parentAuthorId) !== String(user.id)) {
+        const actorName = user.firstName || user.first_name || user.username;
+        const replyPreview = contentStr.length > 60 ? contentStr.slice(0, 57) + '...' : contentStr;
+        const NotificationEmitter = require('../../services/notificationEmitter');
+        NotificationEmitter.emit({
+          type: 'reply', category: 'social', priority: 'normal',
+          actorId: user.id, targetUserId: parentAuthorId,
+          entityType: 'post', entityId: String(replyToId),
+          message: replyPreview ? `${actorName} replied: "${replyPreview}"` : `${actorName} replied to your post`,
+          metadata: { pushTitle: `${actorName} commented`, pushBody: replyPreview ? `"${replyPreview}"` : 'Tap to view', url: `/social/post/${replyToId}` },
+        });
+      }
+    }
+
+    // Fetch author photo from DB (same query used by socialController helpers)
+    let authorPhoto = user.photoUrl || null;
+    try {
+      const photoRes = await dbQuery('SELECT photo_url FROM users WHERE id = $1', [user.id]);
+      authorPhoto = photoRes.rows[0]?.photo_url || authorPhoto;
+    } catch (_) { /* non-fatal */ }
+
+    const fullPost = {
+      ...post,
+      media_urls: mediaItems,
+      author_id: user.id,
+      author_username: user.username,
+      author_first_name: user.firstName || user.first_name,
+      author_photo: authorPhoto,
+      liked_by_me: false,
+    };
+
+    setImmediate(() => {
+      const mentionService = require('../../services/mentionService');
+      if (contentStr) mentionService.createPostMentions(post.id, user.id, contentStr).catch(() => {});
+      if (Array.isArray(tagged_user_ids) && tagged_user_ids.length) {
+        mentionService.createPostTags(post.id, user.id, tagged_user_ids).catch(() => {});
+      }
+      if (contentStr) SocialPostService.extractAndStoreHashtags(post.id, contentStr);
+    });
+
+    // Emit to Socket.IO feed (best-effort — socialController.emitNewPost is a local fn)
+    try {
+      const io = req.app.get('io');
+      if (io) io.emit('social:new_post', { post: fullPost, authorId: user.id });
+    } catch (_) { /* non-fatal */ }
+
+    return res.json({ success: true, post: fullPost });
+  })
+);
+
 app.post('/api/webapp/social/posts/bulk-videos', requireSessionAuth, bulkVideoLimiter, uploadPerformerVideos, asyncHandler(socialController.bulkCreateVideos));
 
 // ── Creator Mux upload path for social feed videos ──────────────────────────
@@ -10319,6 +10705,24 @@ app.post('/api/webapp/social/posts/:postId/view', softAuth, asyncHandler(async (
     return res.status(500).json({ error: 'Failed to record view' });
   }
 }));
+// Literal-path routes MUST come before /:postId so Express doesn't treat 'bookmarks'/'pin' as a postId.
+app.get('/api/webapp/social/posts/bookmarks', requireSessionAuth, asyncHandler(async (req, res) => {
+  const userId = req.session.user.id;
+  const cursor = req.query.cursor || null;
+  const limit = Math.min(parseInt(req.query.limit, 10) || 20, 50);
+  const tier = req.session.user.tier || 'free';
+  const isAdmin = ['admin', 'superadmin'].includes(req.session.user.role);
+  const SocialPostService = require('../../services/socialPostService');
+  const { posts, nextCursor } = await SocialPostService.getBookmarksFeed(userId, cursor, limit, tier, isAdmin);
+  return res.json({ success: true, posts, nextCursor });
+}));
+app.delete('/api/webapp/social/posts/pin', requireSessionAuth, asyncHandler(async (req, res) => {
+  const userId = req.session.user.id;
+  const SocialPostService = require('../../services/socialPostService');
+  const result = await SocialPostService.unsetPinnedPost(userId);
+  return res.json({ success: true, ...result });
+}));
+
 app.delete('/api/webapp/social/posts/:postId', requireSessionAuth, socialActionLimiter, asyncHandler(socialController.deletePost));
 app.patch('/api/webapp/social/posts/:postId', requireSessionAuth, socialActionLimiter, asyncHandler(socialController.editPost));
 app.post('/api/webapp/social/posts/:postId/assign-channel', requireSessionAuth, socialActionLimiter, asyncHandler(socialController.assignPostToChannel));
@@ -10328,6 +10732,289 @@ app.get('/api/webapp/social/posts/:postId/replies', requireSessionAuth, asyncHan
 app.get('/api/webapp/social/mentions/search', requireSessionAuth, asyncHandler(socialController.searchMentions));
 app.post('/api/webapp/social/posts/:postId/mastodon', requireSessionAuth, socialActionLimiter, asyncHandler(socialController.postToMastodon));
 app.post('/api/webapp/social/posts/:postId/translate', requireSessionAuth, socialActionLimiter, asyncHandler(socialController.translateSocialPost));
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Social Feed v2 — Reposts, Quotes, Bookmarks, Hashtags, Pins, Compose Assist
+// ─────────────────────────────────────────────────────────────────────────────
+
+// POST /api/webapp/social/posts/:postId/repost — idempotent toggle pure repost
+app.post('/api/webapp/social/posts/:postId/repost', requireSessionAuth, socialActionLimiter, asyncHandler(async (req, res) => {
+  const userId = req.session.user.id;
+  const postId = parseInt(req.params.postId, 10);
+  if (!Number.isFinite(postId) || postId <= 0) {
+    return res.status(400).json({ success: false, error: 'Invalid postId' });
+  }
+
+  const SocialPostService = require('../../services/socialPostService');
+
+  // Verify the post exists and get the author for the notification
+  const { query: dbQ } = require('../../config/postgres');
+  const { rows: postRows } = await dbQ(
+    'SELECT user_id FROM social_posts WHERE id = $1 AND is_deleted = false',
+    [postId]
+  );
+  if (!postRows.length) return res.status(404).json({ success: false, error: 'Post not found' });
+
+  const result = await SocialPostService.toggleRepost(userId, postId);
+
+  // Emit repost notification (fire-and-forget)
+  if (result.reposted) {
+    const NotificationEmitter = require('../../services/notificationEmitter');
+    const actorHandle = req.session.user.username || '';
+    NotificationEmitter.emitRepost(userId, postRows[0].user_id, postId, actorHandle).catch(() => {});
+  }
+
+  return res.json({ success: true, reposted: result.reposted, reposts_count: result.reposts_count });
+}));
+
+// POST /api/webapp/social/posts/:postId/quote — create a quote-post
+app.post('/api/webapp/social/posts/:postId/quote', requireSessionAuth, socialActionLimiter, require2257ForCreators, asyncHandler(async (req, res) => {
+  const userId = req.session.user.id;
+  const postId = parseInt(req.params.postId, 10);
+  if (!Number.isFinite(postId) || postId <= 0) {
+    return res.status(400).json({ success: false, error: 'Invalid postId' });
+  }
+
+  const { content, media_urls, category, reply_control } = req.body;
+  if (!content || !content.trim()) {
+    return res.status(400).json({ success: false, error: 'content is required for a quote-post' });
+  }
+  if (content.length > 5000) {
+    return res.status(400).json({ success: false, error: 'Content too long (max 5000 chars)' });
+  }
+
+  // Content moderation
+  try {
+    const { assertCleanText } = require('../../services/contentModerationFilter');
+    assertCleanText(content, 'content');
+  } catch (err) {
+    if (err.code === 'FORBIDDEN_CONTENT') {
+      return res.status(400).json({ error: err.message, code: err.code, field: err.field, categories: err.categories });
+    }
+    throw err;
+  }
+
+  const { query: dbQ } = require('../../config/postgres');
+  const { rows: postRows } = await dbQ(
+    'SELECT user_id FROM social_posts WHERE id = $1 AND is_deleted = false',
+    [postId]
+  );
+  if (!postRows.length) return res.status(404).json({ success: false, error: 'Post not found' });
+
+  const SocialPostService = require('../../services/socialPostService');
+  const post = await SocialPostService.createQuotePost(
+    userId, postId, content.trim(),
+    Array.isArray(media_urls) ? media_urls : [],
+    category || null,
+    reply_control || null
+  );
+
+  // Hashtag extraction (fire-and-forget)
+  SocialPostService.extractAndStoreHashtags(post.id, content);
+
+  // Reciprocal-follow friction check
+  const quotedAuthorId = postRows[0].user_id;
+  let quoteFriction = false;
+  if (String(quotedAuthorId) !== String(userId)) {
+    const { rowCount: fwdFollow } = await dbQ(
+      'SELECT 1 FROM user_follows WHERE follower_id = $1 AND following_id = $2 LIMIT 1',
+      [userId, quotedAuthorId]
+    );
+    const { rowCount: revFollow } = await dbQ(
+      'SELECT 1 FROM user_follows WHERE follower_id = $1 AND following_id = $2 LIMIT 1',
+      [quotedAuthorId, userId]
+    );
+    // Friction if neither direction has a follow relationship
+    quoteFriction = (fwdFollow === 0 && revFollow === 0);
+  }
+  if (quoteFriction) res.setHeader('X-Quote-Friction', 'true');
+
+  // Emit quote notification (fire-and-forget)
+  const NotificationEmitter = require('../../services/notificationEmitter');
+  const actorHandle = req.session.user.username || '';
+  NotificationEmitter.emitQuote(userId, quotedAuthorId, postId, post.id, actorHandle).catch(() => {});
+
+  return res.status(201).json({ success: true, post });
+}));
+
+// POST /api/webapp/social/posts/:postId/bookmark — toggle bookmark
+app.post('/api/webapp/social/posts/:postId/bookmark', requireSessionAuth, socialActionLimiter, asyncHandler(async (req, res) => {
+  const userId = req.session.user.id;
+  const postId = parseInt(req.params.postId, 10);
+  if (!Number.isFinite(postId) || postId <= 0) {
+    return res.status(400).json({ success: false, error: 'Invalid postId' });
+  }
+
+  const { query: dbQ } = require('../../config/postgres');
+  const { rows: postRows } = await dbQ(
+    'SELECT user_id FROM social_posts WHERE id = $1 AND is_deleted = false',
+    [postId]
+  );
+  if (!postRows.length) return res.status(404).json({ success: false, error: 'Post not found' });
+
+  const SocialPostService = require('../../services/socialPostService');
+  const result = await SocialPostService.toggleBookmark(userId, postId);
+
+  // Emit bookmark notification (fire-and-forget, suppressed for self-posts)
+  if (result.bookmarked && String(postRows[0].user_id) !== String(userId)) {
+    const NotificationEmitter = require('../../services/notificationEmitter');
+    const actorHandle = req.session.user.username || '';
+    NotificationEmitter.emitBookmark(userId, postRows[0].user_id, postId, actorHandle).catch(() => {});
+  }
+
+  return res.json({ success: true, bookmarked: result.bookmarked, bookmarks_count: result.bookmarks_count });
+}));
+
+// GET /api/webapp/social/posts/bookmarks — my bookmarked posts (cursor-paginated)
+// NOTE: must be registered BEFORE /:postId routes to avoid 'bookmarks' being
+// treated as a postId param.
+app.get('/api/webapp/social/posts/bookmarks', requireSessionAuth, asyncHandler(async (req, res) => {
+  const userId = req.session.user.id;
+  const cursor = req.query.cursor || null;
+  const limit = Math.min(parseInt(req.query.limit, 10) || 20, 50);
+  const tier = req.session.user.tier || 'free';
+  const isAdmin = ['admin', 'superadmin'].includes(req.session.user.role);
+
+  const SocialPostService = require('../../services/socialPostService');
+  const { posts, nextCursor } = await SocialPostService.getBookmarksFeed(userId, cursor, limit, tier, isAdmin);
+  return res.json({ success: true, posts, nextCursor });
+}));
+
+// POST /api/webapp/social/posts/:postId/pin — set pinned post (owner only)
+app.post('/api/webapp/social/posts/:postId/pin', requireSessionAuth, asyncHandler(async (req, res) => {
+  const userId = req.session.user.id;
+  const postId = parseInt(req.params.postId, 10);
+  if (!Number.isFinite(postId) || postId <= 0) {
+    return res.status(400).json({ success: false, error: 'Invalid postId' });
+  }
+  const SocialPostService = require('../../services/socialPostService');
+  try {
+    const result = await SocialPostService.setPinnedPost(userId, postId);
+    return res.json({ success: true, ...result });
+  } catch (err) {
+    if (err.code === 'POST_NOT_FOUND') {
+      return res.status(404).json({ success: false, error: 'Post not found or not yours' });
+    }
+    throw err;
+  }
+}));
+
+// DELETE /api/webapp/social/posts/pin — unset pinned post
+// NOTE: must be registered BEFORE /:postId routes
+app.delete('/api/webapp/social/posts/pin', requireSessionAuth, asyncHandler(async (req, res) => {
+  const userId = req.session.user.id;
+  const SocialPostService = require('../../services/socialPostService');
+  const result = await SocialPostService.unsetPinnedPost(userId);
+  return res.json({ success: true, ...result });
+}));
+
+// GET /api/webapp/social/hashtag/:tag/feed — posts for a hashtag (cursor-paginated)
+app.get('/api/webapp/social/hashtag/:tag/feed', requireSessionAuth, asyncHandler(async (req, res) => {
+  const userId = req.session.user.id;
+  const tag = (req.params.tag || '').toLowerCase().replace(/^#/, '').trim();
+  if (!tag || !/^[a-z0-9_]{2,32}$/.test(tag)) {
+    return res.status(400).json({ success: false, error: 'Invalid hashtag' });
+  }
+  const cursor = req.query.cursor || null;
+  const limit = Math.min(parseInt(req.query.limit, 10) || 20, 50);
+  const tier = req.session.user.tier || 'free';
+  const isAdmin = ['admin', 'superadmin'].includes(req.session.user.role);
+
+  const { query: dbQ } = require('../../config/postgres');
+  const blockedResult = await dbQ(
+    'SELECT blocked_user_id FROM blocked_users WHERE user_id = $1',
+    [userId]
+  );
+  const blockedIds = blockedResult.rows.map(r => r.blocked_user_id);
+
+  const SocialPostService = require('../../services/socialPostService');
+  const { posts, nextCursor } = await SocialPostService.getHashtagPostsFeed(
+    tag, userId, cursor, limit, tier, isAdmin, blockedIds
+  );
+  return res.json({ success: true, tag, posts, nextCursor });
+}));
+
+// GET /api/webapp/social/hashtag/suggest — autocomplete hashtags by prefix
+// Rate-limited at 60/min (use a dedicated limiter)
+const hashtagSuggestLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.session?.user?.id || req.ip,
+  handler: (_req, res) => res.status(429).json({ success: false, error: 'Too many requests' }),
+});
+app.get('/api/webapp/social/hashtag/suggest', requireSessionAuth, hashtagSuggestLimiter, asyncHandler(async (req, res) => {
+  const prefix = ((req.query.q || '').toString().toLowerCase().replace(/^#/, '').trim()).slice(0, 32);
+  const limit = Math.min(parseInt(req.query.limit, 10) || 10, 20);
+  if (prefix.length < 1) {
+    return res.json({ success: true, suggestions: [] });
+  }
+  const { query: dbQ } = require('../../config/postgres');
+  const { rows } = await dbQ(
+    `SELECT tag, COUNT(*)::int AS post_count
+       FROM social_post_hashtags
+      WHERE tag LIKE $1 || '%'
+      GROUP BY tag
+      ORDER BY post_count DESC
+      LIMIT $2`,
+    [prefix, limit]
+  );
+  return res.json({ success: true, suggestions: rows });
+}));
+
+// POST /api/webapp/social/compose-assist — LLM copy coach (10/min, 100/day)
+const composeAssistLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.session?.user?.id || req.ip,
+  handler: (_req, res) => res.status(429).json({ success: false, error: 'Too many requests' }),
+});
+app.post('/api/webapp/social/compose-assist', requireSessionAuth, composeAssistLimiter, asyncHandler(async (req, res) => {
+  const userId = req.session.user.id;
+  const { raw_idea, post_goal, media_attached, audience_language, regenerate } = req.body;
+
+  if (!raw_idea || typeof raw_idea !== 'string' || !raw_idea.trim()) {
+    return res.status(400).json({ success: false, error: 'raw_idea is required' });
+  }
+  if (raw_idea.length > 2000) {
+    return res.status(400).json({ success: false, error: 'raw_idea too long (max 2000 chars)' });
+  }
+
+  // Content moderation on the raw idea
+  try {
+    const { assertCleanText } = require('../../services/contentModerationFilter');
+    assertCleanText(raw_idea, 'raw_idea');
+  } catch (err) {
+    if (err.code === 'FORBIDDEN_CONTENT') {
+      return res.status(400).json({ error: err.message, code: err.code, field: err.field, categories: err.categories });
+    }
+    throw err;
+  }
+
+  const { assist } = require('../../services/socialComposeAssistService');
+  const result = await assist(userId, {
+    rawIdea: raw_idea.trim(),
+    postGoal: post_goal || null,
+    mediaAttached: !!media_attached,
+    audienceLanguage: audience_language || null,
+    regenerate: regenerate === true,
+  });
+
+  if (result.error === 'rate_limited') {
+    return res.status(429).json({ success: false, ...result });
+  }
+  if (result.error === 'content_blocked') {
+    return res.status(400).json({ success: false, ...result });
+  }
+  if (result.error) {
+    return res.status(503).json({ success: false, ...result });
+  }
+
+  return res.json({ success: true, ...result });
+}));
 
 // ── User Hangout Activity (for profiles) ────────────────────────────────────
 app.get('/api/webapp/social/hangout-activity/:userId', requireSessionAuth, asyncHandler(socialController.getUserHangoutActivity));

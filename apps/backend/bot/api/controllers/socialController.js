@@ -344,6 +344,14 @@ const createPost = async (req, res) => {
   const maxLen = isHypePost ? 280 : (replyToId ? 500 : 5000);
   if (content.length > maxLen) return res.status(400).json({ error: `Content too long (max ${maxLen} chars)` });
 
+  // Reply control check — enforce if replying to a post that has reply_control set
+  if (replyToId) {
+    const blockedControl = await SocialPostService.checkReplyControl(replyToId, user.id);
+    if (blockedControl) {
+      return res.status(403).json({ error: 'reply_not_allowed', control: blockedControl });
+    }
+  }
+
   try {
     // 2257 compliance gate — enforce for active creators
     if (user.creator_status === 'active') {
@@ -582,6 +590,8 @@ const createPost = async (req, res) => {
       if (taggedPerformerIds.length) {
         mentionService.createPostTags(post.id, user.id, taggedPerformerIds).catch(() => {});
       }
+      // Hashtag extraction — fire-and-forget
+      SocialPostService.extractAndStoreHashtags(post.id, content.trim());
     });
 
     const io = req.app.get('io');
@@ -1368,6 +1378,8 @@ const createPostWithMedia = async (req, res) => {
       if (taggedPerformerIds.length) {
         mentionService.createPostTags(post.id, user.id, taggedPerformerIds).catch(() => {});
       }
+      // Hashtag extraction — fire-and-forget
+      if (content) SocialPostService.extractAndStoreHashtags(post.id, content.toString().trim());
     });
 
     const io = req.app.get('io');
@@ -1784,6 +1796,8 @@ const createPostWithMultiMedia = async (req, res) => {
       if (taggedPerformerIds.length) {
         mentionService.createPostTags(post.id, user.id, taggedPerformerIds).catch(() => {});
       }
+      // Hashtag extraction — fire-and-forget
+      if (content) SocialPostService.extractAndStoreHashtags(post.id, content.toString().trim());
     });
 
     const io = req.app.get('io');

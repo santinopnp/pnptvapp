@@ -55,6 +55,9 @@ const TYPE_TO_PREF = {
   mention_chat: 'mentions',
   main_stage_join: 'live_events',
   new_post: 'follows',
+  repost: 'social',
+  quote: 'social',
+  bookmark: 'social',
 };
 
 // TTL constants (seconds)
@@ -73,7 +76,7 @@ const SKIP_BOT_TYPES = new Set(['group_message']);
 
 // Notification types that originate from a specific user action toward another user.
 // These must be suppressed when a block relationship exists between actor and target.
-const USER_TO_USER_TYPES = new Set(['follow', 'like', 'reply', 'dm', 'hangout_call', 'hangout_creator_joined', 'group_join', 'reaction_post', 'reaction_chat', 'mention_post', 'mention_chat']);
+const USER_TO_USER_TYPES = new Set(['follow', 'like', 'reply', 'dm', 'hangout_call', 'hangout_creator_joined', 'group_join', 'reaction_post', 'reaction_chat', 'mention_post', 'mention_chat', 'repost', 'quote', 'bookmark']);
 
 // Allowed values per chk_notifications_category PostgreSQL constraint
 const VALID_CATEGORIES = new Set(['social', 'messaging', 'hangouts', 'commerce', 'system', 'announcements']);
@@ -165,6 +168,9 @@ function buildNotificationUrl(type, entityType, entityId) {
     case 'reply':
     case 'reaction_post':
     case 'mention_post':
+    case 'repost':
+    case 'quote':
+    case 'bookmark':
       return entityId ? `/social/post/${entityId}` : '/social';
     case 'reaction_chat':
     case 'mention_chat':
@@ -472,6 +478,75 @@ const NotificationEmitter = {
         logger.warn('NotificationEmitter: bot delivery error', { targetUserId, type, error: err.message });
       }
     }
+  },
+
+  // ── Social feed helpers ────────────────────────────────────────────────────
+
+  /**
+   * Emit a 'repost' notification to the original post's author.
+   * @param {string|number} actorId     - User who reposted
+   * @param {string|number} authorId    - Author of the original post
+   * @param {string|number} postId      - ID of the original post
+   * @param {string}        actorHandle - @username of the actor (for message text)
+   */
+  async emitRepost(actorId, authorId, postId, actorHandle) {
+    if (!actorId || !authorId || !postId) return;
+    if (String(actorId) === String(authorId)) return;
+    const handle = actorHandle ? `@${actorHandle}` : 'Someone';
+    return this.emit({
+      type: 'repost',
+      category: 'social',
+      actorId: String(actorId),
+      targetUserId: String(authorId),
+      entityType: 'post',
+      entityId: String(postId),
+      message: `${handle} reposted your post`,
+      metadata: { postId: String(postId) },
+    });
+  },
+
+  /**
+   * Emit a 'quote' notification to the quoted post's author.
+   * @param {string|number} actorId       - User who created the quote-post
+   * @param {string|number} authorId      - Author of the quoted post
+   * @param {string|number} quotedPostId  - ID of the post being quoted
+   * @param {string|number} quotePostId   - ID of the new quote-post
+   * @param {string}        actorHandle   - @username of the actor
+   */
+  async emitQuote(actorId, authorId, quotedPostId, quotePostId, actorHandle) {
+    if (!actorId || !authorId || !quotedPostId) return;
+    if (String(actorId) === String(authorId)) return;
+    const handle = actorHandle ? `@${actorHandle}` : 'Someone';
+    return this.emit({
+      type: 'quote',
+      category: 'social',
+      actorId: String(actorId),
+      targetUserId: String(authorId),
+      entityType: 'post',
+      entityId: String(quotePostId),
+      message: `${handle} quoted your post`,
+      metadata: { quotedPostId: String(quotedPostId), quotePostId: String(quotePostId) },
+    });
+  },
+
+  /**
+   * Emit a 'bookmark' notification to the post's author (opt-in — many
+   * platforms suppress this; we emit it but preference key is 'social').
+   */
+  async emitBookmark(actorId, authorId, postId, actorHandle) {
+    if (!actorId || !authorId || !postId) return;
+    if (String(actorId) === String(authorId)) return;
+    const handle = actorHandle ? `@${actorHandle}` : 'Someone';
+    return this.emit({
+      type: 'bookmark',
+      category: 'social',
+      actorId: String(actorId),
+      targetUserId: String(authorId),
+      entityType: 'post',
+      entityId: String(postId),
+      message: `${handle} bookmarked your post`,
+      metadata: { postId: String(postId) },
+    });
   },
 
   /**

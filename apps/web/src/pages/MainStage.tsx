@@ -8,7 +8,7 @@ import {
   useRoomContext,
   useTracks,
 } from "@livekit/components-react";
-import { ConnectionState, RoomEvent, Track } from "livekit-client";
+import { ConnectionState, MediaDeviceFailure, RoomEvent, Track } from "livekit-client";
 import { useMainStage, type MainStageState } from "@/hooks/useMainStage";
 import { useMainStageRoom } from "@/components/mainstage/MainStageProvider";
 import { getMainStageJoinCheck, acceptMainStageConsents, getWalletBalance, getMainStageViewerToken, getMainStageFreeViewerToken, getMainStageState, voteSkipMainStage, playNextMainStage, getHangoutGroup, getMainStagePin, getPublicCreatorProfile, translateText, ApiError, type MainStageJoinCheck, type MainStagePin, type TopicLite, type MainStageOnStageEntry, type CreatorPublicProfile } from "@/lib/api";
@@ -2305,16 +2305,16 @@ export default function MainStage() {
                 videoCaptureDefaults: { facingMode: "user" },
               }}
               className="flex-1 flex flex-col min-h-0"
-              onMediaDeviceFailure={(failure) => {
-                const msg = failure?.toString() || "Camera failed";
-                if (/NotAllowed|Permission/i.test(msg)) {
-                  setCamError(t.live.mainStageErrCameraPermission);
-                } else if (/NotFound|Device/i.test(msg)) {
-                  setCamError(t.live.mainStageErrNoCamera);
-                } else if (/NotReadable|Overconstrained/i.test(msg)) {
-                  setCamError(t.live.mainStageErrCameraInUse);
+              onMediaDeviceFailure={(failure, kind) => {
+                const isMic = kind === "audioinput";
+                if (failure === MediaDeviceFailure.PermissionDenied) {
+                  setCamError(isMic ? t.live.mainStageErrMicPermission : t.live.mainStageErrCameraPermission);
+                } else if (failure === MediaDeviceFailure.NotFound) {
+                  setCamError(isMic ? t.live.mainStageErrNoMic : t.live.mainStageErrNoCamera);
+                } else if (failure === MediaDeviceFailure.DeviceInUse) {
+                  setCamError(isMic ? t.live.mainStageErrMicInUse : t.live.mainStageErrCameraInUse);
                 } else {
-                  setCamError(`Camera error: ${msg}`);
+                  setCamError(isMic ? t.live.mainStageErrMicPermission : `Camera error: ${failure ?? "unknown"}`);
                 }
               }}
             >
@@ -2459,16 +2459,16 @@ export default function MainStage() {
               serverUrl={livekitUrl}
               token=""
               className="flex-1 flex flex-col min-h-0"
-              onMediaDeviceFailure={(failure) => {
-                const msg = failure?.toString() || "Camera failed";
-                if (/NotAllowed|Permission/i.test(msg)) {
-                  setCamError(t.live.mainStageErrCameraPermission);
-                } else if (/NotFound|Device/i.test(msg)) {
-                  setCamError(t.live.mainStageErrNoCamera);
-                } else if (/NotReadable|Overconstrained/i.test(msg)) {
-                  setCamError(t.live.mainStageErrCameraInUse);
+              onMediaDeviceFailure={(failure, kind) => {
+                const isMic = kind === "audioinput";
+                if (failure === MediaDeviceFailure.PermissionDenied) {
+                  setCamError(isMic ? t.live.mainStageErrMicPermission : t.live.mainStageErrCameraPermission);
+                } else if (failure === MediaDeviceFailure.NotFound) {
+                  setCamError(isMic ? t.live.mainStageErrNoMic : t.live.mainStageErrNoCamera);
+                } else if (failure === MediaDeviceFailure.DeviceInUse) {
+                  setCamError(isMic ? t.live.mainStageErrMicInUse : t.live.mainStageErrCameraInUse);
                 } else {
-                  setCamError(`Camera error: ${msg}`);
+                  setCamError(isMic ? t.live.mainStageErrMicPermission : `Camera error: ${failure ?? "unknown"}`);
                 }
               }}
             >

@@ -341,7 +341,8 @@ export default function SocialFeedTabs({
   const FEED_STORAGE_KEY = "pnptv:feed:tab";
   const FEED_ORDER_STORAGE_KEY = "pnptv:feed:tabOrder";
   type TabKey = Exclude<FeedFilter, "all">;
-  const DEFAULT_TAB_ORDER: TabKey[] = ["latest", "subscribed", "following", "new", "nearby", "hot", "slam"];
+  // "For You" (hot) and "Following" are the primary pair — seed them first.
+  const DEFAULT_TAB_ORDER: TabKey[] = ["hot", "following", "latest", "subscribed", "new", "nearby", "slam"];
   const isTabKey = (v: unknown): v is TabKey =>
     v === "latest" || v === "subscribed" || v === "following" || v === "new" || v === "nearby" || v === "hot" || v === "slam";
   const [feedMode, setFeedMode] = useState<TabKey>(() => {
@@ -542,13 +543,17 @@ export default function SocialFeedTabs({
 
   // ── Real-time socket events ─────────────────────────────────────────────────
   const [hasNewPosts, setHasNewPosts] = useState(false);
+  const [newPostCount, setNewPostCount] = useState(0);
 
   useEffect(() => {
     // Skip real-time updates for hashtag/hangout filtered feeds (too specific)
     if (hashtagFilter || hangoutGroupId) return;
     const socket = connectSocket();
 
-    const onNewPost = () => setHasNewPosts(true);
+    const onNewPost = () => {
+      setHasNewPosts(true);
+      setNewPostCount(c => c + 1);
+    };
     const onReaction = (data: { postId: number; reactions: any[] }) => {
       setPosts((prev) => prev.map((p) => p.id === data.postId ? { ...p, reactions: data.reactions } : p));
     };
@@ -828,13 +833,14 @@ export default function SocialFeedTabs({
           >
             {tabOrder.map((key) => {
               const label =
-                key === "latest"     ? t.tabLatest     :
-                key === "subscribed" ? t.tabSubscribed :
-                key === "following"  ? t.tabFollowing  :
-                key === "new"        ? t.tabNew        :
-                key === "nearby"     ? t.tabNearby     :
-                key === "slam"       ? "💉 Slam"       :
-                                       t.tabHot;
+                key === "hot"        ? "For You"        :
+                key === "following"  ? t.tabFollowing   :
+                key === "latest"     ? t.tabLatest      :
+                key === "subscribed" ? t.tabSubscribed  :
+                key === "new"        ? t.tabNew         :
+                key === "nearby"     ? t.tabNearby      :
+                key === "slam"       ? "💉 Slam"        :
+                                       key;
               const isActive = feedMode === key;
               return (
                 <button
@@ -954,17 +960,24 @@ export default function SocialFeedTabs({
         </div>
       )}
 
-      {/* New posts pill */}
+      {/* New posts pill — shows count of buffered new posts, tap to prepend */}
       {hasNewPosts && !isLoading && (
         <button
-          onClick={() => { setHasNewPosts(false); setPosts([]); setNextCursor(null); setIsLoading(true); loadFeed(); }}
+          onClick={() => {
+            setHasNewPosts(false);
+            setNewPostCount(0);
+            setPosts([]);
+            setNextCursor(null);
+            setIsLoading(true);
+            loadFeed();
+          }}
           className="w-full mb-3 py-2 rounded-xl text-sm font-semibold text-white flex items-center justify-center gap-2 transition-all active:scale-95"
           style={{ background: "linear-gradient(135deg,#D4007A,#E69138)" }}
         >
           <svg className="w-4 h-4 animate-bounce" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M5 10l7-7m0 0l7 7m-7-7v18" />
           </svg>
-          New posts — tap to refresh
+          {newPostCount > 1 ? `${newPostCount} new posts` : 'New post'} — tap to refresh
         </button>
       )}
 

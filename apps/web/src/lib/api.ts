@@ -1532,6 +1532,15 @@ export interface SocialPostItem {
   rent_price_rush?: number | null;
   buy_price_rush?: number | null;
   channel_pass_enabled?: boolean | null;
+  // X-parity fields (added 2026-10-18)
+  bookmarks_count?: number;
+  is_bookmarked?: boolean;
+  is_reposted_by_me?: boolean;
+  quoted_post?: SocialPostItem | null;
+  quoted_post_id?: string | null;
+  reply_control?: 'everyone' | 'following' | 'mentioned';
+  media_alt_texts?: string[];
+  is_pinned?: boolean;
 }
 
 export interface PostCardSnapshot {
@@ -2766,6 +2775,71 @@ export function searchCreators(
  * liked_by_me is always false; use getSocialFeedPosts on the Social page for
  * accurate per-viewer like state.
  */
+
+// ── Social X-parity endpoints (added 2026-10-18) ──────────────────────────────
+
+export async function togglePostRepost(postId: string): Promise<{ reposted: boolean; reposts_count: number }> {
+  return request(`/api/webapp/social/posts/${postId}/repost`, { method: 'POST' });
+}
+
+export type ComposeAssistVariant = {
+  label: string;
+  hook: string;
+  body: string;
+  cta: string;
+  full: string;
+  hashtags: string[];
+  emoji_rationale: string;
+};
+export type ComposeAssistResponse =
+  | { variants: ComposeAssistVariant[]; voice_match_notes: string; safety_notes: string }
+  | { error: string; reason: string };
+
+export async function createQuotePost(
+  postId: string,
+  body: { content: string; media_urls?: string[]; category?: string; reply_control?: 'everyone' | 'following' | 'mentioned' },
+): Promise<SocialPostItem & { _quoteFriction?: boolean }> {
+  return request(`/api/webapp/social/posts/${postId}/quote`, { method: 'POST', body });
+}
+
+export async function togglePostBookmark(postId: string): Promise<{ bookmarked: boolean; bookmarks_count: number }> {
+  return request(`/api/webapp/social/posts/${postId}/bookmark`, { method: 'POST' });
+}
+
+export async function getMyBookmarks(cursor?: string, limit = 20): Promise<{ posts: SocialPostItem[]; next_cursor: string | null }> {
+  const params = new URLSearchParams();
+  if (cursor) params.set('cursor', cursor);
+  params.set('limit', String(limit));
+  return request(`/api/webapp/social/bookmarks?${params}`);
+}
+
+export async function pinPost(postId: string): Promise<{ pinned_post_id: string }> {
+  return request(`/api/webapp/social/posts/${postId}/pin`, { method: 'POST' });
+}
+
+export async function unpinPost(): Promise<{ pinned_post_id: null }> {
+  return request('/api/webapp/social/unpin', { method: 'POST' });
+}
+
+export async function getHashtagFeed(tag: string, cursor?: string): Promise<{ posts: SocialPostItem[]; next_cursor: string | null }> {
+  const params = new URLSearchParams({ tag });
+  if (cursor) params.set('cursor', cursor);
+  return request(`/api/webapp/social/hashtag?${params}`);
+}
+
+export async function suggestHashtags(prefix: string): Promise<{ tag: string; post_count: number }[]> {
+  return request(`/api/webapp/social/hashtags/suggest?prefix=${encodeURIComponent(prefix)}`);
+}
+
+export async function composeAssist(body: {
+  raw_idea: string;
+  post_goal: string;
+  media_attached: 'none' | 'image' | 'video' | 'carousel';
+  audience_language: 'en' | 'es';
+  regenerate?: boolean;
+}): Promise<ComposeAssistResponse> {
+  return request('/api/webapp/social/compose-assist', { method: 'POST', body });
+}
 
 // Hangout Groups
 export interface HangoutGroup {

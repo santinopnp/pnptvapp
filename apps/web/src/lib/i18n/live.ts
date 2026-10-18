@@ -286,6 +286,10 @@ const strings = {
     mainStageErrCameraPermission: "Camera permission denied. Enable it in your browser settings and tap Go live again.",
     mainStageErrNoCamera: "No camera detected. Make sure a camera is connected.",
     mainStageErrCameraInUse: "Camera is in use by another app. Close it and retry.",
+    // Main Stage — microphone errors
+    mainStageErrMicPermission: "Microphone permission denied. Enable it in your browser settings to unmute.",
+    mainStageErrNoMic: "No microphone detected. Connect one to use audio.",
+    mainStageErrMicInUse: "Microphone is in use by another app. Close it and retry.",
 
     // Main Stage — toolbar buttons (aria / title)
     mainStageAriaFullscreen: "Enter fullscreen",
@@ -712,6 +716,10 @@ const strings = {
     mainStageErrCameraPermission: "Permiso de cámara denegado. Actívalo en la configuración de tu navegador y volvé a tocar Salir al aire.",
     mainStageErrNoCamera: "No se detectó cámara. Asegurate de tener una conectada.",
     mainStageErrCameraInUse: "La cámara está en uso por otra app. Cerrala y volvé a intentar.",
+    // Main Stage — microphone errors
+    mainStageErrMicPermission: "Permiso de micrófono denegado. Actívalo en la configuración de tu navegador para dessilenciarte.",
+    mainStageErrNoMic: "No se detectó micrófono. Conectá uno para usar el audio.",
+    mainStageErrMicInUse: "El micrófono está en uso por otra app. Cerrala y volvé a intentar.",
 
     // Main Stage — toolbar buttons (aria / title)
     mainStageAriaFullscreen: "Pantalla completa",

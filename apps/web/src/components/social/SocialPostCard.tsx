@@ -1,5 +1,34 @@
 import React, { useState, useCallback, useRef, useEffect, lazy, Suspense } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
+
+// ── Haptics (silently no-ops on web) ─────────────────────────────────────────
+async function hapticImpact(style: 'Light' | 'Medium' | 'Heavy' = 'Light') {
+  try {
+    const { Haptics, ImpactStyle } = await import('@capacitor/haptics');
+    await Haptics.impact({ style: ImpactStyle[style] });
+  } catch { /* no-op on web */ }
+}
+
+// ── Quote-friction localStorage key ─────────────────────────────────────────
+const QUOTE_FRICTION_KEY = 'pnptv:quote_friction_dismissed';
+
+// ── AnimatedCounter — brief scale pulse when the numeric value changes ───────
+function AnimatedCounter({ value }: { value: number }) {
+  return (
+    <AnimatePresence mode="popLayout">
+      <motion.span
+        key={value}
+        initial={{ scale: 1 }}
+        animate={{ scale: [1, 1.2, 1] }}
+        transition={{ duration: 0.18, times: [0, 0.5, 1] }}
+        className="tabular-nums"
+      >
+        {value}
+      </motion.span>
+    </AnimatePresence>
+  );
+}
 
 const PRIME_PLANS = [
   { id: "prime-week-pass-7d",      label: "PRIME Week Pass",        duration: "7 days",       price: "15",    isRecurring: false, recommended: false },
@@ -23,6 +52,7 @@ import FreeTierOverlay from "@/components/FreeTierOverlay";
 import { UserAvatar } from "@/components/UserAvatar";
 import { VideoPlayer } from "@/components/VideoPlayer";
 import { MediaLightbox } from "@/components/hangouts/MediaLightbox";
+import { SocialMediaLightbox } from "@/components/social/MediaLightbox";
 // NP inline checkout retired 2026-08-09; PRIME CTAs deep-link to /subscribe.
 import { CryptoOnboardingWizard } from "@/components/payments/CryptoOnboardingWizard";
 import { NpAppPickerSheet } from "@/components/payments/NowPaymentsWaitingPanel";
@@ -34,6 +64,11 @@ import {
   createReply,
   togglePostLike,
   togglePostHype,
+  togglePostRepost,
+  togglePostBookmark,
+  createQuotePost,
+  pinPost,
+  unpinPost,
   editSocialPost,
   createUserReport,
   searchCreators,
@@ -431,6 +466,28 @@ export default function SocialPostCard({
   const [hypeError, setHypeError] = useState<string | null>(null);
   const [hypeQuota, setHypeQuota] = useState<{ remaining: number; limit: number; resetsAt: string | null } | null>(null);
   const [showPromoModal, setShowPromoModal] = useState(false);
+  // Repost / bookmark / quote / pin state
+  const [isReposted, setIsReposted] = useState<boolean>(Boolean(post.is_reposted_by_me));
+  const [repostCount, setRepostCount] = useState<number>(Math.max(0, post.reposts_count || 0));
+  const [repostInFlight, setRepostInFlight] = useState(false);
+  const [isBookmarked, setIsBookmarked] = useState<boolean>(Boolean(post.is_bookmarked));
+  const [bookmarkCount, setBookmarkCount] = useState<number>(Math.max(0, post.bookmarks_count || 0));
+  const [bookmarkInFlight, setBookmarkInFlight] = useState(false);
+  const [showRepostPopover, setShowRepostPopover] = useState(false);
+  const [showQuoteComposer, setShowQuoteComposer] = useState(false);
+  const [quoteText, setQuoteText] = useState('');
+  const [quoteSending, setQuoteSending] = useState(false);
+  const [quoteFrictionShown, setQuoteFrictionShown] = useState(false);
+  const repostPopoverRef = useRef<HTMLDivElement>(null);
+  const repostLongPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Double-tap-to-like on media
+  const lastMediaTapRef = useRef(0);
+  const [heartBurst, setHeartBurst] = useState(false);
+  // Pin state (derived from post, locally optimistic)
+  const [isPinned, setIsPinned] = useState<boolean>(Boolean(post.is_pinned));
+  const [pinInFlight, setPinInFlight] = useState(false);
+  // Social lightbox (index-aware, alt-text aware)
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [promoModalPlanId, setPromoModalPlanId] = useState<string | null>(null);
   const [npPickerPlanId, setNpPickerPlanId] = useState<string | null>(null);
   const hypeInFlight = useRef(false);
@@ -743,6 +800,109 @@ export default function SocialPostCard({
   }, [showMenu]);
 
   useEffect(() => {
+    if (!showRepostPopover) return;
+    const handler = (e: MouseEvent) => {
+      if (repostPopoverRef.current && !repostPopoverRef.current.contains(e.target as Node)) {
+        setShowRepostPopover(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showRepostPopover]);
+
+  const handleRepost = useCallback(async () => {
+    if (repostInFlight) return;
+    setRepostInFlight(true);
+    const prevReposted = isReposted;
+    const prevCount = repostCount;
+    setIsReposted(!isReposted);
+    setRepostCount(c => Math.max(0, c + (isReposted ? -1 : 1)));
+    void hapticImpact('Light');
+    try {
+      const res = await togglePostRepost(String(post.id));
+      setIsReposted(res.reposted);
+      setRepostCount(Math.max(0, res.reposts_count));
+    } catch {
+      setIsReposted(prevReposted);
+      setRepostCount(prevCount);
+    } finally {
+      setRepostInFlight(false);
+    }
+  }, [repostInFlight, isReposted, repostCount, post.id]);
+
+  const handleBookmark = useCallback(async () => {
+    if (bookmarkInFlight) return;
+    setBookmarkInFlight(true);
+    const prevBookmarked = isBookmarked;
+    const prevCount = bookmarkCount;
+    setIsBookmarked(!isBookmarked);
+    setBookmarkCount(c => Math.max(0, c + (isBookmarked ? -1 : 1)));
+    void hapticImpact('Light');
+    try {
+      const res = await togglePostBookmark(String(post.id));
+      setIsBookmarked(res.bookmarked);
+      setBookmarkCount(Math.max(0, res.bookmarks_count));
+    } catch {
+      setIsBookmarked(prevBookmarked);
+      setBookmarkCount(prevCount);
+    } finally {
+      setBookmarkInFlight(false);
+    }
+  }, [bookmarkInFlight, isBookmarked, bookmarkCount, post.id]);
+
+  const handleSendQuote = useCallback(async () => {
+    const text = quoteText.trim();
+    if (!text || quoteSending) return;
+    setQuoteSending(true);
+    try {
+      const res = await createQuotePost(String(post.id), { content: text });
+      if (res._quoteFriction) {
+        try {
+          const dismissed = localStorage.getItem(QUOTE_FRICTION_KEY) === '1';
+          if (!dismissed && !quoteFrictionShown) {
+            setQuoteFrictionShown(true);
+            setTimeout(() => setQuoteFrictionShown(false), 5000);
+            try { localStorage.setItem(QUOTE_FRICTION_KEY, '1'); } catch { /* ignore */ }
+          }
+        } catch { /* ignore */ }
+      }
+      setShowQuoteComposer(false);
+      setQuoteText('');
+    } catch { /* silent */ } finally {
+      setQuoteSending(false);
+    }
+  }, [quoteText, quoteSending, post.id, quoteFrictionShown]);
+
+  const handlePinToggle = useCallback(async () => {
+    if (pinInFlight) return;
+    setPinInFlight(true);
+    const prevPinned = isPinned;
+    setIsPinned(!isPinned);
+    try {
+      if (isPinned) {
+        await unpinPost();
+      } else {
+        await pinPost(String(post.id));
+      }
+    } catch {
+      setIsPinned(prevPinned);
+    } finally {
+      setPinInFlight(false);
+    }
+  }, [pinInFlight, isPinned, post.id]);
+
+  const handleMediaDoubleTap = useCallback(() => {
+    const now = Date.now();
+    if (now - lastMediaTapRef.current < 300 && !post.liked_by_me) {
+      onLike(post.id);
+      setHeartBurst(true);
+      void hapticImpact('Medium');
+      setTimeout(() => setHeartBurst(false), 800);
+    }
+    lastMediaTapRef.current = now;
+  }, [post.liked_by_me, post.id, onLike]);
+
+  useEffect(() => {
     if (!isEditing || !editTagQuery.trim()) { setEditTagResults([]); return; }
     setEditTagSearching(true);
     const timer = setTimeout(async () => {
@@ -887,6 +1047,20 @@ export default function SocialPostCard({
             <span className="text-white/70 font-medium">{post.author_first_name || post.author_username || 'Someone'}</span>{' '}
             reposted{post.repost_author_username && <> from <span className="text-white/70">@{post.repost_author_username}</span></>}
           </span>
+        </div>
+      )}
+
+      {/* Pin indicator — shown on profile wall posts that the author has pinned */}
+      {isPinned && (
+        <div
+          className="absolute top-2 right-2 flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full"
+          style={{ background: "rgba(255,255,255,0.08)", color: "#A1A1AA", border: "1px solid rgba(255,255,255,0.1)", zIndex: 1 }}
+          aria-label="Pinned post"
+        >
+          <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z" />
+          </svg>
+          Pinned
         </div>
       )}
 
@@ -1090,6 +1264,19 @@ export default function SocialPostCard({
                           <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125" />
                         </svg>
                         Edit
+                      </button>
+                    )}
+                    {isOwn && (
+                      <button
+                        className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm hover:bg-white/10 transition-colors text-left"
+                        style={{ color: "#A78BFA" }}
+                        onClick={() => { setShowMenu(false); void handlePinToggle(); }}
+                        disabled={pinInFlight}
+                      >
+                        <svg className="w-4 h-4 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24">
+                          <path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z" />
+                        </svg>
+                        {pinInFlight ? '…' : isPinned ? 'Unpin from profile' : 'Pin to profile'}
                       </button>
                     )}
                     {isOwn && user?.creator_status === "active" && !showChannelPicker && (
@@ -1776,21 +1963,47 @@ export default function SocialPostCard({
                     const carouselUrls = extractCarouselUrls(post.media_urls);
                     const showWatermark = !!(post.author_username && post.author_creator_status === "active");
                     if (carouselUrls.length > 1) {
-                      return <MediaCarouselImages urls={carouselUrls} showWatermark={showWatermark} onImageClick={(url) => setLightboxSrc(url)} />;
+                      return <MediaCarouselImages urls={carouselUrls} showWatermark={showWatermark} onImageClick={(url) => { const idx = carouselUrls.indexOf(url); setLightboxIndex(idx >= 0 ? idx : 0); }} />;
                     }
                     return (
                       <div style={{ position: "relative" }}>
-                        <img
-                          src={post.media_url}
-                          alt="Post image"
-                          className="w-full rounded-lg object-cover"
-                          loading="lazy"
-                          onClick={(e) => { e.stopPropagation(); if (post.media_url) setLightboxSrc(post.media_url); }}
-                          style={{ cursor: "zoom-in", aspectRatio: "4 / 5" }}
-                          onError={(e) => {
-                            (e.target as HTMLImageElement).parentElement!.style.display = "none";
+                        <div
+                          className="relative"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleMediaDoubleTap();
+                            if (Date.now() - lastMediaTapRef.current > 300) {
+                              // Single tap — open lightbox
+                              const urls = extractCarouselUrls(post.media_urls);
+                              const list = urls.length > 0 ? urls : (post.media_url ? [post.media_url] : []);
+                              if (list.length > 0) setLightboxIndex(0);
+                            }
                           }}
-                        />
+                        >
+                          <img
+                            src={post.media_url}
+                            alt={post.media_alt_texts?.[0] ?? "Post image"}
+                            className="w-full rounded-lg object-cover"
+                            loading="lazy"
+                            style={{ cursor: "zoom-in", aspectRatio: "4 / 5" }}
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).parentElement!.style.display = "none";
+                            }}
+                          />
+                          {/* Double-tap heart burst */}
+                          {heartBurst && (
+                            <motion.div
+                              className="absolute inset-0 flex items-center justify-center pointer-events-none"
+                              initial={{ opacity: 0, scale: 0.5 }}
+                              animate={{ opacity: [0, 1, 1, 0], scale: [0.5, 1.3, 1.1, 1.5] }}
+                              transition={{ duration: 0.7, times: [0, 0.2, 0.5, 1] }}
+                            >
+                              <svg className="w-20 h-20 drop-shadow-lg" fill="#D4007A" viewBox="0 0 24 24">
+                                <path d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12z" />
+                              </svg>
+                            </motion.div>
+                          )}
+                        </div>
                         {showWatermark && (
                           <img
                             src="/logo-nav.png"
@@ -1978,15 +2191,106 @@ export default function SocialPostCard({
           {/* Actions bar — hidden on synthetic carousel posts (no real post to like) */}
           {!post.is_carousel && (
           <div
-            className="flex items-center gap-3 mt-3 pt-2.5 flex-wrap border-t border-white/5"
-            style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}
+            className="mt-3 pt-2.5 border-t border-white/5"
             onClick={(e) => e.stopPropagation()}
           >
+            {/* Reply-control chip — shown when post restricts who can reply */}
+            {post.reply_control && post.reply_control !== 'everyone' && (
+              <div className="mb-2 flex items-center gap-1 text-[10px] text-white/40">
+                <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+                </svg>
+                <span>
+                  {post.reply_control === 'following' ? 'People the author follows can reply' : 'Mentioned people can reply'}
+                </span>
+              </div>
+            )}
+            <div className="flex items-center gap-3 flex-wrap" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+            {/* Reply */}
+            <button
+              onClick={toggleReplies}
+              disabled={!!(post.reply_control && post.reply_control !== 'everyone' && !isOwn)}
+              className="flex items-center gap-1.5 text-xs hover:text-blue-400 transition-colors disabled:opacity-40 disabled:cursor-not-allowed min-h-[44px] min-w-[44px]"
+              style={showReplies ? { color: "#60A5FA" } : undefined}
+              aria-label="Replies"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 20.25c4.97 0 9-3.694 9-8.25s-4.03-8.25-9-8.25S3 7.444 3 12c0 2.104.859 4.023 2.273 5.48.432.447.74 1.04.586 1.641a4.483 4.483 0 01-.923 1.785A5.969 5.969 0 006 21c1.282 0 2.47-.402 3.445-1.087.81.22 1.668.337 2.555.337z" />
+              </svg>
+              {localReplyCount > 0 && <AnimatedCounter value={localReplyCount} />}
+            </button>
+
+            {/* Repost — tap to repost, long-press for popover with Quote option */}
+            <div className="relative" ref={repostPopoverRef}>
+              <button
+                onPointerDown={() => {
+                  repostLongPressTimer.current = setTimeout(() => {
+                    setShowRepostPopover(true);
+                    void hapticImpact('Medium');
+                  }, 400);
+                }}
+                onPointerUp={() => {
+                  if (repostLongPressTimer.current) {
+                    clearTimeout(repostLongPressTimer.current);
+                    repostLongPressTimer.current = null;
+                  }
+                }}
+                onPointerLeave={() => {
+                  if (repostLongPressTimer.current) {
+                    clearTimeout(repostLongPressTimer.current);
+                    repostLongPressTimer.current = null;
+                  }
+                }}
+                onClick={() => {
+                  if (showRepostPopover) return;
+                  void handleRepost();
+                }}
+                disabled={repostInFlight}
+                className="flex items-center gap-1.5 text-xs transition-all hover:text-green-400 active:scale-95 disabled:opacity-50 min-h-[44px] min-w-[44px]"
+                style={isReposted ? { color: "#34D399" } : undefined}
+                aria-label={isReposted ? "Undo repost" : "Repost"}
+                aria-pressed={isReposted}
+              >
+                <svg className="w-4 h-4" fill={isReposted ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={isReposted ? 0 : 1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 12c0-1.232-.046-2.453-.138-3.662a4.006 4.006 0 00-3.7-3.7 48.678 48.678 0 00-7.324 0 4.006 4.006 0 00-3.7 3.7c-.017.22-.032.441-.046.662M19.5 12l3-3m-3 3l-3-3m-12 3c0 1.232.046 2.453.138 3.662a4.006 4.006 0 003.7 3.7 48.656 48.656 0 007.324 0 4.006 4.006 0 003.7-3.7c.017-.22.032-.441.046-.662M4.5 12l3 3m-3-3l-3 3" />
+                </svg>
+                {repostCount > 0 && <AnimatedCounter value={repostCount} />}
+              </button>
+              {showRepostPopover && (
+                <div
+                  className="absolute bottom-full left-0 mb-1 z-50 rounded-xl shadow-xl py-1 overflow-hidden min-w-[140px]"
+                  style={{ background: "#2C2C2E", border: "1px solid rgba(255,255,255,0.08)" }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <button
+                    className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm hover:bg-white/10 transition-colors text-left text-white"
+                    onClick={() => { setShowRepostPopover(false); void handleRepost(); }}
+                  >
+                    <svg className="w-4 h-4 flex-shrink-0 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 12c0-1.232-.046-2.453-.138-3.662a4.006 4.006 0 00-3.7-3.7 48.678 48.678 0 00-7.324 0 4.006 4.006 0 00-3.7 3.7c-.017.22-.032.441-.046.662M19.5 12l3-3m-3 3l-3-3m-12 3c0 1.232.046 2.453.138 3.662a4.006 4.006 0 003.7 3.7 48.656 48.656 0 007.324 0 4.006 4.006 0 003.7-3.7c.017-.22.032-.441.046-.662M4.5 12l3 3m-3-3l-3 3" />
+                    </svg>
+                    Repost
+                  </button>
+                  <button
+                    className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm hover:bg-white/10 transition-colors text-left text-white"
+                    onClick={() => { setShowRepostPopover(false); setShowQuoteComposer(true); }}
+                  >
+                    <svg className="w-4 h-4 flex-shrink-0 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z" />
+                    </svg>
+                    Quote
+                  </button>
+                </div>
+              )}
+            </div>
+
             {/* Heart like */}
             <button
               onClick={handleLike}
-              className="flex items-center gap-1.5 text-xs transition-colors hover:text-pink-400"
+              className="flex items-center gap-1.5 text-xs transition-colors hover:text-pink-400 active:scale-95 min-h-[44px] min-w-[44px]"
               style={{ color: post.liked_by_me ? "#D4007A" : "#8E8E93" }}
+              aria-label={post.liked_by_me ? "Unlike" : "Like"}
+              aria-pressed={post.liked_by_me}
             >
               <svg
                 className="w-4 h-4"
@@ -2001,30 +2305,84 @@ export default function SocialPostCard({
                   d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12z"
                 />
               </svg>
-              {(post.likes_count || 0) > 0 && <span>{post.likes_count}</span>}
+              {(post.likes_count || 0) > 0 && <AnimatedCounter value={post.likes_count || 0} />}
             </button>
 
-            {/* Comment / Reply toggle */}
+            {/* Bookmark */}
             <button
-              onClick={toggleReplies}
-              className="flex items-center gap-1.5 text-xs hover:text-blue-400 transition-colors"
-              style={showReplies ? { color: "#60A5FA" } : undefined}
+              onClick={handleBookmark}
+              disabled={bookmarkInFlight}
+              className="flex items-center gap-1.5 text-xs transition-all hover:text-amber-400 active:scale-95 disabled:opacity-50 min-h-[44px] min-w-[44px]"
+              style={isBookmarked ? { color: "#F59E0B" } : undefined}
+              aria-label={isBookmarked ? "Remove bookmark" : "Bookmark"}
+              aria-pressed={isBookmarked}
             >
               <svg
                 className="w-4 h-4"
-                fill="none"
+                fill={isBookmarked ? "currentColor" : "none"}
                 viewBox="0 0 24 24"
                 stroke="currentColor"
-                strokeWidth={1.5}
+                strokeWidth={isBookmarked ? 0 : 1.5}
               >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M12 20.25c4.97 0 9-3.694 9-8.25s-4.03-8.25-9-8.25S3 7.444 3 12c0 2.104.859 4.023 2.273 5.48.432.447.74 1.04.586 1.641a4.483 4.483 0 01-.923 1.785A5.969 5.969 0 006 21c1.282 0 2.47-.402 3.445-1.087.81.22 1.668.337 2.555.337z"
-                />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0111.186 0z" />
               </svg>
-              {localReplyCount > 0 && <span>{localReplyCount}</span>}
+              {bookmarkCount > 0 && <AnimatedCounter value={bookmarkCount} />}
             </button>
+
+            {/* Hype — viewer-cast boost vote (post_hypes, migration 347).
+                Toggles a 7-day vote that shows as attribution on the ORIGINAL
+                post and feeds into _applyDiscoveryBoost. Not shown on hyper's
+                own posts (self-hype allowed but pointless in feed context). */}
+            {user && !post.is_promoted
+              && (post.metadata as Record<string, unknown> | null | undefined)?.kind !== 'channel_promo' && (
+              <button
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  if (hypeInFlight.current) return;
+                  if (hypeQuota && hypeQuota.remaining === 0) return;
+                  hypeInFlight.current = true;
+                  const nextHyped = !hypePosted;
+                  setHypePosted(nextHyped);
+                  setHypeCount(c => Math.max(0, c + (nextHyped ? 1 : -1)));
+                  void hapticImpact('Light');
+                  try {
+                    const res = await togglePostHype(post.id);
+                    if (typeof res.hyped === 'boolean') setHypePosted(res.hyped);
+                    if (typeof res.hype_score === 'number') setHypeCount(Math.max(0, res.hype_score));
+                    if (typeof res.dailyLimit === 'number' && typeof res.dailyRemaining === 'number') {
+                      setHypeQuota({ remaining: res.dailyRemaining, limit: res.dailyLimit, resetsAt: res.dailyResetsAt ?? null });
+                    }
+                  } catch (err) {
+                    setHypePosted(!nextHyped);
+                    setHypeCount(c => Math.max(0, c + (nextHyped ? -1 : 1)));
+                    if (err instanceof ApiError && err.code === 'HYPE_QUOTA_EXCEEDED') {
+                      const d = err.data as { dailyLimit?: number; dailyRemaining?: number; resetsAt?: string | null };
+                      if (typeof d?.dailyLimit === 'number') {
+                        setHypeQuota({ remaining: d.dailyRemaining ?? 0, limit: d.dailyLimit, resetsAt: d.resetsAt ?? null });
+                      }
+                    } else {
+                      const msg = err instanceof Error ? err.message : '';
+                      setHypeError(msg || 'Failed');
+                      setTimeout(() => setHypeError(null), 2500);
+                    }
+                  } finally {
+                    hypeInFlight.current = false;
+                  }
+                }}
+                disabled={!!(hypeQuota && hypeQuota.remaining === 0)}
+                className="flex items-center gap-1.5 text-xs transition-all disabled:cursor-default disabled:opacity-40 min-h-[44px] min-w-[44px]"
+                style={hypePosted ? { color: '#FF9500', filter: 'drop-shadow(0 0 5px rgba(255,149,0,0.6))' } : { color: 'var(--pnp-text-secondary, #8E8E93)' }}
+                title={hypeQuota?.remaining === 0 ? 'Daily hypes used — come back tomorrow' : hypePosted ? 'Un-hype' : 'Hype this post'}
+                aria-label={hypePosted ? 'Un-hype this post' : 'Hype this post'}
+                aria-pressed={hypePosted}
+              >
+                <svg className={hypePosted ? "w-5 h-5" : "w-4 h-4"} fill={hypePosted ? 'currentColor' : 'none'} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={hypePosted ? 0 : 1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.362 5.214A8.252 8.252 0 0112 21 8.25 8.25 0 016.038 7.048 8.287 8.287 0 009 9.6a8.983 8.983 0 013.361-6.867 8.21 8.21 0 003 2.48z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 18a3.75 3.75 0 00.495-7.467 5.99 5.99 0 00-1.925 3.546 5.974 5.974 0 01-2.133-1A3.75 3.75 0 0012 18z" />
+                </svg>
+                {hypeCount > 0 && <AnimatedCounter value={hypeCount} />}
+              </button>
+            )}
 
             {/* Share — always visible; disclaimer modal gates first share. */}
             <button
@@ -2035,7 +2393,8 @@ export default function SocialPostCard({
                   setShowDisclaimerModal(true);
                 }
               }}
-              className="flex items-center gap-1.5 text-xs hover:text-green-400 transition-colors"
+              className="flex items-center gap-1.5 text-xs hover:text-green-400 transition-colors min-h-[44px] min-w-[44px]"
+              aria-label="Share"
             >
               <svg
                 className="w-4 h-4"
@@ -2057,85 +2416,81 @@ export default function SocialPostCard({
               <button
                 onClick={handleTranslate}
                 disabled={isTranslating}
-                className="flex items-center gap-1 text-xs transition-colors hover:text-teal-400 disabled:opacity-40"
+                className="flex items-center gap-1 text-xs transition-colors hover:text-teal-400 disabled:opacity-40 ml-auto"
                 style={translatedContent ? { color: "#5ED1C4" } : { color: "var(--pnp-text-secondary, #8E8E93)" }}
                 title={translatedContent ? t.showOriginal : t.translate}
               >
                 {isTranslating ? (
                   <span className="text-[10px]">{t.translating}</span>
                 ) : (
-                  <svg
-                    className="w-3.5 h-3.5"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    strokeWidth={1.5}
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      d="M10.5 21l5.25-11.25L21 21m-9-3h7.5M3 5.621a48.474 48.474 0 016-.371m0 0c1.12 0 2.233.038 3.334.114M9 5.25V3m3.334 2.364C11.176 10.658 7.69 15.08 3 17.502m9.334-12.138c.896.061 1.785.147 2.666.257m-4.589 8.495a18.023 18.023 0 01-3.827-5.802"
-                    />
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 21l5.25-11.25L21 21m-9-3h7.5M3 5.621a48.474 48.474 0 016-.371m0 0c1.12 0 2.233.038 3.334.114M9 5.25V3m3.334 2.364C11.176 10.658 7.69 15.08 3 17.502m9.334-12.138c.896.061 1.785.147 2.666.257m-4.589 8.495a18.023 18.023 0 01-3.827-5.802" />
                   </svg>
                 )}
               </button>
             )}
+          </div>{/* end action buttons row */}
 
-            {/* Hype — viewer-cast boost vote (post_hypes, migration 347).
-                Toggles a 7-day vote that shows as attribution on the ORIGINAL
-                post and feeds into _applyDiscoveryBoost. Not shown on hyper's
-                own posts (self-hype allowed but pointless in feed context). */}
-            {user && !post.is_promoted
-              && (post.metadata as Record<string, unknown> | null | undefined)?.kind !== 'channel_promo' && (
-              <button
-                onClick={async (e) => {
-                  e.stopPropagation();
-                  if (hypeInFlight.current) return;
-                  if (hypeQuota && hypeQuota.remaining === 0) return;
-                  hypeInFlight.current = true;
-                  const nextHyped = !hypePosted;
-                  setHypePosted(nextHyped);
-                  setHypeCount(c => Math.max(0, c + (nextHyped ? 1 : -1)));
-                  try {
-                    const res = await togglePostHype(post.id);
-                    if (typeof res.hyped === 'boolean') setHypePosted(res.hyped);
-                    if (typeof res.hype_score === 'number') setHypeCount(Math.max(0, res.hype_score));
-                    if (typeof res.dailyLimit === 'number' && typeof res.dailyRemaining === 'number') {
-                      setHypeQuota({ remaining: res.dailyRemaining, limit: res.dailyLimit, resetsAt: res.dailyResetsAt ?? null });
-                    }
-                  } catch (err) {
-                    setHypePosted(!nextHyped);
-                    setHypeCount(c => Math.max(0, c + (nextHyped ? -1 : 1)));
-                    if (err instanceof ApiError && err.code === 'HYPE_QUOTA_EXCEEDED') {
-                      const d = err.data as { dailyLimit?: number; dailyRemaining?: number; resetsAt?: string | null };
-                      if (typeof d?.dailyLimit === 'number') {
-                        setHypeQuota({ remaining: d.dailyRemaining ?? 0, limit: d.dailyLimit, resetsAt: d.resetsAt ?? null });
-                      }
-                      // No red error text — quota indicator handles the state
-                    } else {
-                      const msg = err instanceof Error ? err.message : '';
-                      setHypeError(msg || 'Failed');
-                      setTimeout(() => setHypeError(null), 2500);
-                    }
-                  } finally {
-                    hypeInFlight.current = false;
-                  }
-                }}
-                disabled={!!(hypeQuota && hypeQuota.remaining === 0)}
-                className="flex items-center gap-1.5 text-xs transition-all disabled:cursor-default disabled:opacity-40"
-                style={hypePosted ? { color: '#FF9500', filter: 'drop-shadow(0 0 5px rgba(255,149,0,0.6))' } : { color: 'var(--pnp-text-secondary, #8E8E93)' }}
-                title={hypeQuota?.remaining === 0 ? 'Daily hypes used — come back tomorrow' : hypePosted ? 'Un-hype' : 'Hype this post'}
-                aria-label={hypePosted ? 'Un-hype this post' : 'Hype this post'}
-                aria-pressed={hypePosted}
+          {/* Quote composer — inline below actions when triggered */}
+          {showQuoteComposer && (
+            <div
+              className="mt-2 p-3 rounded-xl space-y-2"
+              style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Quoted post preview */}
+              <div
+                className="text-xs text-white/50 p-2 rounded-lg border border-white/10 truncate"
+                style={{ background: "rgba(0,0,0,0.25)" }}
               >
-                <svg className={hypePosted ? "w-5 h-5" : "w-4 h-4"} fill={hypePosted ? 'currentColor' : 'none'} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={hypePosted ? 0 : 1.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.362 5.214A8.252 8.252 0 0112 21 8.25 8.25 0 016.038 7.048 8.287 8.287 0 009 9.6a8.983 8.983 0 013.361-6.867 8.21 8.21 0 003 2.48z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 18a3.75 3.75 0 00.495-7.467 5.99 5.99 0 00-1.925 3.546 5.974 5.974 0 01-2.133-1A3.75 3.75 0 0012 18z" />
-                </svg>
-                <span className={`tabular-nums${hypePosted ? ' font-semibold' : ''}`}>{hypeCount > 0 ? hypeCount : ''}</span>
-              </button>
-            )}
+                <span className="font-medium text-white/70">@{post.author_username || post.author_first_name}</span>
+                {' · '}{(post.content || '').slice(0, 80)}{(post.content || '').length > 80 ? '…' : ''}
+              </div>
+              <textarea
+                value={quoteText}
+                onChange={(e) => setQuoteText(e.target.value)}
+                placeholder="Add your comment…"
+                rows={2}
+                maxLength={500}
+                disabled={quoteSending}
+                className="w-full rounded-lg px-3 py-2 text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-pink-500 resize-none placeholder:text-white/30"
+              />
+              <div className="flex items-center gap-2 justify-end">
+                <button
+                  type="button"
+                  onClick={() => { setShowQuoteComposer(false); setQuoteText(''); }}
+                  className="text-xs text-white/40 hover:text-white/70 transition-colors px-2 py-1"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleSendQuote()}
+                  disabled={!quoteText.trim() || quoteSending}
+                  className="px-3 py-1 rounded-full text-xs font-semibold transition-all disabled:opacity-40 text-white"
+                  style={{ background: "linear-gradient(135deg, #D4007A, #7B61FF)" }}
+                >
+                  {quoteSending ? '…' : 'Quote'}
+                </button>
+              </div>
+            </div>
+          )}
 
+          {/* Quote friction toast */}
+          {quoteFrictionShown && (
+            <div
+              role="status"
+              aria-live="polite"
+              className="mt-1.5 flex items-center gap-2 px-3 py-2 rounded-xl text-xs"
+              style={{ background: "rgba(123,97,255,0.12)", border: "1px solid rgba(123,97,255,0.25)", color: "#A78BFA" }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+              </svg>
+              You're quoting someone who doesn't follow you. Be kind — the author gets a notification.
+            </div>
+          )}
           </div>
           )}
 
@@ -2494,17 +2849,16 @@ export default function SocialPostCard({
         isOpen={showShareModal}
         onClose={() => setShowShareModal(false)}
       />
-      {lightboxSrc && (() => {
+      {lightboxIndex !== null && (() => {
         const carouselList = extractCarouselUrls(post.media_urls);
-        const list = carouselList.length > 1 ? carouselList : (post.media_url ? [post.media_url] : []);
+        const list = carouselList.length > 0 ? carouselList : (post.media_url ? [post.media_url] : []);
         if (list.length === 0) return null;
         return (
-          <MediaLightbox
-            src={lightboxSrc}
-            mediaType="image"
-            mediaList={list}
-            onClose={() => setLightboxSrc(null)}
-            onNavigate={(url) => setLightboxSrc(url)}
+          <SocialMediaLightbox
+            mediaUrls={list}
+            initialIndex={lightboxIndex}
+            altTexts={post.media_alt_texts}
+            onClose={() => setLightboxIndex(null)}
           />
         );
       })()}
