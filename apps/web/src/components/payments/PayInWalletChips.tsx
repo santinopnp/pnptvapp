@@ -1033,7 +1033,8 @@ export function WalletPayCard({
           },
         });
       } else {
-        // When MoonPay is kill-switched, bias to Stripe by omitting secondary providers.
+        // Provider preference lives in the Privy dashboard (fundingMethods) — the
+        // SDK's AddFundsFiatOptions does not accept a defaultProvider field.
         await addFunds({
           destination: {
             address: activeWallet.address,
@@ -1043,22 +1044,16 @@ export function WalletPayCard({
           fiat: {
             defaultAmount: grossed,
             source: { defaultAsset: "usd" },
-            ...(!_MOONPAY_ENABLED ? { defaultProvider: "stripe" } : {}),
           },
         });
       }
-      // addFunds resolved — user closed the fund flow. Stripe settlement is
-      // instant in sandbox and up to ~2 min in prod. Poll balance every 3s
-      // for up to 60s so the user gets an obvious "we're waiting" affordance
-      // instead of the same "Pay with card" button reappearing.
-      //
-      // Auto-continue (2026-09-06): the old flow required a second manual
-      // Pay click after balance arrived — the biggest drop point per
-      // checkout_intents data (56% of intents expired without a signed tx).
-      // Now we auto-invoke handlePay once funds are here so one Top-up
-      // click carries the user through to entitlement grant.
+      // addFunds/fundWallet resolved — user closed the fund flow. Stripe is ~2min
+      // in prod; MoonPay LATAM (COP/MXN/BRL) can take 3–5min while the local
+      // PSP clears. Use a longer poll window on the MoonPay branch so a slow
+      // settlement doesn't drop the user into "took too long" + stuck USDC.
+      const pollTimeoutMs = useMoonPay ? 300_000 : 120_000;
       setFunding(true);
-      setFundingSecsLeft(120);
+      setFundingSecsLeft(Math.round(pollTimeoutMs / 1000));
       const start = Date.now();
       let consecutivePollErrors = 0;
       let pollDelay = 3_000;
@@ -1087,14 +1082,14 @@ export function WalletPayCard({
           }
         }
         if (pollCancelledRef.current) return;
-        if (Date.now() - start >= 120_000) {
+        if (Date.now() - start >= pollTimeoutMs) {
           setFunding(false);
           setError(es
             ? "El pago tardó demasiado en confirmar. Revisá tu wallet y reintentá."
             : "Payment took too long to settle. Check your wallet and retry.");
           return;
         }
-        const secsLeft = Math.max(0, Math.round((120_000 - (Date.now() - start)) / 1000));
+        const secsLeft = Math.max(0, Math.round((pollTimeoutMs - (Date.now() - start)) / 1000));
         setFundingSecsLeft(secsLeft);
         pollDelay = Math.min(Math.round(pollDelay * 1.5), 10_000);
         setTimeout(poll, pollDelay);

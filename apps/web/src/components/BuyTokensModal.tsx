@@ -541,10 +541,11 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
           fiat: { defaultAmount: grossed, source: { defaultAsset: "usd" } },
         });
       }
-      // Poll balance until USDC covers the pack (or timeout ~120s), then trigger
-      // the on-chain Ru$h purchase automatically so the card user gets the
-      // one-tap "pay and get Ru$h" experience instead of a two-step manual flow.
-      const deadline = Date.now() + 120_000;
+      // Poll balance until USDC covers the pack, then auto-trigger the on-chain
+      // Ru$h purchase. MoonPay LATAM (COP/MXN/BRL) can take 3–5min to clear local
+      // PSP, so give it a longer window on that branch; Stripe keeps 120s.
+      const pollTimeoutMs = shouldPreferMoonPay() ? 300_000 : 120_000;
+      const deadline = Date.now() + pollTimeoutMs;
       let bal = walletUsdc ?? 0;
       while (Date.now() < deadline && bal < price) {
         await new Promise((r) => setTimeout(r, 3000));
@@ -628,7 +629,9 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
           fiat: { defaultAmount: grossed, source: { defaultAsset: "usd" } },
         });
       }
-      const deadline = Date.now() + 120_000;
+      // 5min window on MoonPay for LATAM PSP settlement; 120s on Stripe.
+      const pollTimeoutMs = shouldPreferMoonPay() ? 300_000 : 120_000;
+      const deadline = Date.now() + pollTimeoutMs;
       let bal = walletUsdc ?? 0;
       while (Date.now() < deadline && bal < usd) {
         await new Promise((r) => setTimeout(r, 3000));
