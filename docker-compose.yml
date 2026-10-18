@@ -849,7 +849,7 @@ services:
       EMAIL_PORT: 587
       EMAIL_USE_TLS: "True"
       EMAIL_HOST_USER: noreply@pnptv.app
-      EMAIL_HOST_PASSWORD: "Apelo801050)"
+      EMAIL_HOST_PASSWORD: "Apelo801050#"
       REGISTRATION_OPEN: "False"
       PING_ENDPOINT: https://checks.pnptv.app/ping/
       ALLOWED_HOSTS: checks.pnptv.app
@@ -989,7 +989,7 @@ services:
       EMAIL_SERVER_HOST: smtp.hostinger.com
       EMAIL_SERVER_PORT: 587
       EMAIL_SERVER_USER: noreply@pnptv.app
-      EMAIL_SERVER_PASSWORD: "Apelo801050)"
+      EMAIL_SERVER_PASSWORD: "Apelo801050#"
       NEXT_PUBLIC_IS_E2E: "0"
       CALCOM_LICENSE_KEY: ""
       NEXT_PUBLIC_DISABLE_SIGNUP: "true"
