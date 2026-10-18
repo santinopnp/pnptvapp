@@ -375,6 +375,13 @@ function PrivyAutoLogin() {
     }, 1800);
     return () => clearTimeout(t);
   }, [isAuthenticated, ready, authenticated, login, user?.lastLoginMethod, hasPrivyId]);
+  // Clear the auto-login flag once the user successfully authenticates so that
+  // future sessions where Privy becomes disconnected again will re-prompt them.
+  // Without this, a single modal-dismiss permanently suppresses auto-login.
+  useEffect(() => {
+    if (!authenticated) return;
+    try { localStorage.removeItem("__pnptv_privy_autologin"); } catch { /* ignore */ }
+  }, [authenticated]);
   return null;
 }
 
