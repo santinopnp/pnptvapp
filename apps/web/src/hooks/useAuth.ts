@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, createContext, useContext } from "react";
 import { isTelegramContext, getTelegramWebApp, waitForTelegramSdk } from "@/lib/telegram";
 import { telegramAuth, checkAuthStatus, apiLogout, oidcLogout, ApiError, NetworkError, type TelegramAuthResponse } from "@/lib/api";
-import { disconnectSocket } from "@/lib/socket";
+import { connectSocket, disconnectSocket } from "@/lib/socket";
 import { userManager } from "@/lib/auth";
 import React from "react";
 
@@ -220,6 +220,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Silently fail refresh
     }
   }, []);
+
+  // Global listener: refresh user state whenever any payment path confirms an
+  // entitlement — fires regardless of which page is currently mounted so users
+  // never need to log out to see their new tier reflected in the UI.
+  useEffect(() => {
+    if (!user?.id) return;
+    const socket = connectSocket();
+    const onEntitlementChange = () => { refreshUser().catch(() => {}); };
+    socket.on("user:entitlement-change", onEntitlementChange);
+    return () => { socket.off("user:entitlement-change", onEntitlementChange); };
+  }, [user?.id, refreshUser]);
 
   const setUserLanguage = useCallback((lang: string) => {
     setUser((u) => (u ? { ...u, language: lang } : u));

@@ -609,7 +609,7 @@ export default function Subscribe() {
           </p>
 
           <button
-            onClick={() => { window.location.href = "/"; }}
+            onClick={() => navigate("/")}
             className="btn-gradient px-6 py-2.5 rounded-xl text-white font-medium"
           >
             {s.goToPNPtv}
@@ -804,7 +804,7 @@ export default function Subscribe() {
                         alreadyEntitled={user?.tier === 'prime'}
                         onSuccess={() => {
                           setWalletPanelPlanId(null);
-                          setTimeout(() => { window.location.href = "/"; }, 1200);
+                          setTimeout(() => navigate("/"), 1200);
                         }}
                         onCryptoFallback={parseFloat(String(plan.price)) >= NOWPAYMENTS_MINIMUM_USD
                           ? () => openAppSheet(plan.id, `${plan.name || plan.id} · $${parseFloat(String(plan.price)).toFixed(2)}`)
@@ -1055,8 +1055,7 @@ export default function Subscribe() {
                           alreadyEntitled={alreadyEnt}
                           onSuccess={() => {
                             setWalletPanelPlanId(null);
-                            // Reload to reflect the new entitlement everywhere.
-                            setTimeout(() => { window.location.href = "/"; }, 1200);
+                            setTimeout(() => navigate("/"), 1200);
                           }}
                           onCryptoFallback={parseFloat(String(plan.price)) >= NOWPAYMENTS_MINIMUM_USD
                             ? () => openAppSheet(plan.id, `${plan.name || plan.id} · $${parseFloat(String(plan.price)).toFixed(2)}`)
@@ -1260,8 +1259,7 @@ export default function Subscribe() {
                           alreadyEntitled={alreadyEnt}
                           onSuccess={() => {
                             setWalletPanelPlanId(null);
-                            // Reload to reflect the new entitlement everywhere.
-                            setTimeout(() => { window.location.href = "/"; }, 1200);
+                            setTimeout(() => navigate("/"), 1200);
                           }}
                           onCryptoFallback={parseFloat(String(plan.price)) >= NOWPAYMENTS_MINIMUM_USD
                             ? () => openAppSheet(plan.id, `${plan.name || plan.id} · $${parseFloat(String(plan.price)).toFixed(2)}`)
