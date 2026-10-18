@@ -407,9 +407,14 @@ function ContentSheet({ onClose }: { onClose: () => void }) {
 // ── You Sheet ────────────────────────────────────────────────────────────────
 function YouSheet({ onClose, onSwitchMode }: { onClose: () => void; onSwitchMode?: (mode: NavMode) => void }) {
   const navigate = useNavigate();
-  const { user, isAdmin, isCreatorAdmin } = useAuth();
+  const { user, isAdmin, isCreatorAdmin, logout } = useAuth();
   const { nav } = useI18n();
   const go = useCallback((to: string) => { onClose(); navigate(to); }, [onClose, navigate]);
+  const handleSignOut = useCallback(async () => {
+    onClose();
+    try { await logout(); } catch { /* ignore */ }
+    navigate("/login");
+  }, [onClose, logout, navigate]);
 
   const initials = user?.displayName?.charAt(0)?.toUpperCase() || user?.username?.charAt(0)?.toUpperCase() || "?";
   const tierLabel = user?.tier === "prime" ? (nav.tierPrime || "PRIME") : user?.tier === "member" ? (nav.tierMember || "MEMBER") : (nav.tierFree || "FREE");
@@ -519,6 +524,18 @@ function YouSheet({ onClose, onSwitchMode }: { onClose: () => void; onSwitchMode
               )}
             </div>
           )}
+
+          <div className="mt-1 pt-1 border-t border-white/8">
+            <button onClick={handleSignOut}
+              className="w-full flex items-center gap-4 px-3 py-3 rounded-[14px] transition-all active:bg-white/5 text-left">
+              <div className="w-10 h-10 rounded-[11px] flex items-center justify-center flex-shrink-0" style={{ background: "rgba(255,255,255,.05)" }}>
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} style={{ color: "#8A8A9A" }}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                </svg>
+              </div>
+              <p className="text-[14px] font-semibold text-pnp-textSecondary">{nav.youSignOut || "Sign out"}</p>
+            </button>
+          </div>
         </div>
       </div>
     </SheetBackdrop>
