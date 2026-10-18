@@ -923,7 +923,7 @@ services:
     container_name: umami
     restart: unless-stopped
     environment:
-      DATABASE_URL: "postgresql://pnptvbot:Apelo801050%23@pg-pnptv:5432/umami"
+      DATABASE_URL: "postgresql://pnptvbot:UKdmKxi6YrgQqnNZ1BmNA67BdAN4BxDzfeQbutWu@pg-pnptv:5432/umami"
       DATABASE_TYPE: postgresql
       APP_SECRET: "b4daaf3ada9965acf5f3df76254f5e316887833012cf88af8a4652001b55c23e"
     networks:
@@ -978,8 +978,8 @@ services:
     container_name: calcom
     restart: unless-stopped
     environment:
-      DATABASE_URL: "postgresql://pnptvbot:Apelo801050%23@pg-pnptv:5432/calcom?connection_limit=5&pool_timeout=30&connect_timeout=10"
-      DATABASE_DIRECT_URL: "postgresql://pnptvbot:Apelo801050%23@pg-pnptv:5432/calcom?connect_timeout=10"
+      DATABASE_URL: "postgresql://pnptvbot:UKdmKxi6YrgQqnNZ1BmNA67BdAN4BxDzfeQbutWu@pg-pnptv:5432/calcom?connection_limit=5&pool_timeout=30&connect_timeout=10"
+      DATABASE_DIRECT_URL: "postgresql://pnptvbot:UKdmKxi6YrgQqnNZ1BmNA67BdAN4BxDzfeQbutWu@pg-pnptv:5432/calcom?connect_timeout=10"
       NEXTAUTH_SECRET: "b968f9535372ec2a1ad3ffa16c6782ecf7ce286aeca7f95be231f3ab8608274e"
       NEXTAUTH_URL: https://booking.pnptv.app
       CALENDSO_ENCRYPTION_KEY: "b46d7aec2df70c8c3d268a9399cbde29f9a8f4f8cdf007a70eb62049fba8a29f"
@@ -1132,7 +1132,7 @@ services:
     restart: unless-stopped
     environment:
       PORT: "3015"
-      PG_URL: "postgresql://pnptvbot:Apelo801050%23@pg-pnptv:5432/pnptvbot"
+      PG_URL: "postgresql://pnptvbot:UKdmKxi6YrgQqnNZ1BmNA67BdAN4BxDzfeQbutWu@pg-pnptv:5432/pnptvbot"
       SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN}
       OFFICIAL_USER_ID: "8552451957"
       LEX_USER_ID: "8f5f4dd1-7bdb-4571-b026-e09d91113c91"
