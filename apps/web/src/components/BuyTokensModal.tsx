@@ -514,26 +514,16 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
     setOfferOpenInBrowser(false);
     setPayingPackageId(pkg.id);
     try {
-      // Primary: useFundWallet (MoonPay only — Coinbase disabled). grossUpForOnramp
-      // adds a fee buffer so USDC that arrives ≥ pack price; enforces $15 minimum.
-      // Fallback: useAddFunds (Stripe, inline) when MoonPay already failed or
-      // popups are blocked (Telegram / in-app browser / iOS PWA).
+      // grossUpForOnramp adds a fee buffer so USDC that arrives ≥ pack price; enforces $15 minimum.
       const grossed = grossUpForOnramp(price);
-      if (!stripeHasFailed && !popupsUnsupported()) {
-        await fundWallet({
+      await addFunds({
+        destination: {
           address: activeWallet.address,
-          options: { chain: base, amount: grossed, asset: "USDC" },
-        });
-      } else {
-        await addFunds({
-          destination: {
-            address: activeWallet.address,
-            chain: BASE_CAIP2,
-            asset: USDC_BASE_ADDRESS,
-          },
-          fiat: { defaultAmount: grossed, source: { defaultAsset: "usd" } },
-        });
-      }
+          chain: BASE_CAIP2,
+          asset: USDC_BASE_ADDRESS,
+        },
+        fiat: { defaultAmount: grossed, source: { defaultAsset: "usd" } },
+      });
       // Poll balance until USDC covers the pack (or timeout ~60s), then trigger
       // the on-chain Ru$h purchase automatically so the card user gets the
       // one-tap "pay and get Ru$h" experience instead of a two-step manual flow.
@@ -598,24 +588,15 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
     setOfferOpenInBrowser(false);
     setPayingCustom(true);
     try {
-      // Primary: MoonPay via useFundWallet (Coinbase disabled = MoonPay only).
-      // Fallback: Stripe via useAddFunds when MoonPay already failed or popups blocked.
       const grossed = grossUpForOnramp(usd);
-      if (!stripeHasFailed && !popupsUnsupported()) {
-        await fundWallet({
+      await addFunds({
+        destination: {
           address: activeWallet.address,
-          options: { chain: base, amount: grossed, asset: "USDC" },
-        });
-      } else {
-        await addFunds({
-          destination: {
-            address: activeWallet.address,
-            chain: BASE_CAIP2,
-            asset: USDC_BASE_ADDRESS,
-          },
-          fiat: { defaultAmount: grossed, source: { defaultAsset: "usd" } },
-        });
-      }
+          chain: BASE_CAIP2,
+          asset: USDC_BASE_ADDRESS,
+        },
+        fiat: { defaultAmount: grossed, source: { defaultAsset: "usd" } },
+      });
       const deadline = Date.now() + 60_000;
       let bal = walletUsdc ?? 0;
       while (Date.now() < deadline && bal < usd) {

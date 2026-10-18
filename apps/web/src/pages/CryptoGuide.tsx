@@ -313,7 +313,7 @@ export default function CryptoGuide() {
     try {
       await addFunds({
         destination: { address: activeWallet.address, chain: BASE_CAIP2, asset: USDC_BASE },
-        fiat: { defaultAmount: "30" },
+        fiat: { defaultAmount: "30", source: { defaultAsset: "usd" } },
       });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);

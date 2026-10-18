@@ -354,7 +354,7 @@ export default function Donate() {
                 <button
                   onClick={() => addFunds({
                     destination: { address: walletAddress, chain: BASE_CAIP2, asset: USDC_BASE_ADDRESS },
-                    fiat: { defaultAmount: "20" },
+                    fiat: { defaultAmount: "20", source: { defaultAsset: "usd" } },
                   }).catch(() => {})}
                   className="px-3 py-1.5 rounded-lg text-[11px] font-bold text-[#7B61FF] border border-[#7B61FF]/40 hover:bg-[#7B61FF]/10 transition-all"
                 >

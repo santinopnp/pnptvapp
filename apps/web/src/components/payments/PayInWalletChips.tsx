@@ -971,29 +971,18 @@ export function WalletPayCard({
     setError(null);
     setOfferOpenInBrowser(false);
     try {
-      // Primary: useFundWallet (MoonPay). Coinbase is disabled on this account
-      // so the picker shows MoonPay only — no Stripe.
-      // Fallback path (stripeHasFailed=true OR popup-blocked env where MoonPay
-      // can't open): useAddFunds (Stripe, runs inline — no popup needed).
       const grossed = grossUpForOnramp(amountUsd);
-      if (!stripeHasFailed && !popupsUnsupported()) {
-        await fundWallet({
+      await addFunds({
+        destination: {
           address: activeWallet.address,
-          options: { chain: base, amount: grossed, asset: "USDC" },
-        });
-      } else {
-        await addFunds({
-          destination: {
-            address: activeWallet.address,
-            chain: _BASE_CAIP2,
-            asset: _USDC_BASE,
-          },
-          fiat: {
-            defaultAmount: grossed,
-            source: { defaultAsset: "usd" },
-          },
-        });
-      }
+          chain: _BASE_CAIP2,
+          asset: _USDC_BASE,
+        },
+        fiat: {
+          defaultAmount: grossed,
+          source: { defaultAsset: "usd" },
+        },
+      });
       // addFunds resolved — user closed the fund flow. Stripe settlement is
       // instant in sandbox and up to ~2 min in prod. Poll balance every 3s
       // for up to 60s so the user gets an obvious "we're waiting" affordance
