@@ -53,3 +53,6 @@ apps/web/public/marketing/*.mp4
 
 # Broadcast campaign videos - large binaries served from public/, not source.
 apps/web/public/broadcast/*.mp4
+
+# Local tutorial media — not for git (101MB, belongs on CDN)
+/static/
