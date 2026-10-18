@@ -788,6 +788,9 @@ export default function App() {
                       // via provisionCreatorWallet(); other users get one the moment they
                       // initiate a crypto payment (Privy SDK creates it inline).
                       embeddedWallets: { ethereum: { createOnLogin: "off" } },
+                      // fundingMethods is dashboard-controlled in this SDK version;
+                      // VITE_STRIPE_ONRAMP_ENABLED / VITE_MOONPAY_ONRAMP_ENABLED are
+                      // read by PayInWalletChips to filter the useFundWallet call instead.
                       // Own WalletConnect Cloud project id — dedicated rate-limit +
                       // reliable Trust/Rainbow/etc handshake. Falls back to Privy's
                       // shared id if unset (works but with silent throttling).

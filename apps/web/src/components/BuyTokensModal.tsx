@@ -21,6 +21,7 @@ import { createWalletClient, custom, encodeFunctionData, parseUnits } from "viem
 import { base } from "viem/chains";
 import { OpenInBrowserButton } from "@/components/telegram/OpenInBrowserButton";
 import { WalletCheckoutHero, grossUpForOnramp, getPreferredWallet, setPreferredWallet, classifyOnrampError, onrampErrorMessage, shouldOfferOpenInBrowser, popupsUnsupported } from "@/components/payments/PayInWalletChips";
+import { shouldPreferMoonPay } from "@/lib/browserEnv";
 
 const USDC_BASE_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const BASE_CAIP2 = "eip155:8453" as const;
@@ -145,6 +146,8 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
   // is still opening its onramp modal (e.g. rapid taps before popup appears).
   // Mirrored from WalletPayCard.fundInFlightRef — same Privy error source.
   const fundInFlightRef = useRef(false);
+  // State mirror of fundInFlightRef so buttons can react to in-flight guard.
+  const [fundingInFlight, setFundingInFlight] = useState(false);
   // Set to true when a Stripe-specific error is caught so the button label
   // changes to signal a different action ("Try another method") on re-tap.
   const [stripeHasFailed, setStripeHasFailed] = useState(false);
@@ -166,6 +169,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
       // Always clear the in-flight guard when the modal closes so a re-open
       // isn't blocked by a stale true value from the previous session.
       fundInFlightRef.current = false;
+      setFundingInFlight(false);
       return;
     }
     setError(null);
@@ -509,6 +513,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
     // still open. Early-return so we never surface that error to users.
     if (fundInFlightRef.current) return;
     fundInFlightRef.current = true;
+    setFundingInFlight(true);
     const price = Number(pkg.usd);
     setError(null);
     setOfferOpenInBrowser(false);
@@ -516,18 +521,30 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
     try {
       // grossUpForOnramp adds a fee buffer so USDC that arrives ≥ pack price; enforces $15 minimum.
       const grossed = grossUpForOnramp(price);
-      await addFunds({
-        destination: {
+      if (shouldPreferMoonPay()) {
+        await fundWallet({
           address: activeWallet.address,
-          chain: BASE_CAIP2,
-          asset: USDC_BASE_ADDRESS,
-        },
-        fiat: { defaultAmount: grossed, source: { defaultAsset: "usd" } },
-      });
-      // Poll balance until USDC covers the pack (or timeout ~60s), then trigger
+          options: {
+            chain: base,
+            amount: grossed,
+            asset: { erc20: USDC_BASE_ADDRESS as `0x${string}` },
+            card: { preferredProvider: "moonpay" },
+          },
+        });
+      } else {
+        await addFunds({
+          destination: {
+            address: activeWallet.address,
+            chain: BASE_CAIP2,
+            asset: USDC_BASE_ADDRESS,
+          },
+          fiat: { defaultAmount: grossed, source: { defaultAsset: "usd" } },
+        });
+      }
+      // Poll balance until USDC covers the pack (or timeout ~120s), then trigger
       // the on-chain Ru$h purchase automatically so the card user gets the
       // one-tap "pay and get Ru$h" experience instead of a two-step manual flow.
-      const deadline = Date.now() + 60_000;
+      const deadline = Date.now() + 120_000;
       let bal = walletUsdc ?? 0;
       while (Date.now() < deadline && bal < price) {
         await new Promise((r) => setTimeout(r, 3000));
@@ -570,6 +587,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
       });
     } finally {
       fundInFlightRef.current = false;
+      setFundingInFlight(false);
       setPayingPackageId(null);
     }
   };
@@ -583,21 +601,34 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
     // flow in progress" Privy error on multi-tap before the modal opens.
     if (fundInFlightRef.current) return;
     fundInFlightRef.current = true;
+    setFundingInFlight(true);
     const actualTokens = tokens ?? Math.round(usd * 6);
     setError(null);
     setOfferOpenInBrowser(false);
     setPayingCustom(true);
     try {
       const grossed = grossUpForOnramp(usd);
-      await addFunds({
-        destination: {
+      if (shouldPreferMoonPay()) {
+        await fundWallet({
           address: activeWallet.address,
-          chain: BASE_CAIP2,
-          asset: USDC_BASE_ADDRESS,
-        },
-        fiat: { defaultAmount: grossed, source: { defaultAsset: "usd" } },
-      });
-      const deadline = Date.now() + 60_000;
+          options: {
+            chain: base,
+            amount: grossed,
+            asset: { erc20: USDC_BASE_ADDRESS as `0x${string}` },
+            card: { preferredProvider: "moonpay" },
+          },
+        });
+      } else {
+        await addFunds({
+          destination: {
+            address: activeWallet.address,
+            chain: BASE_CAIP2,
+            asset: USDC_BASE_ADDRESS,
+          },
+          fiat: { defaultAmount: grossed, source: { defaultAsset: "usd" } },
+        });
+      }
+      const deadline = Date.now() + 120_000;
       let bal = walletUsdc ?? 0;
       while (Date.now() < deadline && bal < usd) {
         await new Promise((r) => setTimeout(r, 3000));
@@ -647,6 +678,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
       setOfferOpenInBrowser(shouldOfferOpenInBrowser(kind));
     } finally {
       fundInFlightRef.current = false;
+      setFundingInFlight(false);
       setPayingCustom(false);
     }
   };
@@ -1122,7 +1154,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
                       ? (walletUsdc != null && walletUsdc >= price)
                       : (walletEth != null && ethUsdPrice != null && walletEth >= ethNeeded);
                     const isPaying = payingPackageId === pkg.id;
-                    const disabled = isPaying || success !== null;
+                    const disabled = isPaying || success !== null || fundingInFlight;
                     // No-balance path always falls back to card via Privy's
                     // Stripe onramp (settles USDC on Base regardless of the
                     // selected rail — ETH-rail users still pay with card, they

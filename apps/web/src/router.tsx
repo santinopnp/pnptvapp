@@ -1540,22 +1540,8 @@ export const router = createBrowserRouter([
   // Public alias — /lifetime → /subscribe (offer closed)
   { path: "/lifetime", element: <Navigate to="/subscribe" replace /> },
   { path: "/lifetime100b", element: <Navigate to="/lifetime100" replace /> },
-  {
-    path: "/nequinegocios",
-    element: (
-      <ModuleLoader>
-        <NequiNegociosPage />
-      </ModuleLoader>
-    ),
-  },
-  {
-    path: "/mercadopago",
-    element: (
-      <ModuleLoader>
-        <MercadoPagoPage />
-      </ModuleLoader>
-    ),
-  },
+  { path: "/nequinegocios", element: <Navigate to="/subscribe" replace /> },
+  { path: "/mercadopago", element: <Navigate to="/subscribe" replace /> },
   {
     path: "/page/:slug",
     element: (

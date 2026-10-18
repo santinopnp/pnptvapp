@@ -36,9 +36,9 @@ const RECURRING_PLANS = new Set(["prime-week-pass-7d", "monthly-pass", "prime-di
 
 const RECOMMENDED_PLAN_FALLBACK = "prime-diamond-pass-365d";
 
-// NowPayments raised their minimum payment floor to ~$18.94 USD (2026-09-20).
-// Plans priced below this threshold fall back to Privy USDC only.
-const NOWPAYMENTS_MINIMUM_USD = 18.95;
+// NowPayments floor is enforced server-side; show the button for any amount
+// and let the backend reject if below their minimum for the chosen currency.
+const NOWPAYMENTS_MINIMUM_USD = 0;
 
 function formatPrice(amount: number, currency: string): string {
   if (currency === "COP") {

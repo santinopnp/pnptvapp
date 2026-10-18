@@ -4,10 +4,11 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useI18n } from "@/lib/i18n";
 import { BuyTokensModal } from "@/components/BuyTokensModal";
-import { usePrivy, useWallets, useAddFunds, useConnectWallet } from "@privy-io/react-auth";
+import { usePrivy, useWallets, useAddFunds, useFundWallet, useConnectWallet } from "@privy-io/react-auth";
 import { createWalletClient, custom, encodeFunctionData, parseUnits, parseEther } from "viem";
 import { base } from "viem/chains";
 import { getPreferredWallet, setPreferredWallet, walletTypeLabel, WalletTypeIcon } from "@/components/payments/PayInWalletChips";
+import { shouldPreferMoonPay } from "@/lib/browserEnv";
 
 // CAIP-2 chain id for Base — used by Privy's useAddFunds destination.
 const BASE_CAIP2 = "eip155:8453" as const;
@@ -72,6 +73,7 @@ export default function Donate() {
   const { ready: privyReady, authenticated: privyAuthed, login: privyLogin } = usePrivy();
   const { wallets } = useWallets();
   const { addFunds } = useAddFunds();
+  const { fundWallet } = useFundWallet();
   const [connectError, setConnectError] = useState<string | null>(null);
   const { connectWallet } = useConnectWallet({
     onSuccess: ({ wallet }) => {
@@ -352,10 +354,24 @@ export default function Donate() {
                 </button>
               ) : privyAuthed && walletAddress ? (
                 <button
-                  onClick={() => addFunds({
-                    destination: { address: walletAddress, chain: BASE_CAIP2, asset: USDC_BASE_ADDRESS },
-                    fiat: { defaultAmount: "20", source: { defaultAsset: "usd" } },
-                  }).catch(() => {})}
+                  onClick={() => {
+                    if (shouldPreferMoonPay()) {
+                      fundWallet({
+                        address: walletAddress,
+                        options: {
+                          chain: base,
+                          amount: "20",
+                          asset: { erc20: USDC_BASE_ADDRESS as `0x${string}` },
+                          card: { preferredProvider: "moonpay" },
+                        },
+                      }).catch(() => {});
+                    } else {
+                      addFunds({
+                        destination: { address: walletAddress, chain: BASE_CAIP2, asset: USDC_BASE_ADDRESS },
+                        fiat: { defaultAmount: "20", source: { defaultAsset: "usd" } },
+                      }).catch(() => {});
+                    }
+                  }}
                   className="px-3 py-1.5 rounded-lg text-[11px] font-bold text-[#7B61FF] border border-[#7B61FF]/40 hover:bg-[#7B61FF]/10 transition-all"
                 >
                   {es ? "Añadir USDC" : "Add USDC"}

@@ -11441,7 +11441,7 @@ export async function purchaseVideoAccess(
 
 export async function checkoutChannelPass(
   creatorId: string,
-  provider: "rush" | "wallet_usdc" | "nowpayments" | "stripe" | "moonpay" = "rush",
+  provider: "rush" | "wallet_usdc" | "nowpayments" = "rush",
   payCurrency?: string,
 ): Promise<ChannelPassCheckoutResult> {
   const body: { provider: string; payCurrency?: string } = { provider };

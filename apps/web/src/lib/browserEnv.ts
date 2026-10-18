@@ -28,3 +28,34 @@ export function popupsUnsupported(): boolean {
   return isInAppBrowser() || isIOSStandalone();
 }
 
+// Contexts where Stripe's SMS verification iframe is likely blocked or broken:
+// Android Telegram WebApp, iOS in-app browsers (Instagram/TikTok/Snapchat),
+// and iOS standalone PWA. Returns true → show pre-emptive warning before addFunds.
+export function smsVerifLikelyBlocked(): boolean {
+  if (typeof window === "undefined") return false;
+  const ua = navigator.userAgent || "";
+  const isTelegramAndroid =
+    /Android/i.test(ua) &&
+    !!(window as { Telegram?: { WebApp?: { initData?: string } } }).Telegram?.WebApp;
+  if (isTelegramAndroid) return true;
+  if (isIOSStandalone()) return true;
+  if (isIOS() && /Instagram|TikTok|musical_ly|Snapchat/i.test(ua)) return true;
+  return false;
+}
+
+// Contexts where we should route the card onramp through MoonPay (useFundWallet)
+// instead of Stripe (useAddFunds). MoonPay handles Android Telegram WebApp
+// and iOS social in-app browsers without SMS verification. Returns false when
+// VITE_MOONPAY_ONRAMP_ENABLED=false so the kill switch suppresses both paths.
+export function shouldPreferMoonPay(): boolean {
+  if (typeof window === "undefined") return false;
+  if (import.meta.env.VITE_MOONPAY_ONRAMP_ENABLED === "false") return false;
+  const ua = navigator.userAgent || "";
+  const isTelegramAndroid =
+    /Android/i.test(ua) &&
+    !!(window as { Telegram?: { WebApp?: { initData?: string } } }).Telegram?.WebApp;
+  if (isTelegramAndroid) return true;
+  if (isIOS() && /Instagram|TikTok|musical_ly|Snapchat/i.test(ua)) return true;
+  return false;
+}
+

@@ -41,6 +41,8 @@ export interface CreatorSubscribeWizardProps {
   returnUrl?: string;
   /** Channel access type — controls whether the launch-offer banner is shown. */
   accessType?: "free" | "prime" | "subscription" | "paid";
+  /** Called when card onramp fails — open NowPayments as a fallback. */
+  onCryptoFallback?: () => void;
 }
 
 const BENEFITS_EN = [
@@ -68,6 +70,7 @@ export default function CreatorSubscribeWizard({
   storageKey,
   returnUrl,
   accessType = "subscription",
+  onCryptoFallback,
 }: CreatorSubscribeWizardProps) {
   // NowPayments retired 2026-08-09 — creator subscription flows exclusively
   // through WalletPayCard (USDC on Base). storageKey / returnUrl no longer
@@ -336,6 +339,7 @@ export default function CreatorSubscribeWizard({
         label={lang === "es" ? `Pagar $${priceUsd.toFixed(2)} · Suscripción` : `Pay $${priceUsd.toFixed(2)} · Subscription`}
         lang={lang}
         onSuccess={() => onSuccess?.()}
+        onCryptoFallback={onCryptoFallback}
       />
 
       {/* NP crypto picker retired 2026-08-09 — Wallet is now the only crypto

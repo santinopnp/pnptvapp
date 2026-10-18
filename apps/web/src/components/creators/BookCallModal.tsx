@@ -46,7 +46,8 @@ import { BuyTokensModal } from "@/components/BuyTokensModal";
 type Step = "SELECT_MODEL" | "SELECT_PACKAGE" | "SELECT_SLOT" | "CHECKOUT" | "SUCCESS";
 type Provider = "wallet" | "tokens" | "nowpayments";
 
-const NOWPAYMENTS_MINIMUM_USD = 18.95;
+// Floor enforced server-side; show button for any amount.
+const NOWPAYMENTS_MINIMUM_USD = 0;
 
 export interface BookCallModalProps {
   creator: CreatorCardCreator;
@@ -1382,6 +1383,7 @@ export function BookCallModal({
                 if (bookingId) setConfirmedBookingId(bookingId);
                 setStep("SUCCESS");
               }}
+              onCryptoFallback={() => setProvider("nowpayments")}
             />
           </div>
         )}

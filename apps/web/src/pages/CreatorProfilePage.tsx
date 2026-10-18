@@ -1980,6 +1980,7 @@ export default function CreatorProfilePage() {
                     onSuccess={() => {
                       setCrystalWalletMode(null);
                     }}
+                    onCryptoFallback={() => { setCrystalWalletMode(null); handleCrystalNowPayments("gift"); }}
                     compact
                   />
                 </div>
@@ -2032,6 +2033,7 @@ export default function CreatorProfilePage() {
                     onSuccess={() => {
                       setCrystalWalletMode(null);
                     }}
+                    onCryptoFallback={() => { setCrystalWalletMode(null); handleCrystalNowPayments("self"); }}
                     compact
                   />
                 </div>

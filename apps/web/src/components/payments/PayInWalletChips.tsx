@@ -222,7 +222,7 @@ import { useEffect as _useEffect, useState as _useState, useRef as _useRef } fro
 import { usePrivy, useWallets, useAddFunds, useFundWallet, useConnectWallet, useSendTransaction, useUnlinkWallet, useCreateWallet, type WalletListEntry } from "@privy-io/react-auth";
 import { getLinkedWallet } from "@/lib/api";
 import { OpenInBrowserButton } from "@/components/telegram/OpenInBrowserButton";
-import { isIOSStandalone, popupsUnsupported } from "@/lib/browserEnv";
+import { isIOSStandalone, popupsUnsupported, smsVerifLikelyBlocked, shouldPreferMoonPay } from "@/lib/browserEnv";
 import { createWalletClient, custom, encodeFunctionData, parseUnits, parseEther } from "viem";
 import { base, mainnet } from "viem/chains";
 
@@ -267,6 +267,10 @@ import {
   type WalletCheckoutSurface,
 } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
+
+// Kill switches read once at module load — false disables the provider globally.
+const _STRIPE_ENABLED = import.meta.env.VITE_STRIPE_ONRAMP_ENABLED !== "false";
+const _MOONPAY_ENABLED = import.meta.env.VITE_MOONPAY_ONRAMP_ENABLED !== "false";
 
 // ── CCTP (Circle Cross-Chain Transfer Protocol) constants ─────────────────
 // Used to bridge native USDC from Ethereum mainnet → Base natively (no
@@ -365,42 +369,44 @@ export function onrampErrorMessage(kind: OnrampErrorKind, es: boolean, rawMsg: s
   const where = isIOSStandalone()
     ? (es ? "Safari" : "Safari")
     : (es ? "tu navegador" : "your browser");
-  // Suggesting MoonPay only makes sense where its popup can open.
-  const tryMoonpay = noPopup
+  // Suffix suggesting the next step when popup providers aren't available here.
+  const tryAltMethod = noPopup
     ? (es
-      ? ` Para usar MoonPay, ábrelo en ${where} con el botón de abajo.`
-      : ` To use MoonPay, open this page in ${where} with the button below.`)
+      ? ` Ábrelo en ${where} para más opciones de pago.`
+      : ` Open this page in ${where} for more payment options.`)
     : (es
-      ? " Toca Recargar otra vez y elige MoonPay, o usa Apple Pay / Google Pay."
-      : " Tap Top up again and pick MoonPay, or use Apple Pay / Google Pay.");
+      ? " Toca Recargar otra vez e intenta con Apple Pay / Google Pay, o paga con cripto."
+      : " Tap Top up again and try Apple Pay / Google Pay, or pay with crypto instead.");
   switch (kind) {
     case "popup_blocked":
       return noPopup
         ? (es
-          ? `Aquí no se puede abrir la ventana de MoonPay. Toca Recargar y elige Tarjeta / Apple Pay (Stripe), que sí funciona aquí, o ábrelo en ${where} para usar MoonPay.`
-          : `MoonPay's window can't open here. Tap Top up and pick Card / Apple Pay (Stripe), which works here, or open this page in ${where} to use MoonPay.`)
+          ? `La ventana de pago no puede abrirse aquí. Toca Recargar y elige Tarjeta / Apple Pay (Stripe), que sí funciona aquí, o ábrelo en ${where} para más opciones.`
+          : `The payment window can't open here. Tap Top up and pick Card / Apple Pay (Stripe), which works here, or open this page in ${where} for more options.`)
         : (es
-          ? "Tu navegador bloqueó la ventana de MoonPay. Permite ventanas emergentes para pnptv.app y reintenta, o elige Tarjeta / Apple Pay (Stripe)."
-          : "Your browser blocked MoonPay's window. Allow pop-ups for pnptv.app and retry, or pick Card / Apple Pay (Stripe).");
+          ? "Tu navegador bloqueó la ventana de pago. Permite ventanas emergentes para pnptv.app y reintenta, o elige Tarjeta / Apple Pay (Stripe)."
+          : "Your browser blocked the payment window. Allow pop-ups for pnptv.app and retry, or pick Card / Apple Pay (Stripe).");
     case "card_blocked": {
       const isInsufficient = /insufficient funds/i.test(rawMsg);
       const baseMsg = isInsufficient
         ? (es ? "Tu tarjeta no tiene fondos suficientes." : "Your card has insufficient funds.")
         : (es ? "Stripe rechazó este pago. No se hizo ningún cargo." : "Stripe declined this payment. You were not charged.");
-      return baseMsg + tryMoonpay;
+      return baseMsg + (noPopup
+        ? (es ? ` Intenta con Apple Pay / Google Pay, o ábrelo en ${where}.` : ` Try Apple Pay / Google Pay, or open this page in ${where}.`)
+        : (es ? " Intenta con Apple Pay / Google Pay, o paga con cripto." : " Try again with Apple Pay / Google Pay, or pay with crypto instead."));
     }
     case "stripe_failed":
       return (es
         ? "Stripe no pudo completar el pago. No se hizo ningún cargo."
-        : "Stripe couldn't complete the payment. You were not charged.") + tryMoonpay;
+        : "Stripe couldn't complete the payment. You were not charged.") + tryAltMethod;
     case "provider_region":
       return es
-        ? "Ese proveedor no está disponible en tu país. Toca Recargar otra vez y elige otra opción (MoonPay o Stripe)."
-        : "That provider isn't available in your country. Tap Top up again and pick another option (MoonPay or Stripe).";
+        ? "Ese proveedor no está disponible en tu país. Toca Recargar otra vez y elige otra opción de pago."
+        : "That provider isn't available in your country. Tap Top up again and pick another payment option.";
     case "provider_failed":
       return es
-        ? "El proveedor no completó el pago. Toca Recargar otra vez y prueba con la otra opción (Tarjeta / Apple Pay con Stripe, o MoonPay)."
-        : "The provider didn't complete the payment. Tap Top up again and try the other option (Card / Apple Pay via Stripe, or MoonPay).";
+        ? "El proveedor no completó el pago. Toca Recargar otra vez y prueba con Tarjeta / Apple Pay, o paga con cripto."
+        : "The provider didn't complete the payment. Tap Top up again and try Card / Apple Pay, or pay with crypto instead.";
     case "status_timeout":
       // The provider may still settle — warn against paying twice.
       return es
@@ -521,6 +527,7 @@ export function WalletPayCard({
   }, [authenticated, wallets.length]);
   const { addFunds } = useAddFunds();
   const { fundWallet } = useFundWallet();
+  const [fundingInFlight, setFundingInFlight] = _useState(false);
   const [connectError, setConnectError] = _useState<string | null>(null);
   const { connectWallet } = useConnectWallet({
     onSuccess: ({ wallet }) => {
@@ -566,11 +573,13 @@ export function WalletPayCard({
   const [error, setError] = _useState<string | null>(null);
   const [gasTopupFailed, setGasTopupFailed] = _useState(false);
   const [success, setSuccess] = _useState(false);
+  const [paymentComplete, setPaymentComplete] = _useState(false); // brief "Payment complete" tile before close
   const [lastTxHash, setLastTxHash] = _useState<string | null>(null);
   // True from when addFunds resolves until either (a) balance covers the price
-  // or (b) 60s of polling elapses. Prevents the "Pay with card" button from
+  // or (b) 120s of polling elapses. Prevents the "Pay with card" button from
   // re-appearing as if nothing happened while Stripe onramp settles.
   const [funding, setFunding] = _useState(false);
+  const [fundingSecsLeft, setFundingSecsLeft] = _useState<number>(120);
   // Last addFunds failure needs a real browser (MoonPay popup) → offer the
   // one-tap "Open in browser / Safari" escape.
   const [offerOpenInBrowser, setOfferOpenInBrowser] = _useState(false);
@@ -580,6 +589,7 @@ export function WalletPayCard({
   // picker where they can explicitly choose MoonPay or Apple Pay instead.
   const [stripeHasFailed, setStripeHasFailed] = _useState(false);
   const fundInFlightRef = _useRef(false);
+  const [showSmsBlockedBanner, setShowSmsBlockedBanner] = _useState(false);
   const [eth, setEth] = _useState<number | null>(null);
   // Tracks whether the onramp poll has been cancelled (component unmounted).
   const pollCancelledRef = _useRef(false);
@@ -895,13 +905,18 @@ export function WalletPayCard({
       if (!verified.ok) throw new Error(verified.reason || "verify_failed");
       setLastTxHash(txHash);
       setSuccess(true);
+      setPaymentComplete(true);
       setUsdc((prev) => (prev == null ? prev : Math.max(0, prev - amountUsd)));
-      onSuccess?.({
-        intentId: intent.intentId,
-        rushCredited: verified.rushCredited,
-        entitlementId: verified.entitlementId,
-        bookingId: (verified as { bookingId?: string | null }).bookingId ?? null,
-      });
+      // Show "Payment complete" tile for 2.5s then fire onSuccess so callers close/navigate.
+      setTimeout(() => {
+        setPaymentComplete(false);
+        onSuccess?.({
+          intentId: intent.intentId,
+          rushCredited: verified.rushCredited,
+          entitlementId: verified.entitlementId,
+          bookingId: (verified as { bookingId?: string | null }).bookingId ?? null,
+        });
+      }, 2500);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       const errStatus = (err as { status?: number }).status;
@@ -967,22 +982,71 @@ export function WalletPayCard({
     // flow in progress" — 32 rows in payment_errors), e.g. auto-open from
     // handlePay racing a manual Top-up tap.
     if (fundInFlightRef.current) return;
+
+    // Kill switch: Stripe onramp globally disabled → route straight to crypto fallback.
+    if (!_STRIPE_ENABLED) {
+      if (onCryptoFallback) {
+        onCryptoFallback();
+        return;
+      }
+      setError(es
+        ? "Los pagos con tarjeta están temporalmente deshabilitados. Usa una opción de cripto."
+        : "Card payments are temporarily disabled. Pay with crypto instead.");
+      return;
+    }
+
+    // In SMS-verification-hostile environments (Android Telegram WebApp, iOS
+    // in-app browsers) Stripe's phone-verify step is blocked by the webview.
+    // If MoonPay is available we route straight through useFundWallet — no banner.
+    // Otherwise (e.g. iOS PWA where MoonPay also can't open), bias toward
+    // NowPayments when available; otherwise show a banner with an "Open in
+    // browser" escape. Never call addFunds or fundWallet in the banner path.
+    const useMoonPay = shouldPreferMoonPay();
+    if (smsVerifLikelyBlocked() && !useMoonPay) {
+      if (onCryptoFallback) {
+        onCryptoFallback();
+        return;
+      }
+      setShowSmsBlockedBanner(true);
+      return;
+    }
+
     fundInFlightRef.current = true;
+    setFundingInFlight(true);
+    setShowSmsBlockedBanner(false);
     setError(null);
     setOfferOpenInBrowser(false);
     try {
       const grossed = grossUpForOnramp(amountUsd);
-      await addFunds({
-        destination: {
+      if (useMoonPay) {
+        // Android Telegram WebApp / iOS social in-app browsers: route through
+        // MoonPay which does not require SMS verification and works inside
+        // these webviews. useFundWallet does NOT surface Stripe even when
+        // it is enabled — that is intentional here.
+        await fundWallet({
           address: activeWallet.address,
-          chain: _BASE_CAIP2,
-          asset: _USDC_BASE,
-        },
-        fiat: {
-          defaultAmount: grossed,
-          source: { defaultAsset: "usd" },
-        },
-      });
+          options: {
+            chain: base,
+            amount: grossed,
+            asset: { erc20: _USDC_BASE as `0x${string}` },
+            card: { preferredProvider: "moonpay" },
+          },
+        });
+      } else {
+        // When MoonPay is kill-switched, bias to Stripe by omitting secondary providers.
+        await addFunds({
+          destination: {
+            address: activeWallet.address,
+            chain: _BASE_CAIP2,
+            asset: _USDC_BASE,
+          },
+          fiat: {
+            defaultAmount: grossed,
+            source: { defaultAsset: "usd" },
+            ...(!_MOONPAY_ENABLED ? { defaultProvider: "stripe" } : {}),
+          },
+        });
+      }
       // addFunds resolved — user closed the fund flow. Stripe settlement is
       // instant in sandbox and up to ~2 min in prod. Poll balance every 3s
       // for up to 60s so the user gets an obvious "we're waiting" affordance
@@ -994,6 +1058,7 @@ export function WalletPayCard({
       // Now we auto-invoke handlePay once funds are here so one Top-up
       // click carries the user through to entitlement grant.
       setFunding(true);
+      setFundingSecsLeft(120);
       const start = Date.now();
       let consecutivePollErrors = 0;
       let pollDelay = 3_000;
@@ -1022,13 +1087,15 @@ export function WalletPayCard({
           }
         }
         if (pollCancelledRef.current) return;
-        if (Date.now() - start >= 180_000) {
+        if (Date.now() - start >= 120_000) {
           setFunding(false);
           setError(es
             ? "El pago tardó demasiado en confirmar. Revisá tu wallet y reintentá."
             : "Payment took too long to settle. Check your wallet and retry.");
           return;
         }
+        const secsLeft = Math.max(0, Math.round((120_000 - (Date.now() - start)) / 1000));
+        setFundingSecsLeft(secsLeft);
         pollDelay = Math.min(Math.round(pollDelay * 1.5), 10_000);
         setTimeout(poll, pollDelay);
       };
@@ -1075,6 +1142,7 @@ export function WalletPayCard({
       });
     } finally {
       fundInFlightRef.current = false;
+      setFundingInFlight(false);
     }
   };
 
@@ -1287,6 +1355,28 @@ export function WalletPayCard({
           })}
         </div>
       )}
+      {showSmsBlockedBanner && !onCryptoFallback && !shouldPreferMoonPay() && (
+        <div className="rounded-lg border border-amber-400/40 bg-amber-500/10 px-3 py-2.5 space-y-2">
+          <p className="text-[11px] text-amber-200 leading-snug">
+            {es
+              ? "La verificación por SMS de Stripe puede no funcionar en este navegador. Ábrelo en tu navegador principal para el método de tarjeta."
+              : "Stripe's SMS verification may not work in this browser. Open this page in your main browser to use the card method."}
+          </p>
+          <OpenInBrowserButton es={es} />
+          <button
+            type="button"
+            onClick={() => {
+              setShowSmsBlockedBanner(false);
+              fundInFlightRef.current = false;
+              setFundingInFlight(false);
+              setTimeout(() => handleFund(), 50);
+            }}
+            className="w-full py-1.5 rounded-lg text-[11px] font-semibold text-amber-100/70 border border-amber-400/20 hover:bg-amber-400/10 transition"
+          >
+            {es ? "Intentar de todas formas aquí" : "Try anyway here"}
+          </button>
+        </div>
+      )}
       {error && (
         <div className="text-[11px] text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2 py-1.5">
           {error}
@@ -1307,7 +1397,17 @@ export function WalletPayCard({
           {connectError}
         </div>
       )}
-      {success && (
+      {paymentComplete && (
+        <div className="rounded-xl px-3 py-4 bg-emerald-500/15 border border-emerald-400/50 flex items-center justify-center gap-3">
+          <svg className="w-6 h-6 flex-shrink-0 text-emerald-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+          </svg>
+          <span className="text-base font-bold text-emerald-200">
+            {es ? "Pago completado · Acceso activo" : "Payment complete · Entitlement active"}
+          </span>
+        </div>
+      )}
+      {success && !paymentComplete && (
         <div className="rounded-xl px-3 py-3 bg-emerald-500/10 border border-emerald-500/30 space-y-2">
           <div className="flex items-center gap-2 text-emerald-200 font-semibold text-sm">
             <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
@@ -1373,8 +1473,8 @@ export function WalletPayCard({
           </svg>
           <span className="text-sm font-semibold text-emerald-200">
             {es
-              ? "Confirmando tu pago… (puede tardar hasta 1 min)"
-              : "Confirming your payment… (up to 1 min)"}
+              ? `Confirmando pago… (${fundingSecsLeft}s)`
+              : `Confirming payment… (${fundingSecsLeft}s)`}
           </span>
         </div>
       ) : (
@@ -1387,8 +1487,19 @@ export function WalletPayCard({
               <>
               <button
                 type="button"
-                onClick={handleFund}
-                disabled={fundInFlightRef.current}
+                onClick={() => {
+                  if (stripeHasFailed) {
+                    // Force-reset so Privy spins up a fresh session instead of resuming the stuck one.
+                    fundInFlightRef.current = false;
+                    setFundingInFlight(false);
+                    setStripeHasFailed(false);
+                    setError(null);
+                    setTimeout(() => handleFund(), 50);
+                    return;
+                  }
+                  handleFund();
+                }}
+                disabled={fundingInFlight}
                 className="w-full py-3 rounded-xl text-white transition active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed flex flex-col items-center gap-0.5"
                 style={{ background: "linear-gradient(135deg,#10b981,#059669)", touchAction: "manipulation", WebkitTapHighlightColor: "transparent" }}
               >

@@ -58,7 +58,7 @@ const T = {
     s2Eyebrow: "SECTION 2",
     s2Title: "How to Fund Your Wallet",
     s2OptionA: "Option A — Card, Apple Pay, or Google Pay",
-    s2OptionABody: "The easiest way. Tap the button below, choose your amount, and pay with any major credit/debit card, Apple Pay, or Google Pay through our regulated partners (Stripe, MoonPay, Ramp). USDC arrives in your wallet in under 2 minutes.",
+    s2OptionABody: "The easiest way. Tap the button below, choose your amount, and pay with any major credit/debit card, Apple Pay, or Google Pay through our regulated payment partners. USDC arrives in your wallet in under 2 minutes.",
     s2Button: "💳 Fund with card →",
     s2ButtonSignIn: "Sign in to fund your wallet",
     s2Fine: "Minimum $20 for card onramp. Fees shown before confirming.",
@@ -120,7 +120,7 @@ const T = {
     s6OptionA: "Option A — Send USDC to an exchange, then sell",
     s6OptionABody: "Send USDC to Coinbase, Kraken, or another exchange (see Section 4), then sell USDC for your local currency and withdraw to your bank. This is the most common method.",
     s6OptionB: "Option B — Use a USDC offramp in the 💎 widget",
-    s6OptionBBody: 'Tap the 💎 icon → "Withdraw" → select Ramp or MoonPay to convert USDC directly to local currency deposited to your bank or card.',
+    s6OptionBBody: 'Tap the 💎 icon → "Withdraw" → use the offramp option to convert USDC directly to local currency deposited to your bank or card.',
 
     faqTitle: "FAQ",
     faqs: [
@@ -132,7 +132,7 @@ const T = {
       { q: "Can I use my wallet outside PNPtv?", a: "Yes. Export your private key (see Section 5) and import it into MetaMask, Trust Wallet, or Coinbase Wallet." },
       { q: "Can I withdraw my USDC?", a: "Yes. Send USDC out to any Base-compatible address (exchange or wallet) at any time. See Section 4." },
       { q: "What if my payment doesn't go through?", a: "Card funding almost never fails — but if it does, no money is charged. If you have USDC in your wallet but a purchase says 'insufficient balance', refresh the page — balances take up to 2 min to sync." },
-      { q: "Which cards work?", a: "All major credit and debit cards (Visa, Mastercard, Amex, Discover), Apple Pay, Google Pay, and bank transfer through Stripe, MoonPay and Ramp. Non-US cards work too." },
+      { q: "Which cards work?", a: "All major credit and debit cards (Visa, Mastercard, Amex, Discover), Apple Pay, Google Pay, and bank transfer. Non-US cards work too." },
     ],
 
     ctaTitle: "Ready?",
@@ -171,7 +171,7 @@ const T = {
     s2Eyebrow: "SECCIÓN 2",
     s2Title: "Cómo Cargar tu Billetera",
     s2OptionA: "Opción A — Tarjeta, Apple Pay o Google Pay",
-    s2OptionABody: "La forma más sencilla. Toca el botón de abajo, elige tu monto y paga con cualquier tarjeta de crédito/débito, Apple Pay o Google Pay a través de nuestros socios regulados (Stripe, MoonPay, Ramp). El USDC llega a tu billetera en menos de 2 minutos.",
+    s2OptionABody: "La forma más sencilla. Toca el botón de abajo, elige tu monto y paga con cualquier tarjeta de crédito/débito, Apple Pay o Google Pay a través de nuestros socios regulados de pago. El USDC llega a tu billetera en menos de 2 minutos.",
     s2Button: "💳 Cargar con tarjeta →",
     s2ButtonSignIn: "Inicia sesión para cargar tu billetera",
     s2Fine: "Mínimo $20 en onramp con tarjeta. Las comisiones se muestran antes de confirmar.",
@@ -233,7 +233,7 @@ const T = {
     s6OptionA: "Opción A — Envía USDC a un exchange y vende",
     s6OptionABody: "Envía USDC a Coinbase, Kraken u otro exchange (ver Sección 4), luego vende USDC por tu moneda local y retira a tu banco. Es el método más común.",
     s6OptionB: "Opción B — Usa un offramp de USDC en el widget 💎",
-    s6OptionBBody: 'Toca el ícono 💎 → "Retirar" → selecciona Ramp o MoonPay para convertir USDC directamente a moneda local depositada en tu banco o tarjeta.',
+    s6OptionBBody: 'Toca el ícono 💎 → "Retirar" → usa la opción de offramp para convertir USDC directamente a moneda local depositada en tu banco o tarjeta.',
 
     faqTitle: "Preguntas frecuentes",
     faqs: [
@@ -245,7 +245,7 @@ const T = {
       { q: "¿Puedo usar mi billetera fuera de PNPtv?", a: "Sí. Exporta tu clave privada (ver Sección 5) e impórtala en MetaMask, Trust Wallet o Coinbase Wallet." },
       { q: "¿Puedo retirar mi USDC?", a: "Sí. Envía USDC a cualquier dirección compatible con Base (exchange o wallet) en cualquier momento. Ver Sección 4." },
       { q: "¿Y si mi pago no pasa?", a: "El pago con tarjeta casi nunca falla — pero si falla, no se cobra. Si tienes USDC pero dice 'saldo insuficiente', refresca la página — los saldos tardan hasta 2 min en sincronizar." },
-      { q: "¿Qué tarjetas funcionan?", a: "Todas las tarjetas de crédito y débito principales (Visa, Mastercard, Amex, Discover), Apple Pay, Google Pay y transferencia bancaria a través de Stripe, MoonPay y Ramp. También funcionan tarjetas fuera de EE.UU." },
+      { q: "¿Qué tarjetas funcionan?", a: "Todas las tarjetas de crédito y débito principales (Visa, Mastercard, Amex, Discover), Apple Pay, Google Pay y transferencia bancaria. También funcionan tarjetas fuera de EE.UU." },
     ],
 
     ctaTitle: "¿Lista/o?",

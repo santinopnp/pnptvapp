@@ -19356,6 +19356,87 @@ app.post('/api/wallet/client-error', walletStatusLimiter, requireSessionAuth, as
   return res.json({ ok: true });
 }));
 
+// ── Stripe Crypto Onramp — Seamless Sign-In authIntentId cache ────────────
+//
+// Stripe's Seamless Sign-In (https://docs.stripe.com/crypto/onramp/seamless-sign-in-integration-guide)
+// lets returning users skip phone OTP by supplying the authIntentId from
+// their first successful onramp.  We cache it server-side per user.
+//
+// IMPORTANT: As of @privy-io/react-auth the installed version, useAddFunds()
+// does NOT expose a passthrough for authIntentId — AddFundsFiatOptions has no
+// providerSettings or stripe field, and AddFundsResult returns only
+// { method, status }.  These routes are wired and ready for when Privy adds
+// that support or if a direct Stripe Crypto Onramp integration replaces Privy.
+//
+// Auth intent expiry: Stripe does not publish a hard TTL but 90 days is a
+// conservative safe-side; we return null for anything older to force re-auth.
+
+const stripeAuthIntentReadLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  keyGenerator: (req) => String(req.session?.user?.id || req.ip),
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const stripeAuthIntentWriteLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  keyGenerator: (req) => String(req.session?.user?.id || req.ip),
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// GET /api/wallet/stripe-auth-intent
+// Returns the cached Stripe authIntentId for the authenticated user, or null
+// if none is stored or the stored value is older than 90 days.
+app.get('/api/wallet/stripe-auth-intent', stripeAuthIntentReadLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
+  const userId = req.session?.user?.id;
+  const { rows } = await getPool().query(
+    `SELECT stripe_onramp_auth_intent_id, stripe_onramp_auth_intent_at
+       FROM users
+      WHERE id = $1`,
+    [userId]
+  );
+  if (!rows.length || !rows[0].stripe_onramp_auth_intent_id) {
+    return res.json({ authIntentId: null, ageMs: null });
+  }
+  const storedAt = rows[0].stripe_onramp_auth_intent_at;
+  const ageMs = storedAt ? Date.now() - new Date(storedAt).getTime() : null;
+  const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1000;
+  if (ageMs !== null && ageMs > NINETY_DAYS_MS) {
+    // Expired — return null but don't bother clearing the row here; the
+    // next successful POST will overwrite it.
+    return res.json({ authIntentId: null, ageMs });
+  }
+  return res.json({ authIntentId: rows[0].stripe_onramp_auth_intent_id, ageMs });
+}));
+
+// POST /api/wallet/stripe-auth-intent
+// Body: { authIntentId: string }
+// Stores the Stripe authIntentId for the authenticated user.
+app.post('/api/wallet/stripe-auth-intent', stripeAuthIntentWriteLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
+  const userId = req.session?.user?.id;
+  const { authIntentId } = req.body || {};
+  if (!authIntentId || typeof authIntentId !== 'string') {
+    return res.status(400).json({ ok: false, error: 'authIntentId_required' });
+  }
+  // Validate rough shape: Stripe auth intent IDs are prefixed "lkai_" and are
+  // alphanumeric.  Reject anything that looks structurally wrong to prevent
+  // storing junk.
+  if (!/^[A-Za-z0-9_\-]{8,128}$/.test(authIntentId)) {
+    return res.status(400).json({ ok: false, error: 'authIntentId_invalid' });
+  }
+  await getPool().query(
+    `UPDATE users
+        SET stripe_onramp_auth_intent_id = $1,
+            stripe_onramp_auth_intent_at = NOW()
+      WHERE id = $2`,
+    [authIntentId, userId]
+  );
+  return res.json({ ok: true });
+}));
+
 // ── Rewarded video ads — Grindr-style unlock framework ────────────────────
 //
 // Free-tier users can watch a 30s rewarded video ad to unlock features

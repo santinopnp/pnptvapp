@@ -48,20 +48,27 @@ router.get('/creators/:creatorId/channel-pass', async (req, res) => {
 });
 
 // POST /api/subscriptions/creators/:creatorId/channel-pass/checkout
-// Body: { provider: 'rush'|'wallet_usdc'|'nowpayments'|'stripe'|'moonpay', payCurrency?: string }
+// Body: { provider: 'rush'|'wallet_usdc'|'nowpayments', payCurrency?: string }
 //
 // Response shapes by provider:
 //   rush         → { success, data: { expires_at, new_balance, subscription_id } }
 //   wallet_usdc  → { success, data: { payment_id, receiving_address, amount_native,
 //                                     amount_usdc, chain, token, contract_address, expires_at } }
 //   nowpayments  → { success, data: { payment_url, order_id, nowpayments_invoice_id, pay_currency } }
-//   stripe/moonpay → { success: false, error: { code: 'NOT_IMPLEMENTED_YET' } } (HTTP 501)
 router.post('/creators/:creatorId/channel-pass/checkout', authGuard, async (req, res) => {
   const userId = req.session?.user?.id;
   const { creatorId } = req.params;
   const { provider, payCurrency } = req.body || {};
 
-  const VALID_PROVIDERS = ['rush', 'stripe', 'moonpay', 'wallet_usdc', 'nowpayments'];
+  // stripe/moonpay are client-side Privy on-ramp — not a backend provider
+  if (provider === 'stripe' || provider === 'moonpay') {
+    return res.status(410).json({
+      success: false,
+      error: { code: 'PROVIDER_RETIRED', message: 'Use client-side Privy on-ramp instead of this endpoint.' },
+    });
+  }
+
+  const VALID_PROVIDERS = ['rush', 'wallet_usdc', 'nowpayments'];
   if (!provider || !VALID_PROVIDERS.includes(provider)) {
     return res.status(400).json({
       success: false,
@@ -89,10 +96,6 @@ router.post('/creators/:creatorId/channel-pass/checkout', authGuard, async (req,
       });
       return res.json({ success: true, data: result });
     }
-
-    // stripe / moonpay — not yet implemented
-    const result = await channelPassService.purchaseWithFiat({ userId, creatorId, provider });
-    return res.status(501).json({ success: false, error: result });
   } catch (err) {
     if (err && err.code === 'SELF_SUBSCRIBE') {
       return res.status(403).json({ success: false, error: { code: 'SELF_SUBSCRIBE', message: err.message } });
