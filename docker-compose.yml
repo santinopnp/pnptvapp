@@ -837,7 +837,10 @@ services:
       DB_PORT: 5432
       DB_NAME: healthchecks
       DB_USER: pnptvbot
-      DB_PASSWORD: "Apelo801050#"
+      # Hardcoded (matches umami/calcom pattern) — ${POSTGRES_PASSWORD}
+      # resolves from .env, not .env.production, so interpolation picked up
+      # the stale value. Rotate here when the real pnptvbot password rotates.
+      DB_PASSWORD: "UKdmKxi6YrgQqnNZ1BmNA67BdAN4BxDzfeQbutWu"
       SECRET_KEY: "2d189c9ec881bef0570bd13a683e2b625f506288853c516d3f555ae193b32aa1"
       SITE_ROOT: https://checks.pnptv.app
       SITE_NAME: PNPtv Healthchecks

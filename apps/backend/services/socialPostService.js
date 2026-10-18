@@ -2439,10 +2439,11 @@ class SocialPostService {
       return { reposted: false, reposts_count: countRows[0]?.reposts_count ?? 0, newPost: null };
     }
 
-    // Repost: insert bare row (no content, no quoted_post_id)
+    // Repost: insert bare row (no content, no quoted_post_id). Use '' instead
+    // of NULL — social_posts.content has a NOT NULL constraint.
     const { rows } = await query(
       `INSERT INTO social_posts (user_id, repost_of_id, content, is_shareable)
-       VALUES ($1, $2, NULL, true)
+       VALUES ($1, $2, '', true)
        RETURNING id`,
       [userId, postId]
     );
