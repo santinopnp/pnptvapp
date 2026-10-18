@@ -257,7 +257,7 @@ async function main() {
     console.log('\n  Sample DM (es):'); console.log(dmText('papi', 'es'));
     console.log('\n  Sample TG caption (en):'); console.log(tgCaption('papi', 'en'));
     console.log(`\n  DRY RUN — would process ${targets.length} users.\n`);
-    process.exit(0);
+    return;
   }
 
   // Insert campaign row (or fetch existing if we're re-running same week).
@@ -354,15 +354,17 @@ async function main() {
     `• Skipped (already sent this week): ${stats.skip}\n` +
     `Monday recap will follow with conversion + revenue.`
   );
-
-  process.exit(0);
 }
 
 // Only run if invoked directly (`node <this file>`). Prevents the campaign
 // from auto-firing when the file is `require()`d for introspection —
-// see feedback_broadcast_scripts_auto_run_main.md.
+// see feedback_broadcast_scripts_auto_run_main.md. NEVER call process.exit
+// from inside main() — the BullMQ worker in services/workers/index.js
+// imports and calls main() in-process, so an exit from here kills the bot.
 if (require.main === module) {
-  main().catch(err => { console.error('Fatal:', err.message); process.exit(1); });
+  main()
+    .then(() => process.exit(0))
+    .catch(err => { console.error('Fatal:', err.message); process.exit(1); });
 }
 
 module.exports = { main, isoWeekUTC, CAMPAIGN_ID };
