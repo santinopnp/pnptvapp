@@ -173,15 +173,21 @@ if (!resetInProgress) {
   }
 }
 
-// Hide splash screen after React mounts
+// Hide splash screen after React mounts.
+// rAF is ideal but can be throttled in background tabs and some embedded WebViews
+// (Telegram Desktop on Windows, older in-app browsers). A 2s setTimeout fallback
+// ensures the splash always clears even when rAF is delayed — avoids the 15s boot
+// failure watchdog firing on a healthy app that just painted slowly.
 if (!resetInProgress) {
-  requestAnimationFrame(() => {
+  const hideSplash = () => {
     const splash = document.getElementById("splash");
-    if (splash) {
+    if (splash && !splash.classList.contains("hide")) {
       splash.classList.add("hide");
       setTimeout(() => splash.remove(), 500);
     }
-  });
+  };
+  requestAnimationFrame(hideSplash);
+  setTimeout(hideSplash, 2000);
 }
 
 // ── Service Worker update detection (forced-update modal) ──

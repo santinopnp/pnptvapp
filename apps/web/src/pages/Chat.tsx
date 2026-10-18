@@ -70,6 +70,10 @@ import {
   updateHangoutTopic,
   deleteHangoutTopic,
   tipTokens,
+  getHangoutPins,
+  pinHangoutMessage,
+  unpinHangoutMessage,
+  searchHangoutMessages,
   ApiError,
   type HangoutGroup,
   type TopicLite,
@@ -292,6 +296,21 @@ function HangoutChatPanel({
   const [confirmDelete, setConfirmDelete] = useState<GroupMessage | null>(null);
   const [deleting, setDeleting] = useState(false);
 
+  // Pinned messages state
+  const [pins, setPins] = useState<Array<{ id: number; matrix_event_id: string; message_body: string; pinned_by_name: string; pinned_at: string }>>([]);
+  const [showPinsPanel, setShowPinsPanel] = useState(false);
+
+  // Message search state
+  const [showSearch, setShowSearch] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<GroupMessage[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // "New messages above" banner state
+  const [newMsgAboveCount, setNewMsgAboveCount] = useState(0);
+  const newMsgAboveFirstIdRef = useRef<number | null>(null);
+
   // Translation state, keyed by message id — mirrors the DM translate pattern
   const [translationView, setTranslationView] = useState<Map<number, "translated" | "original">>(new Map());
   const [translationCache, setTranslationCache] = useState<Map<number, string>>(new Map());
@@ -377,6 +396,25 @@ function HangoutChatPanel({
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const lastTypingEmit = useRef(0);
   const tipPickerRef = useRef<HTMLDivElement>(null);
+
+  const handleSearchInput = useCallback((q: string) => {
+    setSearchQuery(q);
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    if (!q.trim() || q.trim().length < 2) { setSearchResults([]); return; }
+    searchDebounceRef.current = setTimeout(async () => {
+      setIsSearching(true);
+      try {
+        const r = await searchHangoutMessages(groupId, q.trim());
+        if (r.success) setSearchResults(r.messages);
+      } catch { setSearchResults([]); }
+      finally { setIsSearching(false); }
+    }, 350);
+  }, [groupId]);
+
+  // Cleanup search debounce on unmount
+  useEffect(() => {
+    return () => { if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current); };
+  }, []);
 
   // Auto-grow the composer as text is typed/restored (including on the
   // initial mount, e.g. an edit's content or a restored draft).
@@ -561,6 +599,12 @@ function HangoutChatPanel({
     hasFetched.current = groupId;
     setIsLoading(true);
     setChatError(null);
+    setPins([]);
+    setShowSearch(false);
+    setSearchQuery('');
+    setSearchResults([]);
+    setNewMsgAboveCount(0);
+    newMsgAboveFirstIdRef.current = null;
     getGroupMessages(groupId)
       .then((data) => {
         if (data.success) {
@@ -579,6 +623,8 @@ function HangoutChatPanel({
         }
       })
       .finally(() => setIsLoading(false));
+    // Fetch pinned messages
+    getHangoutPins(groupId).then(r => { if (r.success) setPins(r.pins); }).catch(() => {});
   }, [groupId]);
 
   // Auto-scroll on load
@@ -615,6 +661,11 @@ function HangoutChatPanel({
         setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
       } else {
         setUnreadBelow((c) => c + 1);
+        // Track new messages from others while scrolled up
+        if (String(msg.user_id) !== String(myId)) {
+          setNewMsgAboveCount(c => c + 1);
+          if (newMsgAboveFirstIdRef.current === null) newMsgAboveFirstIdRef.current = msg.id;
+        }
       }
     };
 
@@ -892,7 +943,11 @@ function HangoutChatPanel({
     const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     isNearBottom.current = distFromBottom < 200;
     setShowScrollFab(distFromBottom > 300);
-    if (isNearBottom.current) setUnreadBelow(0);
+    if (isNearBottom.current) {
+      setUnreadBelow(0);
+      setNewMsgAboveCount(0);
+      newMsgAboveFirstIdRef.current = null;
+    }
     if (el.scrollTop < 60 && hasMore && !loadingMore) loadMore();
   };
 
@@ -900,6 +955,8 @@ function HangoutChatPanel({
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     setUnreadBelow(0);
     setShowScrollFab(false);
+    setNewMsgAboveCount(0);
+    newMsgAboveFirstIdRef.current = null;
   };
 
   // Context menu handlers
@@ -1147,6 +1204,67 @@ function HangoutChatPanel({
         </div>
       )}
 
+      {/* Pinned message banner */}
+      {pins.length > 0 && !showPinsPanel && (
+        <button
+          onClick={() => setShowPinsPanel(true)}
+          className="w-full flex items-center gap-2.5 px-3 py-2 border-b text-left hover:bg-white/5 transition-colors flex-shrink-0"
+          style={{ background: 'rgba(212,0,122,0.06)', borderColor: 'rgba(212,0,122,0.15)' }}
+        >
+          <svg className="w-4 h-4 flex-shrink-0 text-pnp-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+          </svg>
+          <div className="flex-1 min-w-0">
+            <p className="text-[10px] font-semibold text-pnp-accent uppercase tracking-wide leading-none mb-0.5">
+              {pins.length > 1 ? `${pins.length} pinned messages` : 'Pinned message'}
+            </p>
+            <p className="text-[12px] text-white/70 truncate leading-snug">
+              {pins[0].message_body || '📎 Media'}
+            </p>
+          </div>
+          <button
+            onClick={(e) => { e.stopPropagation(); setPins([]); }}
+            className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-white/10 text-white/40 hover:text-white/70 flex-shrink-0"
+            aria-label="Dismiss pins banner"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </button>
+      )}
+
+      {/* Pins panel overlay */}
+      {showPinsPanel && (
+        <div className="absolute inset-0 z-30 flex flex-col" style={{ background: 'var(--pnp-bg)' }}>
+          <div className="flex items-center gap-3 px-4 py-3 border-b" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
+            <button onClick={() => setShowPinsPanel(false)} className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-white/10">
+              <svg className="w-5 h-5 text-pnp-textSecondary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+              </svg>
+            </button>
+            <h2 className="text-sm font-bold text-pnp-textPrimary flex-1">Pinned Messages</h2>
+          </div>
+          <div className="flex-1 overflow-y-auto">
+            {pins.length === 0 ? (
+              <p className="text-center text-pnp-textSecondary text-sm py-12">No pinned messages</p>
+            ) : (
+              pins.map(pin => (
+                <div key={pin.id} className="px-4 py-3 border-b flex items-start gap-3" style={{ borderColor: 'rgba(255,255,255,0.05)' }}>
+                  <svg className="w-4 h-4 mt-0.5 flex-shrink-0 text-pnp-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+                  </svg>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-white/90 leading-relaxed">{pin.message_body || '📎 Media'}</p>
+                    <p className="text-[10px] text-white/40 mt-1">Pinned by {pin.pinned_by_name} · {new Date(pin.pinned_at).toLocaleDateString()}</p>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Messages */}
       <div
         ref={scrollContainerRef}
@@ -1171,6 +1289,27 @@ function HangoutChatPanel({
           </div>
         ) : (
           <>
+            {newMsgAboveCount > 0 && (
+              <div className="sticky top-0 z-10 flex justify-center py-1.5 pointer-events-none">
+                <button
+                  onClick={() => {
+                    if (newMsgAboveFirstIdRef.current) {
+                      const el = document.getElementById(`msg-${newMsgAboveFirstIdRef.current}`);
+                      el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }
+                    setNewMsgAboveCount(0);
+                    newMsgAboveFirstIdRef.current = null;
+                  }}
+                  className="pointer-events-auto flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold text-white shadow-lg transition-all active:scale-95"
+                  style={{ background: 'linear-gradient(135deg,#D4007A,#7B61FF)' }}
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+                  </svg>
+                  {newMsgAboveCount} new {newMsgAboveCount === 1 ? 'message' : 'messages'}
+                </button>
+              </div>
+            )}
             {loadingMore && (
               <div className="flex justify-center py-2">
                 <div className="w-5 h-5 border-2 border-white/20 border-t-pnp-accent rounded-full animate-spin" />
@@ -1526,6 +1665,20 @@ function HangoutChatPanel({
         const canMod = isOwnerOrMod && !isMine;
         const menuItems = (py: string) => (
           <>
+            {cmsg.content && !cmsg.content.startsWith('[') && (
+              <button
+                onClick={() => {
+                  navigator.clipboard?.writeText(cmsg.content!).catch(() => {});
+                  setContextMenu(null);
+                }}
+                className={`w-full px-5 ${py} text-[15px] text-left text-white active:bg-white/10 hover:bg-white/10 transition-colors flex items-center gap-3`}
+              >
+                <svg className="w-5 h-5 text-pnp-textSecondary flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+                Copy text
+              </button>
+            )}
             {(cmsg.media_url || (cmsg.content && cmsg.content.trim())) && cmsg.message_type !== 'post_card' && (isMine || isOwnerOrMod) && (
               <button onClick={() => handleShareToFeed(cmsg)} className={`w-full px-5 ${py} text-[15px] text-left text-white active:bg-white/10 hover:bg-white/10 transition-colors flex items-center gap-3`}>
                 <svg className="w-5 h-5 text-pnp-textSecondary flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -1546,6 +1699,30 @@ function HangoutChatPanel({
               </svg>
               Forward
             </button>
+            {isOwnerOrMod && cmsg.message_type !== 'post_card' && (
+              <button
+                onClick={async () => {
+                  setContextMenu(null);
+                  try {
+                    const alreadyPinned = pins.some(p => p.matrix_event_id === String(cmsg.id));
+                    if (alreadyPinned) {
+                      await unpinHangoutMessage(groupId, String(cmsg.id));
+                      setPins(prev => prev.filter(p => p.matrix_event_id !== String(cmsg.id)));
+                    } else {
+                      await pinHangoutMessage(groupId, String(cmsg.id), cmsg.content || '');
+                      const res = await getHangoutPins(groupId);
+                      if (res.success) setPins(res.pins);
+                    }
+                  } catch { /* best-effort */ }
+                }}
+                className={`w-full px-5 ${py} text-[15px] text-left text-white active:bg-white/10 hover:bg-white/10 transition-colors flex items-center gap-3`}
+              >
+                <svg className="w-5 h-5 text-pnp-textSecondary flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+                </svg>
+                {pins.some(p => p.matrix_event_id === String(cmsg.id)) ? 'Unpin' : 'Pin message'}
+              </button>
+            )}
             {isMine && (
               <>
                 <button onClick={() => startEdit(cmsg)} className={`w-full px-5 ${py} text-[15px] text-left text-white active:bg-white/10 hover:bg-white/10 transition-colors flex items-center gap-3`}>
@@ -2408,6 +2585,49 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
 
   const [showAboutPanel, setShowAboutPanel] = useState(false);
 
+  // Notification mode for current group header bell
+  const [notifMode, setNotifMode] = useState<'all' | 'mentions' | 'muted'>('all');
+
+  const handleNotifToggle = useCallback(async () => {
+    if (!activeGroup) return;
+    const gid = activeTopic?.id ?? activeGroup.id;
+    const next: 'all' | 'mentions' | 'muted' = notifMode === 'all' ? 'mentions' : notifMode === 'mentions' ? 'muted' : 'all';
+    setNotifMode(next);
+    try {
+      await updateHangoutNotification(gid, next);
+    } catch {
+      setNotifMode(notifMode); // revert on error
+    }
+  }, [notifMode, activeGroup, activeTopic]);
+
+  // Message search state (Chat-level — panel renders between header and chat)
+  const [showSearch, setShowSearch] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<GroupMessage[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleSearchInput = useCallback((q: string) => {
+    setSearchQuery(q);
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    if (!q.trim() || q.trim().length < 2) { setSearchResults([]); return; }
+    const gid = activeTopic?.id ?? activeGroup?.id;
+    if (!gid) return;
+    searchDebounceRef.current = setTimeout(async () => {
+      setIsSearching(true);
+      try {
+        const r = await searchHangoutMessages(gid, q.trim());
+        if (r.success) setSearchResults(r.messages);
+      } catch { setSearchResults([]); }
+      finally { setIsSearching(false); }
+    }, 350);
+  }, [activeTopic?.id, activeGroup?.id]);
+
+  // Cleanup search debounce on unmount
+  useEffect(() => {
+    return () => { if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current); };
+  }, []);
+
   // Topics — sub-channels within a hangout group (declared earlier, near activeGroup)
   const [showCreateTopic, setShowCreateTopic] = useState(false);
   const [newTopicName, setNewTopicName] = useState('');
@@ -2680,6 +2900,8 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
     setCallPanelDismissed(false);
     setCallDuration("0:00");
     setCallError(null);
+    // Reset notification mode to default on group switch
+    setNotifMode('all');
   }, [activeGroup?.id]);
 
   // ─── Global hangout socket events (invite received, feed posts) ──────────
@@ -3048,6 +3270,9 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
     setView("chat");
     navigate(`/chat/${group.id}`, { replace: true });
     setChatError(null);
+    setShowSearch(false);
+    setSearchQuery('');
+    setSearchResults([]);
 
     markGroupAsRead(group.id).catch(() => {});
     loadGroupDetail(group.id);
@@ -3416,7 +3641,8 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
               </div>
               <div className="flex items-center gap-1 mt-0.5 overflow-hidden">
                 <span className="text-xs text-pnp-textSecondary flex-shrink-0">
-                  {activeGroup.memberCount} {activeGroup.memberCount === 1 ? t.chat.membersSingular : t.chat.membersPlural}
+                  {activeGroup.memberCount ? `${activeGroup.memberCount.toLocaleString()} ${activeGroup.memberCount === 1 ? t.chat.membersSingular : t.chat.membersPlural}` : ''}
+                  {onlineMembers.length > 0 ? `${activeGroup.memberCount ? ' · ' : ''}${onlineMembers.length} online` : ''}
                 </span>
                 {activeGroup.isPaid && (activeGroup.priceUsd ?? 0) > 0 && (
                   <span className="text-[10px] text-amber-400 font-medium flex-shrink-0">${Number(activeGroup.priceUsd).toFixed(2)}</span>
@@ -3448,6 +3674,45 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                 Live
               </span>
             )}
+            {/* Search messages button */}
+            <button
+              onClick={() => { setShowSearch(s => !s); setSearchQuery(''); setSearchResults([]); }}
+              className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-white/10 active:scale-90 transition-all"
+              aria-label={showSearch ? 'Close search' : 'Search messages'}
+            >
+              {showSearch ? (
+                <svg className="w-4 h-4 text-pnp-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              ) : (
+                <svg className="w-4 h-4 text-pnp-textSecondary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+              )}
+            </button>
+
+            {/* Notification bell quick-toggle */}
+            <button
+              onClick={handleNotifToggle}
+              className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-white/10 active:scale-90 transition-all"
+              aria-label={`Notifications: ${notifMode}`}
+              title={`Notifications: ${notifMode} — tap to change`}
+            >
+              {notifMode === 'muted' ? (
+                <svg className="w-4 h-4 text-white/30" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0zM3 3l18 18" />
+                </svg>
+              ) : notifMode === 'mentions' ? (
+                <svg className="w-4 h-4 text-pnp-accent/70" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                </svg>
+              ) : (
+                <svg className="w-4 h-4 text-pnp-textSecondary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                </svg>
+              )}
+            </button>
+
             {/* Create event button */}
             {isOwnerOrMod && (
               <button
@@ -3637,6 +3902,69 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
           </div>
         </div>
 
+        {/* Message search panel */}
+        {showSearch && (
+          <div className="border-b px-3 py-2 flex flex-col gap-0 flex-shrink-0" style={{ borderColor: 'rgba(255,255,255,0.08)', background: 'var(--pnp-surface)' }}>
+            <div className="flex items-center gap-2 px-3 py-2 rounded-xl" style={{ background: 'rgba(255,255,255,0.06)' }}>
+              <svg className="w-4 h-4 text-pnp-textSecondary flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              <input
+                autoFocus
+                type="text"
+                value={searchQuery}
+                onChange={e => handleSearchInput(e.target.value)}
+                placeholder="Search messages…"
+                className="flex-1 bg-transparent text-sm text-pnp-textPrimary placeholder-pnp-textSecondary outline-none"
+              />
+              {searchQuery && (
+                <button onClick={() => { setSearchQuery(''); setSearchResults([]); }} className="text-white/40 hover:text-white/70">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              )}
+            </div>
+            {(searchResults.length > 0 || isSearching || (searchQuery.trim().length >= 2 && !isSearching)) && (
+              <div className="max-h-64 overflow-y-auto mt-1">
+                {isSearching && (
+                  <div className="flex items-center justify-center py-6">
+                    <div className="w-5 h-5 rounded-full border-2 border-pnp-accent/30 border-t-pnp-accent animate-spin" />
+                  </div>
+                )}
+                {!isSearching && searchResults.length === 0 && searchQuery.trim().length >= 2 && (
+                  <p className="text-center text-pnp-textSecondary text-sm py-6">No messages found</p>
+                )}
+                {!isSearching && searchResults.map(msg => (
+                  <button
+                    key={msg.id}
+                    onClick={() => {
+                      setShowSearch(false);
+                      setSearchQuery('');
+                      setSearchResults([]);
+                      setTimeout(() => {
+                        const el = document.getElementById(`msg-${msg.id}`);
+                        if (el) {
+                          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                          el.classList.add('msg-highlight-glow', 'rounded-2xl');
+                          setTimeout(() => el.classList.remove('msg-highlight-glow', 'rounded-2xl'), 1500);
+                        }
+                      }, 150);
+                    }}
+                    className="w-full px-3 py-2.5 flex items-start gap-2.5 hover:bg-white/5 active:bg-white/10 transition-colors rounded-lg text-left"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[11px] font-semibold text-pnp-accent truncate">{msg.first_name || msg.username}</p>
+                      <p className="text-[12px] text-white/70 line-clamp-2 leading-snug mt-0.5">{msg.content}</p>
+                      <p className="text-[10px] text-white/30 mt-1">{new Date(msg.created_at).toLocaleDateString()}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Accessibility: announce topic switches to screen readers */}
         <span aria-live="polite" className="sr-only">
           {activeTopic ? `Now viewing topic: ${activeTopic.name}` : ''}
@@ -3790,6 +4118,14 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                         }
                       >
                         # {topic.name}
+                        {(topic.unreadCount ?? 0) > 0 && (
+                          <span
+                            className="ml-1 min-w-[16px] h-4 px-1 rounded-full text-[9px] font-bold text-white inline-flex items-center justify-center flex-shrink-0"
+                            style={{ background: 'linear-gradient(135deg,#D4007A,#E69138)' }}
+                          >
+                            {(topic.unreadCount ?? 0) > 99 ? '99+' : topic.unreadCount}
+                          </span>
+                        )}
                       </button>
                       {canManageTopics && (
                         <button

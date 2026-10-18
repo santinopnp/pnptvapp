@@ -2819,6 +2819,7 @@ export interface TopicLite {
   position: number;
   isReadOnly?: boolean;
   isWallOfFame?: boolean;
+  unreadCount?: number;
 }
 
 export type ForwardTarget =
@@ -3071,6 +3072,27 @@ export function toggleMessageReaction(
     method: "POST",
     body: { emoji },
   });
+}
+
+export async function getHangoutPins(groupId: number): Promise<{ success: boolean; pins: Array<{ id: number; group_id: number; matrix_event_id: string; message_body: string; pinned_by: string; pinned_by_name: string; pinned_at: string }> }> {
+  return request(`/api/webapp/hangouts/groups/${groupId}/pins`);
+}
+
+export async function pinHangoutMessage(groupId: number, eventId: string, body: string): Promise<{ success: boolean; pin: unknown }> {
+  return request(`/api/webapp/hangouts/groups/${groupId}/pin`, {
+    method: "POST",
+    body: JSON.stringify({ eventId, body }),
+  });
+}
+
+export async function unpinHangoutMessage(groupId: number, eventId: string): Promise<{ success: boolean }> {
+  return request(`/api/webapp/hangouts/groups/${groupId}/pin/${encodeURIComponent(eventId)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function searchHangoutMessages(groupId: number, q: string): Promise<{ success: boolean; messages: GroupMessage[] }> {
+  return request(`/api/webapp/hangouts/groups/${groupId}/messages/search?q=${encodeURIComponent(q)}`);
 }
 
 export function translateGroupMessage(

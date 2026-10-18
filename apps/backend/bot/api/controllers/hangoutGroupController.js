@@ -227,7 +227,19 @@ const listGroups = async (req, res) => {
       );
       for (const t of topicRows) {
         if (!topicsMap[t.parent_group_id]) topicsMap[t.parent_group_id] = [];
-        topicsMap[t.parent_group_id].push({ id: t.id, name: t.name, description: t.description || '', position: t.position, isReadOnly: !!t.is_read_only, isWallOfFame: !!t.is_wall_of_fame });
+        topicsMap[t.parent_group_id].push({ id: t.id, name: t.name, description: t.description || '', position: t.position, isReadOnly: !!t.is_read_only, isWallOfFame: !!t.is_wall_of_fame, unreadCount: 0 });
+      }
+    }
+
+    // Fetch unread counts for topics (single MGET round-trip)
+    if (redis) {
+      const allTopics = Object.values(topicsMap).flat();
+      if (allTopics.length > 0) {
+        const topicUnreadKeys = allTopics.map(t => `hangout:unread:${t.id}:${user.id}`);
+        const topicUnreadValues = await redis.mget(...topicUnreadKeys).catch(() => topicUnreadKeys.map(() => null));
+        allTopics.forEach((t, i) => {
+          t.unreadCount = parseInt(topicUnreadValues[i], 10) || 0;
+        });
       }
     }
 
