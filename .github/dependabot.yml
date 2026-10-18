@@ -9,3 +9,15 @@ updates:
       # so GHSA-q7cg-457f-vx79 does not affect this codebase.
       - dependency-name: "joi"
         versions: [">=18.0.0"]
+      # stream-json advisories (DoS via pick/ignore/filter/replace, JSONC re-scan,
+      # Assembler prototype pollution) reach us only through
+      # jayson -> @solana/web3.js -> @privy-io/server-auth. We never call
+      # Solana RPC, so the vulnerable parser paths are not executed. The
+      # maintainer has not patched the 1.x line; 3.x is a breaking rewrite.
+      # Revisit when @privy-io/server-auth drops its Solana peer.
+      - dependency-name: "stream-json"
+      # postcss-selector-parser quadratic CSS parsing is a dev-time only
+      # concern (runs during vite build on our own trusted stylesheets, not
+      # on user input). Fix requires tailwindcss 3 -> 4 which is a breaking
+      # rewrite; schedule separately.
+      - dependency-name: "postcss-selector-parser"
