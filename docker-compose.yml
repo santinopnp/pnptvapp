@@ -1147,6 +1147,37 @@ services:
           memory: 256m
           cpus: '0.25'
 
+  mcp-social:
+    image: mcp-social:latest
+    container_name: mcp-social
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      PORT: "3017"
+      REDIS_URL: "redis://:${REDIS_PNPTV_PASSWORD}@redis-pnptv:6379"
+      SENDER_ID: "8599671840"
+      DEFAULT_ACTOR_ID: "8599671840"
+      ZOHO_SOCIAL_CLIENT_ID: ${ZOHO_SOCIAL_CLIENT_ID:-}
+      ZOHO_SOCIAL_CLIENT_SECRET: ${ZOHO_SOCIAL_CLIENT_SECRET:-}
+      ZOHO_SOCIAL_REFRESH_TOKEN: ${ZOHO_SOCIAL_REFRESH_TOKEN:-}
+      ZOHO_SOCIAL_API_DOMAIN: ${ZOHO_SOCIAL_API_DOMAIN:-https://social.zohoapis.com}
+      ZOHO_SOCIAL_ACCOUNTS_URL: ${ZOHO_SOCIAL_ACCOUNTS_URL:-https://accounts.zoho.com}
+      ZOHO_SOCIAL_BRAND_ID: ${ZOHO_SOCIAL_BRAND_ID:-}
+      ZOHO_SOCIAL_X_CHANNEL_ID: ${ZOHO_SOCIAL_X_CHANNEL_ID:-}
+    networks:
+      - pnptvapp_net
+    depends_on:
+      pg-pnptv:
+        condition: service_healthy
+      redis-pnptv:
+        condition: service_started
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: '0.25'
+
   deploy-webhook:
     build:
       context: /opt/deploy-webhook
