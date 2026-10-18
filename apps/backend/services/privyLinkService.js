@@ -208,10 +208,14 @@ async function verifyAndLink({ pnptvUserId, privyToken }) {
     const privyUser = await client.getUserById(privyId);
     walletAddress = extractWalletAddress(privyUser);
   } catch (err) {
-    logger.warn('[privy-link] getUserById failed, proceeding with id only', {
+    logger.warn('[privy-link] getUserById failed — aborting link', {
       privyId,
       err: err.message,
     });
+    const e = new Error('privy_get_user_failed');
+    e.code = 'privy_get_user_failed';
+    e.cause = err;
+    throw e;
   }
 
   // Refuse to steal a Privy id already linked to a different pnptv user.
