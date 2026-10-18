@@ -170,6 +170,9 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
       // isn't blocked by a stale true value from the previous session.
       fundInFlightRef.current = false;
       setFundingInFlight(false);
+      // Reset the Stripe→MoonPay auto-switch latch so a fresh modal open can
+      // auto-rescue again if the user is rate-limited next session too.
+      autoSwitchedMoonPayRef.current = false;
       return;
     }
     setError(null);
@@ -507,7 +510,11 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
     }
   };
 
-  const handleFundForPackage = async (pkg: TokenPackage) => {
+  // Latch: one-shot auto-switch Stripe "Too many attempts" → MoonPay per modal
+  // open. Resets on modal close via the existing useEffect that clears state.
+  const autoSwitchedMoonPayRef = useRef(false);
+
+  const handleFundForPackage = async (pkg: TokenPackage, opts?: { forceMoonPay?: boolean }) => {
     if (!activeWallet) return;
     // Guard: Privy throws "Existing fiat onramp flow in progress" if a call is
     // still open. Early-return so we never surface that error to users.
@@ -521,7 +528,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
     try {
       // grossUpForOnramp adds a fee buffer so USDC that arrives ≥ pack price; enforces $15 minimum.
       const grossed = grossUpForOnramp(price);
-      if (shouldPreferMoonPay()) {
+      if (opts?.forceMoonPay === true || shouldPreferMoonPay()) {
         await fundWallet({
           address: activeWallet.address,
           options: {
@@ -571,6 +578,20 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
       const msg = err instanceof Error ? err.message : String(err);
       const kind = classifyOnrampError(msg);
       if (kind === "cancel") return;
+      // Stripe Link "Too many attempts" — silently retry the same package via
+      // MoonPay (card → card hop). One-shot via autoSwitchedMoonPayRef.
+      if (kind === "rate_limited" && !autoSwitchedMoonPayRef.current && !opts?.forceMoonPay) {
+        autoSwitchedMoonPayRef.current = true;
+        reportWalletClientError("buyTokensFundWallet_rate_limited_switch_to_moonpay", err, {
+          surface: "rush", packageId: pkg.id, amountUsd: price,
+          address: activeWallet?.address, walletType: activeWallet?.walletClientType,
+        });
+        fundInFlightRef.current = false;
+        setFundingInFlight(false);
+        setPayingPackageId(null);
+        setTimeout(() => { handleFundForPackage(pkg, { forceMoonPay: true }); }, 50);
+        return;
+      }
       // MoonPay popup blocked or provider error → next tap uses Stripe
       if (!stripeHasFailed && (kind === "popup_blocked" || kind === "provider_failed" || kind === "provider_region" || kind === "status_timeout")) {
         setStripeHasFailed(true);
@@ -596,7 +617,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
   // Card onramp → auto-buy flow for custom amounts and preset packages.
   // Mirrors handleFundForPackage. When pkgId is provided, actualTokens uses
   // the package's real token count (including bonus) instead of the flat rate.
-  const handleFundForCustomAmount = async (usd: number, tokens?: number, pkgId?: string, closeOnCancel = false) => {
+  const handleFundForCustomAmount = async (usd: number, tokens?: number, pkgId?: string, closeOnCancel = false, opts?: { forceMoonPay?: boolean }) => {
     if (!activeWallet) return;
     // Same guard as handleFundForPackage — prevents the "Existing fiat onramp
     // flow in progress" Privy error on multi-tap before the modal opens.
@@ -609,7 +630,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
     setPayingCustom(true);
     try {
       const grossed = grossUpForOnramp(usd);
-      if (shouldPreferMoonPay()) {
+      if (opts?.forceMoonPay === true || shouldPreferMoonPay()) {
         await fundWallet({
           address: activeWallet.address,
           options: {
@@ -654,6 +675,19 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
       const kind = classifyOnrampError(msg);
       if (kind === "cancel") {
         if (closeOnCancel) onClose();
+        return;
+      }
+      // Stripe Link "Too many attempts" → silently retry same amount via MoonPay.
+      if (kind === "rate_limited" && !autoSwitchedMoonPayRef.current && !opts?.forceMoonPay) {
+        autoSwitchedMoonPayRef.current = true;
+        reportWalletClientError("buyTokensFundWallet_rate_limited_switch_to_moonpay", err, {
+          surface: "rush", packageId: pkgId, amountUsd: usd,
+          address: activeWallet?.address, walletType: activeWallet?.walletClientType,
+        });
+        fundInFlightRef.current = false;
+        setFundingInFlight(false);
+        setPayingCustom(false);
+        setTimeout(() => { handleFundForCustomAmount(usd, tokens, pkgId, closeOnCancel, { forceMoonPay: true }); }, 50);
         return;
       }
       reportWalletClientError("buyTokensFundWallet", err, {

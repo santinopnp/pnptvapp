@@ -343,6 +343,7 @@ export type OnrampErrorKind =
   | "cancel"
   | "popup_blocked"   // MoonPay/Meld popup could not open
   | "card_blocked"    // Stripe risk block / decline / 3DS failure
+  | "rate_limited"    // Stripe Link "Too many attempts" — phone-OTP lockout on Stripe side
   | "stripe_failed"   // Stripe KYC / limits / Link / SDK load failures
   | "provider_region" // provider not offered in the user's country
   | "status_timeout"  // MoonPay popup flow: status polling gave up
@@ -355,6 +356,10 @@ export function classifyOnrampError(msg: string): OnrampErrorKind {
   if (/unable to open payment window|pop-?up.*blocked/i.test(msg)) return "popup_blocked";
   if (/not available in your region/i.test(msg)) return "provider_region";
   if (/unable to check payment status|could not confirm payment status/i.test(msg)) return "status_timeout";
+  // Stripe Link phone-OTP lockout — rate limit lives on Stripe's side keyed to
+  // the user's phone number; separate from stripe_failed because we auto-switch
+  // to MoonPay (card→card) instead of surfacing an error.
+  if (/too many attempts/i.test(msg)) return "rate_limited";
   if (/identity verification|kyc|transaction_limit_reached|link authentication|something went wrong setting up checkout|stripe crypto sdk|failed to fetch|rate limit exceeded/i.test(msg)) return "stripe_failed";
   if (/user exited|cancel|reject/i.test(msg)) return "cancel";
   if (/^(error: )?transaction failed/i.test(msg)) return "provider_failed";
@@ -395,6 +400,13 @@ export function onrampErrorMessage(kind: OnrampErrorKind, es: boolean, rawMsg: s
         ? (es ? ` Intenta con Apple Pay / Google Pay, o ábrelo en ${where}.` : ` Try Apple Pay / Google Pay, or open this page in ${where}.`)
         : (es ? " Intenta con Apple Pay / Google Pay, o paga con cripto." : " Try again with Apple Pay / Google Pay, or pay with crypto instead."));
     }
+    case "rate_limited":
+      // Stripe Link phone-OTP lockout. Normally we auto-switch to MoonPay and
+      // the user never sees this; this message only renders when MoonPay is
+      // kill-switched or when the auto-switch has already been used once.
+      return (es
+        ? "Stripe bloqueó temporalmente los intentos de verificación con tu teléfono. Intenta con Apple Pay / Google Pay (no requieren SMS), o paga con cripto."
+        : "Stripe temporarily blocked phone verification attempts. Try Apple Pay / Google Pay (no SMS needed), or pay with crypto instead.");
     case "stripe_failed":
       return (es
         ? "Stripe no pudo completar el pago. No se hizo ningún cargo."
@@ -596,6 +608,11 @@ export function WalletPayCard({
   // Set to true after initial balance load completes so we can auto-pay once
   // when the user arrives with enough balance already funded.
   const autoPayFiredRef = _useRef(false);
+  // One-shot latch: once we've auto-switched a Stripe "Too many attempts"
+  // over to MoonPay this component lifetime, don't recurse again — a second
+  // rate_limited (should never happen on MoonPay since it doesn't use Link)
+  // would just show the normal error path.
+  const autoSwitchedMoonPayRef = _useRef(false);
 
   _useEffect(() => {
     // Reset cancellation flag and stripe-failure state when the wallet/auth
@@ -976,7 +993,7 @@ export function WalletPayCard({
     } finally { setPaying(false); }
   };
 
-  const handleFund = async () => {
+  const handleFund = async (opts?: { forceMoonPay?: boolean }) => {
     if (!activeWallet) return;
     // Privy rejects a second call while one is open ("Existing fiat onramp
     // flow in progress" — 32 rows in payment_errors), e.g. auto-open from
@@ -1001,7 +1018,11 @@ export function WalletPayCard({
     // Otherwise (e.g. iOS PWA where MoonPay also can't open), bias toward
     // NowPayments when available; otherwise show a banner with an "Open in
     // browser" escape. Never call addFunds or fundWallet in the banner path.
-    const useMoonPay = shouldPreferMoonPay();
+    //
+    // forceMoonPay=true comes from the Stripe "Too many attempts" auto-switch
+    // in the catch block — bypasses the platform heuristic and forces the
+    // MoonPay branch below.
+    const useMoonPay = opts?.forceMoonPay === true || shouldPreferMoonPay();
     if (smsVerifLikelyBlocked() && !useMoonPay) {
       if (onCryptoFallback) {
         onCryptoFallback();
@@ -1102,6 +1123,28 @@ export function WalletPayCard({
       // User-environment issues — show the message but don't log as a real error.
       if (kind === "flow_in_progress") {
         setError(onrampErrorMessage(kind, es, msg));
+        return;
+      }
+      // Stripe Link "Too many attempts" — the phone-OTP rate limit lives on
+      // Stripe's side keyed to the user's phone number. Browser/session changes
+      // don't help; waiting hours does. Rather than surface a hostile error,
+      // silently retry the exact same purchase via MoonPay (card → card hop)
+      // when MoonPay is enabled and we haven't already tried it this call.
+      // One-shot: autoSwitchedMoonPayRef prevents infinite recursion if
+      // MoonPay itself fails.
+      if (kind === "rate_limited" && _MOONPAY_ENABLED && !useMoonPay && !autoSwitchedMoonPayRef.current) {
+        autoSwitchedMoonPayRef.current = true;
+        reportWalletClientError("fundWallet_rate_limited_switch_to_moonpay", err, {
+          surface, amountUsd, address: activeWallet?.address,
+          walletType: activeWallet?.walletClientType,
+        });
+        // Release the in-flight lock before re-entering handleFund so the
+        // guard at the top of handleFund doesn't early-return. forceMoonPay
+        // bypasses the platform heuristic (Windows desktop etc.) so the
+        // retry actually hits useFundWallet, not addFunds again.
+        fundInFlightRef.current = false;
+        setFundingInFlight(false);
+        setTimeout(() => { handleFund({ forceMoonPay: true }); }, 50);
         return;
       }
       // popup_blocked from MoonPay → signal next tap uses Stripe (inline, no popup)
