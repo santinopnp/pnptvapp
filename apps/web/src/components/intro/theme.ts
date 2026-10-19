@@ -19,7 +19,7 @@ export const COLORS = {
 } as const;
 
 /**
- * Display face. Ethnocentric is served from fonts.cdnfonts.com; the stack falls
+ * Display face. Ethnocentric is self-hosted at /fonts/ethnocentric-rg.woff; the stack falls
  * back to Roboto Mono so the piece degrades to real brand type rather than a
  * system default when that host is unreachable. See FONTS.md.
  */

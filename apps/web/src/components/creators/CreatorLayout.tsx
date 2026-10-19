@@ -220,7 +220,7 @@ export default function CreatorLayout() {
   const sidebar = (
     <nav className="flex flex-col h-dvh">
       <div className="flex items-center gap-3 px-4 h-16 border-b border-pnp-border">
-        <img src="/logo-header.png" alt="PNPtv!" className="h-9 w-auto" />
+        <img src="/logo-full.png" alt="PNPtv!" className="h-9 w-auto" />
         <span
           className="text-sm font-bold text-gradient"
         >
@@ -368,7 +368,7 @@ export default function CreatorLayout() {
           </svg>
         </button>
         <div className="flex items-center gap-2">
-          <img src="/logo-header.png" alt="PNPtv!" className="h-9 w-auto" />
+          <img src="/logo-full.png" alt="PNPtv!" className="h-9 w-auto" />
           <span
             className="text-xs font-bold text-gradient"
           >

@@ -180,7 +180,7 @@ export default function DashBankPage() {
               </svg>
             </button>
             <Link to="/">
-              <img src="/logo-header.png" alt="PNPtv!" className="h-8 w-auto" />
+              <img src="/logo-full.png" alt="PNPtv!" className="h-8 w-auto" />
             </Link>
           </div>
           {!isAuthenticated && (
@@ -213,7 +213,7 @@ export default function DashBankPage() {
           />
           <div className="relative">
             <div className="flex justify-center mb-3">
-              <img src="/logo-header.png" alt="PNPtv!" className="h-14 w-auto" />
+              <img src="/logo-full.png" alt="PNPtv!" className="h-14 w-auto" />
             </div>
             <div className="inline-flex items-center gap-2 mb-2">
               <span className="text-4xl font-black" style={{ color: "#008DE4" }}>Bank</span>

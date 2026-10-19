@@ -142,7 +142,7 @@ export function AdminLayout() {
   const sidebar = (
     <nav className="flex flex-col h-dvh">
       <div className="flex items-center gap-3 px-4 h-16 border-b border-pnp-border">
-        <img src="/logo-header.png" alt="PNPtv!" className="h-9 w-auto" />
+        <img src="/logo-full.png" alt="PNPtv!" className="h-9 w-auto" />
         <span className="text-sm font-bold text-pnp-accent">Admin</span>
         {isCreatorAdmin && (
           <span className="ml-auto text-xs font-medium px-1.5 py-0.5 rounded bg-pnp-accent/20 text-pnp-accent">
@@ -236,7 +236,7 @@ export function AdminLayout() {
           </svg>
         </button>
         <div className="flex items-center gap-2">
-          <img src="/logo-header.png" alt="PNPtv!" className="h-9 w-auto" />
+          <img src="/logo-full.png" alt="PNPtv!" className="h-9 w-auto" />
           <span className="text-xs font-bold text-pnp-accent">Admin</span>
         </div>
         <div className="w-8" />
