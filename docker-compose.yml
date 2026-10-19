@@ -1169,6 +1169,8 @@ services:
       ZOHO_SOCIAL_BRAND_ID: ${ZOHO_SOCIAL_BRAND_ID:-}
       ZOHO_SOCIAL_X_CHANNEL_ID: ${ZOHO_SOCIAL_X_CHANNEL_ID:-}
       SOCIAL_LIBRARY_PATH: /library/social-library.json
+      SANTINO_MCP_TOKEN: ${SANTINO_MCP_TOKEN:-}
+      BACKEND_INTERNAL_URL: "http://pnptv-bot:3001"
     volumes:
       - type: bind
         source: /opt/pnptvapp/content
