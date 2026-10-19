@@ -34,7 +34,7 @@
     "cors": "^2.8.5",
     "cron-parser": "^5.10.1",
     "crypto-js": "^4.2.0",
-    "csv-parse": "^7.0.2",
+    "csv-parse": "^7.0.3",
     "csv-parser": "^3.2.1",
     "dotenv": "^16.6.1",
     "dotenv-safe": "^9.1.0",
