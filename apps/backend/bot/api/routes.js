@@ -22650,7 +22650,7 @@ app.post('/api/creators/:id/services/:serviceId/book',
   );
 
   // POST /api/webapp/creator/ai/generate-social-post
-  // Generates a hook-body-CTA bilingual post for creators (promote or calls template)
+  // Generates an X-format English-only hook-body-CTA post for creators
   app.post(
     '/api/webapp/creator/ai/generate-social-post',
     requireSessionAuth,
@@ -22662,15 +22662,38 @@ app.post('/api/creators/:id/services/:serviceId/book',
         return res.status(400).json({ success: false, error: 'prompt is required' });
       }
       const grokService = require('../../services/grokService');
-      let builtPrompt;
+
+      const systemPrompt = `You write social posts for creators on PNPtv — a private adult platform for the queer PNP community. Creators range from performers to community members; write in a neutral, confident, community-authentic voice that fits any creator (not a specific person).
+
+FORMAT RULES (X / Twitter):
+- English only
+- Max 280 characters — count carefully, stay under
+- Structure: 1 hook line → 1-2 body lines → 1 CTA
+- Hook: direct, stops the scroll — can be a question, bold statement, or vibe-setter
+- Body: specific about what's offered (content, vibe, energy, the moment)
+- CTA: clear action (subscribe at pnptv.app, DM, tip, join) — no external link in the main post body
+- No hashtags unless the creator asked for them
+- No markdown, no bullet points — plain text only
+- Max 2 emojis total, only if they add energy (🔥 ☁️ 👀)
+- Output the post text only — nothing else`;
+
+      let userPrompt;
       if (template === 'calls') {
-        builtPrompt = `Write a social media post for an adult creator on PNPtv announcing availability for private calls. Context: "${promptText}". Structure: 1 hook line (vibe/energy) → 1-2 body lines about what's available → 1 CTA to DM or book. Max 280 chars. Authentic, playful, unapologetic tone. No hashtags in body.`;
+        userPrompt = `Write an X post for a creator announcing they're available for private calls/sessions. Context from creator: "${promptText}". Return only the post text.`;
       } else {
-        builtPrompt = `Write a social media post for an adult creator on PNPtv promoting their content. What to promote: "${promptText}". Structure: 1 bold hook line that stops the scroll → 2 body lines about what makes it hot/special → 1 clear CTA (subscribe, watch, tip). Max 280 chars. Sexy but not robotic. No hashtags in body.`;
+        userPrompt = `Write an X post for a creator promoting their content. What to promote: "${promptText}". Return only the post text.`;
       }
+
       try {
-        const result = await grokService.generateSharePost({ prompt: builtPrompt });
-        res.json({ success: true, post: result.combined, en: result.en, es: result.es });
+        const post = await grokService.chat({
+          mode: 'xPost',
+          language: 'English',
+          prompt: userPrompt,
+          maxTokens: 120,
+          systemOverride: systemPrompt,
+        });
+        const trimmed = post.trim();
+        res.json({ success: true, post: trimmed, en: trimmed, es: trimmed });
       } catch (err) {
         res.status(500).json({ success: false, error: 'Could not generate post — try again in a moment' });
       }
