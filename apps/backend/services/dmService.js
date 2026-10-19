@@ -105,6 +105,15 @@ class DmService {
     const senderIsSuperGod = EntitlementAccessService.isSuperGod(senderId);
     const isAdmin = options.isAdmin === true || senderIsSuperGod;
 
+    // Reject banned senders even if their session hasn't expired yet
+    if (!senderIsSuperGod) {
+      const PlatformBanService = require('./platformBanService');
+      const banRecord = await PlatformBanService.isBanned({ userId: String(senderId) }).catch(() => null);
+      if (banRecord) {
+        throw { statusCode: 403, message: 'Your account has been suspended', code: 'ACCOUNT_BANNED' };
+      }
+    }
+
     const DM_INTRO_LIMIT = 5;
     let dmIntroKey = null;
     let dmIntroUsed = 0;
@@ -246,6 +255,24 @@ class DmService {
     }
 
     const text = content ? String(content).trim().slice(0, 4000) : null;
+
+    // Threat detection — block before insert, alert Slack async. Admin senders skip.
+    if (text && !isAdmin) {
+      const matched = _scanDmForThreats(text);
+      if (matched.length > 0) {
+        setImmediate(() => DmService._alertDmThreat(senderId, resolvedRecipientId, text, matched));
+        throw { statusCode: 403, message: 'Message blocked: prohibited content', code: 'THREAT_DETECTED' };
+      }
+    }
+
+    if (!isAdmin) {
+      const MessageRateLimiter = require('./messageRateLimiter');
+      const rl = await MessageRateLimiter.checkLimit(String(senderId), String(resolvedRecipientId));
+      if (!rl.allowed) {
+        throw { statusCode: 429, message: 'Too many messages. Please slow down.', code: 'RATE_LIMITED', retryAfter: rl.retryAfter };
+      }
+    }
+
     const mType = (messageType === 'post_card' ? 'post_card' : 'text');
     const metaJson = meta ? JSON.stringify(meta) : null;
     const { rows } = await query(
@@ -303,36 +330,39 @@ class DmService {
           message: `${senderName} sent you a message`,
           metadata: { senderId, senderName, messageId: message.id, preview: threadPreview, url: `/dm/${senderId}` }
         });
-
-        // Threat detection — skip system/admin senders to avoid false alerts
-        if (text && sender?.role !== 'superadmin' && sender?.role !== 'admin') {
-          const matched = _scanDmForThreats(text);
-          if (matched.length > 0) {
-            const redis = require('../config/redis').getRedis();
-            const dedupKey = `dm:threat:dedup:${senderId}`;
-            const alreadyAlerted = redis ? await redis.get(dedupKey).catch(() => null) : null;
-            if (!alreadyAlerted) {
-              if (redis) redis.set(dedupKey, '1', 'EX', 3600).catch(() => {});
-              const [recipRow] = (await query('SELECT username FROM users WHERE id = $1', [resolvedRecipientId]).catch(() => ({ rows: [] }))).rows;
-              const slackOps = require('./slackOpsService');
-              slackOps.notifyDmThreat({
-                senderId,
-                senderUsername: sender?.username || null,
-                recipientId: resolvedRecipientId,
-                recipientUsername: recipRow?.username || null,
-                messageText: text,
-                matchedPatterns: matched,
-                messageId: message.id,
-              }).catch(() => {});
-            }
-          }
-        }
       } catch (notifErr) {
         logger.warn('DM push notification error', { error: notifErr.message, messageId: message.id });
       }
     })();
 
     return message;
+  }
+
+  static async _alertDmThreat(senderId, recipientId, text, matchedPatterns) {
+    try {
+      const redis = require('../config/redis').getRedis();
+      const dedupKey = `dm:threat:dedup:${senderId}`;
+      const alreadyAlerted = redis ? await redis.get(dedupKey).catch(() => null) : null;
+      if (alreadyAlerted) return;
+      if (redis) redis.set(dedupKey, '1', 'EX', 3600).catch(() => {});
+      const { rows } = await query(
+        'SELECT id, username FROM users WHERE id = ANY($1::text[])',
+        [[String(senderId), String(recipientId)]]
+      ).catch(() => ({ rows: [] }));
+      const usernameOf = (id) => rows.find((r) => String(r.id) === String(id))?.username || null;
+      const slackOps = require('./slackOpsService');
+      await slackOps.notifyDmThreat({
+        senderId,
+        senderUsername: usernameOf(senderId),
+        recipientId,
+        recipientUsername: usernameOf(recipientId),
+        messageText: text,
+        matchedPatterns,
+        messageId: null,
+      });
+    } catch (err) {
+      logger.warn('DM threat alert error', { error: err.message, senderId });
+    }
   }
 
   static async markAsRead(userId, otherUserId, io = null) {
