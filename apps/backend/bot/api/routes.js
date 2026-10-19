@@ -10048,16 +10048,6 @@ app.post('/api/webapp/social/posts/with-multi-media', requireSessionAuth, upload
     datastore: new TusFileStore({ directory: TUS_SOCIAL_DIR }),
     respectForwardedHeaders: true,
     maxSize: 500 * 1024 * 1024, // 500 MB per file
-    async onIncomingRequest(req, _res, _upload) {
-      // Block requests without a valid session — requireSessionAuth runs before
-      // tusServer.handle(), so req.session is already validated by that point.
-      // This hook is an extra defence-in-depth check.
-      if (!req.session?.user?.id) {
-        const err = new Error('Unauthorized');
-        err.status_code = 401;
-        throw err;
-      }
-    },
     async onUploadCreate(req, res, upload) {
       // Validate MIME type declared in metadata before accepting the upload
       const rawMeta = upload.metadata || {};
@@ -10070,7 +10060,9 @@ app.post('/api/webapp/social/posts/with-multi-media', requireSessionAuth, upload
       return { res };
     },
     async onUploadFinish(req, res, upload) {
-      const userId = req.session?.user?.id || 'anon';
+      // req here is the srvx NodeRequest wrapper — access Express req via req.node?.req
+      const expressReq = req.node?.req || req.runtime?.node?.req;
+      const userId = expressReq?.session?.user?.id || 'anon';
       const rawMeta = upload.metadata || {};
       const declaredMime = rawMeta.filetype || rawMeta.type || 'application/octet-stream';
       const ext = TUS_SOCIAL_EXT_MAP[declaredMime] || 'bin';
@@ -27207,6 +27199,31 @@ app.get('/internal/zoho/desk/tickets', requireInternalSecret, asyncHandler(async
 }));
 
 // ── End internal Zoho proxy routes ───────────────────────────────────────────
+
+// ── Internal X Bearer Token endpoint (used by mcp-social container) ──────────
+// Returns a decrypted, auto-refreshed OAuth 2.0 Bearer token for any active
+// x_accounts row. Avoids the mcp-social container managing its own token
+// rotation (which caused competing refreshes and invalidated the token chain).
+// Protected by SANTINO_MCP_TOKEN.
+
+app.get('/api/internal/x-bearer-token', asyncHandler(async (req, res) => {
+  const secret = process.env.SANTINO_MCP_TOKEN;
+  if (!secret || req.headers['x-internal-secret'] !== secret) {
+    return res.status(403).json({ error: 'forbidden' });
+  }
+  const handle = String(req.query.handle || 'PNPtvApp').replace(/^@/, '');
+  const XPostService = require('../../services/xPostService');
+  const { rows } = await query(
+    'SELECT * FROM x_accounts WHERE handle = $1 AND is_active = true LIMIT 1',
+    [handle]
+  );
+  if (!rows.length) {
+    return res.status(404).json({ error: `X account @${handle} not found or inactive` });
+  }
+  const accessToken = await XPostService.getValidAccessToken(rows[0]);
+  return res.json({ access_token: accessToken, handle: rows[0].handle, expires_at: rows[0].token_expires_at });
+}));
+// ── End internal X Bearer Token endpoint ─────────────────────────────────────
 
 // Export app WITHOUT 404/error handlers
 // These will be added in bot.js AFTER the webhook callback
