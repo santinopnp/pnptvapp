@@ -1369,7 +1369,7 @@ export default function PostCard({
                     </div>
                   )}
                   {/* PRIME creator action pills — Subscribe to PRIME + Book a Call */}
-                  {isPrimeCreator && String(user?.id ?? "") !== String(post.author_id) && (
+                  {isPrimeCreator && String(user?.id ?? "") !== String(post.author_id) && (showPrimeUpsell || (showBookCallCta && hasCallPackages)) && (
                     <div className="mt-2.5 flex gap-2" onClick={(e) => e.stopPropagation()}>
                       {showPrimeUpsell && (
                         <button
@@ -2101,7 +2101,7 @@ export default function PostCard({
           creator={{
             id: String(post.author_id),
             username: post.author_username || "",
-            photo_url: null,
+            photo_url: resolvePhotoUrl(post.author_photo),
             creator_type: "full_time",
             creator_price_usd: 0,
           }}
