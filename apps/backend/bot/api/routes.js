@@ -27248,6 +27248,21 @@ app.get('/api/internal/x-bearer-token', asyncHandler(async (req, res) => {
 }));
 // ── End internal X Bearer Token endpoint ─────────────────────────────────────
 
+// ── Banner Promotions — public endpoint, 60s cache ────────────────────────────
+app.get('/api/public/banner-promotions/active', asyncHandler(async (_req, res) => {
+  const { rows } = await query(
+    `SELECT id, title, content, image_url, cta_text, cta_link, starts_at, ends_at
+       FROM banner_promotions
+      WHERE active = true
+        AND (starts_at IS NULL OR starts_at <= NOW())
+        AND (ends_at IS NULL OR ends_at > NOW())
+      ORDER BY starts_at DESC NULLS LAST
+      LIMIT 1`
+  );
+  res.setHeader('Cache-Control', 'public, max-age=60');
+  return res.json({ banner: rows[0] || null });
+}));
+
 // Export app WITHOUT 404/error handlers
 // These will be added in bot.js AFTER the webhook callback
 module.exports = app;

@@ -881,6 +881,73 @@ function NativeLangNudge() {
   );
 }
 
+// ── PromoBanner ───────────────────────────────────────────────────────────────
+
+const API_BASE = import.meta.env.VITE_API_URL || '';
+
+interface BannerPromotion {
+  id: number;
+  title: string;
+  content: string;
+  image_url: string | null;
+  cta_text: string;
+  cta_link: string;
+  ends_at: string | null;
+}
+
+function PromoBanner() {
+  const [banner, setBanner] = React.useState<BannerPromotion | null>(null);
+  const [dismissed, setDismissed] = React.useState(false);
+
+  React.useEffect(() => {
+    fetch(`${API_BASE}/api/public/banner-promotions/active`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (!data?.banner) return;
+        const key = `pnptv:banner:dismissed:${data.banner.id}`;
+        if (localStorage.getItem(key)) return;
+        setBanner(data.banner);
+      })
+      .catch(() => {});
+  }, []);
+
+  if (!banner || dismissed) return null;
+
+  const handleDismiss = () => {
+    localStorage.setItem(`pnptv:banner:dismissed:${banner.id}`, '1');
+    setDismissed(true);
+  };
+
+  return (
+    <div className="relative flex items-center gap-3 px-4 py-3 text-white text-sm" style={{ background: 'linear-gradient(90deg, #D4007A 0%, #7B2FBE 100%)' }}>
+      {banner.image_url && (
+        <img src={banner.image_url} alt="" className="w-10 h-10 rounded-lg object-cover flex-shrink-0 hidden sm:block" />
+      )}
+      <div className="flex-1 min-w-0">
+        <span className="font-semibold">{banner.title}</span>
+        {banner.content && <span className="ml-2 opacity-90 hidden sm:inline">{banner.content}</span>}
+      </div>
+      <a
+        href={banner.cta_link}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-bold bg-white text-[#D4007A] hover:bg-white/90 transition-colors"
+      >
+        {banner.cta_text}
+      </a>
+      <button
+        onClick={handleDismiss}
+        aria-label="Dismiss"
+        className="flex-shrink-0 ml-1 p-1 rounded-full hover:bg-white/20 transition-colors"
+      >
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+          <path d="M2 2l10 10M12 2L2 12" />
+        </svg>
+      </button>
+    </div>
+  );
+}
+
 // ── Layout ────────────────────────────────────────────────────────────────────
 
 export function Layout() {
@@ -2047,6 +2114,7 @@ export function Layout() {
           ? "pb-[calc(5rem+env(safe-area-inset-bottom,0px))]"
           : "pb-[calc(4rem+max(0.75rem,env(safe-area-inset-bottom,0px)))]"
       }`}>
+        <PromoBanner />
         <Outlet />
       </main>
 
