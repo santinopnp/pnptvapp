@@ -1158,6 +1158,22 @@ export default function XAutoCampaigns() {
             >
               + {t.admin.xCampaigns.actions.addAccount}
             </button>
+            <button
+              onClick={async () => {
+                try {
+                  const res = await startXOAuth(); // OAuth 2.0 — scopes incl. dm.read/dm.write when env has them
+                  if (res.url) {
+                    window.location.href = res.url;
+                  }
+                } catch (err: unknown) {
+                  setError(err instanceof Error ? err.message : t.admin.xCampaigns.feedback.failedOAuth);
+                }
+              }}
+              title="OAuth 2.0 — use this to grant DM scopes (dm.read, dm.write)"
+              className="px-4 py-2 rounded-lg text-sm font-medium bg-pnp-surface border border-pnp-border text-pnp-textPrimary hover:border-pnp-accent/50 transition-colors"
+            >
+              + OAuth2 (DM scopes)
+            </button>
           </div>
         </div>
 

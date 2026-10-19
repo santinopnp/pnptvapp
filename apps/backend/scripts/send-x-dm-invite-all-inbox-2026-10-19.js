@@ -15,9 +15,25 @@
  * DEFAULT = dry-run. Pass --live to actually send.
  *
  * Usage:
- *   docker exec pnptv-bot node /app/apps/backend/scripts/send-x-dm-invite-all-inbox-2026-10-19.js
- *   docker exec pnptv-bot node /app/apps/backend/scripts/send-x-dm-invite-all-inbox-2026-10-19.js --live
- *   docker exec pnptv-bot node /app/apps/backend/scripts/send-x-dm-invite-all-inbox-2026-10-19.js --limit=50 --live
+ *   # dry-run (safe default — reads inbox, prints EN/ES split + previews, no send)
+ *   docker run --rm --network pnptvapp_pnptvapp_net \
+ *     -e X_PNPTVAPP_BEARER='<oauth2 user token w/ dm.read dm.write>' \
+ *     -v /opt/pnptvapp/apps/backend/scripts/send-x-dm-invite-all-inbox-2026-10-19.js:/app/apps/backend/scripts/send-x-dm-invite-all-inbox-2026-10-19.js:ro \
+ *     -v /opt/pnptvapp/apps/backend/.cache:/app/apps/backend/.cache \
+ *     pnptv-bot:latest node /app/apps/backend/scripts/send-x-dm-invite-all-inbox-2026-10-19.js
+ *
+ *   # backfill cache with current counterparts WITHOUT sending (post-send recovery)
+ *   docker run … --mark-sent
+ *
+ *   # live send (requires: cache dir writable + no _lock key in cache file)
+ *   docker run … --live
+ *   docker run … --limit=5 --live    # sanity check first
+ *
+ * BROADCAST RULES ENFORCED:
+ *   - must run via `docker run` (NOT docker exec pnptv-bot) — otherwise a parallel
+ *     session restarting the bot container kills the send mid-flight.
+ *   - cache dir must be host-mounted and writable so dedup survives re-runs.
+ *   - script refuses --live if `_lock` key present in cache file.
  */
 
 const path = require('path');
@@ -33,13 +49,29 @@ const db = require(path.join(BACKEND, 'utils/db'));
 const XPostService = require(path.join(BACKEND, 'services/xPostService'));
 
 const LIVE = process.argv.includes('--live');
-const DRY_RUN = !LIVE;
+const MARK_SENT = process.argv.includes('--mark-sent'); // backfill cache without sending
+const DRY_RUN = !LIVE && !MARK_SENT;
 const LIMIT_ARG = process.argv.find((a) => a.startsWith('--limit='));
 const LIMIT = LIMIT_ARG ? parseInt(LIMIT_ARG.split('=')[1], 10) : null;
 
 const ACCOUNT_HANDLE = 'PNPtvApp';
 const CACHE_DIR = path.join(BACKEND, '.cache');
 const CACHE_FILE = path.join(CACHE_DIR, 'x-dm-invite-sent.json');
+
+// Safety: refuse to send if cache is unwritable. 2026-10-19 run went live without
+// a working cache; without this check a re-run of --live silently duplicates DMs.
+function assertCacheWritable() {
+  try {
+    fs.mkdirSync(CACHE_DIR, { recursive: true });
+    const probe = path.join(CACHE_DIR, '.probe');
+    fs.writeFileSync(probe, 'ok');
+    fs.unlinkSync(probe);
+  } catch (err) {
+    console.error(`\n❌ FATAL: ${CACHE_DIR} is not writable (${err.code}). Refusing to send without durable dedup.`);
+    console.error('   Fix: chmod 777 the .cache dir on host, or mount it writable in docker run.');
+    process.exit(1);
+  }
+}
 
 const PACE_MS = 10_000;          // 10s between sends → ~90/15min, well under 1000/24h
 const BACKOFF_MS = 5 * 60_000;   // 5min backoff on 429
@@ -190,6 +222,19 @@ async function main() {
   if (LIMIT) console.log(`   limit: ${LIMIT} sends`);
   console.log('');
 
+  if (LIVE) {
+    assertCacheWritable();
+    const existing = loadCache();
+    if (existing._lock) {
+      console.error(`\n❌ FATAL: cache has active _lock — refusing to --live.`);
+      console.error(`   reason:   ${existing._lock.reason}`);
+      console.error(`   set_at:   ${existing._lock.set_at}`);
+      console.error(`   clear_by: ${existing._lock.clear_by}`);
+      console.error(`   file:     ${CACHE_FILE}`);
+      process.exit(1);
+    }
+  }
+
   let accessToken;
   if (process.env.X_PNPTVAPP_BEARER) {
     accessToken = process.env.X_PNPTVAPP_BEARER;
@@ -223,6 +268,21 @@ async function main() {
 
   const byLang = pending.reduce((acc, p) => ((acc[p.lang] = (acc[p.lang] || 0) + 1), acc), {});
   console.log(`   • lang split:           ${JSON.stringify(byLang)}`);
+
+  if (MARK_SENT) {
+    assertCacheWritable();
+    const nowIso = new Date().toISOString();
+    let marked = 0;
+    for (const p of pending) {
+      cache.sent[p.senderId] = { at: nowIso, lang: p.lang, backfilled: true };
+      marked++;
+    }
+    // Keep _lock so prod stays safe until operator removes it explicitly
+    saveCache(cache);
+    console.log(`\n📒 MARK-SENT — ${marked} counterparts added to cache (no DMs sent). File: ${CACHE_FILE}`);
+    console.log(`   Note: remove the "_lock" key from the cache file manually before next --live.`);
+    process.exit(0);
+  }
 
   if (DRY_RUN) {
     console.log('\n🧪 DRY RUN — sample previews:');
