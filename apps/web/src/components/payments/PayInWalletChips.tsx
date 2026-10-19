@@ -1471,7 +1471,11 @@ export function WalletPayCard({
       {/* If the wallet has enough USDC, show Pay as the primary CTA. Otherwise
           demote Pay and promote "Fund with card" so a zero-balance user gets a
           single obvious next step instead of two similar-looking buttons. */}
-      {!priceReady ? (
+      {alreadyEntitled ? (
+        <div className="w-full py-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-center text-sm font-semibold text-emerald-200">
+          {es ? "✓ Ya tenés acceso activo" : "✓ You already have an active subscription"}
+        </div>
+      ) : !priceReady ? (
         <div className="w-full py-3 rounded-xl bg-white/5 border border-white/10 text-center text-sm text-pnp-textSecondary">
           {es ? "Cargando precio…" : "Loading price…"}
         </div>

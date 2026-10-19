@@ -801,7 +801,7 @@ export default function Subscribe() {
                           ? `Pagar $${parseFloat(String(plan.price)).toFixed(0)} · ${isLifetime ? "Membresía Founders" : "PRIME anual"}`
                           : `Pay $${parseFloat(String(plan.price)).toFixed(0)} · ${isLifetime ? "Founders Membership" : "PRIME Annual"}`}
                         lang={(t.lang as "es" | "en")}
-                        alreadyEntitled={user?.tier === 'prime'}
+                        alreadyEntitled={user?.tier?.toLowerCase() === 'prime'}
                         onSuccess={() => {
                           setWalletPanelPlanId(null);
                           setTimeout(() => navigate("/"), 1200);
@@ -1042,7 +1042,7 @@ export default function Subscribe() {
                   <div className="w-full mt-2" onClick={(e) => e.stopPropagation()}>
                     {(() => {
                       const pLabel = getPlanLabel(plan, MEMBER_PLAN_IDS.has(plan.id));
-                      const alreadyEnt = (pLabel === 'PRIME' && user?.tier === 'prime') || (pLabel === 'BASIC' && user?.tier === 'member');
+                      const alreadyEnt = (pLabel === 'PRIME' && user?.tier?.toLowerCase() === 'prime') || (pLabel === 'BASIC' && user?.tier?.toLowerCase() === 'member');
                       return (
                         <WalletPayCard
                           key={`wallet-${plan.id}`}
@@ -1246,7 +1246,7 @@ export default function Subscribe() {
                   <div className="w-full mt-2" onClick={(e) => e.stopPropagation()}>
                     {(() => {
                       const pLabel = getPlanLabel(plan, MEMBER_PLAN_IDS.has(plan.id));
-                      const alreadyEnt = (pLabel === 'PRIME' && user?.tier === 'prime') || (pLabel === 'BASIC' && user?.tier === 'member');
+                      const alreadyEnt = (pLabel === 'PRIME' && user?.tier?.toLowerCase() === 'prime') || (pLabel === 'BASIC' && user?.tier?.toLowerCase() === 'member');
                       return (
                         <WalletPayCard
                           key={`wallet-${plan.id}`}
