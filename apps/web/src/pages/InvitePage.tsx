@@ -295,7 +295,7 @@ function Shell({ children, lang, setLang, confettiRef }: {
   children: React.ReactNode;
   lang: Lang;
   setLang: (l: Lang) => void;
-  confettiRef?: React.RefObject<HTMLCanvasElement>;
+  confettiRef?: React.RefObject<HTMLCanvasElement | null>;
 }) {
   return (
     <div

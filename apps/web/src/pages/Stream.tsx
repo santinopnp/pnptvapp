@@ -89,7 +89,7 @@ function FullscreenPortal({ children }: { children: React.ReactNode }) {
     };
   }, []);
   if (!host) return null;
-  return createPortal(children, host);
+  return createPortal(children as Parameters<typeof createPortal>[0], host);
 }
 
 // ── Virtualized chat message list (react-window v2) ───────────────────────

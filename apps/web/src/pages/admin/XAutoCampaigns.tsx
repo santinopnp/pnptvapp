@@ -608,7 +608,7 @@ export default function XAutoCampaigns() {
   const grokEndRef = useRef<HTMLDivElement>(null);
   const grokInputRef = useRef<HTMLTextAreaElement>(null);
 
-  const pollRef = useRef<ReturnType<typeof setInterval>>();
+  const pollRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
 
   // Data loading
   const loadStats = useCallback(async () => {
