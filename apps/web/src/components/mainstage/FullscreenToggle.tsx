@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useI18n } from "@/lib/i18n";
 
 interface FullscreenToggleProps {
-  targetRef: React.RefObject<HTMLElement>;
+  targetRef: React.RefObject<HTMLElement | null>;
 }
 
 export function FullscreenToggle({ targetRef }: FullscreenToggleProps) {

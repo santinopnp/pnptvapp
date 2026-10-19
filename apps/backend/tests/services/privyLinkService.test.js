@@ -1,16 +1,16 @@
 'use strict';
 
+// verifyAndLink runs its read-modify-write inside a pool transaction. Route the
+// transaction client's statements through the same `query` mock so tests can
+// keep sequencing/inspecting calls on one mock; BEGIN/COMMIT/ROLLBACK are
+// no-ops that don't consume mockImplementationOnce slots.
 jest.mock('../../config/postgres', () => {
   const query = jest.fn();
-  // verifyAndLink runs its writes on a pooled client inside a transaction;
-  // route client.query through the same mock so assertions see every SQL call
-  // (transaction control statements are skipped so they don't consume the
-  // per-test mockImplementationOnce responses).
-  const client = {
-    query: (sql, ...rest) => (/^(BEGIN|COMMIT|ROLLBACK)$/.test(sql) ? Promise.resolve({ rows: [] }) : query(sql, ...rest)),
+  const txClient = {
+    query: (sql, params) => (/^(BEGIN|COMMIT|ROLLBACK)$/.test(sql) ? Promise.resolve({ rows: [] }) : query(sql, params)),
     release: jest.fn(),
   };
-  return { query, getPool: jest.fn(() => ({ connect: jest.fn().mockResolvedValue(client) })) };
+  return { query, getPool: () => ({ connect: async () => txClient }) };
 });
 jest.mock('../../utils/logger', () => ({
   info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn(),

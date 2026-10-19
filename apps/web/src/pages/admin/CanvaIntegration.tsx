@@ -87,7 +87,7 @@ export default function CanvaIntegration() {
   } | null>(null);
 
   // Auto-poll
-  const pollRef = useRef<ReturnType<typeof setInterval>>();
+  const pollRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
 
   const loadStats = useCallback(async () => {
     try {
