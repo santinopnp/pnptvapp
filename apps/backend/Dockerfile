@@ -60,12 +60,13 @@ COPY --chown=pnptv:pnptv public/ ./public/
 # Backend code (most frequently changed — last for best cache)
 COPY --chown=pnptv:pnptv apps/backend/ ./apps/backend/
 
-RUN mkdir -p /app/logs /app/public/uploads/avatars /app/public/uploads/posts /app/public/uploads/chat \
+RUN mkdir -p /app/logs /app/public/uploads/avatars /app/public/uploads/posts /app/public/uploads/chat /app/public/uploads/tus \
     && chown pnptv:pnptv /app/logs \
                          /app/public/uploads \
                          /app/public/uploads/avatars \
                          /app/public/uploads/posts \
                          /app/public/uploads/chat \
+                         /app/public/uploads/tus \
     && chown pnptv:pnptv /tmp
 
 USER pnptv
