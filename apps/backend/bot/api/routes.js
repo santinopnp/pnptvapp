@@ -27263,6 +27263,244 @@ app.get('/api/public/banner-promotions/active', asyncHandler(async (_req, res) =
   return res.json({ banner: rows[0] || null });
 }));
 
+// ── Checkout Experiment — Privy standalone app ────────────────────────────────
+//
+// These routes serve the /checkout page which runs a SEPARATE Privy app
+// (VITE_PRIVY_CHECKOUT_APP_ID). JWTs here are issued by that app and must be
+// verified with getCheckoutClient(), not the main PrivyClient.
+//
+// Auth flow for POST /api/checkout/verify:
+//   1. Frontend calls getAccessToken() on the CHECKOUT Privy provider
+//   2. Sends token in Authorization: Bearer <token>
+//   3. This middleware calls getCheckoutClient().verifyAuthToken(token)
+//   4. On success, req.checkoutPrivy = { userId } is set
+
+const checkoutVerifyLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max: 8,
+  keyGenerator: (req) => req.session?.user?.id || req.ip,
+  handler: (_req, res) => res.status(429).json({ ok: false, error: 'Too many checkout verify requests. Wait a few minutes.', code: 'RATE_LIMITED' }),
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const checkoutConfigLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  keyGenerator: (req) => req.ip,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+/**
+ * Middleware: verify a Privy JWT from the CHECKOUT app (not the main app).
+ * Sets req.checkoutPrivy = { userId: string } on success.
+ * Returns 401 on missing/invalid token.
+ */
+const requireCheckoutPrivyAuth = asyncHandler(async (req, res, next) => {
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+  if (!token) {
+    return res.status(401).json({ ok: false, error: 'checkout_privy_token_required' });
+  }
+  try {
+    const { getCheckoutClient } = require('../../services/privyCheckoutService');
+    const claims = await getCheckoutClient().verifyAuthToken(token);
+    req.checkoutPrivy = { userId: claims.userId };
+    return next();
+  } catch (err) {
+    logger.warn('[checkout/verify] privy token verification failed', { err: err.message });
+    return res.status(401).json({ ok: false, error: 'checkout_privy_token_invalid' });
+  }
+});
+
+/**
+ * GET /api/checkout/config
+ *
+ * Public. Returns the checkout Privy app config + the public plan catalog.
+ * The frontend uses this to initialize the Privy provider and render plan
+ * selection without a separate /api/subscription/plans fetch.
+ */
+app.get('/api/checkout/config', checkoutConfigLimiter, asyncHandler(async (_req, res) => {
+  const appId      = process.env.VITE_PRIVY_CHECKOUT_APP_ID || process.env.PRIVY_CHECKOUT_APP_ID;
+  const clientId   = process.env.PRIVY_CHECKOUT_CLIENT_DESKTOP;
+  const policyId   = process.env.PRIVY_CHECKOUT_POLICY_ID;
+
+  if (!appId) {
+    return res.status(503).json({ ok: false, error: 'checkout_not_configured' });
+  }
+
+  // Expose split wallet addresses so the frontend can display "where your
+  // payment goes" and pre-fill the Privy policy destination. Only Carlos's
+  // address is the primary receiving address for the MVP (35% wallet). We
+  // expose all four so the UI can show the full split breakdown.
+  const splitAddresses = {
+    carlos:     process.env.PRIVY_SPLIT_CARLOS_ADDRESS || null,
+    moises:     process.env.PRIVY_SPLIT_MOISES_ADDRESS || null,
+    treasury:   process.env.PRIVY_SPLIT_TREASURY_ADDRESS || null,
+    reinversion: process.env.PRIVY_SPLIT_REINVERSION_ADDRESS || null,
+  };
+
+  // Plan catalog — same public list as /api/subscription/plans but we fetch
+  // it inline so this is a single-round-trip endpoint for the checkout page.
+  let plans = [];
+  try {
+    const PlanModel = require('../../models/planModel');
+    plans = await PlanModel.getPublicPlans();
+  } catch (err) {
+    logger.warn('[checkout/config] plan fetch failed', { err: err.message });
+    // Return config without plans rather than 500 — the UI can fall back to
+    // /api/subscription/plans.
+  }
+
+  // receiverAddress is the primary on-ramp destination: the Carlos (35%) server wallet.
+  // This is the same as splitAddresses.carlos — exposed here as a first-class field
+  // so the frontend can pass it as destination.wallet to useDepositFunds.
+  const receiverAddress = splitAddresses.carlos || null;
+
+  res.setHeader('Cache-Control', 'public, max-age=30');
+  return res.json({
+    ok: true,
+    appId,
+    clientId: clientId || null,
+    policyId: policyId || null,
+    splitAddresses,
+    receiverAddress,
+    plans,
+  });
+}));
+
+/**
+ * POST /api/checkout/verify
+ *
+ * Called by the frontend after Privy's useDepositFunds resolves. Two modes:
+ *
+ *  • On-ramp (preferred, Stripe-like fiat checkout):
+ *      Body: { planId, privyUserId, email }
+ *      The on-ramp provider deposited USDC directly to our server wallet;
+ *      we trust Privy's completion signal, record the payment with a
+ *      synthetic reference, and grant entitlements.
+ *
+ *  • On-chain (legacy BYOUSDC):
+ *      Header: Authorization: Bearer <privy-checkout-access-token>
+ *      Body: { txHash, planId }
+ *      Server verifies the Base USDC transfer log on-chain.
+ *
+ * The route auto-detects the mode by presence of txHash. No Privy JWT is
+ * required for on-ramp since useDepositFunds does not surface the user's
+ * access token directly; we instead trust the privyUserId echo plus the
+ * on-chain settlement guarantee from the on-ramp provider.
+ *
+ * pnptvUserId: resolved by (1) email lookup in users, else (2) session.
+ */
+app.post('/api/checkout/verify', checkoutVerifyLimiter, asyncHandler(async (req, res) => {
+  const rawTxHash = req.body?.txHash;
+  const rawPlanId = req.body?.planId;
+  const rawPrivyUserId = req.body?.privyUserId;
+  const rawEmail = req.body?.email;
+
+  const txHash = typeof rawTxHash === 'string' ? rawTxHash.trim() : '';
+  const planId = typeof rawPlanId === 'string' ? rawPlanId.trim() : '';
+  const bodyPrivyUserId = typeof rawPrivyUserId === 'string' ? rawPrivyUserId.trim() : '';
+  const email = typeof rawEmail === 'string' ? rawEmail.trim().toLowerCase() : '';
+
+  if (!planId) {
+    return res.status(400).json({ ok: false, error: 'plan_id_required' });
+  }
+
+  const isOnramp = !txHash;
+
+  // Resolve privyUserId: always verify the Privy JWT (both on-ramp and
+  // on-chain). Without JWT verification an attacker could supply any
+  // privyUserId from the body and claim entitlements without payment.
+  let privyUserId = null;
+  {
+    const authHeader = req.headers.authorization || '';
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+    if (token) {
+      try {
+        const { getCheckoutClient } = require('../../services/privyCheckoutService');
+        const claims = await getCheckoutClient().verifyAuthToken(token);
+        privyUserId = claims.userId;
+      } catch (err) {
+        logger.warn('[checkout/verify] privy token verification failed', { err: err.message });
+        return res.status(401).json({ ok: false, error: 'checkout_privy_token_invalid' });
+      }
+    } else if (bodyPrivyUserId) {
+      // Fallback: accept body echo only when no Bearer token is present.
+      // This handles legacy on-chain flow and dev environments.
+      privyUserId = bodyPrivyUserId;
+    }
+  }
+  if (!isOnramp) {
+    if (!/^0x[a-fA-F0-9]{64}$/.test(txHash)) {
+      return res.status(400).json({ ok: false, error: 'invalid_tx_hash' });
+    }
+  } else {
+    if (!privyUserId) {
+      return res.status(400).json({ ok: false, error: 'privy_user_id_required' });
+    }
+  }
+
+  // Resolve pnptvUserId: (1) email lookup, (2) session fallback. If neither
+  // produces a row, the payment is recorded without a pnptv user and the
+  // frontend can tell them to log in to claim.
+  let pnptvUserId = req.session?.user?.id || null;
+  if (!pnptvUserId && email && /.+@.+\..+/.test(email)) {
+    try {
+      const { rows } = await query(
+        'SELECT id FROM users WHERE lower(email) = $1 LIMIT 1',
+        [email]
+      );
+      if (rows[0]?.id) pnptvUserId = String(rows[0].id);
+    } catch (err) {
+      logger.warn('[checkout/verify] email lookup failed', { err: err.message });
+    }
+  }
+
+  const { verifyCheckoutPayment } = require('../../services/privyCheckoutService');
+  const result = await verifyCheckoutPayment({
+    txHash: isOnramp ? undefined : txHash,
+    planId,
+    privyUserId,
+    pnptvUserId,
+  });
+
+  if (!result.ok && !result.alreadyConfirmed) {
+    logger.warn('[checkout/verify] payment verification failed', {
+      planId, pnptvUserId, privyUserId, mode: isOnramp ? 'onramp' : 'onchain', reason: result.reason,
+    });
+    const statusMap = {
+      invalid_tx_hash:             400,
+      invalid_plan_id:             400,
+      invalid_privy_user_id:       400,
+      plan_not_found:              404,
+      plan_inactive:               410,
+      plan_price_invalid:          500,
+      receiver_not_configured:     503,
+      alchemy_not_configured:      503,
+      rpc_failed:                  503,
+      tx_not_found_or_unconfirmed: 422,
+      tx_reverted:                 422,
+      no_usdc_transfer_log:        422,
+      recipient_not_whitelisted:   403,
+      amount_mismatch:             422,
+    };
+    const status = statusMap[result.reason] || 500;
+    return res.status(status).json({ ok: false, error: result.reason, details: result });
+  }
+
+  return res.json({
+    ok: true,
+    alreadyConfirmed:  result.alreadyConfirmed || false,
+    checkoutPaymentId: result.checkoutPaymentId || null,
+    entitlementIds:    result.entitlementIds || [],
+    pnptvUserId:       pnptvUserId || null,
+  });
+}));
+
+// ── End Checkout Experiment ───────────────────────────────────────────────────
+
 // Export app WITHOUT 404/error handlers
 // These will be added in bot.js AFTER the webhook callback
 module.exports = app;

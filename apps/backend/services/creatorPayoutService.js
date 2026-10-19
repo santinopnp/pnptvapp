@@ -193,6 +193,8 @@ class CreatorPayoutService {
    * Process a single creator's payout.
    *
    * Routing order (first match wins):
+   *   0. bridge_payout.external_account_id set + BRIDGE_API_KEY configured → Bridge fiat
+   *      (USDC on Base → ACH/SEPA/PIX/Wire via bridge.xyz).
    *   1. payout_reenroll_needed = true AND no valid crypto lane → skip with nudge.
    *   2. payout_method === 'fiat'  → Peer Protocol fiat off-ramp.
    *   3. creator_payout_destinations.bre_b set → fiat off-ramp via bre_b.
@@ -222,13 +224,53 @@ class CreatorPayoutService {
       return { skipped: true };
     }
 
+    const hasBridgePayout = !!(
+      process.env.BRIDGE_API_KEY &&
+      destinations.bridge_payout?.external_account_id &&
+      destinations.bridge_payout?.customer_id
+    );
     const hasFiatMethod = payout_method === 'fiat' && !!fiat_payout_method && !!fiat_payout_account;
     const hasBreB = !!(destinations.bre_b?.handle);
     const hasUsdcErc20 = !!(destinations.usdc_erc20?.address);
     const hasEth = !!(destinations.eth?.address);
 
-    // Creator had a removed lane and has not re-enrolled with ETH/USDC yet — skip.
-    if (payout_reenroll_needed && !hasFiatMethod && !hasBreB && !hasUsdcErc20 && !hasEth) {
+    // ── Route 0: Bridge fiat payout (USDC on Base → bank account) ────────────
+    // Requires BRIDGE_API_KEY env var + creator to have completed Bridge KYC
+    // and registered a bank account (external_account_id in creator_payout_destinations).
+    // Set up: have creator complete bridge.xyz KYC, get their customer_id, store:
+    //   creator_payout_destinations.bridge_payout = {
+    //     customer_id, external_account_id, payment_rail, currency
+    //   }
+    if (hasBridgePayout) {
+      try {
+        const bridgeResult = await this._bridgeFiatPayout(creator, amountUsd);
+        await this._markEarningsPaid(earning_ids, creator_id, {
+          method: 'bridge_fiat',
+          txRef: bridgeResult.bridgeTransferId,
+          payoutId: bridgeResult.bridgeTransferId,
+        });
+        await NotificationEmitter.emit({
+          type: 'payment', category: 'commerce', priority: 'high', actorId: null,
+          targetUserId: creator_id, entityType: 'creator', entityId: String(creator_id),
+          message: `Your payout of $${amountUsd.toFixed(2)} is on its way to your bank account.`,
+          metadata: { amountUsd, payoutMethod: 'bridge_fiat', bridgeTransferId: bridgeResult.bridgeTransferId },
+        });
+        logger.info('CreatorPayoutService: Bridge fiat payout sent', {
+          creatorId: creator_id, amountUsd, bridgeTransferId: bridgeResult.bridgeTransferId,
+        });
+        return { skipped: false };
+      } catch (bridgeErr) {
+        // Log and fall through to the next route rather than blocking the creator's payout.
+        logger.error('CreatorPayoutService: Bridge fiat payout failed — falling through to next route', {
+          creatorId: creator_id, amountUsd, err: bridgeErr.message,
+        });
+      }
+    }
+
+    // Creator had a removed lane and has not re-enrolled — skip.
+    // Bridge counts as a valid lane even though it ran as Route 0 above (it may
+    // have failed transiently, so don't send the re-enrollment nudge if it's set up).
+    if (payout_reenroll_needed && !hasBridgePayout && !hasFiatMethod && !hasBreB && !hasUsdcErc20 && !hasEth) {
       logger.warn('CreatorPayoutService: payout skipped — re-enrollment required (removed lane)', { creatorId: creator_id, amountUsd });
       await NotificationEmitter.emit({
         type: 'system', category: 'commerce', priority: 'high', actorId: null,
@@ -239,7 +281,7 @@ class CreatorPayoutService {
       return { skipped: true };
     }
 
-    if (!hasFiatMethod && !hasBreB && !hasUsdcErc20 && !hasEth) {
+    if (!hasBridgePayout && !hasFiatMethod && !hasBreB && !hasUsdcErc20 && !hasEth) {
       logger.warn('CreatorPayoutService: creator has no valid payout method, skipping', { creatorId: creator_id });
       await NotificationEmitter.emit({
         type: 'system', category: 'commerce', priority: 'high', actorId: null,
@@ -344,6 +386,80 @@ class CreatorPayoutService {
 
     // Defensive throw — routing guards above should cover all branches.
     throw new Error('CreatorPayoutService: no payout route matched (this should be unreachable)');
+  }
+
+  /**
+   * Route 0: Bridge fiat payout.
+   *
+   * Two-step flow:
+   *   1. POST /v0/transfers to bridge.xyz → get USDC deposit address for this transfer.
+   *   2. Send USDC from Carlos's treasury wallet to that deposit address.
+   * Bridge monitors the deposit, converts to fiat, and pays the creator's
+   * registered bank account (ACH, SEPA, PIX, or Wire).
+   *
+   * Prerequisites:
+   *   - BRIDGE_API_KEY env var
+   *   - creator.creator_payout_destinations.bridge_payout.customer_id (Bridge KYC customer)
+   *   - creator.creator_payout_destinations.bridge_payout.external_account_id (registered bank)
+   *   - PRIVY_SPLIT_CARLOS_WALLET_ID must have enough USDC to cover amountUsd
+   *
+   * @param {Object} creator - payout batch row
+   * @param {number} amountUsd
+   */
+  static async _bridgeFiatPayout(creator, amountUsd) {
+    const bridgeApiKey = process.env.BRIDGE_API_KEY;
+    if (!bridgeApiKey) throw new Error('BRIDGE_API_KEY not configured');
+
+    const destinations = creator.creator_payout_destinations || {};
+    const bp = destinations.bridge_payout;
+    if (!bp?.customer_id || !bp?.external_account_id) {
+      throw new Error('Bridge payout destination not configured for creator');
+    }
+
+    const idempotencyKey = `bridge:payout:${creator.creator_id}:${String(creator.total_creator).replace('.', '_')}`;
+
+    // Step 1: Create the Bridge transfer (idempotent — same key = same transfer)
+    const transferRes = await fetch('https://api.bridge.xyz/v0/transfers', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Api-Key': bridgeApiKey,
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: JSON.stringify({
+        amount: amountUsd.toFixed(2),
+        developer_fee: '0',
+        on_behalf_of: bp.customer_id,
+        source: { payment_rail: 'usdc', currency: 'usdc' },
+        destination: {
+          payment_rail: bp.payment_rail || 'ach',
+          currency: bp.currency || 'usd',
+          external_account_id: bp.external_account_id,
+        },
+      }),
+      signal: AbortSignal.timeout(20_000),
+    });
+
+    if (!transferRes.ok) {
+      const errText = await transferRes.text().catch(() => '');
+      throw new Error(`Bridge transfer creation failed ${transferRes.status}: ${errText.slice(0, 240)}`);
+    }
+
+    const transfer = await transferRes.json();
+    const depositAddress = transfer.source?.deposit_instructions?.to_address;
+    if (!depositAddress) {
+      throw new Error(`Bridge transfer ${transfer.id}: no USDC deposit address in response`);
+    }
+
+    // Step 2: Send USDC from treasury wallet to Bridge's deposit address
+    const privyCheckout = require('./privyCheckoutService');
+    await privyCheckout.sendTreasuryUsdcTransfer({
+      toAddress: depositAddress,
+      amountUsd,
+      reference: `bridge:${transfer.id}`,
+    });
+
+    return { bridgeTransferId: transfer.id, depositAddress };
   }
 
   /**
