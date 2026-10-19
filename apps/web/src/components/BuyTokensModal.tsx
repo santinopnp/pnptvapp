@@ -21,7 +21,7 @@ import { createWalletClient, custom, encodeFunctionData, parseUnits } from "viem
 import { base } from "viem/chains";
 import { OpenInBrowserButton } from "@/components/telegram/OpenInBrowserButton";
 import { WalletCheckoutHero, grossUpForOnramp, getPreferredWallet, setPreferredWallet, classifyOnrampError, onrampErrorMessage, shouldOfferOpenInBrowser, popupsUnsupported } from "@/components/payments/PayInWalletChips";
-import { shouldPreferMoonPay } from "@/lib/browserEnv";
+import { shouldPreferMoonPay, markStripeRateLimited } from "@/lib/browserEnv";
 
 const USDC_BASE_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const BASE_CAIP2 = "eip155:8453" as const;
@@ -582,6 +582,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
       // MoonPay (card → card hop). One-shot via autoSwitchedMoonPayRef.
       if (kind === "rate_limited" && !autoSwitchedMoonPayRef.current && !opts?.forceMoonPay) {
         autoSwitchedMoonPayRef.current = true;
+        markStripeRateLimited();
         reportWalletClientError("buyTokensFundWallet_rate_limited_switch_to_moonpay", err, {
           surface: "rush", packageId: pkg.id, amountUsd: price,
           address: activeWallet?.address, walletType: activeWallet?.walletClientType,
@@ -680,6 +681,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
       // Stripe Link "Too many attempts" → silently retry same amount via MoonPay.
       if (kind === "rate_limited" && !autoSwitchedMoonPayRef.current && !opts?.forceMoonPay) {
         autoSwitchedMoonPayRef.current = true;
+        markStripeRateLimited();
         reportWalletClientError("buyTokensFundWallet_rate_limited_switch_to_moonpay", err, {
           surface: "rush", packageId: pkgId, amountUsd: usd,
           address: activeWallet?.address, walletType: activeWallet?.walletClientType,

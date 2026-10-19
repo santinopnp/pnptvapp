@@ -222,7 +222,7 @@ import { useEffect as _useEffect, useState as _useState, useRef as _useRef } fro
 import { usePrivy, useWallets, useAddFunds, useFundWallet, useConnectWallet, useSendTransaction, useUnlinkWallet, useCreateWallet, type WalletListEntry } from "@privy-io/react-auth";
 import { getLinkedWallet } from "@/lib/api";
 import { OpenInBrowserButton } from "@/components/telegram/OpenInBrowserButton";
-import { isIOSStandalone, popupsUnsupported, smsVerifLikelyBlocked, shouldPreferMoonPay } from "@/lib/browserEnv";
+import { isIOSStandalone, popupsUnsupported, smsVerifLikelyBlocked, shouldPreferMoonPay, markStripeRateLimited } from "@/lib/browserEnv";
 import { createWalletClient, custom, encodeFunctionData, parseUnits, parseEther } from "viem";
 import { base, mainnet } from "viem/chains";
 
@@ -1134,6 +1134,7 @@ export function WalletPayCard({
       // MoonPay itself fails.
       if (kind === "rate_limited" && _MOONPAY_ENABLED && !useMoonPay && !autoSwitchedMoonPayRef.current) {
         autoSwitchedMoonPayRef.current = true;
+        markStripeRateLimited();
         reportWalletClientError("fundWallet_rate_limited_switch_to_moonpay", err, {
           surface, amountUsd, address: activeWallet?.address,
           walletType: activeWallet?.walletClientType,

@@ -894,6 +894,14 @@ app.get('/api/webapp/geo', asyncHandler(async (req, res) => {
   const country = geo?.country || null;
   const isColombia = country === 'CO';
   const suggestedLang = (country && COUNTRY_LANG[country]) || 'en';
+  // Spanish/Portuguese LATAM. Used by WalletPayCard to prefer MoonPay (local
+  // currency rails) over Stripe Link (SMS OTP rate-limits in LATAM phone
+  // numbers). Keep lifetime100/yearly50 explicit — operator policy already
+  // routes those through the same card paths.
+  const LATAM_COUNTRIES = new Set([
+    'AR','BO','BR','CL','CO','CR','CU','DO','EC','GT','HN','MX','NI','PA','PY','PE','PR','SV','UY','VE',
+  ]);
+  const isLatam = !!country && LATAM_COUNTRIES.has(country);
   let hasPnpCol = false;
   const userId = req.session?.user?.id;
   if (isColombia && userId) {
@@ -906,7 +914,7 @@ app.get('/api/webapp/geo', asyncHandler(async (req, res) => {
   return res.json({
     country,
     suggestedLang,
-    isLatam: false,
+    isLatam,
     landingMode: false,
     isColombia,
     hasPnpCol,

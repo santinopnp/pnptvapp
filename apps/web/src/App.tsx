@@ -750,6 +750,25 @@ function AppOverlays() {
 export default function App() {
   useNavigationDiagnostics();
 
+  // Fire a single geo-country probe at bootstrap so payment flows can read
+  // sessionStorage['pnptv_geo_latam'] synchronously when deciding onramp
+  // provider (shouldPreferMoonPay → routes LATAM users through MoonPay
+  // instead of Stripe Link). Fail-silent.
+  useEffect(() => {
+    if (sessionStorage.getItem("pnptv_geo_latam") !== null) return;
+    fetch("/api/webapp/geo")
+      .then((r) => r.json())
+      .then((d) => {
+        try {
+          sessionStorage.setItem("pnptv_geo_latam", d?.isLatam ? "1" : "0");
+          if (d?.suggestedLang && d.suggestedLang !== "en") {
+            sessionStorage.setItem("pnptv_geo_lang", d.suggestedLang);
+          }
+        } catch { /* private browsing */ }
+      })
+      .catch(() => { /* fail open */ });
+  }, []);
+
   return (
     <ErrorBoundary>
       <HelmetProvider>
