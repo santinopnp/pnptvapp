@@ -9,7 +9,7 @@ export const strings = {
 
     // ── Pricing card ──────────────────────────────────────────────────────────
     oldPrice: "$250",
-    newPrice: "$50",
+    newPrice: "$100",
     limitedBadge: "PNPtv FOUNDERS · LIMITED SPOTS",
     chargeCurrencyNote: "Pay with USDC · USDT · ETH · BTC — no card needed",
 
@@ -55,31 +55,31 @@ export const strings = {
     // ── "Before you pay" notice ────────────────────────────────────────────────
     noticeTitle: "Good to know",
     noticeFundraising:
-      "Your $50 goes directly to building PNPtv — founders' price while we finish.",
+      "Your $100 goes directly to building PNPtv — founders' price while we finish.",
     noticeEarlyAccess:
       "You lock in lifetime access to every feature we ever ship.",
     noticeInProgress:
       "Some screens still in progress — we're moving fast.",
 
     // ── Sticky CTA ─────────────────────────────────────────────────────────────
-    ctaGetAccess: "CLAIM YOUR SPOT — $50",
-    ctaPayWithCrypto: "₿ Apps & wallets — $50",
-    ctaPayWithCard: "💳 PAY WITH CARD — $50",
-    ctaPayWithWallet: "💳 Card · Apple Pay · Wallet — $50",
+    ctaGetAccess: "CLAIM YOUR SPOT — $100",
+    ctaPayWithCrypto: "₿ Apps & wallets — $100",
+    ctaPayWithCard: "💳 PAY WITH CARD — $100",
+    ctaPayWithWallet: "💳 Card · Apple Pay · Wallet — $100",
     ctaLoading: "Checking availability...",
     ctaSoldOut: "Sold Out",
 
     // ── Card (MercadoPago) modal ───────────────────────────────────────────────
     cardModalTitle: "Pay via Local Payment",
-    cardModalBody: "A payment link will open in your browser to complete your $50 payment. After paying, come back to complete your activation — usually within a few hours.",
+    cardModalBody: "A payment link will open in your browser to complete your $100 payment. After paying, come back to complete your activation — usually within a few hours.",
     cardModalOpenButton: "Open Payment Link →",
 
     // ── Wallet (USDC on Base via Privy) modal ─────────────────────────────────
     walletModalTitle: "Pay with Card — USDC on Base",
     walletModalSubtitle: "Pay with your credit/debit card, Apple Pay, Google Pay, or connect Trust / MetaMask. Settles instantly as USDC on Base — PRIME activates the moment the payment confirms.",
-    walletPayLabel: "Pay $50 · PNPtv Founders",
-    signupCheckoutNote: "After signup you'll go directly to checkout — $50.",
-    upsellAnnualLink: "Not ready? 1 Year of PRIME for $50 →",
+    walletPayLabel: "Pay $100 · PNPtv Founders",
+    signupCheckoutNote: "After signup you'll go directly to checkout — $100.",
+    upsellAnnualLink: "Not ready? 1 Year of PRIME for $100 →",
 
     // ── Email capture modal ────────────────────────────────────────────────────
     modalTitle: "Get Your Payment Link",
@@ -183,7 +183,7 @@ export const strings = {
 
     // ── Pricing card ──────────────────────────────────────────────────────────
     oldPrice: "$250",
-    newPrice: "$50",
+    newPrice: "$100",
     limitedBadge: "PNPtv FOUNDERS · CUPOS LIMITADOS",
     chargeCurrencyNote: "Paga con USDC · USDT · ETH · BTC — sin tarjeta",
 
@@ -229,31 +229,31 @@ export const strings = {
     // ── "Before you pay" notice ────────────────────────────────────────────────
     noticeTitle: "Bueno saber",
     noticeFundraising:
-      "Tu $50 va directamente a construir PNPtv — precio de fundadores mientras terminamos.",
+      "Tu $100 va directamente a construir PNPtv — precio de fundadores mientras terminamos.",
     noticeEarlyAccess:
       "Aseguras acceso de por vida a cada función que lancemos.",
     noticeInProgress:
       "Algunas pantallas aún en progreso — avanzando rápido.",
 
     // ── Sticky CTA ─────────────────────────────────────────────────────────────
-    ctaGetAccess: "RECLAMA TU LUGAR — $50",
-    ctaPayWithCrypto: "₿ Apps y wallets — $50",
-    ctaPayWithCard: "💳 PAGAR CON TARJETA — $50",
-    ctaPayWithWallet: "💳 Tarjeta · Apple Pay · Wallet — $50",
+    ctaGetAccess: "RECLAMA TU LUGAR — $100",
+    ctaPayWithCrypto: "₿ Apps y wallets — $100",
+    ctaPayWithCard: "💳 PAGAR CON TARJETA — $100",
+    ctaPayWithWallet: "💳 Tarjeta · Apple Pay · Wallet — $100",
     ctaLoading: "Verificando disponibilidad...",
     ctaSoldOut: "Agotado",
 
     // ── Card (MercadoPago) modal ───────────────────────────────────────────────
     cardModalTitle: "Pago Local",
-    cardModalBody: "Se abrirá un enlace de pago en tu navegador para completar tu pago de $50. Después de pagar, vuelve para completar tu activación — normalmente en pocas horas.",
+    cardModalBody: "Se abrirá un enlace de pago en tu navegador para completar tu pago de $100. Después de pagar, vuelve para completar tu activación — normalmente en pocas horas.",
     cardModalOpenButton: "Abrir Enlace de Pago →",
 
     // ── Wallet (USDC on Base via Privy) modal ─────────────────────────────────
     walletModalTitle: "Pagar con Tarjeta — USDC en Base",
     walletModalSubtitle: "Paga con tu tarjeta de crédito/débito, Apple Pay, Google Pay, o conecta Trust / MetaMask. Se acredita al instante como USDC en Base — PRIME se activa apenas confirme el pago.",
-    walletPayLabel: "Pagar $50 · PNPtv Founders",
-    signupCheckoutNote: "Después de registrarte irás directo al checkout — $50.",
-    upsellAnnualLink: "¿No estás listo? 1 Año de PRIME por $50 →",
+    walletPayLabel: "Pagar $100 · PNPtv Founders",
+    signupCheckoutNote: "Después de registrarte irás directo al checkout — $100.",
+    upsellAnnualLink: "¿No estás listo? 1 Año de PRIME por $100 →",
 
     // ── Email capture modal ────────────────────────────────────────────────────
     modalTitle: "Obtén Tu Link de Pago",
