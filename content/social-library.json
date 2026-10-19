@@ -1,20 +1,76 @@
 {
   "schema_version": 1,
-  "note": "Mirror of the videos uploaded to the Zoho Social content library. One entry per video. Claude reads this when composing posts to decide which asset to attach.",
+  "note": "Videos available for automated X posts. Served from apps/web/public/videos/ at https://pnptv.app/videos/<filename>. Scheduler picks oldest last_used for rotation.",
   "videos": [
     {
-      "id": "example-template",
-      "title": "Santino + Diego — first joint private call (teaser)",
-      "zoho_asset_id": "",
-      "url": "https://pnptv.app/videos/public/santino-diego-first-call.mp4",
-      "thumbnail": "https://pnptv.app/images/promo/santino-diego-thumb.jpg",
-      "duration_sec": 42,
+      "id": "subscribe-pnptv-vertical-en",
+      "title": "Subscribe to PNPtv PRIME",
+      "url": "https://pnptv.app/videos/subscribe-pnptv-vertical-en.mp4",
+      "thumbnail": "https://pnptv.app/videos/subscribe-pnptv-vertical-en.jpg",
+      "duration_sec": null,
       "orientation": "vertical",
-      "tags": ["santino", "diego", "private-call", "pov", "teaser"],
-      "angle": "first-time pairing, pay-off for Diego announcement",
-      "description": "Santino and Diego take their first joint call together. 42s vertical teaser, no graphic content on-screen. Good for 'Diego is here' pay-off post.",
-      "cta_default": "https://pnptv.app/book/santinofurioso",
-      "added": "2026-10-19"
+      "tags": ["prime", "subscribe", "membership", "pnptv"],
+      "angle": "PRIME membership value — exclusive content, community access",
+      "description": "Short vertical promo for PNPtv PRIME subscription. Good for conversion-focused posts.",
+      "cta_default": "https://pnptv.app/subscribe",
+      "added": "2026-09-26",
+      "last_used": null
+    },
+    {
+      "id": "subscribe-creator-vertical-en",
+      "title": "Subscribe to a Creator",
+      "url": "https://pnptv.app/videos/subscribe-creator-vertical-en.mp4",
+      "thumbnail": "https://pnptv.app/videos/subscribe-creator-vertical-en.jpg",
+      "duration_sec": null,
+      "orientation": "vertical",
+      "tags": ["creator", "subscribe", "onlyfans-alternative", "pnptv"],
+      "angle": "Support your favorite creator directly — no algorithm gatekeeping",
+      "description": "Vertical promo showing how to subscribe to an individual creator on PNPtv.",
+      "cta_default": "https://pnptv.app/creators",
+      "added": "2026-09-26",
+      "last_used": null
+    },
+    {
+      "id": "book-a-call-vertical-en",
+      "title": "Book a Private Call",
+      "url": "https://pnptv.app/videos/book-a-call-vertical-en.mp4",
+      "thumbnail": "https://pnptv.app/videos/book-a-call-vertical-en.jpg",
+      "duration_sec": null,
+      "orientation": "vertical",
+      "tags": ["private-call", "1on1", "book", "creator"],
+      "angle": "1-on-1 live private call with your favorite creator — real time, real connection",
+      "description": "Vertical promo for the private call booking feature. Best for desire-first copy around intimacy.",
+      "cta_default": "https://pnptv.app/creators",
+      "added": "2026-09-26",
+      "last_used": null
+    },
+    {
+      "id": "rush-marketing-vertical-en",
+      "title": "Ru$h — Marketing Vertical",
+      "url": "https://pnptv.app/videos/rush-marketing-vertical-en.mp4",
+      "thumbnail": "https://pnptv.app/videos/rush-marketing-vertical-en.jpg",
+      "duration_sec": null,
+      "orientation": "vertical",
+      "tags": ["rush", "tokens", "rewards", "spend"],
+      "angle": "Ru$h tokens — earn while you interact, spend on exclusive perks",
+      "description": "Vertical marketing clip for the Ru$h token/rewards feature. Good for curiosity-hook posts.",
+      "cta_default": "https://pnptv.app",
+      "added": "2026-09-26",
+      "last_used": null
+    },
+    {
+      "id": "rush-tutorial-vertical-en",
+      "title": "Ru$h — Tutorial Vertical",
+      "url": "https://pnptv.app/videos/rush-tutorial-vertical-en.mp4",
+      "thumbnail": "https://pnptv.app/videos/rush-tutorial-vertical-en.jpg",
+      "duration_sec": null,
+      "orientation": "vertical",
+      "tags": ["rush", "tutorial", "howto", "tokens"],
+      "angle": "Step-by-step: how Ru$h tokens work and how to use them",
+      "description": "Vertical tutorial explaining the Ru$h earning and spending mechanics. Good for educational / 'how it works' posts.",
+      "cta_default": "https://pnptv.app",
+      "added": "2026-09-26",
+      "last_used": null
     }
   ]
 }
