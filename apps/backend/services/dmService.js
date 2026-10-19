@@ -54,6 +54,14 @@ function _scanDmForThreats(text) {
  * DM Service
  * Centralizes direct messaging logic for REST and Socket.IO
  */
+// JS slice() cuts at UTF-16 code units, so splitting an emoji surrogate pair
+// mid-way leaves an orphan high surrogate — breaks pg's JSONB parser when the
+// preview later lands in notifications.metadata.
+function sliceCp(s, n) {
+  const cps = Array.from(s);
+  return cps.length <= n ? s : cps.slice(0, n).join('');
+}
+
 class DmService {
   static _buildThreadPreview({ content, mediaType, messageType, meta }) {
     const text = typeof content === 'string' ? content.trim() : '';
@@ -64,25 +72,25 @@ class DmService {
       const author = src.authorUsername
         ? `@${src.authorUsername}`
         : (src.authorFirstName || 'User');
-      if (noteText) return noteText.slice(0, 100);
-      if (srcText) return `↪ ${author}: ${srcText}`.slice(0, 100);
+      if (noteText) return sliceCp(noteText, 100);
+      if (srcText) return sliceCp(`↪ ${author}: ${srcText}`, 100);
       if (src.mediaType === 'image') return `↪ ${author}: [image]`;
       if (src.mediaType === 'video') return `↪ ${author}: [video]`;
       if (src.mediaType === 'audio') return `↪ ${author}: [audio]`;
-      return `↪ Forwarded from ${author}`.slice(0, 100);
+      return sliceCp(`↪ Forwarded from ${author}`, 100);
     }
     if (messageType === 'post_card') {
       const snap = meta?.snapshot || null;
       const note = typeof snap?.note === 'string' ? snap.note.trim() : '';
       const preview = typeof snap?.content === 'string' ? snap.content.trim() : '';
-      if (note) return note.slice(0, 100);
-      if (preview) return `Shared post: ${preview}`.slice(0, 100);
+      if (note) return sliceCp(note, 100);
+      if (preview) return sliceCp(`Shared post: ${preview}`, 100);
       if (snap?.mediaType === 'image') return 'Shared post: [image]';
       if (snap?.mediaType === 'video') return 'Shared post: [video]';
       if (snap?.mediaType === 'audio') return 'Shared post: [audio]';
-      return text.slice(0, 100) || 'Shared post';
+      return sliceCp(text, 100) || 'Shared post';
     }
-    if (text) return text.slice(0, 100);
+    if (text) return sliceCp(text, 100);
     if (mediaType) return `[${mediaType}]`;
     return 'Media';
   }

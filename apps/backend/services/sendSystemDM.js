@@ -10,8 +10,16 @@ const logger = require('../utils/logger');
  * Optional 5th arg `opts` — { mediaUrl, mediaType, mediaThumbUrl } to attach
  * a hero image. Broadcasts should use this for visual polish.
  */
+// JS slice() cuts at UTF-16 code units, which can split a surrogate pair
+// (e.g. emojis like 🖤 = 🖤). An orphan high surrogate breaks pg's
+// JSONB parser downstream. Slice by Unicode code points instead.
+function sliceCodePoints(s, n) {
+  const cps = Array.from(s);
+  return cps.length <= n ? s : cps.slice(0, n).join('');
+}
+
 async function sendSystemDM(senderId, recipientId, content, pgQuery, opts = {}) {
-  const text = String(content || '').trim().slice(0, 4000);
+  const text = sliceCodePoints(String(content || '').trim(), 4000);
   if (!text) return;
   // Self-send guard: dm_threads has a CHECK constraint (user_a < user_b) that
   // 500s any thread INSERT where sender === recipient. Skip silently.
@@ -41,7 +49,7 @@ async function sendSystemDM(senderId, recipientId, content, pgQuery, opts = {}) 
          last_message_at = NOW(),
          unread_for_a    = dm_threads.unread_for_a + CASE WHEN $4 THEN 0 ELSE 1 END,
          unread_for_b    = dm_threads.unread_for_b + CASE WHEN $4 THEN 1 ELSE 0 END`,
-      [a, b, text.slice(0, 100), incrementB]
+      [a, b, sliceCodePoints(text, 100), incrementB]
     );
 
     // Trigger Push Notification
@@ -65,7 +73,7 @@ async function sendSystemDM(senderId, recipientId, content, pgQuery, opts = {}) 
             senderId,
             senderName,
             messageId: message.id,
-            preview: text.slice(0, 100),
+            preview: sliceCodePoints(text, 100),
             url: `/dm/${senderId}`
           }
         });
