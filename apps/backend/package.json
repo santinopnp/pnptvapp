@@ -19,7 +19,7 @@
     "@bull-board/api": "^9.10.2",
     "@bull-board/express": "^8.5.0",
     "@bull-board/ui": "^9.10.4",
-    "@mux/mux-node": "^14.1.1",
+    "@mux/mux-node": "^15.5.0",
     "@noble/hashes": "^2.4.0",
     "@privy-io/server-auth": "^1.32.5",
     "@sentry/node": "^11.8.0",
