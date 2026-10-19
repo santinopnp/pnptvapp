@@ -1125,25 +1125,7 @@ export function WalletPayCard({
         setError(onrampErrorMessage(kind, es, msg));
         return;
       }
-      // Card onramp unrecoverable (Stripe Link SMS lockout / Stripe KYC-SDK /
-      // MoonPay status timeout). If a crypto fallback is wired, surface it
-      // immediately — don't burn user patience retrying a flow that just
-      // failed. Weekend 2026-10-17/19 data: the old card→card MoonPay hop hit
-      // the same Stripe Link SMS wall and users abandoned.
-      if (onCryptoFallback && (kind === "rate_limited" || kind === "stripe_failed" || kind === "status_timeout")) {
-        if (kind === "rate_limited") markStripeRateLimited();
-        reportWalletClientError("fundWallet_fallback_to_crypto", err, {
-          surface, amountUsd, address: activeWallet?.address,
-          walletType: activeWallet?.walletClientType,
-          onrampErrorKind: kind,
-        });
-        onCryptoFallback();
-        return;
-      }
-      // No crypto fallback wired (e.g. WalletHomeSheet "Fund wallet") → fall
-      // back to the legacy card→card MoonPay hop for Stripe Link lockouts.
-      // One-shot: autoSwitchedMoonPayRef prevents infinite recursion if
-      // MoonPay itself fails.
+      // Stripe rate-limited → try MoonPay first (one-shot), then NowPayments.
       if (kind === "rate_limited" && _MOONPAY_ENABLED && !useMoonPay && !autoSwitchedMoonPayRef.current) {
         autoSwitchedMoonPayRef.current = true;
         markStripeRateLimited();
@@ -1154,6 +1136,18 @@ export function WalletPayCard({
         fundInFlightRef.current = false;
         setFundingInFlight(false);
         setTimeout(() => { handleFund({ forceMoonPay: true }); }, 50);
+        return;
+      }
+      // Card onramp unrecoverable (Stripe SMS lockout after MoonPay hop, Stripe
+      // KYC-SDK, MoonPay status timeout). Route to NowPayments crypto if wired.
+      if (onCryptoFallback && (kind === "rate_limited" || kind === "stripe_failed" || kind === "status_timeout")) {
+        if (kind === "rate_limited") markStripeRateLimited();
+        reportWalletClientError("fundWallet_fallback_to_crypto", err, {
+          surface, amountUsd, address: activeWallet?.address,
+          walletType: activeWallet?.walletClientType,
+          onrampErrorKind: kind,
+        });
+        onCryptoFallback();
         return;
       }
       // popup_blocked from MoonPay → signal next tap uses Stripe (inline, no popup)
