@@ -33,6 +33,12 @@ apps/web/dist/docs/pnptv-docs.zip
 pitch/
 tmp/
 
+# One-off script runtime caches (dedup state, etc.)
+apps/backend/.cache/
+
+# Broadcast / streaming build artifacts
+*.h264
+
 # Claude Design sync — staged converter, build output, machine state
 .ds-sync/
 ds-bundle/
