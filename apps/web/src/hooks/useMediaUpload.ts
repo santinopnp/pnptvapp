@@ -119,6 +119,7 @@ export function useMediaUpload(): UseMediaUploadReturn {
         endpoint: TUS_ENDPOINT,
         chunkSize: CHUNK_SIZE,
         retryDelays: [0, 1000, 3000, 5000, 10000],
+        withCredentials: true,
         headers: { "X-Requested-With": "XMLHttpRequest" },
         metadata: {
           filename: file.name,
