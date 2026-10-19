@@ -17,6 +17,7 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import clsx from "clsx";
 import { useFloatingCall } from "@/context/FloatingCallContext";
@@ -1808,8 +1809,15 @@ export function BookCallModal({
   const stepDots = getStepDots();
 
   // ── Render ────────────────────────────────────────────────────────────────────
+  //
+  // Mounted via createPortal to document.body so that `position: fixed` on the
+  // backdrop/sheet is anchored to the viewport. Ancestors like .glass-card-sm
+  // use `backdrop-filter: blur(…)` which creates a containing block for fixed
+  // descendants — without the portal, this modal rendered clipped inside the
+  // feed post card and appeared "not to open" for users clicking the Book-a-
+  // Call pill in SocialPostCard.
 
-  return (
+  return createPortal(
     <div
       className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center"
       style={{ background: "rgba(0,0,0,0.70)" }}
@@ -1967,6 +1975,7 @@ export function BookCallModal({
           refreshWalletBalance();
         }}
       />
-    </div>
+    </div>,
+    document.body
   );
 }
