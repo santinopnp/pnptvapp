@@ -72,6 +72,17 @@ export default function Home() {
     try { sessionStorage.setItem("pnp_crypto_banner_dismissed", "1"); } catch {}
   };
 
+  // Yearly50 promo banner — PRIME 1 year for $50. Hidden for users who
+  // already hold PRIME. Dismissed via sessionStorage (fresh per tab).
+  const [showYearly50Banner, setShowYearly50Banner] = useState(() => {
+    if (typeof sessionStorage === "undefined") return false;
+    return sessionStorage.getItem("pnp_yearly50_banner_dismissed") !== "1";
+  });
+  const dismissYearly50Banner = () => {
+    setShowYearly50Banner(false);
+    try { sessionStorage.setItem("pnp_yearly50_banner_dismissed", "1"); } catch { /* ignore */ }
+  };
+
   const username = user?.username || user?.displayName || "user";
   const tierLabel = isPrime ? t.home.tierLabelPrime : isMember ? t.home.tierLabelMember : t.home.tierLabelFree;
   const benefits = benefitsByTier[tier] || benefitsByTier["free"];
@@ -230,6 +241,44 @@ export default function Home() {
         <meta name="description" content={t.home.metaDescription} />
       </Helmet>
       {showTutorial && viewMode === "feed" && <TutorialOverlay section="home" onDismiss={dismissTutorial} onDismissForever={dismissForever} />}
+
+      {/* Yearly50 PRIME promo — only for non-PRIME users, dismissible per session */}
+      {isAuthenticated && showYearly50Banner && !isPrime && viewMode === "home" && (
+        <div
+          className="mb-4 rounded-xl p-4 flex items-center gap-3"
+          style={{
+            background: "linear-gradient(90deg, rgba(212,0,122,0.15), rgba(245,158,11,0.12))",
+            border: "1px solid rgba(245,158,11,0.45)",
+          }}
+        >
+          <div style={{ fontSize: 24 }}>🔥</div>
+          <div className="flex-1 min-w-0">
+            <p className="m-0 text-sm font-bold text-white">
+              {es ? "PRIME ANUAL — $50" : "PRIME ANNUAL — $50"}
+            </p>
+            <p className="m-0 text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.8)" }}>
+              {es ? "1 año completo. Acceso total. Asegúralo ya." : "1 full year. Full access. Lock it in."}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => navigate("/yearly50")}
+            className="px-3.5 py-2 rounded-lg text-xs font-bold text-white flex-shrink-0"
+            style={{ background: "linear-gradient(135deg, #D4007A, #F59E0B)" }}
+          >
+            {es ? "Reclamar →" : "Claim →"}
+          </button>
+          <button
+            type="button"
+            onClick={dismissYearly50Banner}
+            aria-label={es ? "Cerrar" : "Dismiss"}
+            className="text-white/50 hover:text-white/90 text-lg leading-none flex-shrink-0"
+            style={{ padding: "4px 6px" }}
+          >
+            ×
+          </button>
+        </div>
+      )}
 
       {/* Crypto-guide onboarding banner (dismissible per session) */}
       {isAuthenticated && showCryptoBanner && viewMode === "home" && (

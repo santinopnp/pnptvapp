@@ -1455,9 +1455,14 @@ export const router = createBrowserRouter([
       </ModuleLoader>
     ),
   },
-  { path: "/lifetime80", element: <Navigate to="/lifetime100" replace /> },
+  { path: "/lifetime80", element: <Navigate to="/yearly50" replace /> },
+  // /lifetime100 consolidated into /yearly50 (same $50, cleaner funnel).
+  // Kept as a client-side Navigate so SPA deep-links still land correctly;
+  // the main redirect lives at the nginx + backend layer for 302 at the
+  // edge. SPA fallback only fires if nginx config misses the path.
+  { path: "/lifetime100", element: <Navigate to="/yearly50" replace /> },
   {
-    path: "/lifetime100",
+    path: "/_lifetime100_legacy_hidden",
     element: (
       <ModuleLoader>
         <Lifetime100 />
@@ -1539,7 +1544,7 @@ export const router = createBrowserRouter([
   },
   // Public alias — /lifetime → /subscribe (offer closed)
   { path: "/lifetime", element: <Navigate to="/subscribe" replace /> },
-  { path: "/lifetime100b", element: <Navigate to="/lifetime100" replace /> },
+  { path: "/lifetime100b", element: <Navigate to="/yearly50" replace /> },
   { path: "/nequinegocios", element: <Navigate to="/subscribe" replace /> },
   { path: "/mercadopago", element: <Navigate to="/subscribe" replace /> },
   {

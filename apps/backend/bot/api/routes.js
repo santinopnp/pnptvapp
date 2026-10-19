@@ -1169,17 +1169,17 @@ app.get('/subscription', (req, res) => {
   res.redirect(301, '/suscripcion');
 });
 
-// Shorthand alias → lifetime100
-app.get('/lifetime', (req, res) => res.redirect(302, 'https://app.pnptv.app/lifetime100'));
+// /lifetime100 consolidated into /yearly50 — both now $50, cleaner funnel.
+// Shorthand aliases redirect to the yearly50 SPA page preserving query string.
+app.get('/lifetime', (req, res) => res.redirect(302, 'https://app.pnptv.app/yearly50'));
 
-// LIFETIME100 — redirect to the React SPA, preserving any query string
 app.get('/lifetime100', (req, res) => {
   const host = req.get('host') || '';
   if (host.includes('easybots.store') || host.includes('easybots')) {
     return res.status(404).send('Not found');
   }
   const qs = req.url.includes('?') ? '?' + req.url.split('?')[1] : '';
-  return res.redirect(302, 'https://app.pnptv.app/lifetime100' + qs);
+  return res.redirect(302, 'https://app.pnptv.app/yearly50' + qs);
 });
 
 // YEARLY50 — redirect to the React SPA, preserving any query string
