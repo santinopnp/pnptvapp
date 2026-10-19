@@ -21,3 +21,36 @@ updates:
       # on user input). Fix requires tailwindcss 3 -> 4 which is a breaking
       # rewrite; schedule separately.
       - dependency-name: "postcss-selector-parser"
+      # tailwindcss + nodemon + their transitive dev-tooling (braces,
+      # chokidar, fast-glob, micromatch) are DEV/BUILD-time only — none ship
+      # to users. Fixes require major-version bumps (tailwindcss 3→4,
+      # nodemon 3→1 which is a cross-API rename). Scheduled with
+      # postcss-selector-parser.
+      - dependency-name: "tailwindcss"
+        versions: [">=4.0.0"]
+      - dependency-name: "nodemon"
+      - dependency-name: "braces"
+      - dependency-name: "chokidar"
+      - dependency-name: "fast-glob"
+      - dependency-name: "micromatch"
+      # ws advisories (uninitialized memory disclosure, DoS from fragments)
+      # affect nested copies inside @reown/appkit + @walletconnect/* +
+      # viem. Those packages are BROWSER-ONLY wallet libs; the `ws` npm
+      # package has a `browser` field that redirects to native WebSocket,
+      # which vite respects at build time. Confirmed: 0 files in the shipped
+      # bundle import 'ws'. Fix would require major bump of @privy-io/
+      # react-auth (would break current auth flow). Our root pool uses
+      # ws@8.21.3 which is patched.
+      - dependency-name: "ws"
+        versions: ["<8.21.0"]
+      # @reown/appkit* + @walletconnect/* are flagged only because of nested
+      # ws@8.18.x — same browser-only non-exposure as above.
+      - dependency-name: "@reown/appkit"
+      - dependency-name: "@reown/appkit-controllers"
+      - dependency-name: "@reown/appkit-pay"
+      - dependency-name: "@reown/appkit-scaffold-ui"
+      - dependency-name: "@reown/appkit-ui"
+      - dependency-name: "@reown/appkit-utils"
+      - dependency-name: "@walletconnect/ethereum-provider"
+      - dependency-name: "@walletconnect/universal-provider"
+      - dependency-name: "x402"
