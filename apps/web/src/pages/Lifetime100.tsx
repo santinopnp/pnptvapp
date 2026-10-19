@@ -30,7 +30,7 @@ interface PlanPageConfig {
 }
 const PLAN_CONFIGS: Record<string, PlanPageConfig> = {
   "yearly50": { planId: "yearly50", priceUsd: 50, apiSlug: "yearly50", basePath: "/yearly50", totalSlots: 50 },
-  "lifetime100": { planId: "lifetime100", priceUsd: 50, apiSlug: "lifetime100", basePath: "/lifetime100", totalSlots: 100 },
+  "lifetime100": { planId: "lifetime100", priceUsd: 100, apiSlug: "lifetime100", basePath: "/lifetime100", totalSlots: 100 },
 };
 const PlanConfigContext = React.createContext<PlanPageConfig>(PLAN_CONFIGS.lifetime100);
 function usePlanConfig(): PlanPageConfig { return React.useContext(PlanConfigContext); }
