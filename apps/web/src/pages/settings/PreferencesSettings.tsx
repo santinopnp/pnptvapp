@@ -142,20 +142,6 @@ export default function PreferencesSettings() {
   const [autoShareToXSaving, setAutoShareToXSaving] = useState(false);
   const [xHandle, setXHandle] = useState<string | null>(null);
 
-  // Nav mode — Classic (default) vs Cruise (floating pill). Persisted in
-  // localStorage under `pnp_nav_mode`; changes dispatch a CustomEvent so
-  // BottomNav re-renders without a full reload.
-  const [navMode, setNavMode] = useState<"classic" | "island">(() => {
-    if (typeof window === "undefined") return "classic";
-    return (localStorage.getItem("pnp_nav_mode") as "classic" | "island") || "classic";
-  });
-  const handleNavModeToggle = useCallback(() => {
-    const next = navMode === "island" ? "classic" : "island";
-    try { localStorage.setItem("pnp_nav_mode", next); } catch { /* noop */ }
-    setNavMode(next);
-    window.dispatchEvent(new CustomEvent("pnp-nav-mode-change", { detail: next }));
-  }, [navMode]);
-
   // Share Location — powers the Nearby feature (see NearbyBadge.tsx).
   const { enabled: nearbyOn } = useNearbyToggle();
 
@@ -334,26 +320,6 @@ export default function PreferencesSettings() {
             onChange={handleAutoShareToXToggle}
             disabled={autoShareToXSaving || !xHandle}
             accentColor="#000000"
-          />
-        </div>
-
-        {/* Cruise Mode — nav style */}
-        <div
-          className="flex items-center justify-between rounded-lg px-3 py-3 mb-3"
-          style={{ background: "rgba(212,0,122,0.06)", border: "1px solid rgba(212,0,122,0.15)" }}
-        >
-          <div className="flex-1 min-w-0 mr-3">
-            <p className="text-sm font-medium text-white">🚢 Cruise Mode</p>
-            <p className="text-xs mt-0.5" style={{ color: "var(--pnp-text-secondary)" }}>
-              {navMode === "island"
-                ? "Floating pill nav on the bottom. Toggle off for the classic bar."
-                : "Show a floating pill nav instead of the classic bottom bar."}
-            </p>
-          </div>
-          <Toggle
-            checked={navMode === "island"}
-            onChange={handleNavModeToggle}
-            accentColor="#D4007A"
           />
         </div>
 

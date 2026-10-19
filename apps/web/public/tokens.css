@@ -1,0 +1,57 @@
+/* PNPtv tokens — generated from tokens.json v4. Do not edit by hand. */
+:root {
+  color-scheme: dark;
+  --background: #121212;
+  --surface: #181818;
+  --surface-raised: #1F1F1F;
+  --border: #2A2A2A;
+  --control-border: #707076;
+  --text-primary: #F5F5F5;
+  --text-secondary: #A1A1A3;
+  --text-tertiary: #8A8A8E;
+  --accent: #D4007A;
+  --accent-hover: #E6198E;
+  --on-accent: #FFFFFF;
+  --night: #0B1436;
+  --brand-amber: #E69138;
+  --focus: #FF4DA6;
+  --success: #34C759;
+  --error: #FF453A;
+  --warning: #FFD60A;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-full: 999px;
+  --font-display: "Ethnocentric Rg", "Roboto Mono", monospace;
+  --font-sans: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --gradient-hero: linear-gradient(115deg, var(--night) 0%, var(--accent) 58%, var(--brand-amber) 100%);
+  --gradient-brand: linear-gradient(135deg, #D4007A, #E69138);
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --background: #FFFFFF;
+  --surface: #F7F7F8;
+  --surface-raised: #EFEFF1;
+  --border: #E2E2E6;
+  --control-border: #8A8A90;
+  --text-primary: #111113;
+  --text-secondary: #5C5C63;
+  --text-tertiary: #62626A;
+  --accent: #D4007A;
+  --accent-hover: #E6198E;
+  --on-accent: #FFFFFF;
+  --night: #0B1436;
+  --brand-amber: #E69138;
+  --focus: #FF4DA6;
+  --success: #17753A;
+  --error: #D92D20;
+  --warning: #B54708;
+}

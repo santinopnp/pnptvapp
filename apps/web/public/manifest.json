@@ -5,11 +5,17 @@
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "display_override": ["standalone", "minimal-ui"],
+  "display_override": [
+    "standalone",
+    "minimal-ui"
+  ],
   "orientation": "portrait",
   "background_color": "#121212",
   "theme_color": "#121212",
-  "categories": ["social", "entertainment"],
+  "categories": [
+    "social",
+    "entertainment"
+  ],
   "icons": [
     {
       "src": "/app-icon-192.png",
@@ -22,20 +28,13 @@
       "type": "image/png"
     },
     {
-      "src": "/app-icon-512.png",
+      "src": "/app-icon-512-maskable.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
     }
   ],
-  "screenshots": [
-    {
-      "src": "/app-icon-512.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "form_factor": "narrow"
-    }
-  ],
+  "screenshots": [],
   "launch_handler": {
     "client_mode": "navigate-existing"
   },

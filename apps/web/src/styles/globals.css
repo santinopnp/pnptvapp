@@ -36,10 +36,11 @@
    packages/ui-kit/src/theme.ts. Default values match the dark theme. The
    `[data-theme="light"]` block overrides them when the user opts in. */
 :root {
+  /* Aligned with PNPtv Design System v4 (public/tokens.css). */
   --pnp-background:    #121212;
-  --pnp-surface:       #1E1E1E;
-  --pnp-surface-hover: #2A2A2A;
-  --pnp-text-primary:  #FFFFFF;
+  --pnp-surface:       #181818;
+  --pnp-surface-hover: #1F1F1F;
+  --pnp-text-primary:  #F5F5F5;
   --pnp-text-secondary:#A1A1A3;
   --pnp-border:        #2A2A2A;
   color-scheme: dark;
@@ -47,11 +48,11 @@
 
 :root[data-theme="light"] {
   --pnp-background:    #FFFFFF;
-  --pnp-surface:       #F5F5F7;
-  --pnp-surface-hover: #E8E8EB;
-  --pnp-text-primary:  #1C1C1E;
-  --pnp-text-secondary:#5A5A60;
-  --pnp-border:        #D7D7DC;
+  --pnp-surface:       #F7F7F8;
+  --pnp-surface-hover: #EFEFF1;
+  --pnp-text-primary:  #111113;
+  --pnp-text-secondary:#5C5C63;
+  --pnp-border:        #E2E2E6;
   color-scheme: light;
 }
 
@@ -107,7 +108,10 @@
 
   body {
     @apply bg-pnp-background text-pnp-textPrimary;
-    font-family: "Roboto Mono", monospace;
+    font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 15px;
+    line-height: 22px;
+    -webkit-font-smoothing: antialiased;
     -webkit-user-select: none;
     user-select: none;
     -webkit-touch-callout: none;
@@ -256,21 +260,18 @@
     -webkit-backdrop-filter: blur(12px);
   }
 
+  /* DS v4: active state is a flat accent, never a gradient. */
   .nav-active {
-    background: linear-gradient(135deg, #D4007A, #E69138);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
+    color: #D4007A;
   }
 
   .nav-active svg {
     color: #D4007A;
   }
 
+  /* DS v4: flat — solid background, no blur. */
   .glass-nav {
-    background: rgba(18, 18, 18, 0.85);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
+    background: var(--pnp-background);
   }
 
   /* Gradient text utility */
