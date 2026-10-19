@@ -533,7 +533,7 @@ function YouSheet({ onClose, onSwitchMode }: { onClose: () => void; onSwitchMode
                   <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
                 </svg>
               </div>
-              <p className="text-[14px] font-semibold text-pnp-textSecondary">{nav.youSignOut || "Sign out"}</p>
+              <p className="text-[14px] font-semibold text-pnp-textSecondary">{nav.signOut || "Sign out"}</p>
             </button>
           </div>
         </div>

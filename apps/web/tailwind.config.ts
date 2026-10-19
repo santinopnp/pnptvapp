@@ -6,6 +6,7 @@ const config: Config = {
     "./index.html",
     "./src/**/*.{ts,tsx}",
     "../../packages/ui-kit/src/**/*.{ts,tsx}",
+    "../../packages/ui-kit/dist/**/*.js",
   ],
   presets: [uiKitPreset as Partial<Config>],
   theme: {

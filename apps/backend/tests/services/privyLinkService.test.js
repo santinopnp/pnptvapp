@@ -1,6 +1,17 @@
 'use strict';
 
-jest.mock('../../config/postgres', () => ({ query: jest.fn() }));
+jest.mock('../../config/postgres', () => {
+  const query = jest.fn();
+  // verifyAndLink runs its writes on a pooled client inside a transaction;
+  // route client.query through the same mock so assertions see every SQL call
+  // (transaction control statements are skipped so they don't consume the
+  // per-test mockImplementationOnce responses).
+  const client = {
+    query: (sql, ...rest) => (/^(BEGIN|COMMIT|ROLLBACK)$/.test(sql) ? Promise.resolve({ rows: [] }) : query(sql, ...rest)),
+    release: jest.fn(),
+  };
+  return { query, getPool: jest.fn(() => ({ connect: jest.fn().mockResolvedValue(client) })) };
+});
 jest.mock('../../utils/logger', () => ({
   info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn(),
 }));
