@@ -1125,11 +1125,23 @@ export function WalletPayCard({
         setError(onrampErrorMessage(kind, es, msg));
         return;
       }
-      // Stripe Link "Too many attempts" — the phone-OTP rate limit lives on
-      // Stripe's side keyed to the user's phone number. Browser/session changes
-      // don't help; waiting hours does. Rather than surface a hostile error,
-      // silently retry the exact same purchase via MoonPay (card → card hop)
-      // when MoonPay is enabled and we haven't already tried it this call.
+      // Card onramp unrecoverable (Stripe Link SMS lockout / Stripe KYC-SDK /
+      // MoonPay status timeout). If a crypto fallback is wired, surface it
+      // immediately — don't burn user patience retrying a flow that just
+      // failed. Weekend 2026-10-17/19 data: the old card→card MoonPay hop hit
+      // the same Stripe Link SMS wall and users abandoned.
+      if (onCryptoFallback && (kind === "rate_limited" || kind === "stripe_failed" || kind === "status_timeout")) {
+        if (kind === "rate_limited") markStripeRateLimited();
+        reportWalletClientError("fundWallet_fallback_to_crypto", err, {
+          surface, amountUsd, address: activeWallet?.address,
+          walletType: activeWallet?.walletClientType,
+          onrampErrorKind: kind,
+        });
+        onCryptoFallback();
+        return;
+      }
+      // No crypto fallback wired (e.g. WalletHomeSheet "Fund wallet") → fall
+      // back to the legacy card→card MoonPay hop for Stripe Link lockouts.
       // One-shot: autoSwitchedMoonPayRef prevents infinite recursion if
       // MoonPay itself fails.
       if (kind === "rate_limited" && _MOONPAY_ENABLED && !useMoonPay && !autoSwitchedMoonPayRef.current) {
@@ -1139,10 +1151,6 @@ export function WalletPayCard({
           surface, amountUsd, address: activeWallet?.address,
           walletType: activeWallet?.walletClientType,
         });
-        // Release the in-flight lock before re-entering handleFund so the
-        // guard at the top of handleFund doesn't early-return. forceMoonPay
-        // bypasses the platform heuristic (Windows desktop etc.) so the
-        // retry actually hits useFundWallet, not addFunds again.
         fundInFlightRef.current = false;
         setFundingInFlight(false);
         setTimeout(() => { handleFund({ forceMoonPay: true }); }, 50);
@@ -1153,15 +1161,6 @@ export function WalletPayCard({
         setStripeHasFailed(true);
         setError(onrampErrorMessage(kind, es, msg));
         setOfferOpenInBrowser(shouldOfferOpenInBrowser(kind));
-        return;
-      }
-      // Stripe/card failure in popup-blocked env → fall through to NowPayments
-      if ((kind === "stripe_failed" || kind === "status_timeout") && onCryptoFallback && popupsUnsupported()) {
-        reportWalletClientError("fundWallet_fallback_to_crypto", err, {
-          surface, amountUsd, address: activeWallet?.address,
-          walletType: activeWallet?.walletClientType,
-        });
-        onCryptoFallback();
         return;
       }
       // Any MoonPay provider error → signal next tap uses Stripe
@@ -1524,6 +1523,18 @@ export function WalletPayCard({
             const showsLeftover = leftoverUsd >= 0.5;
             return (
               <>
+              {/* Pre-warn: card onramp uses Stripe Link SMS verification. Weekend
+                  2026-10-17/19 shipping ~10 "Link authentication abandoned"
+                  errors — users bail at the SMS modal. Giving an upfront heads-up
+                  + a visible crypto peer below cuts that confusion. Only shown
+                  when crypto escape is actually wired by the caller. */}
+              {onCryptoFallback && (
+                <p className="text-[11px] text-pnp-textSecondary text-center leading-snug px-1">
+                  {es
+                    ? "¿Prefieres sin verificación SMS? Paga con cripto abajo."
+                    : "Prefer no SMS verification? Pay with crypto below."}
+                </p>
+              )}
               <button
                 type="button"
                 onClick={() => {
@@ -1563,6 +1574,21 @@ export function WalletPayCard({
                           : `This purchase: $${amountUsd.toFixed(2)} (minimum charge)`)}
                 </span>
               </button>
+              {/* Crypto peer — always visible when the caller wires a NowPayments
+                  escape. Not a fallback; a sibling option. Styled smaller than
+                  the card CTA so card remains the default visual. */}
+              {onCryptoFallback && (
+                <button
+                  type="button"
+                  onClick={onCryptoFallback}
+                  disabled={fundingInFlight}
+                  className="w-full py-2 rounded-xl text-xs font-semibold text-white/80 border border-white/15 bg-white/[0.04] hover:bg-white/[0.08] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed transition flex items-center justify-center gap-1.5"
+                  style={{ touchAction: "manipulation", WebkitTapHighlightColor: "transparent" }}
+                >
+                  <span>{es ? "O paga con cripto · cualquier wallet o exchange" : "Or pay with crypto · any wallet or exchange"}</span>
+                  <span className="text-white/40">→</span>
+                </button>
+              )}
               {/* In popup-blocked contexts (Telegram / in-app browser / iOS PWA)
                   the card onramp runs inline — no popup needed. */}
               {popupsUnsupported() && !error && (
