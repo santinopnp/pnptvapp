@@ -26,6 +26,8 @@
  *   S5 Slur/harassment lexicon in DMs [WEIGHT 1]
  *   S6 New account (<7d) + ≥3 hangouts created
  *   S7 Failed payment attempts ≥5 with zero successes
+ *   S8 Linked to a banned case (same id, email alias, or non-shared IP of
+ *      an active platform ban) — see banEvasionService
  *
  * Silencing: keys like `pnpapp:suspicious:silenced:<user_id>` skip a user
  * for the TTL — the Slack Slash Command interactive button sets this.
@@ -35,6 +37,7 @@ const cron = require('node-cron');
 const { query } = require('../config/postgres');
 const { cache } = require('../config/redis');
 const logger = require('../utils/logger');
+const banEvasionService = require('./banEvasionService');
 
 const CHANNEL_ID = process.env.SLACK_CHANNEL_SUSPICIOUS_REVIEW || null;
 const BOT_TOKEN  = process.env.SLACK_BOT_TOKEN || null;
@@ -158,7 +161,7 @@ async function _s7_failedPayments(userId) {
  * Weight sums to a rough 0-10 scale (S5 lexicon weighted 1 max).
  */
 async function scanUser(userId, { windowDays = 30 } = {}) {
-  const [meta, s1, s2, s3, s4, s5, s6, s7] = await Promise.all([
+  const [meta, s1, s2, s3, s4, s5, s6, s7, s8] = await Promise.all([
     query(`SELECT id, username, first_name, tier, creator_status, role FROM users WHERE id = $1`, [String(userId)]),
     _s1_offPlatformRatio(userId, windowDays),
     _s2_blockedByOthers(userId, windowDays),
@@ -167,6 +170,10 @@ async function scanUser(userId, { windowDays = 30 } = {}) {
     _s5_lexiconHits(userId, windowDays),
     _s6_newAccountManyHangouts(userId),
     _s7_failedPayments(userId),
+    banEvasionService.findBanLinks(userId).catch((err) => {
+      logger.warn('[suspicious] ban-link check failed', { userId, error: err.message });
+      return null;
+    }),
   ]);
   const user = meta.rows[0];
   if (!user) return null;
@@ -193,6 +200,17 @@ async function scanUser(userId, { windowDays = 30 } = {}) {
   }
   if (s7.flag) {
     signals.push({ key: 'failed_payments', weight: 1, detail: `${s7.failed} failed checkout attempts, 0 successful` });
+  }
+
+  if (user.tier !== 'banned' && s8?.links?.length) {
+    const top = s8.links[0];
+    const who = top.bannedUsername ? `@${top.bannedUsername}` : `ban ${top.banId}`;
+    const more = s8.links.length > 1 ? ` (+${s8.links.length - 1} more)` : '';
+    signals.push({
+      key: 'linked_to_banned',
+      weight: Math.max(...s8.links.map(l => l.weight)),
+      detail: `${top.matches.map(m => m.detail).join(' + ')} with banned ${who} — "${String(top.reason || '').slice(0, 80)}"${more}`,
+    });
   }
 
   const score = signals.reduce((a, s) => a + s.weight, 0);
@@ -258,7 +276,11 @@ async function runDailyScan({ windowDays = 30, dryRun = false } = {}) {
   const started = Date.now();
   logger.info('[suspicious] scan starting', { windowDays, dryRun });
 
-  const candidates = await _candidateUsers({ windowDays });
+  const [baseCandidates, evasionCandidates] = await Promise.all([
+    _candidateUsers({ windowDays }),
+    banEvasionService.findCandidateUserIds({ windowDays }),
+  ]);
+  const candidates = [...new Set([...baseCandidates, ...evasionCandidates])];
   logger.info('[suspicious] candidate shortlist', { count: candidates.length });
 
   const flagged = [];

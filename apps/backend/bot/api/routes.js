@@ -26383,6 +26383,17 @@ app.post('/api/webapp/admin/moderation/bans/:id/unban', adminGuard, asyncHandler
   res.json({ success: true });
 }));
 
+// Banned cases this user is linked to (same id, email alias, shared IP).
+// Review aid only — nothing is banned automatically.
+app.get('/api/webapp/admin/moderation/users/:id/ban-links', adminGuard, asyncHandler(async (req, res) => {
+  const banEvasionService = require('../../services/banEvasionService');
+  const result = await banEvasionService.findBanLinks(req.params.id);
+  if (!result) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+  res.json(result);
+}));
+
 app.get('/api/webapp/admin/moderation/audit-log', adminGuard, asyncHandler(async (req, res) => {
   const { action = '', resource_type = '', limit = '50', offset = '0' } = req.query;
   const lim = Math.min(parseInt(limit, 10) || 50, 200);
