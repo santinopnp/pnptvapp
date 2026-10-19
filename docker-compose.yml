@@ -1168,6 +1168,12 @@ services:
       ZOHO_SOCIAL_ACCOUNTS_URL: ${ZOHO_SOCIAL_ACCOUNTS_URL:-https://accounts.zoho.com}
       ZOHO_SOCIAL_BRAND_ID: ${ZOHO_SOCIAL_BRAND_ID:-}
       ZOHO_SOCIAL_X_CHANNEL_ID: ${ZOHO_SOCIAL_X_CHANNEL_ID:-}
+      SOCIAL_LIBRARY_PATH: /library/social-library.json
+    volumes:
+      - type: bind
+        source: /opt/pnptvapp/content
+        target: /library
+        read_only: true
     networks:
       - pnptvapp_net
     depends_on:

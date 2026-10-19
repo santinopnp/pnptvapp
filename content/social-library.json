@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "note": "Mirror of the videos uploaded to the Zoho Social content library. One entry per video. Claude reads this when composing posts to decide which asset to attach.",
+  "videos": [
+    {
+      "id": "example-template",
+      "title": "Santino + Diego — first joint private call (teaser)",
+      "zoho_asset_id": "",
+      "url": "https://pnptv.app/videos/public/santino-diego-first-call.mp4",
+      "thumbnail": "https://pnptv.app/images/promo/santino-diego-thumb.jpg",
+      "duration_sec": 42,
+      "orientation": "vertical",
+      "tags": ["santino", "diego", "private-call", "pov", "teaser"],
+      "angle": "first-time pairing, pay-off for Diego announcement",
+      "description": "Santino and Diego take their first joint call together. 42s vertical teaser, no graphic content on-screen. Good for 'Diego is here' pay-off post.",
+      "cta_default": "https://pnptv.app/book/santinofurioso",
+      "added": "2026-10-19"
+    }
+  ]
+}
