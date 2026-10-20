@@ -1064,7 +1064,7 @@ export default function SocialPostCard({
       <div className="absolute -top-2 -left-2 z-10 flex-shrink-0">
         {post.is_carousel ? (
           <div
-            className="w-10 h-10 rounded-full flex items-center justify-center ring-2 ring-[#1C1C1E]"
+            className="w-10 h-10 rounded-full flex items-center justify-center ring-2 ring-pnp-surface"
             style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
             aria-label="PNPtv PRIME"
           >
@@ -1076,7 +1076,7 @@ export default function SocialPostCard({
           <img
             src="/Logo2-50.png"
             alt="PNPtv!"
-            className="w-10 h-10 rounded-full object-cover ring-2 ring-[#1C1C1E]"
+            className="w-10 h-10 rounded-full object-cover ring-2 ring-pnp-surface"
             style={{ background: "#1a1a2e" }}
           />
         ) : post.author_id === "8552451957" && channelPromoCta && !(post.metadata as { is_creator_post?: boolean } | null)?.is_creator_post ? (
@@ -1086,7 +1086,7 @@ export default function SocialPostCard({
           // Creator-authored promos (is_creator_post=true) skip this and fall
           // through to the standard UserAvatar below.
           <div
-            className="w-10 h-10 rounded-full flex items-center justify-center ring-2 ring-[#1C1C1E] text-white text-sm font-bold"
+            className="w-10 h-10 rounded-full flex items-center justify-center ring-2 ring-pnp-surface text-white text-sm font-bold"
             style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
             aria-label="PNP Channel"
           >
@@ -1096,7 +1096,7 @@ export default function SocialPostCard({
           <img
             src="/logo-final.png"
             alt="PNPtv!"
-            className="w-10 h-10 rounded-full object-contain ring-2 ring-[#1C1C1E] bg-black p-0.5"
+            className="w-10 h-10 rounded-full object-contain ring-2 ring-pnp-surface bg-black p-0.5"
           />
         ) : (
           <UserAvatar
@@ -1104,7 +1104,7 @@ export default function SocialPostCard({
             photoUrl={effectiveAuthorPhoto}
             displayName={post.author_first_name || post.author_username}
             size="md"
-            className="ring-2 ring-[#1C1C1E] rounded-full"
+            className="ring-2 ring-pnp-surface rounded-full"
           />
         )}
       </div>
@@ -1113,20 +1113,20 @@ export default function SocialPostCard({
       <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             {post.is_carousel ? (
-              <span className="font-semibold text-white text-sm truncate">
+              <span className="font-semibold text-pnp-textPrimary text-sm truncate">
                 {post.author_first_name || post.author_username || "Anonymous"}
               </span>
             ) : channelPromoCta && post.author_id === "8552451957" && !(post.metadata as { is_creator_post?: boolean } | null)?.is_creator_post ? (
               // Channel-promo from system account: show channel name as author label
               // so the card reads as belonging to the creator's channel, not the bot.
               // Creator-authored promos (is_creator_post=true) show the real author name.
-              <span className="font-semibold text-white text-sm truncate">
+              <span className="font-semibold text-pnp-textPrimary text-sm truncate">
                 {(post.metadata as { channel_name?: string } | undefined)?.channel_name || "PNP Channels"}
               </span>
             ) : (
               <button
                 onClick={(e) => { e.stopPropagation(); onNavigate(authorPath); }}
-                className="font-semibold text-white text-sm truncate hover:underline"
+                className="font-semibold text-pnp-textPrimary text-sm truncate hover:underline"
               >
                 {post.author_first_name || post.author_username || "Anonymous"}
               </button>
@@ -1247,7 +1247,7 @@ export default function SocialPostCard({
                 {showMenu && (
                   <div
                     className="absolute right-0 top-7 z-50 w-40 rounded-xl shadow-xl py-1 overflow-hidden"
-                    style={{ background: "#2C2C2E", border: "1px solid rgba(255,255,255,0.08)" }}
+                    style={{ background: "#1F1F1F", border: "1px solid rgba(255,255,255,0.08)" }}
                     onClick={(e) => e.stopPropagation()}
                   >
                     {isOwn && !isEditing && !post.blurred && (
@@ -1574,7 +1574,7 @@ export default function SocialPostCard({
                     value={editContent}
                     onChange={(e) => setEditContent(e.target.value)}
                     rows={3}
-                    className="w-full rounded-lg p-2 text-sm text-white bg-white/5 border border-white/15 focus:outline-none focus:border-pink-500 resize-none"
+                    className="w-full rounded-lg p-2 text-sm text-white bg-white/5 border border-pnp-controlBorder focus:outline-none focus:border-pink-500 resize-none"
                     placeholder="Edit your post..."
                     disabled={savingEdit}
                   />
@@ -1587,7 +1587,7 @@ export default function SocialPostCard({
                         maxLength={120}
                         placeholder="Video title…"
                         disabled={savingEdit}
-                        className="w-full rounded-lg px-2 py-1.5 text-sm text-white bg-white/5 border border-white/15 focus:outline-none focus:border-pink-500"
+                        className="w-full rounded-lg px-2 py-1.5 text-sm text-white bg-white/5 border border-pnp-controlBorder focus:outline-none focus:border-pink-500"
                       />
                       <textarea id="pnp-socialpostcard-3"
                         value={editVideoDescription}
@@ -1596,7 +1596,7 @@ export default function SocialPostCard({
                         maxLength={500}
                         placeholder="Video description…"
                         disabled={savingEdit}
-                        className="w-full rounded-lg px-2 py-1.5 text-sm text-white bg-white/5 border border-white/15 focus:outline-none focus:border-pink-500 resize-none"
+                        className="w-full rounded-lg px-2 py-1.5 text-sm text-white bg-white/5 border border-pnp-controlBorder focus:outline-none focus:border-pink-500 resize-none"
                       />
                     </>
                   )}
@@ -1619,10 +1619,10 @@ export default function SocialPostCard({
                           value={editTagQuery}
                           onChange={(e) => setEditTagQuery(e.target.value)}
                           placeholder="Search creators to tag…"
-                          className="w-full rounded-lg px-2 py-1.5 text-sm text-white bg-white/5 border border-white/15 focus:outline-none focus:border-teal-500"
+                          className="w-full rounded-lg px-2 py-1.5 text-sm text-white bg-white/5 border border-pnp-controlBorder focus:outline-none focus:border-teal-500"
                         />
                         {(editTagResults.length > 0 || editTagSearching) && (
-                          <div className="absolute top-full left-0 right-0 z-50 mt-0.5 rounded-lg overflow-hidden shadow-xl" style={{ background: "#2C2C2E", border: "1px solid rgba(255,255,255,0.08)" }}>
+                          <div className="absolute top-full left-0 right-0 z-50 mt-0.5 rounded-lg overflow-hidden shadow-xl" style={{ background: "#1F1F1F", border: "1px solid rgba(255,255,255,0.08)" }}>
                             {editTagSearching && <p className="px-3 py-2 text-xs" style={{ color: "#8E8E93" }}>Searching…</p>}
                             {editTagResults.map(u => (
                               <button
@@ -2255,7 +2255,7 @@ export default function SocialPostCard({
               {showRepostPopover && (
                 <div
                   className="absolute bottom-full left-0 mb-1 z-50 rounded-xl shadow-xl py-1 overflow-hidden min-w-[140px]"
-                  style={{ background: "#2C2C2E", border: "1px solid rgba(255,255,255,0.08)" }}
+                  style={{ background: "#1F1F1F", border: "1px solid rgba(255,255,255,0.08)" }}
                   onClick={(e) => e.stopPropagation()}
                 >
                   <button
@@ -2763,7 +2763,7 @@ export default function SocialPostCard({
           <div
             className="w-full max-w-sm rounded-2xl p-5 space-y-4"
             style={{
-              background: "var(--pnp-surface, #1C1C1E)",
+              background: "var(--pnp-surface, #181818)",
               border: "1px solid rgba(212,0,122,0.25)",
             }}
             onClick={(e) => e.stopPropagation()}

@@ -643,7 +643,7 @@ export default function Subscribe() {
                     {/* Price */}
                     <div className="flex items-baseline gap-0.5 leading-none mt-0.5">
                       <span className="text-[11px] font-bold" style={{ color: accentColor }}>$</span>
-                      <span className="text-2xl font-black text-white">{Math.round(plan.price)}</span>
+                      <span className="text-2xl font-black text-pnp-textPrimary">{Math.round(plan.price)}</span>
                       {!isLifetime && (
                         <span className="text-[10px] font-semibold text-white/50 ml-0.5">
                           {t.lang === "es" ? "/año" : "/yr"}
@@ -652,7 +652,7 @@ export default function Subscribe() {
                     </div>
 
                     {/* Name + subline */}
-                    <p className="text-[11px] font-bold text-white leading-tight">
+                    <p className="text-[11px] font-bold text-pnp-textPrimary leading-tight">
                       {isLifetime
                         ? (t.lang === "es" ? "Membresía Founders" : "Founders Membership")
                         : (t.lang === "es" ? "PRIME anual" : "PRIME Annual")}
@@ -730,12 +730,12 @@ export default function Subscribe() {
               }}
               placeholder={s.promoCodePlaceholder}
               maxLength={64}
-              className="flex-1 px-3 py-2 rounded-lg bg-pnp-surface border border-white/10 text-sm text-pnp-textPrimary placeholder:text-pnp-textSecondary/60 focus:outline-none focus:border-pnp-accent/50"
+              className="flex-1 px-3 py-2 rounded-lg bg-pnp-surface border border-pnp-controlBorder text-sm text-pnp-textPrimary placeholder:text-pnp-textSecondary/60 focus:outline-none focus:border-pnp-accent/50"
             />
             <button
               onClick={() => applyPromo(promoInput, selectedPlan)}
               disabled={promoValidating || !promoInput.trim()}
-              className="px-4 py-2 rounded-lg bg-pnp-accent text-white text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-4 py-2 rounded-xl bg-pnp-accent text-white text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {promoValidating ? "…" : s.promoApply}
             </button>
@@ -808,7 +808,7 @@ export default function Subscribe() {
                       {planLabel}
                     </span>
                     {isLifetimePlan(plan) && (
-                      <span className="text-[10px] font-bold uppercase tracking-wider bg-[#FFB454] text-[#1C1C1E] px-2 py-0.5 rounded-full">
+                      <span className="text-[10px] font-bold uppercase tracking-wider bg-[#FFB454] text-black px-2 py-0.5 rounded-full">
                         {s.lifetime}
                       </span>
                     )}
@@ -907,7 +907,7 @@ export default function Subscribe() {
                       </span>
                     )}
                     {isLifetimePlan(plan) && !isRecommended && (
-                      <span className="text-[10px] font-bold uppercase tracking-wider bg-[#FFB454] text-[#1C1C1E] px-2 py-0.5 rounded-full">
+                      <span className="text-[10px] font-bold uppercase tracking-wider bg-[#FFB454] text-black px-2 py-0.5 rounded-full">
                         {s.lifetime}
                       </span>
                     )}
@@ -1017,7 +1017,7 @@ export default function Subscribe() {
       {pollingPaymentId && (
         <div className="mb-4 p-3 rounded-xl text-sm text-center" style={{ background: "rgba(212,0,122,0.08)", border: "1px solid rgba(212,0,122,0.20)" }}>
           <div className="flex items-center justify-center gap-2 mb-1">
-            <svg className="animate-spin h-4 w-4 text-[#D4007A]" viewBox="0 0 24 24">
+            <svg className="animate-spin h-4 w-4 text-pnp-accent" viewBox="0 0 24 24">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
             </svg>
@@ -1081,14 +1081,14 @@ export default function Subscribe() {
                 <div className="flex gap-2 justify-center">
                   <button
                     onClick={() => { window.location.href = "/"; }}
-                    className="px-4 py-2 rounded-lg text-xs font-semibold text-white transition-all"
+                    className="px-4 py-2 rounded-xl text-xs font-semibold text-white transition-all"
                     style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
                   >
                     {t.lang === "es" ? "Ir a PNPtv" : "Go to PNPtv"}
                   </button>
                   <button
                     onClick={() => window.location.reload()}
-                    className="px-4 py-2 rounded-lg text-xs font-semibold text-white transition-colors"
+                    className="px-4 py-2 rounded-xl text-xs font-semibold text-white transition-colors"
                     style={{ background: "rgba(255,255,255,0.12)" }}
                   >
                     {t.lang === "es" ? "Recargar" : "Refresh"}
@@ -1108,7 +1108,7 @@ export default function Subscribe() {
                     placeholder={t.lang === "es" ? "CÓDIGO-AQUÍ" : "CODE-HERE"}
                     maxLength={50}
                     disabled={activationSubmitting}
-                    className="flex-1 px-3 py-2 rounded-lg text-sm bg-white/5 border border-white/10 text-pnp-textPrimary placeholder:text-pnp-textSecondary/40 focus:outline-none focus:border-white/25 disabled:opacity-50 font-mono tracking-wider"
+                    className="flex-1 px-3 py-2 rounded-lg text-sm bg-white/5 border border-pnp-controlBorder text-pnp-textPrimary placeholder:text-pnp-textSecondary/40 focus:outline-none focus:border-white/25 disabled:opacity-50 font-mono tracking-wider"
                   />
                   <button
                     disabled={activationSubmitting || !activationCode.trim()}
@@ -1135,7 +1135,7 @@ export default function Subscribe() {
                         setActivationSubmitting(false);
                       }
                     }}
-                    className="px-4 py-2 rounded-lg text-sm font-bold text-white disabled:opacity-40 transition-colors whitespace-nowrap"
+                    className="px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-40 transition-colors whitespace-nowrap"
                     style={{ background: "linear-gradient(90deg, #7c3aed, #6d28d9)" }}
                   >
                     {activationSubmitting

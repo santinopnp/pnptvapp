@@ -179,8 +179,8 @@ function IslandBtn({
       {hasNotif && (
         <span className="absolute top-1 right-2 w-[7px] h-[7px] rounded-full bg-[#D4007A] border-[1.5px] border-[rgba(28,28,38,.92)]" />
       )}
-      <span className={`transition-colors ${active ? "text-[#D4007A]" : "text-[#8A8A9A]"}`}>{icon}</span>
-      <span className={`text-[9px] font-bold tracking-[.2px] transition-colors ${active ? "text-[#D4007A]" : "text-[#8A8A9A]"}`}>
+      <span className={`transition-colors ${active ? "text-[#D4007A]" : "text-pnp-textTertiary"}`}>{icon}</span>
+      <span className={`text-[9px] font-bold tracking-[.2px] transition-colors ${active ? "text-[#D4007A]" : "text-pnp-textTertiary"}`}>
         {label}
       </span>
     </button>

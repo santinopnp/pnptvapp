@@ -8,7 +8,8 @@ import {
 } from "@privy-io/react-auth";
 import { base } from "viem/chains";
 import { Skeleton } from "@pnptv/ui-kit";
-import type { SubscriptionPlan } from "@/lib/api";
+import type { SubscriptionPlan, TokenPackage } from "@/lib/api";
+import { getTokenPackages } from "@/lib/api";
 import {
   CheckCircle,
   AlertTriangle,
@@ -42,20 +43,6 @@ const HIDDEN_PLAN_IDS = new Set([
   "mondays_spundays_promo_20",
 ]);
 const MEMBER_PLAN_IDS = new Set(["member_monthly"]);
-
-const TOKEN_PACKAGES = [
-  { id: "pkg_5",    tokens: 30,    usd: 5,    label: "30 Ru$h" },
-  { id: "pkg_10",   tokens: 62,    usd: 10,   label: "62 Ru$h (+3%)" },
-  { id: "pkg_25",   tokens: 155,   usd: 25,   label: "155 Ru$h (+3%)" },
-  { id: "pkg_50",   tokens: 315,   usd: 50,   label: "315 Ru$h (+5%)" },
-  { id: "pkg_100",  tokens: 636,   usd: 100,  label: "636 Ru$h (+6%)" },
-  { id: "pkg_250",  tokens: 1620,  usd: 250,  label: "1,620 Ru$h (+8%)" },
-  { id: "pkg_500",  tokens: 3270,  usd: 500,  label: "3,270 Ru$h (+9%)" },
-  { id: "pkg_1000", tokens: 6600,  usd: 1000, label: "6,600 Ru$h (+10%)" },
-  { id: "pkg_5000", tokens: 33000, usd: 5000, label: "33,000 Ru$h (+10%)" },
-] as const;
-
-type TokenPackage = typeof TOKEN_PACKAGES[number];
 
 interface CallIntent {
   creatorId: string;
@@ -352,7 +339,7 @@ function PlanStep({ initialPlanId, onSelect }: PlanStepProps) {
                 "w-full text-left px-3 py-3 sm:p-4 rounded-xl border-2 transition-all duration-200 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-pnp-background focus-visible:ring-pnp-accent",
                 isSelected
                   ? "border-pnp-accent bg-pnp-accent/10"
-                  : "border-white/10 bg-pnp-surface hover:border-white/20",
+                  : "border-pnp-border bg-pnp-surface hover:border-pnp-controlBorder",
               ].join(" ")}
               style={{ touchAction: "manipulation", WebkitTapHighlightColor: "transparent" }}
               aria-pressed={isSelected}
@@ -374,7 +361,7 @@ function PlanStep({ initialPlanId, onSelect }: PlanStepProps) {
                       {tier}
                     </span>
                     {isRecommended && (
-                      <span className="text-[9px] font-bold uppercase tracking-wider bg-amber-400 text-[#1C1C1E] px-1.5 py-0.5 rounded-full flex-shrink-0">
+                      <span className="text-[9px] font-bold uppercase tracking-wider bg-amber-400 text-black px-1.5 py-0.5 rounded-full flex-shrink-0">
                         Best value
                       </span>
                     )}
@@ -450,18 +437,32 @@ function PlanStep({ initialPlanId, onSelect }: PlanStepProps) {
 // ── Step 1 (tokens): Token Package ────────────────────────────────────────────
 
 interface TokenPackageStepProps {
+  packages: TokenPackage[];
+  loading: boolean;
   initialPkgId: string | null;
   onSelect: (pkg: TokenPackage) => void;
 }
 
-function TokenPackageStep({ initialPkgId, onSelect }: TokenPackageStepProps) {
+function TokenPackageStep({ packages, loading, initialPkgId, onSelect }: TokenPackageStepProps) {
+  const firstId = packages[0]?.id ?? "";
   const [selectedId, setSelectedId] = useState<string>(
-    initialPkgId && TOKEN_PACKAGES.find((p) => p.id === initialPkgId)
-      ? initialPkgId
-      : TOKEN_PACKAGES[0].id,
+    initialPkgId && packages.some((p) => p.id === initialPkgId) ? initialPkgId : firstId,
   );
+  useEffect(() => {
+    if (!selectedId && packages.length > 0) setSelectedId(packages[0].id);
+  }, [packages]);
 
-  const selectedPkg = TOKEN_PACKAGES.find((p) => p.id === selectedId) ?? TOKEN_PACKAGES[0];
+  const selectedPkg = packages.find((p) => p.id === selectedId) ?? packages[0];
+
+  if (loading) {
+    return (
+      <div className="space-y-2">
+        {[...Array(5)].map((_, i) => (
+          <Skeleton key={i} className="h-14 w-full rounded-xl" />
+        ))}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-2">
@@ -470,7 +471,7 @@ function TokenPackageStep({ initialPkgId, onSelect }: TokenPackageStepProps) {
         Ru$h tokens — spend them on tips, calls, and more.
       </p>
 
-      {TOKEN_PACKAGES.map((pkg) => {
+      {packages.map((pkg) => {
         const isSelected = pkg.id === selectedId;
         return (
           <button
@@ -481,7 +482,7 @@ function TokenPackageStep({ initialPkgId, onSelect }: TokenPackageStepProps) {
               "w-full text-left px-3 py-3 sm:p-4 rounded-xl border-2 transition-all duration-200 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-pnp-background focus-visible:ring-pnp-accent",
               isSelected
                 ? "border-pnp-accent bg-pnp-accent/10"
-                : "border-white/10 bg-pnp-surface hover:border-white/20",
+                : "border-pnp-border bg-pnp-surface hover:border-pnp-controlBorder",
             ].join(" ")}
             style={{ touchAction: "manipulation", WebkitTapHighlightColor: "transparent" }}
             aria-pressed={isSelected}
@@ -502,14 +503,15 @@ function TokenPackageStep({ initialPkgId, onSelect }: TokenPackageStepProps) {
 
       <button
         type="button"
-        onClick={() => onSelect(selectedPkg)}
-        className="w-full h-12 mt-2 rounded-xl font-bold text-sm text-white transition-all duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-pnp-background focus-visible:ring-pnp-accent"
+        disabled={!selectedPkg}
+        onClick={() => selectedPkg && onSelect(selectedPkg)}
+        className="w-full h-12 mt-2 rounded-xl font-bold text-sm text-white transition-all duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-pnp-background focus-visible:ring-pnp-accent disabled:opacity-50"
         style={{
           background: "linear-gradient(135deg, #D4007A, #9B00B0)",
           boxShadow: "0 4px 24px rgba(212,0,122,0.35)",
         }}
       >
-        Continue — {fmt(selectedPkg.usd)}
+        {selectedPkg ? `Continue — ${fmt(selectedPkg.usd)}` : "Select a package"}
       </button>
     </div>
   );
@@ -630,8 +632,7 @@ function AccountStep({ onDone, onEmailCapture }: AccountStepProps) {
             placeholder="you@example.com"
             autoComplete="email"
             required
-            className="w-full h-12 px-4 rounded-xl border text-pnp-textPrimary text-sm bg-pnp-surface placeholder:text-pnp-textSecondary/50 focus:outline-none focus:ring-2 focus:ring-pnp-accent transition-all"
-            style={{ borderColor: "#707076" }}
+            className="w-full h-12 px-4 rounded-xl border border-pnp-controlBorder text-pnp-textPrimary text-sm bg-pnp-surface placeholder:text-pnp-textSecondary/50 focus:outline-none focus:ring-2 focus:ring-pnp-accent transition-all"
             aria-label="Email address"
           />
           {localError && (
@@ -669,8 +670,7 @@ function AccountStep({ onDone, onEmailCapture }: AccountStepProps) {
             placeholder="000000"
             autoFocus
             autoComplete="one-time-code"
-            className="w-full h-14 px-4 rounded-xl border text-pnp-textPrimary text-center text-2xl font-bold tracking-widest bg-pnp-surface placeholder:text-pnp-textSecondary/30 focus:outline-none focus:ring-2 focus:ring-pnp-accent"
-            style={{ borderColor: "#707076" }}
+            className="w-full h-14 px-4 rounded-xl border border-pnp-controlBorder text-pnp-textPrimary text-center text-2xl font-bold tracking-widest bg-pnp-surface placeholder:text-pnp-textSecondary/30 focus:outline-none focus:ring-2 focus:ring-pnp-accent"
             aria-label="Verification code"
           />
           {localError && (
@@ -990,6 +990,8 @@ function CheckoutInner() {
   const [step, setStep] = useState<CheckoutStep>(getInitialStep());
   const [selectedPlan, setSelectedPlan] = useState<SubscriptionPlan | null>(null);
   const [selectedTokenPkg, setSelectedTokenPkg] = useState<TokenPackage | null>(null);
+  const [tokenPackages, setTokenPackages] = useState<TokenPackage[]>([]);
+  const [tokenPackagesLoading, setTokenPackagesLoading] = useState(false);
   const [callIntent, setCallIntent] = useState<CallIntent | null>(null);
   const [callIntentError, setCallIntentError] = useState(false);
   const [email, setEmail] = useState("");
@@ -1004,6 +1006,16 @@ function CheckoutInner() {
       })
       .catch(() => {/* keep default */});
   }, []);
+
+  // Fetch token packages from backend (single source of truth)
+  useEffect(() => {
+    if (checkoutType !== "tokens") return;
+    setTokenPackagesLoading(true);
+    getTokenPackages()
+      .then((r) => { if (r.packages.length) setTokenPackages(r.packages); })
+      .catch(() => {})
+      .finally(() => setTokenPackagesLoading(false));
+  }, [checkoutType]);
 
   // For call type: read intent from sessionStorage
   useEffect(() => {
@@ -1113,7 +1125,7 @@ function CheckoutInner() {
     return (
       <div
         className="min-h-dvh w-full flex flex-col items-center justify-center py-6 px-4"
-        style={{ background: "#0A0A0F" }}
+        style={{ background: "#121212" }}
       >
         <div className="w-full max-w-md text-center space-y-4">
           <AlertTriangle className="w-8 h-8 text-pnp-error mx-auto" aria-hidden="true" />
@@ -1135,7 +1147,7 @@ function CheckoutInner() {
   return (
     <div
       className="min-h-dvh w-full overflow-y-auto flex flex-col items-center py-6 px-4 pb-10"
-      style={{ background: "#0A0A0F" }}
+      style={{ background: "#121212" }}
     >
       <Helmet>
         <title>Checkout — PNPtv!</title>
@@ -1167,7 +1179,7 @@ function CheckoutInner() {
         className="w-full max-w-md rounded-2xl overflow-hidden shadow-2xl"
         style={{
           background: "#181818",
-          border: "1px solid rgba(255,255,255,0.08)",
+          border: "1px solid rgba(42,42,42,1)",
           boxShadow: "0 24px 80px rgba(0,0,0,0.6), 0 0 0 1px rgba(212,0,122,0.06)",
         }}
       >
@@ -1196,7 +1208,7 @@ function CheckoutInner() {
 
           {/* Token package selection step */}
           {step === "plan" && checkoutType === "tokens" && (
-            <TokenPackageStep initialPkgId={initialPkgId} onSelect={handleTokenPkgSelect} />
+            <TokenPackageStep packages={tokenPackages} loading={tokenPackagesLoading} initialPkgId={initialPkgId} onSelect={handleTokenPkgSelect} />
           )}
 
           {/* Account step */}
@@ -1224,7 +1236,12 @@ function CheckoutInner() {
                   setStep("plan");
                 }
               }}
-              onSuccess={() => setStep("success")}
+              onSuccess={() => {
+                if (checkoutType === "call") {
+                  try { sessionStorage.removeItem("pnptv:call_intent"); } catch {}
+                }
+                setStep("success");
+              }}
               verifyFn={verifyFn}
             />
           )}
@@ -1270,7 +1287,7 @@ export default function Checkout() {
     return (
       <div
         className="min-h-dvh flex items-center justify-center p-6 text-center"
-        style={{ background: "#0A0A0F" }}
+        style={{ background: "#121212" }}
       >
         <div>
           <p className="text-pnp-textPrimary font-semibold mb-2">Checkout unavailable</p>

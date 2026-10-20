@@ -797,7 +797,7 @@ export default function PostCard({
           // Channel-promo from system account — show channel initial, not Cristina emoji.
           // Creator-authored promos (is_creator_post=true) fall through to UserAvatar.
           <div
-            className="w-10 h-10 flex-shrink-0 rounded-full flex items-center justify-center ring-2 ring-[#1C1C1E] text-white text-sm font-bold"
+            className="w-10 h-10 flex-shrink-0 rounded-full flex items-center justify-center ring-2 ring-pnp-surface text-white text-sm font-bold"
             style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
             aria-label="PNP Channel"
           >
@@ -807,7 +807,7 @@ export default function PostCard({
           <img
             src="/logo-final.png"
             alt="PNPtv!"
-            className="w-10 h-10 flex-shrink-0 rounded-full object-contain ring-2 ring-[#1C1C1E] bg-black p-0.5"
+            className="w-10 h-10 flex-shrink-0 rounded-full object-contain ring-2 ring-pnp-surface bg-black p-0.5"
           />
         ) : (
           <UserAvatar
@@ -929,7 +929,7 @@ export default function PostCard({
                 {showMenu && (
                   <div
                     className="absolute right-0 top-7 z-50 w-40 rounded-xl shadow-xl py-1 overflow-hidden"
-                    style={{ background: "#2C2C2E", border: "1px solid rgba(255,255,255,0.08)" }}
+                    style={{ background: "#1F1F1F", border: "1px solid rgba(255,255,255,0.08)" }}
                     onClick={(e) => e.stopPropagation()}
                   >
                     {isOwn && !isEditing && !post.blurred && (
@@ -1053,7 +1053,7 @@ export default function PostCard({
                       className="w-full bg-white/5 text-white text-sm rounded-lg px-3 py-1.5 outline-none border border-white/10 focus:border-teal-500"
                     />
                     {(editTagResults.length > 0 || editTagSearching) && (
-                      <div className="absolute top-full left-0 right-0 z-50 mt-0.5 rounded-lg overflow-hidden shadow-xl" style={{ background: "#2C2C2E", border: "1px solid rgba(255,255,255,0.08)" }}>
+                      <div className="absolute top-full left-0 right-0 z-50 mt-0.5 rounded-lg overflow-hidden shadow-xl" style={{ background: "#1F1F1F", border: "1px solid rgba(255,255,255,0.08)" }}>
                         {editTagSearching && <p className="px-3 py-2 text-xs" style={{ color: "#8E8E93" }}>Searching…</p>}
                         {editTagResults.map(u => (
                           <button
@@ -1926,7 +1926,7 @@ export default function PostCard({
           <div
             className="w-full max-w-sm rounded-2xl p-5 space-y-4"
             style={{
-              background: "var(--pnp-surface, #1C1C1E)",
+              background: "var(--pnp-surface, #181818)",
               border: "1px solid rgba(212,0,122,0.25)",
             }}
             onClick={(e) => e.stopPropagation()}

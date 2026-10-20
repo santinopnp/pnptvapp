@@ -1001,7 +1001,7 @@ export default function Profile() {
           <button
             onClick={handleBlock}
             disabled={blockLoading}
-            className="px-5 py-2 rounded-lg text-sm font-semibold disabled:opacity-50 transition-colors"
+            className="px-5 py-2 rounded-xl text-sm font-semibold disabled:opacity-50 transition-colors"
             style={{ background: "rgba(255,59,48,0.15)", color: "#FF453A", border: "1px solid rgba(255,59,48,0.3)" }}
           >
             {blockLoading ? "..." : "Unblock User"}
@@ -1639,7 +1639,7 @@ export default function Profile() {
                 </button>
                 <button
                   onClick={handleShareProfile}
-                  className="min-w-[40px] min-h-[40px] px-3 rounded-lg text-sm font-semibold transition-colors flex items-center justify-center gap-1.5"
+                  className="min-w-[40px] min-h-[40px] px-3 rounded-xl text-sm font-semibold transition-colors flex items-center justify-center gap-1.5"
                   style={shareProfileCopied
                     ? { background: "rgba(52,199,89,0.1)", color: "#34C759", border: "1px solid rgba(52,199,89,0.3)" }
                     : { background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.75)", border: "1px solid rgba(255,255,255,0.12)" }
@@ -1674,7 +1674,7 @@ export default function Profile() {
                     aria-haspopup="menu"
                     aria-expanded={overflowOpen}
                     aria-label="More actions"
-                    className="min-w-[44px] min-h-[44px] px-3 rounded-lg transition-colors flex items-center justify-center"
+                    className="min-w-[44px] min-h-[44px] px-3 rounded-xl transition-colors flex items-center justify-center"
                     style={{ background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.75)", border: "1px solid rgba(255,255,255,0.12)" }}
                   >
                     <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -1792,7 +1792,7 @@ export default function Profile() {
                   <button
                     onClick={handleFollow}
                     disabled={followLoading}
-                    className="flex-1 min-h-[40px] py-2 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50"
+                    className="flex-1 min-h-[40px] py-2 rounded-xl text-sm font-semibold transition-colors disabled:opacity-50"
                     style={isFollowing
                       ? { background: "rgba(255,255,255,0.08)", color: "#fff", border: "1px solid rgba(255,255,255,0.2)" }
                       : { background: accentGradient, color: "#fff" }
@@ -1815,7 +1815,7 @@ export default function Profile() {
                         ? navigate("/subscribe")
                         : navigate(`/dm/${profile.id || effectiveParamId}`)
                       }
-                      className="flex-1 min-h-[40px] py-2 rounded-lg text-sm font-semibold border transition-colors flex items-center justify-center gap-1.5"
+                      className="flex-1 min-h-[40px] py-2 rounded-xl text-sm font-semibold border transition-colors flex items-center justify-center gap-1.5"
                       style={isCreatorDmLocked
                         ? { color: "#8A8A9A", borderColor: "rgba(255,255,255,0.1)", background: "rgba(255,255,255,0.03)" }
                         : { color: "#fff", borderColor: "rgba(255,255,255,0.2)" }
@@ -1856,7 +1856,7 @@ export default function Profile() {
                     aria-haspopup="menu"
                     aria-expanded={viewerMenuOpen}
                     aria-label="More actions"
-                    className="min-w-[44px] min-h-[40px] px-3 rounded-lg transition-colors flex items-center justify-center flex-shrink-0"
+                    className="min-w-[44px] min-h-[40px] px-3 rounded-xl transition-colors flex items-center justify-center flex-shrink-0"
                     style={{ background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.75)", border: "1px solid rgba(255,255,255,0.12)" }}
                   >
                     <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -2372,8 +2372,8 @@ export default function Profile() {
 
       {/* ── Tabs (sticky) ── */}
       <div
-        className="flex border-b border-white/10 mb-4 sticky z-20 -mx-4 px-4 backdrop-blur-md"
-        style={{ top: 0, background: "rgba(18,18,20,0.82)" }}
+        className="flex border-b border-white/10 mb-4 sticky top-[60px] z-20 -mx-4 px-4 backdrop-blur-md"
+        style={{ background: "rgba(18,18,20,0.82)" }}
         role="tablist"
         aria-label="Profile sections"
       >
@@ -2555,7 +2555,7 @@ export default function Profile() {
                     }
                   }}
                   disabled={subscribeLoading}
-                  className="inline-flex items-center justify-center px-6 py-2.5 rounded-lg text-sm font-semibold text-white transition-all duration-150 active:scale-[0.97] disabled:opacity-50 min-h-[44px]"
+                  className="inline-flex items-center justify-center px-6 py-2.5 rounded-xl text-sm font-semibold text-white transition-all duration-150 active:scale-[0.97] disabled:opacity-50 min-h-[44px]"
                   style={{ background: profile.creatorType === "ice" ? "linear-gradient(135deg, #A8D8EA, #73B4D4)" : "linear-gradient(135deg, #D4007A, #E69138)" }}
                   aria-label={`Subscribe for $${profile.creatorPriceUsd ?? 15}/mo`}
                 >

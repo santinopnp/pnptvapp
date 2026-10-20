@@ -19,7 +19,6 @@ const CristinaWidget = lazy(() => import("@/components/CristinaWidget").then((m)
 import { LanguageSelector } from "@/components/LanguageSelector";
 import { NotificationBell } from "@/components/NotificationBell";
 import { UserAvatar } from "@/components/UserAvatar";
-import { AdSlot, MenPageBanner } from "@/components/AdSlot";
 import { FeaturedModelInterstitial, PnpFamWelcomeGate } from "@/components/badges/PnpFamWelcomeGate";
 import { Toast } from "@/components/Toast";
 import { FaceMatchConsentHost } from "@/components/safety/FaceMatchConsentHost";
@@ -712,7 +711,7 @@ function SidebarDmChat({ userId, myDbId, onBack }: SidebarDmChatProps) {
       )}
 
       {/* Input bar */}
-      <div className="flex items-end gap-1.5 px-2 py-2 border-t border-pnp-border flex-shrink-0" style={{ background: "var(--pnp-surface, #1C1C1E)" }}>
+      <div className="flex items-end gap-1.5 px-2 py-2 border-t border-pnp-border flex-shrink-0" style={{ background: "var(--pnp-surface, #181818)" }}>
         <input id="pnp-layout-1"
           ref={mediaInputRef}
           type="file"
@@ -2162,26 +2161,6 @@ export function Layout() {
         <div className="flex-shrink-0 lg:hidden">
           <BottomNav />
         </div>
-      )}
-
-      {/* ── Passive ad mounts (free-tier only; AdSlot short-circuits otherwise) ──
-          Popunder + push mount invisibly and self-cap by session in sessionStorage.
-          Sticky footer renders as a fixed bar above BottomNav (mobile) or bottom-right
-          of the viewport (desktop). Kill switch: pnpapp:ads:enabled=0 in Redis. */}
-      {isAuthenticated && user?.ageVerified && user?.termsAccepted && (
-        <>
-          <MenPageBanner isMobile={isMobile} />
-          {isMobile ? <AdSlot slot="popunder_mobile" /> : <AdSlot slot="popunder_desktop" />}
-          {!isMobile && <AdSlot slot="push_inpage" showChip={false} />}
-          {!isMobile && <AdSlot slot="inpage_push_v2" showChip={false} />}
-          <div className="fixed left-0 right-0 z-30 pointer-events-none flex justify-center lg:hidden"
-               style={{ bottom: `calc(4rem + env(safe-area-inset-bottom,0px) + 3.25rem)` }}>
-            <div className="pointer-events-auto"><AdSlot slot="sticky_footer_mobile" /></div>
-          </div>
-          <div className="hidden lg:flex fixed left-72 right-0 bottom-0 z-30 pointer-events-none justify-center pb-1">
-            <div className="pointer-events-auto"><AdSlot slot="sticky_footer_desktop" /></div>
-          </div>
-        </>
       )}
 
       {/* Unified Cristina widget — only after verification */}
