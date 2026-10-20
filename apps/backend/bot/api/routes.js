@@ -27417,28 +27417,21 @@ app.post('/api/checkout/verify', checkoutVerifyLimiter, asyncHandler(async (req,
   {
     const authHeader = req.headers.authorization || '';
     const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
-    if (token) {
-      try {
-        const { getCheckoutClient } = require('../../services/privyCheckoutService');
-        const claims = await getCheckoutClient().verifyAuthToken(token);
-        privyUserId = claims.userId;
-      } catch (err) {
-        logger.warn('[checkout/verify] privy token verification failed', { err: err.message });
-        return res.status(401).json({ ok: false, error: 'checkout_privy_token_invalid' });
-      }
-    } else if (bodyPrivyUserId) {
-      // Fallback: accept body echo only when no Bearer token is present.
-      // This handles legacy on-chain flow and dev environments.
-      privyUserId = bodyPrivyUserId;
+    if (!token) {
+      return res.status(401).json({ ok: false, error: 'checkout_privy_token_required' });
+    }
+    try {
+      const { getCheckoutClient } = require('../../services/privyCheckoutService');
+      const claims = await getCheckoutClient().verifyAuthToken(token);
+      privyUserId = claims.userId;
+    } catch (err) {
+      logger.warn('[checkout/verify] privy token verification failed', { err: err.message });
+      return res.status(401).json({ ok: false, error: 'checkout_privy_token_invalid' });
     }
   }
   if (!isOnramp) {
     if (!/^0x[a-fA-F0-9]{64}$/.test(txHash)) {
       return res.status(400).json({ ok: false, error: 'invalid_tx_hash' });
-    }
-  } else {
-    if (!privyUserId) {
-      return res.status(400).json({ ok: false, error: 'privy_user_id_required' });
     }
   }
 
