@@ -6,8 +6,14 @@ const logger = require('../utils/logger');
 // ── Version constants ────────────────────────────────────────────────────────
 // Bump these strings to force all users through re-acceptance of a new version.
 const RULES_VERSION   = '1.0';
-const TERMS_VERSION   = '1.0';
-const PRIVACY_VERSION = '1.0';
+const TERMS_VERSION   = '2026-10-20';
+const PRIVACY_VERSION = '2026-10-20';
+
+// Members who accepted Terms or Privacy before this instant must re-accept the
+// updated versions (safety scanning of content and DMs). Acceptance timestamps
+// are compared instead of version strings because the legacy /api/accept-terms
+// path writes its own TERMS_VERSION format.
+const POLICY_EFFECTIVE_AT = new Date('2026-10-20T00:00:00Z');
 
 // Ordered wizard steps. The frontend drives display order; here we just need
 // the full set to determine completion.
@@ -347,11 +353,61 @@ async function grantOnboardingBonus(userId) {
   }
 }
 
+/**
+ * Whether an existing member must re-accept the updated Terms and Privacy
+ * Policy. New members accept the current versions during onboarding, so only
+ * accounts that already accepted an older version are flagged.
+ *
+ * @param {string} userId
+ * @returns {Promise<{ needsUpdate: boolean, effectiveAt: string }>}
+ */
+async function getPolicyUpdateStatus(userId) {
+  const { rows } = await query(
+    'SELECT terms_accepted, terms_accepted_at, privacy_accepted_at FROM users WHERE id = $1',
+    [userId]
+  );
+  const u = rows[0];
+  if (!u) throw Object.assign(new Error('User not found'), { status: 404 });
+
+  const before = (ts) => !ts || new Date(ts) < POLICY_EFFECTIVE_AT;
+  const needsUpdate = !!u.terms_accepted && (before(u.terms_accepted_at) || before(u.privacy_accepted_at));
+
+  return { needsUpdate, effectiveAt: POLICY_EFFECTIVE_AT.toISOString() };
+}
+
+/**
+ * Records acceptance of the updated Terms and Privacy Policy together.
+ *
+ * @param {string} userId
+ * @param {string} ip
+ */
+async function acceptPolicyUpdate(userId, ip) {
+  await query(
+    `UPDATE users
+        SET terms_accepted      = true,
+            terms_accepted_at   = NOW(),
+            terms_accepted_ip   = $2,
+            terms_version       = $3,
+            privacy_accepted    = true,
+            privacy_accepted_at = NOW(),
+            privacy_accepted_ip = $2,
+            privacy_version     = $4,
+            updated_at          = NOW()
+      WHERE id = $1`,
+    [userId, ip || null, TERMS_VERSION, PRIVACY_VERSION]
+  );
+  logger.info(`[Onboarding] User ${userId} accepted policy update ${TERMS_VERSION}`);
+  return { ok: true };
+}
+
 module.exports = {
   RULES_VERSION,
   TERMS_VERSION,
   PRIVACY_VERSION,
+  POLICY_EFFECTIVE_AT,
   getOnboardingStatus,
+  getPolicyUpdateStatus,
+  acceptPolicyUpdate,
   markStep,
   completeOnboarding,
   grantOnboardingBonus,

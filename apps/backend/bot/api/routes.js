@@ -41,6 +41,7 @@ const roleGuard = require('./middleware/roleGuard');
 const { asyncHandler } = require('./middleware/errorHandler');
 const { normalizeImageUrl, isWhitelistedCdn } = require('../../services/imageUrlHelper');
 const { authenticateUser } = require('./middleware/auth');
+const { requireFaceMatchConsent, requireFaceMatchConsentForVisualMedia } = require('./middleware/requireFaceMatchConsent');
 const ipTracker = require('./middleware/ipTracker');
 const PermissionService = require('../../services/permissionService');
 const referralService = require('../../services/referralService');
@@ -4821,13 +4822,13 @@ app.post('/api/webapp/settings/change-email', requireSessionAuth, changeEmailLim
 // Web App Profile
 app.get('/api/webapp/profile', requireSessionAuth, asyncHandler(webAppController.getProfile));
 app.put('/api/webapp/profile', requireSessionAuth, asyncHandler(webAppController.updateProfile));
-app.post('/api/webapp/profile/avatar', requireSessionAuth, uploadLimiter, avatarUpload.single('avatar'), verifyMagicBytes(IMAGE_MIMES), asyncHandler(webAppController.uploadAvatar));
-app.post('/api/webapp/profile/cover', requireSessionAuth, uploadLimiter, coverUpload.single('cover'), verifyMagicBytes(IMAGE_MIMES), asyncHandler(webAppController.uploadCover));
+app.post('/api/webapp/profile/avatar', requireSessionAuth, requireFaceMatchConsent, uploadLimiter, avatarUpload.single('avatar'), verifyMagicBytes(IMAGE_MIMES), asyncHandler(webAppController.uploadAvatar));
+app.post('/api/webapp/profile/cover', requireSessionAuth, requireFaceMatchConsent, uploadLimiter, coverUpload.single('cover'), verifyMagicBytes(IMAGE_MIMES), asyncHandler(webAppController.uploadCover));
 app.delete('/api/webapp/profile/avatar', requireSessionAuth, asyncHandler(webAppController.deleteAvatar));
 app.delete('/api/webapp/profile/cover', requireSessionAuth, asyncHandler(webAppController.deleteCover));
 app.post('/api/webapp/profile/telegram/link', telegramWidgetLimiter, requireSessionAuth, asyncHandler(webAppController.linkTelegram));
 app.post('/api/webapp/profile/telegram/unlink', requireSessionAuth, asyncHandler(webAppController.unlinkTelegram));
-app.post('/api/webapp/upload/event-cover', requireSessionAuth, uploadLimiter, eventCoverUpload.single('media'), verifyMagicBytes(IMAGE_MIMES), asyncHandler(webAppController.uploadEventCover));
+app.post('/api/webapp/upload/event-cover', requireSessionAuth, requireFaceMatchConsent, uploadLimiter, eventCoverUpload.single('media'), verifyMagicBytes(IMAGE_MIMES), asyncHandler(webAppController.uploadEventCover));
 
 // Web App Privacy Settings
 app.patch('/api/webapp/privacy', asyncHandler(async (req, res) => {
@@ -4874,7 +4875,7 @@ app.patch('/api/webapp/privacy', asyncHandler(async (req, res) => {
 
 // Model Application File Uploads
 const applyController = require('./controllers/applyController');
-app.post('/api/apply/profile-photo', authenticateUser, uploadLimiter, uploadModelProfilePhoto, asyncHandler(applyController.uploadProfilePhoto));
+app.post('/api/apply/profile-photo', authenticateUser, requireFaceMatchConsent, uploadLimiter, uploadModelProfilePhoto, asyncHandler(applyController.uploadProfilePhoto));
 app.post('/api/apply/id-documents', authenticateUser, uploadLimiter, uploadModelIdDocuments, asyncHandler(applyController.uploadIdDocuments));
 
 // Web App User Location
@@ -5545,10 +5546,10 @@ const tipMenuLimiter = rateLimit({ windowMs: 10 * 1000, max: 5, keyGenerator: (r
 // Web App Live Streaming Routes
 const webappLiveController = require('./controllers/webappLiveController');
 app.get('/api/webapp/live/streams', requireSessionAuth, asyncHandler(webappLiveController.listStreams));
-app.get('/api/webapp/live/rtmp-key', requireSessionAuth, credentialLimiter, asyncHandler(webappLiveController.getRtmpKey));
+app.get('/api/webapp/live/rtmp-key', requireSessionAuth, requireFaceMatchConsent, credentialLimiter, asyncHandler(webappLiveController.getRtmpKey));
 app.get('/api/webapp/me/creator-eligibility', requireSessionAuth, asyncHandler(webappLiveController.getCreatorEligibility));
 // Self-serve channel provisioning: creator gets a Restreamer channel on first "Go Live"
-app.post('/api/webapp/live/provision-channel', requireSessionAuth, credentialLimiter, asyncHandler(webappLiveController.provisionChannel));
+app.post('/api/webapp/live/provision-channel', requireSessionAuth, requireFaceMatchConsent, credentialLimiter, asyncHandler(webappLiveController.provisionChannel));
 
 // ── Cal.com: creator availability slots ──
 const calcomSlotsLimiter = rateLimit({
@@ -6024,7 +6025,7 @@ const broadcastLiveLimiter = rateLimit({
 });
 
 // Manual going-live broadcast to followers
-app.post('/api/webapp/live/broadcast-live-now', requireSessionAuth, roleGuard('model', 'creator', 'admin', 'superadmin'), broadcastLiveLimiter, asyncHandler(webappLiveController.broadcastLiveNow));
+app.post('/api/webapp/live/broadcast-live-now', requireSessionAuth, roleGuard('model', 'creator', 'admin', 'superadmin'), requireFaceMatchConsent, broadcastLiveLimiter, asyncHandler(webappLiveController.broadcastLiveNow));
 
 // VOD replay recordings
 app.get('/api/webapp/creators/:creatorId/recordings', softAuth, asyncHandler(webappLiveController.listCreatorRecordings));
@@ -6055,13 +6056,13 @@ app.put('/api/webapp/live/settings', requireSessionAuth, asyncHandler(streamerSe
 // Gap 2: Persistent thumbnail upload
 app.post('/api/webapp/live/thumbnail', requireSessionAuth, roleGuard('model', 'creator', 'admin', 'superadmin'), express.json({ limit: '4mb' }), asyncHandler(streamerSettingsController.uploadThumbnail));
 // MED-02: 6 MB body limit for snapshot uploads (base64-encoded frame); role guard restricts to creators only
-app.post('/api/webapp/live/snapshot', requireSessionAuth, roleGuard('model', 'creator', 'admin', 'superadmin'), express.json({ limit: '6mb' }), asyncHandler(webappLiveController.uploadSnapshot));
+app.post('/api/webapp/live/snapshot', requireSessionAuth, roleGuard('model', 'creator', 'admin', 'superadmin'), requireFaceMatchConsent, express.json({ limit: '6mb' }), asyncHandler(webappLiveController.uploadSnapshot));
 
 // Gap 1: Past-session earnings history for studio panel
 app.get('/api/webapp/live/earnings', requireSessionAuth, roleGuard('model', 'creator', 'admin', 'superadmin'), asyncHandler(webappLiveController.getEarningsHistory));
 
 // Gap 4: User-uploaded local recording blob (CR-02: roleGuard prevents non-creator 3 GB uploads)
-app.post('/api/webapp/live/recording', requireSessionAuth, roleGuard('model', 'creator', 'admin', 'superadmin'), webappLiveController.uploadLocalRecording);
+app.post('/api/webapp/live/recording', requireSessionAuth, roleGuard('model', 'creator', 'admin', 'superadmin'), requireFaceMatchConsent, webappLiveController.uploadLocalRecording);
 
 // Gap 5: Scene presets
 app.get('/api/webapp/live/scene-presets', requireSessionAuth, asyncHandler(webappLiveController.getScenePresets));
@@ -9089,6 +9090,7 @@ app.post(
   requireSessionAuth,
   uploadLimiter,
   uploadChatMedia,
+  requireFaceMatchConsentForVisualMedia,
   asyncHandler(chatController.sendMediaMessage)
 );
 
@@ -9199,7 +9201,7 @@ app.post('/api/webapp/hangouts/groups/:id/join', requireSessionAuth, requireHang
 app.post('/api/webapp/hangouts/groups/:id/leave', requireSessionAuth, asyncHandler(hangoutGroupController.leaveGroup));
 app.delete('/api/webapp/hangouts/groups/:id', requireSessionAuth, asyncHandler(hangoutGroupController.deleteGroup));
 app.patch('/api/webapp/hangouts/groups/:id', requireSessionAuth, asyncHandler(hangoutGroupController.updateGroup));
-app.post('/api/webapp/hangouts/groups/:id/avatar', requireSessionAuth, uploadLimiter, hangoutAvatarUpload.single('avatar'), verifyMagicBytes(IMAGE_MIMES), asyncHandler(hangoutGroupController.updateGroupAvatar));
+app.post('/api/webapp/hangouts/groups/:id/avatar', requireSessionAuth, requireFaceMatchConsent, uploadLimiter, hangoutAvatarUpload.single('avatar'), verifyMagicBytes(IMAGE_MIMES), asyncHandler(hangoutGroupController.updateGroupAvatar));
 app.post('/api/webapp/hangouts/groups/:id/kick', requireSessionAuth, requireHangoutAccess, asyncHandler(hangoutGroupController.kickMember));
 app.post('/api/webapp/hangouts/groups/:id/members/:userId/role', requireSessionAuth, requireHangoutAccess, asyncHandler(hangoutGroupController.updateMemberRole));
 // Join requests for private groups
@@ -9231,6 +9233,7 @@ app.post(
   requireHangoutAccess,
   uploadLimiter,
   uploadHangoutMedia,
+  requireFaceMatchConsentForVisualMedia,
   verifyMagicBytes(HANGOUT_MEDIA_MIMES),
   asyncHandler(hangoutMediaController.uploadHangoutMedia)
 );
@@ -9290,6 +9293,7 @@ app.post(
   requireSessionAuth,
   uploadLimiter,
   uploadChatMedia,
+  requireFaceMatchConsentForVisualMedia,
   asyncHandler(chatMediaController.sendDmMediaMessage)
 );
 
@@ -10016,8 +10020,8 @@ app.post('/api/webapp/creator/posts/x-embed', requireSessionAuth, roleGuard('mod
   return res.json({ success: true, post: rows[0] });
 }));
 
-app.post('/api/webapp/social/posts/with-media', requireSessionAuth, uploadLimiter, attachCreatorStatus, postMediaUploadMiddleware, verifyDiskFileType, require2257ForCreators, asyncHandler(socialController.createPostWithMedia));
-app.post('/api/webapp/social/posts/with-multi-media', requireSessionAuth, uploadLimiter, attachCreatorStatus, postMultiMediaUploadMiddleware, verifyDiskFileType, require2257ForCreators, asyncHandler(socialController.createPostWithMultiMedia));
+app.post('/api/webapp/social/posts/with-media', requireSessionAuth, requireFaceMatchConsent, uploadLimiter, attachCreatorStatus, postMediaUploadMiddleware, verifyDiskFileType, require2257ForCreators, asyncHandler(socialController.createPostWithMedia));
+app.post('/api/webapp/social/posts/with-multi-media', requireSessionAuth, requireFaceMatchConsent, uploadLimiter, attachCreatorStatus, postMultiMediaUploadMiddleware, verifyDiskFileType, require2257ForCreators, asyncHandler(socialController.createPostWithMultiMedia));
 
 // ── TUS resumable upload server for social post media ────────────────────────
 // Frontend composer uploads directly via tus protocol; on completion the file
@@ -10377,7 +10381,7 @@ app.post('/api/webapp/social/posts/bulk-videos', requireSessionAuth, bulkVideoLi
 // ── Creator Mux upload path for social feed videos ──────────────────────────
 // Direct browser→Mux upload — offloads storage/transcoding/CDN from the VPS
 // and lets creators post video posts up to 50 GB. Active creators only.
-app.post('/api/webapp/social/mux-upload-url', requireSessionAuth, muxUrlLimiter, require2257ForCreators, asyncHandler(async (req, res) => {
+app.post('/api/webapp/social/mux-upload-url', requireSessionAuth, requireFaceMatchConsent, muxUrlLimiter, require2257ForCreators, asyncHandler(async (req, res) => {
   const socialPostMuxService = require('../../services/socialPostMuxService');
   const userId = req.session?.user?.id;
   if (!userId) return res.status(401).json({ success: false, error: 'unauthorized' });
@@ -13029,6 +13033,18 @@ const onboardingController = require('./controllers/onboardingController');
 app.get('/api/webapp/onboarding/status', requireSessionAuthNoConsent, asyncHandler(onboardingController.getStatus));
 app.post('/api/webapp/onboarding/step', requireSessionAuthNoConsent, asyncHandler(onboardingController.markStep));
 app.post('/api/webapp/onboarding/complete', requireSessionAuthNoConsent, asyncHandler(onboardingController.completeOnboarding));
+
+// ── Safety scanning consent ────────────────────────────────────────────────
+// Face matching consent is optional (biometric data, Ley 1581 / GDPR) and only
+// gates photo/video uploads and going live. Consent routes skip the age/terms
+// gate so the onboarding wizard can offer the opt-in on its privacy step.
+const safetyConsentController = require('./controllers/safetyConsentController');
+app.get('/api/webapp/me/face-match-consent', requireSessionAuthNoConsent, asyncHandler(safetyConsentController.getFaceMatchConsent));
+app.post('/api/webapp/me/face-match-consent', requireSessionAuthNoConsent, socialActionLimiter, asyncHandler(safetyConsentController.grantFaceMatchConsent));
+app.delete('/api/webapp/me/face-match-consent', requireSessionAuthNoConsent, socialActionLimiter, asyncHandler(safetyConsentController.withdrawFaceMatchConsent));
+// Existing members re-accept the updated Terms + Privacy Policy (safety scanning).
+app.get('/api/webapp/me/policy-update', requireSessionAuth, asyncHandler(safetyConsentController.getPolicyUpdate));
+app.post('/api/webapp/me/policy-update/accept', requireSessionAuth, socialActionLimiter, asyncHandler(safetyConsentController.acceptPolicyUpdate));
 
 // GET /api/proxy/live/performers — List performers from Directus for tip picker
 app.get('/api/proxy/live/performers', requireSessionAuth, livePerformersLimiter, asyncHandler(async (req, res) => {
@@ -21150,7 +21166,7 @@ app.post('/api/creators/:id/crystal/gift/checkout', crystalGiftCheckoutLimiter, 
 }));
 
 // Channel cover image upload — separate from creatorRoutes because it needs its own multer middleware
-app.post('/api/webapp/creator/channels/:id/cover', requireSessionAuth, uploadLimiter, channelCoverUpload.single('cover'), verifyMagicBytes(IMAGE_MIMES), asyncHandler(async (req, res) => {
+app.post('/api/webapp/creator/channels/:id/cover', requireSessionAuth, requireFaceMatchConsent, uploadLimiter, channelCoverUpload.single('cover'), verifyMagicBytes(IMAGE_MIMES), asyncHandler(async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   const channelId = parseInt(req.params.id, 10);
   if (!Number.isFinite(channelId)) return res.status(400).json({ error: 'Invalid channel ID' });
@@ -22020,6 +22036,7 @@ app.post('/api/creators/:id/services/:serviceId/book',
   // POST /api/webapp/channels/:channelId/videos/init
   app.post('/api/webapp/channels/:channelId/videos/init',
     requireSessionAuth,
+    requireFaceMatchConsent,
     channelVideoLimiter,
     asyncHandler(async (req, res) => {
       const channelId = parseInt(req.params.channelId, 10);
@@ -22219,6 +22236,7 @@ app.post('/api/creators/:id/services/:serviceId/book',
   app.post(
     '/api/webapp/channels/:channelId/videos',
     requireSessionAuth,
+    requireFaceMatchConsent,
     channelVideoLimiter,
     channelVideoUpload.single('file'),
     asyncHandler(async (req, res) => {
@@ -24147,7 +24165,7 @@ app.get('/api/webapp/creators/:creatorId/media',
 // Creator-only: file upload for album photos — registered before /reorder and plain POST
 // to avoid Express matching /upload as a /:id param on PATCH/DELETE routes.
 app.post('/api/webapp/creators/media/upload',
-  requireSessionAuth, creatorGuard,
+  requireSessionAuth, creatorGuard, requireFaceMatchConsent,
   uploadLimiter,
   creatorMediaUploadSingle,
   verifyMagicBytes(IMAGE_MIMES),
@@ -24184,7 +24202,7 @@ app.post('/api/webapp/creators/media/upload',
   }));
 
 app.post('/api/webapp/creators/media/upload-video/init',
-  requireSessionAuth, creatorGuard,
+  requireSessionAuth, creatorGuard, requireFaceMatchConsent,
   asyncHandler(async (req, res) => {
     const { fileName, fileSize, totalChunks } = req.body;
     if (!fileName || !fileSize || !totalChunks) {
@@ -24329,7 +24347,7 @@ app.post('/api/webapp/creators/media/upload-video/complete',
   }));
 
 app.post('/api/webapp/creators/media/upload-video',
-  requireSessionAuth, creatorGuard,
+  requireSessionAuth, creatorGuard, requireFaceMatchConsent,
   uploadLimiter,
   creatorVideoUpload.single('file'),
   verifyDiskFileType,
@@ -24788,7 +24806,7 @@ app.delete('/api/webapp/creators/media/:id',
 
   // POST /api/webapp/creator/media — upload file to Directus + insert row
   app.post('/api/webapp/creator/media',
-    requireSessionAuth, creatorGuard,
+    requireSessionAuth, creatorGuard, requireFaceMatchConsent,
     creatorProfileMediaLimiter,
     creatorProfileMediaUpload.single('file'),
     asyncHandler(async (req, res) => {
@@ -26886,6 +26904,7 @@ app.post('/api/webapp/creators/me/replay/bunny-upload', authenticateUser, asyncH
 
 app.post('/api/webapp/creators/me/replay/upload-chunk',
   authenticateUser,
+  requireFaceMatchConsent,
   replayChunkUpload.single('chunk'),
   asyncHandler(async (req, res) => {
     const creatorId = getActorId(req);
