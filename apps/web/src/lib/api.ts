@@ -174,33 +174,6 @@ export async function adminSetIntroCallOptIn(userId: string, enabled: boolean): 
   if (!res.ok) throw new Error(`http_${res.status}`);
 }
 
-export const NP_COINS = [
-  { code: "btc",        label: "BTC",        icon: "₿", color: "#f7931a" },
-  { code: "usdttrc20",  label: "USDT-TRX",   icon: "₮", color: "#26a17b" },
-  { code: "usdcsol",    label: "USDC-SOL",   icon: "$", color: "#2775ca" },
-  { code: "dash",       label: "DASH",       icon: "Ð", color: "#008de4" },
-  { code: "eth",        label: "ETH",        icon: "Ξ", color: "#627eea" },
-  { code: "usdtbsc",    label: "USDT-BSC",   icon: "₮", color: "#26a17b" },
-  { code: "usdcbsc",    label: "USDC-BSC",   icon: "$", color: "#2775ca" },
-  { code: "ltc",        label: "LTC",        icon: "Ł", color: "#bfbbbb" },
-  { code: "sol",        label: "SOL",        icon: "◎", color: "#9945ff" },
-  { code: "bch",        label: "BCH",        icon: "Ƀ", color: "#8dc351" },
-  { code: "xmr",        label: "XMR",        icon: "ɱ", color: "#ff6600" },
-  { code: "doge",       label: "DOGE",       icon: "Ð", color: "#c2a633" },
-] as const;
-export type NpCoinCode = (typeof NP_COINS)[number]["code"];
-
-// Only the two currencies PNPtv actually charges + settles on: USDC + ETH,
-// both on Base (matches the Privy embedded-wallet checkout rail). Reducing
-// the picker eliminates user confusion around network selection, aligns the
-// legacy NowPayments fallback with the primary wallet flow, and matches
-// where our receiving address expects funds — a mis-network deposit gets
-// stuck at NowPayments' side and creates a support ticket.
-export const NP_COINS_SUBSCRIBE = [
-  { code: "usdcbase",  label: "USDC", network: "Base", icon: "$", color: "#2775ca", recommended: true },
-  { code: "ethbase",   label: "ETH",  network: "Base", icon: "Ξ", color: "#627eea" },
-] as const;
-export type NpSubscribeCoinCode = (typeof NP_COINS_SUBSCRIBE)[number]["code"];
 
 // Performer user IDs eligible for Gifted Ru$h partial payment on private calls.
 // Never expand without explicit approval.
@@ -1291,9 +1264,6 @@ export async function enterLiveStream(channelRef: string): Promise<{ success: bo
   return res.json();
 }
 
-export function buyTokensWithNowPayments(packageId: string, payCurrency?: string): Promise<{ success: boolean; invoiceId: string; checkoutUrl: string; tokens: number; usdAmount: number; nowpaymentsInvoiceId?: string | null; payCurrency?: string | null; payAddress?: string | null; payAmount?: number | null; network?: string | null; validUntil?: string | null; presaleDiscount?: boolean; error?: string }> {
-  return request("/api/wallet/buy-nowpayments", { method: "POST", body: { packageId, ...(payCurrency ? { payCurrency } : {}) } });
-}
 
 export function getPresaleStatus(): Promise<{
   success: boolean;
@@ -4350,28 +4320,6 @@ export function getMyAccess(): Promise<MyAccessResponse> {
   return request("/api/me/access");
 }
 
-export function createPayment(
-  planId: string,
-  provider: "nowpayments",
-  email?: string,
-  promoCode?: string
-): Promise<{
-  success: boolean;
-  paymentUrl: string;
-  paymentId: string;
-  finalPrice?: number;
-  error?: string;
-  message?: string;
-}> {
-  const body: Record<string, string> = { planId, provider };
-  if (email) body.email = email;
-  if (promoCode) body.promoCode = promoCode;
-  return request("/api/webapp/payments/create", {
-    method: "POST",
-    body,
-  });
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type PromoPricing = {
@@ -4406,21 +4354,6 @@ export function validatePromoCode(
 }
 
 
-export function initiateCreatorSubscriptionPayment(
-  creatorId: string,
-  provider: "nowpayments",
-  email: string
-): Promise<{
-  success: boolean;
-  paymentUrl: string;
-  paymentId: string;
-  error?: string;
-}> {
-  return request("/api/webapp/payments/create", {
-    method: "POST",
-    body: { planId: "creator_monthly", provider, email, creatorId },
-  });
-}
 
 export function getPaymentStatus(
   paymentId: string
@@ -4439,7 +4372,7 @@ export function getPaymentStatus(
 
 export function purchaseChannelAccess(
   channelId: number,
-  provider: 'nowpayments',
+  provider: 'wallet_usdc',
   email?: string
 ): Promise<{ success: boolean; paymentId: string; invoiceId: string; paymentUrl?: string; checkoutUrl: string }> {
   return request(`/api/webapp/channels/${channelId}/purchase`, {
@@ -4453,7 +4386,7 @@ export function purchaseChannelAccess(
 // channel-access grants cover both the channel and its linked hangout.
 export function purchaseHangoutAccess(
   hangoutGroupId: number,
-  provider: 'nowpayments',
+  provider: 'wallet_usdc',
   email?: string
 ): Promise<{ success: boolean; paymentId: string; invoiceId: string; paymentUrl?: string; checkoutUrl: string }> {
   return request(`/api/webapp/hangouts/groups/${hangoutGroupId}/purchase`, {
@@ -4492,19 +4425,6 @@ export function getDashSubscriptionStatus(invoiceId: string): Promise<{
   return request(`/api/webapp/payments/dash/status/${encodeURIComponent(invoiceId)}`);
 }
 
-// Poll a NowPayments dash_subscription_orders row by order id.
-// Preferred over polling the wallet balance — order-based signal doesn't
-// false-positive when unrelated credits (tips, admin grants) land during the wait.
-export function getNowPaymentsOrderStatus(orderId: string): Promise<{
-  success: boolean;
-  status: string;
-  completed: boolean;
-  confirming: boolean;
-  failed: boolean;
-  error?: string;
-}> {
-  return request(`/api/wallet/np-status/${encodeURIComponent(orderId)}`);
-}
 
 export function prepareUsdcSubscription(
   planId: string,
@@ -4517,7 +4437,6 @@ export function prepareUsdcSubscription(
   usdAmount: number;
   planName: string;
   invoiceUrl: string;
-  nowpaymentsInvoiceId?: string;
   payCurrency?: string;
   originalAmount?: number;
   discountPct?: number;
@@ -4551,34 +4470,6 @@ export function prepareOnchainSubscription(
   return request("/api/webapp/payments/onchain/prepare", { method: "POST", body });
 }
 
-export async function prepareCallNowPayments(opts: {
-  packageId: number;
-  startTimeUtc?: string | null;
-  endTimeUtc?: string | null;
-  payCurrency?: string;
-  email?: string | null;
-  clientNotes?: string | null;
-}): Promise<{
-  success: boolean;
-  invoiceUrl?: string;
-  nowpaymentsInvoiceId?: string;
-  paymentId?: string;
-  bookingId?: string;
-  amountUsd?: number;
-  error?: string;
-}> {
-  return request("/api/webapp/book-call/checkout/nowpayments", {
-    method: "POST",
-    body: {
-      packageId: opts.packageId,
-      startTimeUtc: opts.startTimeUtc ?? null,
-      endTimeUtc: opts.endTimeUtc ?? null,
-      payCurrency: opts.payCurrency ?? "btc",
-      email: opts.email ?? null,
-      clientNotes: opts.clientNotes ?? null,
-    },
-  });
-}
 
 export function getUsdcSubscriptionStatus(orderId: string): Promise<{
   success: boolean;
@@ -5999,7 +5890,6 @@ export interface CreatorPayoutRecord {
   status: 'pending' | 'processing' | 'sent' | 'failed' | 'completed';
   requested_at: string;
   processed_at: string | null;
-  nowpayments_payout_id: string | null;
 }
 
 export function getCreatorPayoutBalance(): Promise<{ success: boolean } & CreatorPayoutBalance> {
@@ -6994,7 +6884,6 @@ export interface PaymentHealth {
   stuck: {
     meru: { count: number; items: PaymentHealthStuckPayment[] };
     dash: { count: number; items: PaymentHealthStuckPayment[] };
-    nowpayments: { count: number; items: PaymentHealthStuckPayment[] };
   };
   leaks: { count: number; items: PaymentHealthLeak[] };
   activity: {
@@ -8290,7 +8179,6 @@ export interface MediaLibraryVideo {
 const ALLOWED_PAYMENT_HOSTS = [
   "pnptv.app",
   "app.pnptv.app",
-  "nowpayments.io",
 ];
 
 function isAllowedPaymentHost(hostname: string): boolean {
@@ -8641,7 +8529,7 @@ export interface CreatorCallEarnings {
 
 export interface CallCheckoutPayload {
   packageId: number;
-  provider: "nowpayments";
+  provider: "wallet_usdc";
   email: string;
   quantity?: number;
   selectedSlot?: string | null;
@@ -8666,8 +8554,7 @@ export function createCallCheckout(
   });
 }
 
-// createCallCheckoutNowPayments and createCallCheckoutBtc removed 2026-08-09 —
-// call-booking flow uses Wallet USDC (Privy) or Ru$h tokens only.
+// Crypto call checkout removed — call-booking flow uses Wallet USDC (Privy) or Ru$h tokens only.
 // createCallCheckoutDash removed 2026-07-31 — Dash/BTCPay retired.
 
 export interface MyCallCredit {
@@ -8721,7 +8608,6 @@ export interface CreatorTipResponse {
   success: boolean;
   orderId: string;
   invoiceUrl: string;
-  nowpaymentsInvoiceId?: string;
   amount: number;
 }
 
@@ -11439,11 +11325,9 @@ export async function getCryptoPaymentStatus(paymentId: number): Promise<CryptoP
 // ── Crystal Creator pass ────────────────────────────────────────────────────
 // Two prices intentionally live on two endpoints (never returned in the same
 // response): self-purchase = $100/mo, gift = $150/mo.
-
-// Only "nowpayments" is passed to checkoutCrystal*(). The wallet-USDC path is
-// driven by WalletPayCard hitting /api/wallet/checkout/initiate directly with
-// surface="crystal_self"|"crystal_gift" — no separate function needed here.
-export type CrystalCheckoutProvider = "nowpayments";
+// Crystal checkout uses the wallet-USDC path only:
+// WalletPayCard hits /api/wallet/checkout/initiate directly with
+// surface="crystal_self"|"crystal_gift" — checkoutCrystal*() are retired.
 
 export interface CrystalSelfStatus {
   invited: boolean;
@@ -11461,8 +11345,7 @@ export interface CrystalGiftInfo {
 }
 
 export interface CrystalCheckoutResponse {
-  provider: CrystalCheckoutProvider;
-  nowpaymentsInvoiceId: string;
+  provider: string;
   invoiceUrl: string;
 }
 
@@ -11472,7 +11355,7 @@ export async function getCrystalSelf(): Promise<CrystalSelfStatus> {
   return res.json();
 }
 
-export async function checkoutCrystalSelf(provider: CrystalCheckoutProvider): Promise<CrystalCheckoutResponse> {
+export async function checkoutCrystalSelf(provider: string): Promise<CrystalCheckoutResponse> {
   const res = await fetch(`${API_BASE}/api/creator/crystal/self/checkout`, {
     method: "POST",
     credentials: "include",
@@ -11493,7 +11376,7 @@ export async function getCrystalGift(creatorId: string): Promise<CrystalGiftInfo
 
 export async function checkoutCrystalGift(
   creatorId: string,
-  provider: CrystalCheckoutProvider,
+  provider: string,
   giftNote?: string | null,
 ): Promise<CrystalCheckoutResponse> {
   const res = await fetch(`${API_BASE}/api/creators/${encodeURIComponent(creatorId)}/crystal/gift/checkout`, {
@@ -11633,9 +11516,6 @@ export interface ChannelPassCheckoutResult {
   // wallet_usdc shape
   payment_url?: string;
   checkout_intent_id?: string;
-  // nowpayments shape
-  order_id?: string;
-  pay_currency?: string;
   // error shapes
   code?: string;
   error?: string;
@@ -11659,7 +11539,7 @@ export async function purchaseVideoAccess(
 
 export async function checkoutChannelPass(
   creatorId: string,
-  provider: "rush" | "wallet_usdc" | "nowpayments" = "rush",
+  provider: "rush" | "wallet_usdc" = "rush",
   payCurrency?: string,
 ): Promise<ChannelPassCheckoutResult> {
   const body: { provider: string; payCurrency?: string } = { provider };
@@ -12149,7 +12029,7 @@ export function bookParcheCall(data: {
   packageId: number;
   scheduledAt?: string;
   buyerNote?: string;
-  provider: 'nowpayments';
+  provider: 'wallet_usdc';
 }): Promise<{ bookingId: string; checkoutUrl: string; invoiceId: string; amount: number; currency: string; sku: string }> {
   return request<{ bookingId: string; checkoutUrl: string; invoiceId: string; amount: number; currency: string; sku: string }>(
     '/api/webapp/book-parche/checkout',

@@ -3,8 +3,8 @@
  * per-creator subscriptions.
  *
  * Used from: creator profile pill, feed post CTA banner, channel-detail
- * paywall, DM upsell. All these entry points feed the same NowPayments flow
- * (crypto grid + tokens) so the UX is identical everywhere.
+ * paywall, DM upsell. All these entry points feed WalletPayCard (USDC on Base)
+ * and Ru$h tokens.
  *
  * A creator subscription unlocks: creator profile paid posts, canonical paid
  * channel, private hangout, and unlimited DMs with that creator.
@@ -41,7 +41,7 @@ export interface CreatorSubscribeWizardProps {
   returnUrl?: string;
   /** Channel access type — controls whether the launch-offer banner is shown. */
   accessType?: "free" | "prime" | "subscription" | "paid";
-  /** Called when card onramp fails — open NowPayments as a fallback. */
+  /** Called when card onramp fails — reserved for future fallback use. */
   onCryptoFallback?: () => void;
 }
 
@@ -72,9 +72,7 @@ export default function CreatorSubscribeWizard({
   accessType = "subscription",
   onCryptoFallback,
 }: CreatorSubscribeWizardProps) {
-  // NowPayments retired 2026-08-09 — creator subscription flows exclusively
-  // through WalletPayCard (USDC on Base). storageKey / returnUrl no longer
-  // used; kept in props for backwards compatibility.
+  // storageKey / returnUrl no longer used; kept in props for backwards compatibility.
   void storageKey;
   void returnUrl;
 

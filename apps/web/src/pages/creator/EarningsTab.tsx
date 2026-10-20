@@ -266,7 +266,7 @@ export function EarningsTab({ earnings, t }: EarningsTabProps) {
     try {
       const res = await requestCreatorPayout({ address: withdrawAddress.trim() });
       if (res.success) {
-        setWithdrawSuccess({ payoutId: res.payout.nowpayments_payout_id });
+        setWithdrawSuccess({ payoutId: res.payout.id });
         // FIX 12: Refetch authoritative server balance instead of optimistic mutation
         fetchBalance();
         getCreatorPayoutHistory()

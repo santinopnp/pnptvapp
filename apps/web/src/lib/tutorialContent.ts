@@ -271,10 +271,10 @@ export const tutorialContent: Record<string, TutorialSection> = {
         illustration: "subscribePlans",
       },
       {
-        titleEn: "Pay with Bitcoin / Crypto",
-        titleEs: "Paga con Bitcoin / Crypto",
-        descEn: "Option A — Ethereum & USDC: Select the Crypto tab. A NowPayments checkout opens. Choose ETH or USDC (Ethereum), then scan the QR code or copy the wallet address. Send the exact amount shown. Confirmation typically lands in a few minutes.",
-        descEs: "Opcion A — Ethereum y USDC: Selecciona la pestana Crypto. Se abre un checkout de NowPayments. Elige ETH o USDC (Ethereum), escanea el codigo QR o copia la direccion de wallet. Envia la cantidad exacta indicada. La confirmacion suele llegar en minutos.",
+        titleEn: "Pay with Crypto",
+        titleEs: "Paga con Crypto",
+        descEn: "Select the Crypto tab. Pay with USDC or ETH on Base. Scan the QR code or copy the wallet address. Send the exact amount shown. Confirmation typically lands in a few minutes.",
+        descEs: "Selecciona la pestana Crypto. Paga con USDC o ETH en Base. Escanea el codigo QR o copia la direccion de wallet. Envia la cantidad exacta indicada. La confirmacion suele llegar en minutos.",
         illustration: "paymentMethods",
       },
       {

@@ -23,7 +23,6 @@
 'use strict';
 
 const { v4: uuidv4 } = require('uuid');
-const axios = require('axios');
 const { query, getClient } = require('../config/postgres');
 // BTCPay/Dash retired 2026-07-31 — import removed. createDashCheckout() and
 // createBtcCheckout() are kept as stubs below so existing call-sites don't crash.
@@ -36,16 +35,7 @@ const { cache } = require('../config/redis');
 
 const WEB_APP_URL = process.env.WEB_APP_URL || 'https://pnptv.app';
 
-const NOWPAYMENTS_URL = process.env.NOWPAYMENTS_ENVIRONMENT === 'sandbox'
-  ? 'https://api-sandbox.nowpayments.io/v1'
-  : 'https://api.nowpayments.io/v1';
-const NOWPAYMENTS_API_KEY = process.env.NOWPAYMENTS_API_KEY || '';
-
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function nowpaymentsWidgetUrl(invoiceId) {
-  return `https://nowpayments.io/embeds/payment-widget?iid=${encodeURIComponent(String(invoiceId))}`;
-}
 
 /**
  * Resolve a validated token package from the shared catalogue.
@@ -524,141 +514,6 @@ class TokenCheckoutService {
       client.release();
       await cache.releaseLock(lockKey).catch(() => {});
     }
-  }
-
-  // ── NowPayments checkout ─────────────────────────────────────────────────
-
-  /**
-   * Create a NowPayments hosted invoice for a token package purchase.
-   * When presaleDiscount=true, charges 90% of the normal USD price but credits
-   * the full token amount — users get more tokens per dollar during presale.
-   *
-   * @param {string} userId
-   * @param {string} packageId
-   * @param {string|null} [payCurrency]  Optional NowPayments pay_currency ('eth' or 'usdcerc20')
-   * @param {boolean} [presaleDiscount]  Apply 10% presale discount to USD charge
-   * @returns {Promise<{ invoiceId: string, checkoutUrl: string, tokens: number, usdAmount: number }>}
-   */
-  static async createNowPaymentsCheckout(userId, packageId, payCurrency = null, presaleDiscount = false) {
-    const pkg = resolvePackage(packageId);
-    if (!pkg) {
-      throw Object.assign(new Error(`Token package '${packageId}' not found`), { code: 'PACKAGE_NOT_FOUND', status: 404 });
-    }
-
-    if (!NOWPAYMENTS_API_KEY) {
-      throw Object.assign(new Error('Crypto payments are not configured'), { code: 'NOWPAYMENTS_NOT_CONFIGURED', status: 503 });
-    }
-
-    // Presale: charge 90% of normal price; user still receives full token amount.
-    // Round to 2 decimal places to avoid floating-point invoice issues.
-    const usdAmount = presaleDiscount
-      ? Math.round(pkg.usd * 0.9 * 100) / 100
-      : pkg.usd;
-    const orderId = `pnptv-tokens-nowp-${userId}-${Date.now()}`;
-    const successUrl = `${WEB_APP_URL}/wallet?nowpayments=success&order=${encodeURIComponent(orderId)}`;
-    const cancelUrl = `${WEB_APP_URL}/wallet`;
-
-    let invoiceUrl;
-    let npPayInfo = {};
-    const ALLOWED_TOKEN_PAY_CURRENCIES = new Set([
-      'btc', 'eth', 'ltc', 'doge', 'xmr', 'sol', 'trx', 'bnbbsc', 'matic',
-      'usdcsol', 'usdttrc20', 'usdtbsc', 'usdterc20',
-    ]);
-    const requestedCurrency = payCurrency ? String(payCurrency).toLowerCase() : null;
-    const validPayCurrency = (requestedCurrency && ALLOWED_TOKEN_PAY_CURRENCIES.has(requestedCurrency))
-      ? requestedCurrency : 'usdcsol';
-    if (requestedCurrency && requestedCurrency !== validPayCurrency) {
-      logger.warn('TokenCheckoutService.createNowPaymentsCheckout: unsupported pay_currency — falling back to usdcsol', {
-        userId, packageId, requested: requestedCurrency,
-      });
-    }
-    try {
-      const invoiceBody = {
-        price_amount: usdAmount,
-        price_currency: 'usd',
-        pay_currency: validPayCurrency,
-        order_id: orderId,
-        order_description: `${pkg.tokens} PNP Tokens`,
-        ipn_callback_url: `${WEB_APP_URL}/api/webhooks/nowpayments`,
-      };
-      const invoiceHeaders = { 'x-api-key': NOWPAYMENTS_API_KEY, 'Content-Type': 'application/json' };
-      // One retry on transient failure (5xx / network). NP occasionally 500s
-      // for a few seconds at a time — 2026-09-01 probe showed intermittent
-      // INTERNAL_ERROR responses recovering within seconds. Same order_id is
-      // safe since fulfillment dedups on it in dash_subscription_orders.
-      let paymentResp;
-      try {
-        paymentResp = await axios.post(`${NOWPAYMENTS_URL}/invoice`, invoiceBody, { headers: invoiceHeaders, timeout: 10000 });
-      } catch (firstErr) {
-        const status = firstErr.response?.status;
-        const isTransient = !status || (status >= 500 && status < 600);
-        if (!isTransient) throw firstErr;
-        logger.warn('TokenCheckoutService.createNowPaymentsCheckout: NP transient error — retrying once', { status, orderId });
-        await new Promise((r) => setTimeout(r, 1000));
-        paymentResp = await axios.post(`${NOWPAYMENTS_URL}/invoice`, invoiceBody, { headers: invoiceHeaders, timeout: 10000 });
-      }
-      const { id: nowpaymentsInvoiceId, invoice_url: npInvoiceUrl } = paymentResp.data;
-      if (!nowpaymentsInvoiceId) throw new Error('No invoice id in response');
-      invoiceUrl = npInvoiceUrl || nowpaymentsWidgetUrl(nowpaymentsInvoiceId);
-      npPayInfo = { nowpaymentsInvoiceId: String(nowpaymentsInvoiceId), payCurrency: validPayCurrency };
-    } catch (invoiceErr) {
-      logger.error('TokenCheckoutService.createNowPaymentsCheckout: NowPayments error', {
-        userId, packageId, payCurrency, error: invoiceErr.response?.data || invoiceErr.message,
-      });
-      const npData = invoiceErr.response?.data;
-      const npStatus = invoiceErr.response?.status;
-      // NP-specific 4xx (currency temporarily disabled, invalid amount, etc.) get their
-      // real message surfaced. Only truly transient/network failures fall back to the
-      // generic "please try again" copy.
-      if (npStatus && npStatus >= 400 && npStatus < 500 && npData?.message) {
-        const err = Object.assign(new Error(String(npData.message)), {
-          code: npData.code || 'NOWPAYMENTS_INVALID',
-          status: 400,
-          npCoin: validPayCurrency,
-        });
-        throw err;
-      }
-      const err = Object.assign(new Error('Could not reach NowPayments. Please try again.'), { code: 'NOWPAYMENTS_ERROR', status: 502 });
-      throw err;
-    }
-
-    // Store in dash_subscription_orders so the NowPayments IPN webhook can
-    // find and fulfill this order (same path as subscription/plan payments).
-    const { query: pgQuery } = require('../config/postgres');
-    await pgQuery(
-      `INSERT INTO dash_subscription_orders
-         (user_id, plan_id, email, usd_amount, btcpay_invoice_id, status, metadata)
-       VALUES ($1, 'token_purchase', NULL, $2, $3, 'pending', $4)
-       ON CONFLICT (btcpay_invoice_id) DO NOTHING`,
-      [
-        userId,
-        usdAmount,
-        orderId,
-        JSON.stringify({
-          provider: 'nowpayments',
-          flow: 'token_purchase',
-          packageId: pkg.id,
-          tokens: pkg.tokens,
-          bonusTokens: Math.max(0, pkg.tokens - pkg.usd * 6),
-          invoiceUrl,
-          ...(npPayInfo?.nowpaymentsInvoiceId ? { nowpaymentsInvoiceId: npPayInfo.nowpaymentsInvoiceId } : {}),
-          ...(payCurrency ? { payCurrency } : {}),
-          ...(presaleDiscount ? { presale_discount: true, original_usd: pkg.usd } : {}),
-        }),
-      ]
-    );
-
-    logger.info('TokenCheckoutService.createNowPaymentsCheckout: invoice created', {
-      userId, packageId, orderId, usdAmount, payCurrency, tokens: pkg.tokens,
-    });
-
-    return {
-      invoiceId: orderId,
-      checkoutUrl: invoiceUrl,
-      tokens: pkg.tokens,
-      usdAmount,
-      ...npPayInfo,
-    };
   }
 
   /**

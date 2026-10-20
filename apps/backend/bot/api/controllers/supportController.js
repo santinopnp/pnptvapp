@@ -443,7 +443,7 @@ async function verifyPayment(req, res) {
 
   const validProviders = [
     // Current providers (match frontend dropdown in CristinaWidget)
-    'wallet_usdc', 'nowpayments', 'rush_tokens',
+    'wallet_usdc', 'rush_tokens',
     // Legacy providers (historical verification only)
     'epayco', 'daimo', 'btcpay', 'stripe', 'moonpay', 'efipay', 'nequi_wompi',
   ];

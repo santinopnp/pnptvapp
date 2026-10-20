@@ -247,13 +247,6 @@ async function initializeQueues() {
     jobId: 'cron-wallet-reconcile',
   });
 
-  // NOWPayments reconciler — every 15 min
-  await cronQueue.add('nowpayments-reconcile', {}, {
-    repeat: { pattern: '*/15 * * * *', tz: 'UTC' },
-    attempts: 2, removeOnFail: false,
-    jobId: 'cron-nowpayments-reconcile',
-  });
-
   // Gas treasury anomaly detector — every 15 min
   // Compares on-chain outgoing txs vs gas_topups table; alerts Slack on unauthorized sends
   await cronQueue.add('gas-treasury-anomaly', {}, {

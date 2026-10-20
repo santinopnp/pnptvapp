@@ -34,7 +34,6 @@ import {
   getBtcAvailable,
   createBtcSubscription,
   getBtcSubscriptionStatus,
-  initiateCreatorSubscriptionPayment,
   getUserLabel,
   getLabelColor,
   assertPaymentUrl,
@@ -77,7 +76,7 @@ import { BookCallModal } from "@/components/creators/BookCallModal";
 import CreatorSubscribeWizard from "@/components/creators/CreatorSubscribeWizard";
 import type { CreatorCardCreator } from "@/components/creators/CreatorCard";
 import { NearbyBadge, useNearbyToggle } from "@/components/NearbyBadge";
-import { getDistanceToUser, getMyCallCredits, getCreatorCallPackages, NP_COINS_SUBSCRIBE, type CallPackage } from "@/lib/api";
+import { getDistanceToUser, getMyCallCredits, getCreatorCallPackages, type CallPackage } from "@/lib/api";
 import { useAcceptingCalls } from "@/hooks/useAcceptingCalls";
 
 
@@ -297,7 +296,6 @@ export default function Profile() {
   const [subscribeEmail, setSubscribeEmail] = useState("");
   const [subscribeEmailError, setSubscribeEmailError] = useState<string | null>(null);
   const [subscribeProvider, setSubscribeProvider] = useState<"usdc" | "usdc_sol" | "btc">("usdc");
-  const [npCoinPick, setNpCoinPick] = useState<string>("usdcbase");
   const [btcAvailable, setBtcAvailable] = useState(false);
   const [usdcAvailable, setUsdcAvailable] = useState<boolean | null>(null);
   const [subscribePaymentLoading, setSubscribePaymentLoading] = useState(false);
@@ -370,9 +368,6 @@ export default function Profile() {
   const coverInputRef = useRef<HTMLInputElement>(null);
   const [coverUploading, setCoverUploading] = useState(false);
   const subscribeButtonRef = useRef<HTMLDivElement>(null);
-
-  // NowPayments hook fully retired 2026-08-09. CreatorSubscribeWizard handles
-  // wallet + tokens directly and calls its own onSuccess synchronously.
 
   // Scroll lock — applies whenever any local modal is open
   useEffect(() => {

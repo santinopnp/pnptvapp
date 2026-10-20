@@ -2762,9 +2762,9 @@ const walletSpendLimiter = rateLimit({ windowMs: 5 * 60 * 1000, max: 10, keyGene
 // exhausting the spend budget for actual checkout calls.
 const gasTopupLimiter = rateLimit({ windowMs: 5 * 60 * 1000, max: 20, keyGenerator: (req) => req.session?.user?.id || req.ip, handler: (req, res) => res.status(429).json({ success: false, error: 'Too many requests. Wait a moment and try again.', code: 'RATE_LIMITED' }), standardHeaders: true, legacyHeaders: false });
 // Token-buy invoice-creation endpoints: cap at 20 / 10 min per user. Users
-// legitimately browse multiple methods (Dash, NowPayments, BTC) and packages
+// legitimately browse multiple methods (Dash, BTC) and packages
 // before deciding — all three endpoints share this counter, so 20 gives enough
-// room to shop around without exhausting real BTCPay/NowPayments quota.
+// room to shop around without exhausting real BTCPay quota.
 const walletBuyLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 20, keyGenerator: (req) => req.session?.user?.id || req.ip, handler: (req, res) => res.status(429).json({ success: false, error: 'Demasiados intentos. Espera 10 minutos antes de intentar de nuevo.', code: 'RATE_LIMITED' }), standardHeaders: true, legacyHeaders: false });
 // Grok-backed AI generation endpoints: cap at 10/min per user. Every call hits
 // xAI and costs money — no rate-limit means one authenticated user can spam it.
@@ -4977,8 +4977,8 @@ app.get('/api/webapp/admin/payment-health', adminGuard, asyncHandler(async (req,
     LIMIT 50
   `);
 
-  // NowPayments: stuck orders (pending/confirming/confirmed/partially_paid > 15 min)
-  const nowpaymentsStuck = await q(`
+  // Legacy crypto orders still in pending state (historical — NP retired 2026-10-20)
+  const legacyCryptoStuck = await q(`
     SELECT id, user_id, plan_id, btcpay_invoice_id, usd_amount, status, notes,
            created_at,
            EXTRACT(EPOCH FROM (NOW() - created_at))/60 AS minutes_pending
@@ -4987,7 +4987,7 @@ app.get('/api/webapp/admin/payment-health', adminGuard, asyncHandler(async (req,
       btcpay_invoice_id LIKE 'pnptv-nowp-%'
       OR btcpay_invoice_id LIKE 'pnptv-tokens-nowp-%'
       OR btcpay_invoice_id LIKE 'call-%'
-      OR (metadata->>'provider' = 'nowpayments')
+      OR (metadata->>'provider' = 'wallet_usdc')
     )
       AND status IN ('pending', 'confirming', 'confirmed', 'partially_paid')
       AND created_at < NOW() - INTERVAL '15 minutes'
@@ -5034,7 +5034,7 @@ app.get('/api/webapp/admin/payment-health', adminGuard, asyncHandler(async (req,
     stuck: {
       meru: { count: meruStuck.rowCount, items: meruStuck.rows },
       dash: { count: dashStuck.rowCount, items: dashStuck.rows },
-      nowpayments: { count: nowpaymentsStuck.rowCount, items: nowpaymentsStuck.rows },
+      legacy_crypto: { count: legacyCryptoStuck.rowCount, items: legacyCryptoStuck.rows },
     },
     leaks: { count: leaks.rowCount, items: leaks.rows },
     activity: settlements.rows[0] || {},
@@ -5071,7 +5071,6 @@ app.get('/api/webapp/admin/service-status', adminGuard, asyncHandler(async (_req
     calcom:      'https://booking.pnptv.app',
     cms:         'https://cms.pnptv.app',
     backend:     'https://pnptv.app/health',
-    nowpayments: 'https://api.nowpayments.io/v1/status',
     ampache:     'http://ampache:80',
   };
 
@@ -5120,8 +5119,6 @@ app.get('/api/webapp/admin/service-status', adminGuard, asyncHandler(async (_req
         (SELECT COUNT(*)::int FROM dash_subscription_orders WHERE status='completed' AND completed_at > NOW() - INTERVAL '24 hours') AS completed_24h,
         (SELECT COUNT(*)::int FROM dash_subscription_orders WHERE status='pending' AND created_at > NOW() - INTERVAL '24 hours') AS pending_24h,
         (SELECT COUNT(*)::int FROM dash_subscription_orders WHERE status='partially_paid') AS partial_all,
-        (SELECT COUNT(*)::int FROM dash_subscription_orders WHERE status='pending' AND metadata->>'provider'='nowpayments' AND created_at > NOW() - INTERVAL '24 hours') AS np_pending_24h,
-        (SELECT COUNT(*)::int FROM dash_subscription_orders WHERE status='completed' AND metadata->>'provider'='nowpayments' AND completed_at > NOW() - INTERVAL '7 days') AS np_completed_7d,
         -- btcpay_pending_24h and btcpay_completed_7d removed 2026-07-31 (provider retired)
         (SELECT COUNT(*)::int FROM meru_payment_links WHERE status='used' AND used_at > NOW() - INTERVAL '7 days') AS meru_completed_7d,
         (SELECT COUNT(*)::int FROM meru_payment_links WHERE status='active' AND reserved_for_user_id IS NULL) AS meru_available
@@ -5889,30 +5886,6 @@ app.post('/api/internal/broadcast/lifetime80', healthLimiter, asyncHandler(async
     logger.info('lifetime80 broadcast complete', { summary });
     res.json({ success: true, summary });
   });
-}));
-
-// GET /api/internal/nowpayments-balance — live NowPayments merchant balance.
-// Called by the remote payments-monitor routine (runs outside the server IP range).
-// Auth: Bearer INTERNAL_ZOHO_SECRET.
-app.get('/api/internal/nowpayments-balance', healthLimiter, asyncHandler(async (req, res) => {
-  const bearer = req.headers.authorization?.replace(/^Bearer\s+/, '');
-  const expected = process.env.INTERNAL_ZOHO_SECRET;
-  if (!expected || bearer !== expected) {
-    return res.status(401).json({ success: false, error: 'unauthorized' });
-  }
-  const axios = require('axios');
-  try {
-    const r = await axios.get('https://api.nowpayments.io/v1/balance', {
-      headers: { 'x-api-key': process.env.NOWPAYMENTS_API_KEY },
-      timeout: 8000,
-    });
-    return res.json({ success: true, balance: r.data });
-  } catch (err) {
-    const status = err.response?.status;
-    const data   = err.response?.data;
-    logger.warn('nowpayments balance fetch failed', { status, data });
-    return res.status(502).json({ success: false, error: 'nowpayments_error', detail: data || err.message });
-  }
 }));
 
 // GET /api/health/webhooks — public ePayco webhook delivery health (7d window).
@@ -7360,7 +7333,7 @@ app.post('/api/webapp/payments/create', requireSessionAuth, paymentCreateLimiter
   const result = await PaymentService.createPayment({
     userId,
     planId,
-    provider: 'nowpayments',
+    provider: 'wallet_usdc',
     creatorId: creatorId ? String(creatorId) : undefined,
     extraMetadata: Object.keys(extraMetadata).length ? extraMetadata : undefined,
   });
@@ -7415,7 +7388,7 @@ app.get('/api/webapp/admin/users/:id/payments-unified', adminGuard, asyncHandler
     ),
     getPool().query(
       `SELECT id::text, 'dash_orders' AS source, plan_id, NULL AS plan_name, usd_amount AS amount, 'USD' AS currency,
-              CASE WHEN btcpay_invoice_id LIKE 'pnptv-nowp-%' THEN 'nowpayments' ELSE 'btcpay' END AS provider,
+              CASE WHEN btcpay_invoice_id LIKE 'pnptv-nowp-%' THEN 'legacy_crypto' ELSE 'btcpay' END AS provider,
               status, completed_at, created_at, metadata, btcpay_invoice_id AS payment_ref
        FROM dash_subscription_orders WHERE user_id = $1 ORDER BY created_at DESC LIMIT 200`, [userId]
     ),
@@ -7426,7 +7399,7 @@ app.get('/api/webapp/admin/users/:id/payments-unified', adminGuard, asyncHandler
     ),
     getPool().query(
       `SELECT id::text, 'creator_tips_sent' AS source, NULL AS plan_id, 'Tip to creator ' || creator_id AS plan_name,
-              amount_usd AS amount, 'USD' AS currency, 'nowpayments' AS provider, status,
+              amount_usd AS amount, 'USD' AS currency, COALESCE(provider, 'legacy_crypto') AS provider, status,
               completed_at, created_at, NULL AS metadata
        FROM creator_tips WHERE payer_id = $1 ORDER BY created_at DESC LIMIT 100`, [userId]
     ),
@@ -9696,17 +9669,13 @@ app.post('/api/webapp/me/dismiss-year50-popup', requireSessionAuth, asyncHandler
 }));
 
 /**
- * First-hour crypto-purchase bonus: users who make ANY successful NowPayments
+ * First-hour crypto-purchase bonus: users who make ANY successful crypto
  * purchase within 1 hour of completing the crypto tutorial get +100 Santino-only
  * tokens (creator_gifts[SANTINO_USER_ID]). Idempotent per user via the
  * `crypto_guide_bonus_granted_at IS NULL` guard.
  *
- * The claim UPDATE and the wallet credit run in a single transaction so a
- * mid-flight failure rolls the flag back and keeps the bonus retryable — never
- * a "flag set, tokens missing" ghost.
- *
- * Called fire-and-forget from every successful NowPayments IPN settlement path.
- * Failures are logged, never thrown — the payment itself must not be blocked.
+ * NOTE: The original caller (crypto IPN handler) was retired 2026-10-20.
+ * This function is kept as dead code in case a new crypto rail is added.
  */
 async function maybeGrantFirstHourCryptoBonus(userId) {
   if (!userId) return false;
@@ -12169,8 +12138,8 @@ app.post('/api/webapp/hangouts/groups/:id/purchase', requireSessionAuth, asyncHa
   if (!Number.isFinite(hangoutId)) {
     return res.status(400).json({ error: 'Invalid hangout ID' });
   }
-  if (!provider || provider !== 'nowpayments') {
-    return res.status(400).json({ error: 'Provider must be nowpayments' });
+  if (!provider || provider !== 'wallet_usdc') {
+    return res.status(400).json({ error: 'Provider must be wallet_usdc' });
   }
 
   const { rows: groups } = await getPool().query(
@@ -12209,55 +12178,7 @@ app.post('/api/webapp/hangouts/groups/:id/purchase', requireSessionAuth, asyncHa
     ...(email ? { email } : {}),
   };
 
-  // ── NowPayments branch ────────────────────────────────────────────────────
-  if (provider === 'nowpayments') {
-    const npApiKey = process.env.NOWPAYMENTS_API_KEY || '';
-    if (!npApiKey) {
-      return res.status(503).json({ error: 'Crypto payments are not available yet.', code: 'NOWPAYMENTS_NOT_CONFIGURED' });
-    }
-    const npUrl = process.env.NOWPAYMENTS_ENVIRONMENT === 'sandbox'
-      ? 'https://api-sandbox.nowpayments.io/v1'
-      : 'https://api.nowpayments.io/v1';
-    try {
-      const orderId = `pnptv-nowp-hangout-${userId}-${hangout.id}-${Date.now()}`;
-      const paymentResp = await axios.post(`${npUrl}/invoice`, {
-        price_amount: hangoutPrice,
-        price_currency: 'usd',
-        pay_currency: 'usdcsol',
-        order_id: orderId,
-        order_description: `Hangout access: ${hangout.name}`,
-        ipn_callback_url: `${webappUrlHangout}/api/webhooks/nowpayments`,
-        success_url: `${webappUrlHangout}/chat/${hangout.id}?payment=success`,
-        ...(email ? { customer_email: email } : {}),
-      }, {
-        headers: { 'x-api-key': npApiKey, 'Content-Type': 'application/json' },
-        timeout: 10000,
-      });
-      const { id: npInvoiceId, invoice_url: npInvoiceUrl } = paymentResp.data;
-      if (!npInvoiceId) throw new Error('No invoice id in NowPayments response');
-      const invoiceUrl = npInvoiceUrl || nowpaymentsWidgetUrl(npInvoiceId);
-      const insertRes = await getPool().query(
-        `INSERT INTO dash_subscription_orders
-           (user_id, plan_id, email, usd_amount, btcpay_invoice_id, status, metadata)
-         VALUES ($1, 'hangout_access', $2, $3, $4, 'pending', $5)
-         ON CONFLICT (btcpay_invoice_id) DO UPDATE
-           SET status = dash_subscription_orders.status
-         RETURNING id`,
-        [userId, email || null, hangoutPrice, orderId, JSON.stringify({ ...scopeMetadata, provider: 'nowpayments', invoiceUrl, nowpaymentsInvoiceId: String(npInvoiceId) })]
-      );
-      return res.json({
-        success: true,
-        paymentId: String(insertRes.rows[0].id),
-        invoiceId: orderId,
-        checkoutUrl: invoiceUrl,
-      });
-    } catch (err) {
-      logger.error(`Hangout nowpayments purchase failed: ${err.message}`);
-      return res.status(502).json({ error: 'Could not reach payment provider. Please try again.', code: 'NOWPAYMENTS_ERROR' });
-    }
-  }
-
-  return res.status(400).json({ error: 'Unsupported provider' });
+  return res.status(400).json({ error: 'Unsupported provider. Use wallet_usdc.' });
 }));
 
 // Purchase access to a paid channel (and its linked hangout).
@@ -12271,8 +12192,8 @@ app.post('/api/webapp/channels/:channelId/purchase', requireSessionAuth, channel
   if (!Number.isFinite(channelId)) {
     return res.status(400).json({ error: 'Invalid channel ID' });
   }
-  if (!provider || provider !== 'nowpayments') {
-    return res.status(400).json({ error: 'Provider must be nowpayments' });
+  if (!provider || provider !== 'wallet_usdc') {
+    return res.status(400).json({ error: 'Provider must be wallet_usdc' });
   }
 
   const { rows: channels } = await getPool().query(
@@ -12307,55 +12228,7 @@ app.post('/api/webapp/channels/:channelId/purchase', requireSessionAuth, channel
     ...(email ? { email } : {}),
   };
 
-  // ── NowPayments branch ────────────────────────────────────────────────────
-  if (provider === 'nowpayments') {
-    const npApiKey = process.env.NOWPAYMENTS_API_KEY || '';
-    if (!npApiKey) {
-      return res.status(503).json({ error: 'Crypto payments are not available yet.', code: 'NOWPAYMENTS_NOT_CONFIGURED' });
-    }
-    const npUrl = process.env.NOWPAYMENTS_ENVIRONMENT === 'sandbox'
-      ? 'https://api-sandbox.nowpayments.io/v1'
-      : 'https://api.nowpayments.io/v1';
-    try {
-      const orderId = `pnptv-nowp-channel-${userId}-${channel.id}-${Date.now()}`;
-      const paymentResp = await axios.post(`${npUrl}/invoice`, {
-        price_amount: channelPrice,
-        price_currency: 'usd',
-        pay_currency: 'usdcsol',
-        order_id: orderId,
-        order_description: `Channel access: ${channel.name}`,
-        ipn_callback_url: `${webappUrlChannel}/api/webhooks/nowpayments`,
-        success_url: `${webappUrlChannel}/chat/${channel.hangout_group_id || ''}?payment=success`,
-        ...(email ? { customer_email: email } : {}),
-      }, {
-        headers: { 'x-api-key': npApiKey, 'Content-Type': 'application/json' },
-        timeout: 10000,
-      });
-      const { id: npInvoiceId, invoice_url: npInvoiceUrl } = paymentResp.data;
-      if (!npInvoiceId) throw new Error('No invoice id in NowPayments response');
-      const invoiceUrl = npInvoiceUrl || nowpaymentsWidgetUrl(npInvoiceId);
-      const insertRes = await getPool().query(
-        `INSERT INTO dash_subscription_orders
-           (user_id, plan_id, email, usd_amount, btcpay_invoice_id, status, metadata)
-         VALUES ($1, 'channel_access', $2, $3, $4, 'pending', $5)
-         ON CONFLICT (btcpay_invoice_id) DO UPDATE
-           SET status = dash_subscription_orders.status
-         RETURNING id`,
-        [userId, email || null, channelPrice, orderId, JSON.stringify({ ...scopeMetadata, provider: 'nowpayments', invoiceUrl, nowpaymentsInvoiceId: String(npInvoiceId) })]
-      );
-      return res.json({
-        success: true,
-        paymentId: String(insertRes.rows[0].id),
-        invoiceId: orderId,
-        checkoutUrl: invoiceUrl,
-      });
-    } catch (err) {
-      logger.error(`Channel nowpayments purchase failed: ${err.message}`);
-      return res.status(502).json({ error: 'Could not reach payment provider. Please try again.', code: 'NOWPAYMENTS_ERROR' });
-    }
-  }
-
-  return res.status(400).json({ error: 'Unsupported provider' });
+  return res.status(400).json({ error: 'Unsupported provider. Use wallet_usdc.' });
 }));
 
 app.get('/api/webapp/channels/:channelId', softAuth, asyncHandler(async (req, res) => {
@@ -14239,11 +14112,10 @@ app.get('/api/wallet/history', requireSessionAuth, asyncHandler(async (req, res)
 }));
 
 // POST /api/wallet/buy retired 2026-07-31 — BTCPay/Dash/Meru token top-ups removed.
-// Use /api/wallet/nowpayments-buy for crypto.
 app.post('/api/wallet/buy', walletBuyLimiter, requireSessionAuth, asyncHandler(async (_req, res) => {
   return res.status(410).json({
     success: false,
-    error: 'Dash token top-ups retired. Use crypto (NowPayments) or Meru.',
+    error: 'Dash token top-ups retired. Use the USDC wallet payment option.',
     code: 'DASH_RETIRED',
   });
 }));
@@ -14307,57 +14179,7 @@ app.get('/api/wallet/presale-status', limiter, asyncHandler(async (req, res) => 
   }
 }));
 
-// POST /api/wallet/buy-nowpayments — re-enabled 2026-08-15 as fallback rail so
-// users without Base USDC can pay in any NowPayments-supported coin. Wallet
-// checkout on Base remains the primary path (WalletPayCard); this endpoint
-// serves the "Pay with any crypto" fallback.
-app.post('/api/wallet/buy-nowpayments', walletBuyLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
-  const user = req.session?.user;
-  const { packageId, payCurrency: rawPayCurrency } = req.body;
-  if (!packageId) return res.status(400).json({ success: false, error: 'packageId is required' });
-
-  // Accept any NP-supported coin. When null, NP shows the full picker on the invoice page.
-  const ALLOWED_PAY_CURRENCIES = new Set([
-    'btc', 'eth', 'ltc', 'doge', 'xmr', 'sol', 'trx', 'bnbbsc', 'matic',
-    'usdcsol', 'usdttrc20', 'usdtbsc', 'usdterc20',
-  ]);
-  const payCurrency = (rawPayCurrency && ALLOWED_PAY_CURRENCIES.has(String(rawPayCurrency).toLowerCase()))
-    ? String(rawPayCurrency).toLowerCase() : null;
-
-  const userId = String(user.telegram_id || user.id);
-
-  // Check presale: 10% off the USD price (user still receives full token amount)
-  // Use raw Redis client — cache.get() runs JSON.parse which converts '1' → 1 (number)
-  let presaleDiscount = false;
-  try {
-    const presaleFlag = await getRedis().get('pnpapp:presale:active');
-    if (presaleFlag === '1') presaleDiscount = true;
-  } catch (_) { /* Redis unavailable — skip discount */ }
-
-  try {
-    const result = await TokenCheckoutService.createNowPaymentsCheckout(userId, packageId, payCurrency, presaleDiscount);
-    return res.json({ success: true, ...result, presaleDiscount });
-  } catch (err) {
-    logger.error('[wallet/buy-nowpayments]', { error: err.message, code: err.code });
-    if (err.code === 'PACKAGE_NOT_FOUND' || err.code === 'INVALID_PACKAGE') {
-      return res.status(404).json({ success: false, error: err.message });
-    }
-    if (err.code === 'NOWPAYMENTS_NOT_CONFIGURED') {
-      return res.status(503).json({ success: false, error: err.message });
-    }
-    if (err.code === 'NOWPAYMENTS_INVALID' || err.code === 'INVALID_REQUEST_PARAMS') {
-      return res.status(400).json({
-        success: false,
-        error: err.message,
-        code: 'NOWPAYMENTS_INVALID',
-        coin: err.npCoin || payCurrency || null,
-      });
-    }
-    return res.status(500).json({ success: false, error: 'Failed to create crypto invoice.' });
-  }
-}));
-
-// GET /api/wallet/np-status/:orderId — poll the NowPayments DSO by order id.
+// GET /api/wallet/np-status/:orderId — poll DSO status by order id (retained for support lookups).
 // Frontend uses this instead of watching the wallet-balance delta (which false-
 // positives when any other credit lands — tip, admin grant, refund reversal —
 // during the poll window). Returns the DSO status and computed completed flag.
@@ -15000,7 +14822,7 @@ app.get('/api/invoice/:paymentId', requireSessionAuth, asyncHandler(async (req, 
     planName,
     amount: parseFloat(r.amount) || 0,
     currency: r.currency || 'USD',
-    provider: r.provider || 'nowpayments',
+    provider: r.provider || 'wallet_usdc',
     transactionId: r.reference || r.id,
     purchaseDate: r.completed_at ? new Date(r.completed_at) : new Date(),
   });
@@ -15013,14 +14835,13 @@ app.get('/api/invoice/:paymentId', requireSessionAuth, asyncHandler(async (req, 
 // ─────────────────────────────────────────────────────────────────────────────
 // BTCPay / Lightning / Dash — RETIRED 2026-07-31
 // All routes below are tombstones to prevent 404 log noise.
-// NowPayments is the only active crypto payment provider.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // GET /api/webapp/payments/lightning/available — retired
 app.get('/api/webapp/payments/lightning/available', (req, res) => res.json({ available: false, configured: false, reason: 'BTCPay/Lightning retired 2026-07-31' }));
 
 // POST /api/webapp/payments/lightning/create — retired
-app.post('/api/webapp/payments/lightning/create', (req, res) => res.status(410).json({ success: false, error: 'Lightning payments retired. Use NowPayments crypto checkout.', code: 'LIGHTNING_RETIRED' }));
+app.post('/api/webapp/payments/lightning/create', (req, res) => res.status(410).json({ success: false, error: 'Lightning payments retired. Use the USDC wallet payment option.', code: 'LIGHTNING_RETIRED' }));
 
 // GET /api/webapp/payments/lightning/status/:invoiceId — tombstone; DB read preserved for historical data
 app.get('/api/webapp/payments/lightning/status/:invoiceId', requireSessionAuth, asyncHandler(async (req, res) => {
@@ -15047,7 +14868,7 @@ app.get('/api/webapp/payments/dash/available', (req, res) => res.json({ availabl
 app.get('/api/webapp/payments/btc/available', (req, res) => res.json({ available: false, configured: false, reason: 'BTCPay/BTC retired 2026-07-31' }));
 
 // POST /api/webapp/payments/btc/create — retired 2026-07-31
-app.post('/api/webapp/payments/btc/create', (req, res) => res.status(410).json({ success: false, error: 'BTCPay BTC payments retired. Use NowPayments with payCurrency:btc.', code: 'BTCPAY_RETIRED' }));
+app.post('/api/webapp/payments/btc/create', (req, res) => res.status(410).json({ success: false, error: 'BTCPay BTC payments retired. Use the USDC wallet payment option.', code: 'BTCPAY_RETIRED' }));
 
 // GET /api/webapp/payments/btc/status/:invoiceId — historical DB read preserved
 app.get('/api/webapp/payments/btc/status/:invoiceId', requireSessionAuth, asyncHandler(async (req, res) => {
@@ -15094,14 +14915,10 @@ app.get('/api/webapp/payments/btc/status/:invoiceId', requireSessionAuth, asyncH
   return res.status(404).json({ success: false, error: 'Order not found' });
 }));
 
-// POST /api/wallet/buy-btc — retired 2026-07-31; use /api/wallet/buy-nowpayments with payCurrency:btc
-app.post('/api/wallet/buy-btc', walletBuyLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
-  return res.status(410).json({
-    success: false,
-    error: 'BTCPay BTC token top-ups retired. Use crypto (NowPayments) instead.',
-    code: 'BTCPAY_RETIRED',
-  });
-}));
+// POST /api/wallet/buy-btc — retired 2026-07-31
+app.post('/api/wallet/buy-btc', walletBuyLimiter, requireSessionAuth, (req, res) => {
+  return res.status(410).json({ success: false, error: 'BTC token top-ups retired. Use the USDC wallet payment option.', code: 'BTCPAY_RETIRED' });
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Meru token activation-code flow (/live page)
@@ -15247,32 +15064,6 @@ app.get('/api/wallet/token-activation/:activationCode/status', tokenActivationSt
 }));
 
 // ─────────────────────────────────────────────────────────────────────────────
-// NOWPayments — USDC / USDT stablecoin payments
-// ─────────────────────────────────────────────────────────────────────────────
-
-const NOWPAYMENTS_URL = process.env.NOWPAYMENTS_ENVIRONMENT === 'sandbox'
-  ? 'https://api-sandbox.nowpayments.io/v1'
-  : 'https://api.nowpayments.io/v1';
-const NOWPAYMENTS_API_KEY = process.env.NOWPAYMENTS_API_KEY || '';
-const nowpaymentsWidgetUrl = (invoiceId) =>
-  `https://nowpayments.io/embeds/payment-widget?iid=${encodeURIComponent(String(invoiceId))}`;
-
-function validateNowpaymentsIpn(body, signature) {
-  const secret = process.env.NOWPAYMENTS_IPN_SECRET || '';
-  if (!secret || !signature) return false;
-  const sortedBody = Object.keys(body).sort().reduce((acc, key) => {
-    acc[key] = body[key];
-    return acc;
-  }, {});
-  const hmac = crypto.createHmac('sha512', secret)
-    .update(JSON.stringify(sortedBody))
-    .digest('hex');
-  try {
-    return crypto.timingSafeEqual(Buffer.from(hmac, 'hex'), Buffer.from(signature, 'hex'));
-  } catch {
-    return false;
-  }
-}
 
 const usdcAvailableLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -15282,11 +15073,10 @@ const usdcAvailableLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// GET /api/webapp/payments/usdc/available — check if NOWPayments is configured
-app.get('/api/webapp/payments/usdc/available', usdcAvailableLimiter, asyncHandler(async (req, res) => {
-  const configured = !!NOWPAYMENTS_API_KEY;
-  return res.json({ available: configured, configured });
-}));
+// GET /api/webapp/payments/usdc/available — crypto provider retired 2026-10-20; always returns false.
+app.get('/api/webapp/payments/usdc/available', usdcAvailableLimiter, (req, res) => {
+  return res.json({ available: false, configured: false, retired: true });
+});
 
 const usdcPrepareLimiter = rateLimit({
   windowMs: 10 * 60 * 1000, // 10 minutes
@@ -15298,10 +15088,10 @@ const usdcPrepareLimiter = rateLimit({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Signed NowPayments redirect — used by mass DM/Telegram broadcasts so each
-// button in a message can 302 straight to a hosted NP invoice for the correct
-// user + plan + crypto. HMAC-SHA256 over SESSION_SECRET + short-lived exp so a
-// leaked URL can't be reused past its window.
+// Signed plan redirect — used by mass DM/Telegram broadcasts so each
+// button in a message can 302 to the /subscribe page with plan preselected.
+// HMAC-SHA256 over SESSION_SECRET + short-lived exp so a leaked URL can't be
+// reused past its window.
 // ─────────────────────────────────────────────────────────────────────────────
 const npGoLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -15344,16 +15134,11 @@ app.get('/api/pay/np-go', npGoLimiter, asyncHandler(async (req, res) => {
     return res.status(403).send('Invalid signature.');
   }
 
-  // Route change 2026-08-19: STOP creating a NowPayments invoice on click.
-  // The blind 302→NP hosted checkout was converting at 0.006% (1 payment out
-  // of 15,539 clicks on the 2026-08-19 crypto-plans broadcast). Users landed
-  // on NP's "send X BTC to this address" page, had no crypto or no idea how,
-  // and bailed. Now we redirect to /subscribe with the plan preselected and
-  // the intended coin as a hint, so the user lands on the improved checkout
-  // surface with card + wallet + all crypto options visible.
+  // Redirect to /subscribe with the plan preselected and the intended coin as
+  // a hint, so the user lands on the checkout surface with all options visible.
   const webappUrl = (process.env.WEBAPP_URL || 'https://pnptv.app').replace(/\/$/, '');
   const dest = `${webappUrl}/subscribe?plan=${encodeURIComponent(String(plan))}&pay=${encodeURIComponent(String(pay))}&via=np-go`;
-  logger.info('[NP-GO] Redirecting to /subscribe (invoice creation retired)', {
+  logger.info('[NP-GO] Redirecting to /subscribe', {
     userId: String(u), plan, pay, dest,
   });
   return res.redirect(302, dest);
@@ -15361,12 +15146,8 @@ app.get('/api/pay/np-go', npGoLimiter, asyncHandler(async (req, res) => {
 
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Public lifetime100 crypto checkout (no auth) — creates a NowPayments hosted
-// invoice for a $100 lifetime PRIME purchase paid in USDC / USDT / ETH / BTC.
-// User arrives on /lifetime100, picks currency, enters email — we lazy-create
-// (or resolve) a user row keyed by email, then hand back the invoice URL + iid
-// so the frontend can embed the NP widget. IPN webhook path is shared with the
-// authenticated flow: on completion it grants the lifetime100 plan add-ons.
+// Public lifetime100 checkout (no auth) — availability check endpoint.
+// Crypto invoice creation retired 2026-10-20; use WalletPayCard (USDC on Base).
 // ─────────────────────────────────────────────────────────────────────────────
 const LIFETIME100_PAY_CURRENCIES = new Set(['usdcbase', 'usdterc20', 'eth', 'btc']);
 const lifetime100NpInvoiceLimiter = rateLimit({
@@ -15394,147 +15175,16 @@ app.get('/api/public/lifetime100/availability', asyncHandler(async (req, res) =>
   }
 }));
 
-app.post('/api/public/lifetime100/np-invoice', lifetime100NpInvoiceLimiter, asyncHandler(async (req, res) => {
-  if (!NOWPAYMENTS_API_KEY) {
-    return res.status(503).json({ success: false, error: 'Crypto payments are temporarily unavailable.' });
-  }
+// POST /api/public/lifetime100/np-invoice — retired 2026-10-20. Use WalletPayCard (USDC on Base).
+app.post('/api/public/lifetime100/np-invoice', lifetime100NpInvoiceLimiter, (req, res) => {
+  return res.status(410).json({ success: false, error: 'retired', code: 'PROVIDER_RETIRED', message: 'Crypto checkout is retired. Use the USDC wallet payment option.' });
+});
 
-  const { email: rawEmail, payCurrency: rawPayCurrency, language: rawLang } = req.body || {};
-  const email = String(rawEmail || '').trim().toLowerCase();
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
-    return res.status(400).json({ success: false, error: 'A valid email address is required.' });
-  }
-  const payCurrency = String(rawPayCurrency || '').toLowerCase();
-  if (!LIFETIME100_PAY_CURRENCIES.has(payCurrency)) {
-    return res.status(400).json({ success: false, error: 'Unsupported currency.' });
-  }
-  const language = (typeof rawLang === 'string' && rawLang.toLowerCase().startsWith('es')) ? 'es' : 'en';
-
-  const { query: dbQuery } = require('../../config/postgres');
-  const { ensureEmailCredentials } = require('../../services/userService');
-
-  // Resolve (or lazy-create) a user for this email so the IPN webhook can grant.
-  const existing = await dbQuery(
-    `SELECT id FROM users WHERE LOWER(email) = LOWER($1) AND COALESCE(is_deleted, false) = false LIMIT 1`,
-    [email]
-  );
-  let userId;
-  if (existing.rows.length > 0) {
-    userId = existing.rows[0].id;
-  } else {
-    userId = crypto.randomUUID();
-    const firstName = email.split('@')[0].slice(0, 80) || 'Founder';
-    const rawUname3 = (email.split('@')[0] || '').toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 30) || `user_${crypto.randomBytes(4).toString('hex')}`;
-    const { rows: urows3 } = await dbQuery('SELECT 1 FROM users WHERE LOWER(username)=LOWER($1) LIMIT 1', [rawUname3]);
-    const username = urows3.length > 0 ? `${rawUname3.slice(0, 24)}_${crypto.randomBytes(3).toString('hex')}` : rawUname3;
-    await dbQuery(
-      `INSERT INTO users (id, email, username, first_name, tier, role, subscription_status, language, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, 'free', 'user', 'free', $5, NOW(), NOW())`,
-      [userId, email, username, firstName, language]
-    );
-    // Best-effort Authentik provision so a magic-link login works post-payment.
-    try { await ensureEmailCredentials(userId, email, language, { skipEmail: true }); } catch (_) {}
-  }
-
-  // Confirm the plan exists + read the amount from the DB (source of truth).
-  const planRes = await dbQuery(
-    `SELECT id, display_name, name, price FROM plans WHERE id = 'lifetime-pass' AND active = true LIMIT 1`
-  );
-  if (planRes.rows.length === 0) {
-    return res.status(503).json({ success: false, error: 'Lifetime plan not available.' });
-  }
-  const plan = planRes.rows[0];
-  const usdAmount = parseFloat(plan.price);
-  const planDisplayName = plan.display_name || plan.name || 'PNPtv! Lifetime PRIME';
-
-  // Reuse a live pending invoice for the same user + currency (avoids duplicate NP fees on retry).
-  const resumeRes = await dbQuery(
-    `SELECT id, btcpay_invoice_id, metadata FROM dash_subscription_orders
-     WHERE user_id = $1 AND plan_id = 'lifetime-pass' AND status = 'pending'
-       AND metadata->>'flow' = 'lifetime100-public'
-       AND metadata->>'payCurrency' = $2
-       AND created_at > NOW() - INTERVAL '23 hours'
-     ORDER BY created_at DESC LIMIT 1`,
-    [String(userId), payCurrency]
-  );
-  if (resumeRes.rows.length > 0) {
-    const meta = resumeRes.rows[0].metadata || {};
-    if (meta.invoiceUrl && meta.nowpaymentsInvoiceId) {
-      return res.json({
-        success: true,
-        orderId: resumeRes.rows[0].btcpay_invoice_id,
-        invoiceUrl: meta.invoiceUrl,
-        nowpaymentsInvoiceId: String(meta.nowpaymentsInvoiceId),
-        payCurrency,
-        usdAmount,
-        planName: planDisplayName,
-        resumed: true,
-      });
-    }
-  }
-
-  const webappUrl = (process.env.WEBAPP_URL || 'https://pnptv.app').replace(/\/$/, '');
-  const orderId = `pnptv-lt100-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
-
-  let invoiceUrl, nowpaymentsInvoiceId;
-  try {
-    const paymentResp = await axios.post(`${NOWPAYMENTS_URL}/invoice`, {
-      price_amount: usdAmount,
-      price_currency: 'usd',
-      pay_currency: payCurrency,
-      order_id: orderId,
-      order_description: `${planDisplayName} — PNPtv!`,
-      ipn_callback_url: `${webappUrl}/api/webhooks/nowpayments`,
-      success_url: `${webappUrl}/lifetime100?paid=1&order=${encodeURIComponent(orderId)}`,
-      cancel_url: `${webappUrl}/lifetime100`,
-      customer_email: email,
-    }, {
-      headers: { 'x-api-key': NOWPAYMENTS_API_KEY, 'Content-Type': 'application/json' },
-      timeout: 10000,
-    });
-    nowpaymentsInvoiceId = paymentResp.data?.id;
-    invoiceUrl = paymentResp.data?.invoice_url;
-    if (!nowpaymentsInvoiceId) throw new Error('No invoice id in response');
-    if (!invoiceUrl) invoiceUrl = nowpaymentsWidgetUrl(nowpaymentsInvoiceId);
-  } catch (err) {
-    logger.error('[LT100-NP] NowPayments invoice creation failed', {
-      email, payCurrency, error: err.response?.data || err.message,
-    });
-    return res.status(502).json({ success: false, error: 'Could not reach the payment provider. Please try again in a minute.' });
-  }
-
-  await dbQuery(
-    `INSERT INTO dash_subscription_orders
-       (user_id, plan_id, email, usd_amount, btcpay_invoice_id, status, metadata)
-     VALUES ($1, 'lifetime-pass', $2, $3, $4, 'pending', $5)
-     ON CONFLICT (btcpay_invoice_id) DO NOTHING`,
-    [String(userId), email, usdAmount, orderId, JSON.stringify({
-      provider: 'nowpayments',
-      flow: 'lifetime100-public',
-      source: 'lifetime100-widget',
-      payCurrency,
-      language,
-      invoiceUrl,
-      nowpaymentsInvoiceId: String(nowpaymentsInvoiceId),
-    })]
-  );
-
-  logger.info('[LT100-NP] Invoice created', { userId, email, orderId, payCurrency, usdAmount });
-
-  return res.json({
-    success: true,
-    orderId,
-    invoiceUrl,
-    nowpaymentsInvoiceId: String(nowpaymentsInvoiceId),
-    payCurrency,
-    usdAmount,
-    planName: planDisplayName,
-  });
-}));
+// Retired implementation kept as unreachable stub for reference.
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Public yearly50 crypto checkout (no auth) — mirrors the lifetime100 flow but
-// for the $50 annual PRIME plan (plan_id = 'yearly50', 50 total slots).
+// Public yearly50 checkout (no auth) — availability check endpoint.
+// Crypto invoice creation retired 2026-10-20; use WalletPayCard (USDC on Base).
 // ─────────────────────────────────────────────────────────────────────────────
 const YEARLY50_PAY_CURRENCIES = new Set(['usdcbase', 'usdterc20', 'eth', 'btc']);
 const yearly50NpInvoiceLimiter = rateLimit({
@@ -15562,146 +15212,11 @@ app.get('/api/public/yearly50/availability', asyncHandler(async (req, res) => {
   }
 }));
 
-app.post('/api/public/yearly50/np-invoice', yearly50NpInvoiceLimiter, asyncHandler(async (req, res) => {
-  if (!NOWPAYMENTS_API_KEY) {
-    return res.status(503).json({ success: false, error: 'Crypto payments are temporarily unavailable.' });
-  }
+// POST /api/public/yearly50/np-invoice — retired 2026-10-20. Use WalletPayCard (USDC on Base).
+app.post('/api/public/yearly50/np-invoice', yearly50NpInvoiceLimiter, (req, res) => {
+  return res.status(410).json({ success: false, error: 'retired', code: 'PROVIDER_RETIRED', message: 'Crypto checkout is retired. Use the USDC wallet payment option.' });
+});
 
-  const { email: rawEmail, payCurrency: rawPayCurrency, language: rawLang } = req.body || {};
-  const email = String(rawEmail || '').trim().toLowerCase();
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
-    return res.status(400).json({ success: false, error: 'A valid email address is required.' });
-  }
-  const payCurrency = String(rawPayCurrency || '').toLowerCase();
-  if (!YEARLY50_PAY_CURRENCIES.has(payCurrency)) {
-    return res.status(400).json({ success: false, error: 'Unsupported currency.' });
-  }
-  const language = (typeof rawLang === 'string' && rawLang.toLowerCase().startsWith('es')) ? 'es' : 'en';
-
-  const { query: dbQuery } = require('../../config/postgres');
-  const { ensureEmailCredentials } = require('../../services/userService');
-
-  const existing = await dbQuery(
-    `SELECT id FROM users WHERE LOWER(email) = LOWER($1) AND COALESCE(is_deleted, false) = false LIMIT 1`,
-    [email]
-  );
-  let userId;
-  if (existing.rows.length > 0) {
-    userId = existing.rows[0].id;
-  } else {
-    userId = crypto.randomUUID();
-    const firstName = email.split('@')[0].slice(0, 80) || 'Member';
-    const rawUname = (email.split('@')[0] || '').toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 30) || `user_${crypto.randomBytes(4).toString('hex')}`;
-    const { rows: urows } = await dbQuery('SELECT 1 FROM users WHERE LOWER(username)=LOWER($1) LIMIT 1', [rawUname]);
-    const username = urows.length > 0 ? `${rawUname.slice(0, 24)}_${crypto.randomBytes(3).toString('hex')}` : rawUname;
-    await dbQuery(
-      `INSERT INTO users (id, email, username, first_name, tier, role, subscription_status, language, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, 'free', 'user', 'free', $5, NOW(), NOW())`,
-      [userId, email, username, firstName, language]
-    );
-    try { await ensureEmailCredentials(userId, email, language, { skipEmail: true }); } catch (_) {}
-  }
-
-  const planRes = await dbQuery(
-    `SELECT id, display_name, name, price FROM plans WHERE id = 'yearly50' AND active = true LIMIT 1`
-  );
-  if (planRes.rows.length === 0) {
-    return res.status(503).json({ success: false, error: 'Annual plan not available.' });
-  }
-  const plan = planRes.rows[0];
-  const usdAmount = parseFloat(plan.price);
-  const planDisplayName = plan.display_name || plan.name || 'PNPtv! PRIME Annual';
-
-  const resumeRes = await dbQuery(
-    `SELECT id, btcpay_invoice_id, metadata FROM dash_subscription_orders
-     WHERE user_id = $1 AND plan_id = 'yearly50' AND status = 'pending'
-       AND metadata->>'flow' = 'yearly50-public'
-       AND metadata->>'payCurrency' = $2
-       AND created_at > NOW() - INTERVAL '23 hours'
-     ORDER BY created_at DESC LIMIT 1`,
-    [String(userId), payCurrency]
-  );
-  if (resumeRes.rows.length > 0) {
-    const meta = resumeRes.rows[0].metadata || {};
-    if (meta.invoiceUrl && meta.nowpaymentsInvoiceId) {
-      return res.json({
-        success: true,
-        orderId: resumeRes.rows[0].btcpay_invoice_id,
-        invoiceUrl: meta.invoiceUrl,
-        nowpaymentsInvoiceId: String(meta.nowpaymentsInvoiceId),
-        payCurrency,
-        usdAmount,
-        planName: planDisplayName,
-        resumed: true,
-      });
-    }
-  }
-
-  const webappUrl = (process.env.WEBAPP_URL || 'https://pnptv.app').replace(/\/$/, '');
-  const orderId = `pnptv-y50-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
-
-  let invoiceUrl, nowpaymentsInvoiceId;
-  try {
-    const paymentResp = await axios.post(`${NOWPAYMENTS_URL}/invoice`, {
-      price_amount: usdAmount,
-      price_currency: 'usd',
-      pay_currency: payCurrency,
-      order_id: orderId,
-      order_description: `${planDisplayName} — PNPtv!`,
-      ipn_callback_url: `${webappUrl}/api/webhooks/nowpayments`,
-      success_url: `${webappUrl}/yearly50?paid=1&order=${encodeURIComponent(orderId)}`,
-      cancel_url: `${webappUrl}/yearly50`,
-      customer_email: email,
-    }, {
-      headers: { 'x-api-key': NOWPAYMENTS_API_KEY, 'Content-Type': 'application/json' },
-      timeout: 10000,
-    });
-    nowpaymentsInvoiceId = paymentResp.data?.id;
-    invoiceUrl = paymentResp.data?.invoice_url;
-    if (!nowpaymentsInvoiceId) throw new Error('No invoice id in response');
-    if (!invoiceUrl) invoiceUrl = nowpaymentsWidgetUrl(nowpaymentsInvoiceId);
-  } catch (err) {
-    logger.error('[Y50-NP] NowPayments invoice creation failed', {
-      email, payCurrency, error: err.response?.data || err.message,
-    });
-    return res.status(502).json({ success: false, error: 'Could not reach the payment provider. Please try again in a minute.' });
-  }
-
-  await dbQuery(
-    `INSERT INTO dash_subscription_orders
-       (user_id, plan_id, email, usd_amount, btcpay_invoice_id, status, metadata)
-     VALUES ($1, 'yearly50', $2, $3, $4, 'pending', $5)
-     ON CONFLICT (btcpay_invoice_id) DO NOTHING`,
-    [String(userId), email, usdAmount, orderId, JSON.stringify({
-      provider: 'nowpayments',
-      flow: 'yearly50-public',
-      source: 'yearly50-widget',
-      payCurrency,
-      language,
-      invoiceUrl,
-      nowpaymentsInvoiceId: String(nowpaymentsInvoiceId),
-    })]
-  );
-
-  logger.info('[Y50-NP] Invoice created', { userId, email, orderId, payCurrency, usdAmount });
-
-  return res.json({
-    success: true,
-    orderId,
-    invoiceUrl,
-    nowpaymentsInvoiceId: String(nowpaymentsInvoiceId),
-    payCurrency,
-    usdAmount,
-    planName: planDisplayName,
-  });
-}));
-
-// Subscribable (recurring) plan IDs → NOWPayments subscription plan ID env var names
-const NOWPAYMENTS_SUBSCRIPTION_PLAN_MAP = {
-  'prime-week-pass-7d': 'NOWPAYMENTS_PLAN_WEEKLY',
-  'monthly-pass': 'NOWPAYMENTS_PLAN_MONTHLY',
-  'prime-diamond-pass-365d': 'NOWPAYMENTS_PLAN_YEARLY',
-};
 
 const usdcSubscribeLimiter = rateLimit({
   windowMs: 10 * 60 * 1000,
@@ -15712,468 +15227,23 @@ const usdcSubscribeLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// RETIRED 2026-08-09 — NowPayments hosted invoice replaced by wallet checkout.
+// POST /api/webapp/payments/usdc/subscribe — retired 2026-08-09.
 app.post('/api/webapp/payments/usdc/subscribe', requireSessionAuth, usdcSubscribeLimiter, (_req, res) => {
-  return res.status(410).json({
-    success: false,
-    error: 'NowPayments retired. Use wallet checkout (USDC on Base).',
-    code: 'NOWPAYMENTS_RETIRED',
-  });
+  return res.status(410).json({ success: false, error: 'retired', code: 'PROVIDER_RETIRED', message: 'Crypto subscription checkout is retired. Use the USDC wallet payment option.' });
 });
 
-app.post('/__np_retired_stub__usdc-subscribe', requireSessionAuth, usdcSubscribeLimiter, asyncHandler(async (req, res) => {
-  if (!NOWPAYMENTS_API_KEY) {
-    return res.status(503).json({ success: false, error: 'USDC payments are not configured.', code: 'NOWPAYMENTS_NOT_CONFIGURED' });
-  }
 
-  const user = req.session.user;
-  const { planId, email: rawEmail, returnUrl: rawReturnUrl, payCurrency: rawPayCurrency, promoCode } = req.body;
-  if (!planId) return res.status(400).json({ success: false, error: 'planId is required' });
+// POST /api/webapp/payments/usdc/prepare — retired 2026-10-20.
+app.post('/api/webapp/payments/usdc/prepare', requireSessionAuth, usdcPrepareLimiter, (req, res) => {
+  return res.status(410).json({ success: false, error: 'retired', code: 'PROVIDER_RETIRED', message: 'Crypto checkout is retired. Use the USDC wallet payment option.' });
+});
 
-  const ALLOWED_PAY_CURRENCIES = new Set(['eth', 'usdcerc20']);
-  const validPayCurrency = (rawPayCurrency && ALLOWED_PAY_CURRENCIES.has(String(rawPayCurrency).toLowerCase()))
-    ? String(rawPayCurrency).toLowerCase() : null;
 
-  // NP-H-02: validate email if provided
-  if (rawEmail != null && (typeof rawEmail !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail.trim()) || rawEmail.trim().length > 254)) {
-    return res.status(400).json({ success: false, error: 'Invalid email address' });
-  }
-  const email = rawEmail?.trim() || null;
+// POST /api/webapp/payments/onchain/prepare — retired 2026-10-20.
+app.post('/api/webapp/payments/onchain/prepare', requireSessionAuth, usdcPrepareLimiter, (req, res) => {
+  return res.status(410).json({ success: false, error: 'retired', code: 'PROVIDER_RETIRED', message: 'Onchain checkout is retired. Use the USDC wallet payment option.' });
+});
 
-  // promoCode format check — full validation happens in _resolveSubscriptionPromo below.
-  if (promoCode != null && (typeof promoCode !== 'string' || !/^[A-Za-z0-9_-]{3,64}$/.test(promoCode.trim()))) {
-    return res.status(400).json({ success: false, error: 'Invalid promo code format' });
-  }
-
-  const ALLOWED_RETURN_PATHS = new Set(['/subscribe', '/lifetime100']);
-  const returnPath = (typeof rawReturnUrl === 'string' && ALLOWED_RETURN_PATHS.has(rawReturnUrl))
-    ? rawReturnUrl
-    : '/subscribe';
-
-  const envVarName = NOWPAYMENTS_SUBSCRIPTION_PLAN_MAP[planId];
-  if (!envVarName) {
-    return res.status(400).json({ success: false, error: 'This plan does not support auto-renewing subscriptions.' });
-  }
-  const nowpaymentsPlanId = process.env[envVarName];
-  if (!nowpaymentsPlanId) {
-    return res.status(503).json({ success: false, error: 'Subscription plan not configured.', code: 'NOWPAYMENTS_NOT_CONFIGURED' });
-  }
-
-  const userId = String(user.telegram_id || user.id);
-  const { query: dbQuery } = require('../../config/postgres');
-  const webappUrl = process.env.WEBAPP_URL || 'https://pnptv.app';
-
-  const planRes = await dbQuery('SELECT * FROM plans WHERE id = $1 AND active = true', [planId]);
-  const plan = planRes.rows[0];
-  if (!plan) return res.status(404).json({ success: false, error: 'Plan not found' });
-
-  // Apply promo code (if supplied) OR the auto 20% crypto discount — promo wins.
-  const basePrice = parseFloat(plan.price);
-  let promoApplied = null;
-  try {
-    promoApplied = await _resolveSubscriptionPromo({ userId, promoCode, planId, plan });
-  } catch (promoErr) {
-    return res.status(promoErr.httpStatus || 400).json({ success: false, error: promoErr.message, code: promoErr.code });
-  }
-  const usdAmount = promoApplied
-    ? promoApplied.finalPrice
-    : ((plan.payment_method === 'crypto' || basePrice <= 50) ? basePrice : Math.round(basePrice * 0.80 * 100) / 100);
-  const planDisplayName = plan.display_name || plan.name;
-
-  // Resume existing pending subscription invoice (within 23 hours)
-  const existingRes = await dbQuery(
-    `SELECT id, btcpay_invoice_id, metadata FROM dash_subscription_orders
-     WHERE user_id = $1 AND plan_id = $2 AND status = 'pending'
-       AND metadata->>'flow' = 'subscription'
-       AND created_at > NOW() - INTERVAL '23 hours'
-     ORDER BY created_at DESC LIMIT 1`,
-    [userId, planId]
-  );
-  if (existingRes.rows.length > 0) {
-    const meta = existingRes.rows[0].metadata || {};
-    if (meta.invoiceUrl) {
-      logger.info('[NOWPayments] Subscribe: resuming existing subscription invoice', { userId, planId });
-      return res.json({ success: true, orderId: existingRes.rows[0].btcpay_invoice_id, invoiceUrl: meta.invoiceUrl, planName: planDisplayName, usdAmount, resumed: true });
-    }
-  }
-
-  const orderId = `pnptv-nowp-sub-${userId}-${Date.now()}`;
-  const customerEmail = email || user.email || null;
-
-  let invoiceUrl;
-  let npPayInfo = {};
-  try {
-    const paymentResp = await axios.post(`${NOWPAYMENTS_URL}/invoice`, {
-      price_amount: usdAmount,
-      price_currency: 'usd',
-      pay_currency: validPayCurrency || 'usdcsol',
-      order_id: orderId,
-      order_description: `${planDisplayName} – PNPtv!`,
-      ipn_callback_url: `${webappUrl}/api/webhooks/nowpayments`,
-      ...(customerEmail ? { customer_email: customerEmail } : {}),
-    }, {
-      headers: { 'x-api-key': NOWPAYMENTS_API_KEY, 'Content-Type': 'application/json' },
-      timeout: 10000,
-    });
-    const { id: nowpaymentsInvoiceId, invoice_url: npInvoiceUrl } = paymentResp.data;
-    if (!nowpaymentsInvoiceId) throw new Error('No invoice id in response');
-    invoiceUrl = npInvoiceUrl || nowpaymentsWidgetUrl(nowpaymentsInvoiceId);
-    npPayInfo = { nowpaymentsInvoiceId: String(nowpaymentsInvoiceId), payCurrency: validPayCurrency || 'usdcsol' };
-  } catch (err) {
-    logger.error('[NOWPayments] Subscription payment creation failed', { userId, planId, payCurrency: validPayCurrency, error: err.response?.data || err.message });
-    return res.status(502).json({ success: false, error: 'Could not reach NOWPayments. Please try again.', code: 'NOWPAYMENTS_ERROR' });
-  }
-
-  await dbQuery(
-    `INSERT INTO dash_subscription_orders
-       (user_id, plan_id, email, usd_amount, btcpay_invoice_id, status, metadata)
-     VALUES ($1, $2, $3, $4, $5, 'pending', $6)
-     ON CONFLICT (btcpay_invoice_id) DO NOTHING`,
-    [userId, planId, customerEmail, usdAmount, orderId,
-     JSON.stringify({
-       provider: 'nowpayments',
-       flow: 'subscription',
-       invoiceUrl,
-       nowpaymentsPlanId,
-       ...(npPayInfo?.nowpaymentsInvoiceId ? { nowpaymentsInvoiceId: npPayInfo.nowpaymentsInvoiceId } : {}),
-       ...(validPayCurrency ? { payCurrency: validPayCurrency } : {}),
-       ...(promoApplied ? {
-         promoId: promoApplied.promoId,
-         promoCode: promoApplied.promoCode,
-         redemptionId: promoApplied.redemptionId,
-         originalPrice: promoApplied.originalPrice,
-         discountAmount: promoApplied.discountAmount,
-       } : {}),
-     })]
-  );
-
-  logger.info('[NOWPayments] Subscription invoice created', { userId, planId, orderId, usdAmount, payCurrency: validPayCurrency, promoCode: promoApplied?.promoCode || null });
-
-  return res.json({ success: true, orderId, invoiceUrl, planName: planDisplayName, usdAmount, ...npPayInfo });
-}));
-
-// Re-enabled 2026-08-15 as "Pay with any crypto" fallback for plans checkout.
-// Primary path is wallet USDC on Base (WalletPayCard); this creates a hosted
-// NowPayments invoice for users who prefer BTC / USDT / DOGE / LTC / XMR / etc.
-app.post('/api/webapp/payments/usdc/prepare', requireSessionAuth, usdcPrepareLimiter, asyncHandler(async (req, res) => {
-  if (!NOWPAYMENTS_API_KEY) {
-    return res.status(503).json({ success: false, error: 'Crypto fallback is not configured.', code: 'NOWPAYMENTS_NOT_CONFIGURED' });
-  }
-
-  const user = req.session.user;
-  const { planId, email, creatorId, returnUrl: rawReturnUrl, payCurrency: rawPayCurrency } = req.body;
-  if (!planId) return res.status(400).json({ success: false, error: 'planId is required' });
-
-  if (email != null && (typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) || email.trim().length > 254)) {
-    return res.status(400).json({ success: false, error: 'Invalid email address' });
-  }
-
-  const ALLOWED_PAY_CURRENCIES_PREPARE = new Set([
-    'btc', 'eth', 'ltc', 'doge', 'xmr', 'sol', 'trx', 'bnbbsc', 'matic',
-    'usdcsol', 'usdcbase', 'usdttrc20', 'usdtbsc', 'usdterc20',
-  ]);
-  const validPayCurrency = (rawPayCurrency && ALLOWED_PAY_CURRENCIES_PREPARE.has(String(rawPayCurrency).toLowerCase()))
-    ? String(rawPayCurrency).toLowerCase() : null;
-
-  const ALLOWED_RETURN_PATHS_PREPARE = new Set(['/subscribe', '/lifetime100']);
-  const returnPath = (typeof rawReturnUrl === 'string' && ALLOWED_RETURN_PATHS_PREPARE.has(rawReturnUrl))
-    ? rawReturnUrl
-    : '/subscribe';
-
-  const userId = String(user.telegram_id || user.id);
-  const { query: dbQuery } = require('../../config/postgres');
-  const webappUrl = process.env.WEBAPP_URL || 'https://pnptv.app';
-
-  // Return existing pending invoice if created within the last 23 hours — avoids duplicate invoices
-  // When payCurrency is specified, only resume invoices for the same currency to avoid
-  // returning a USDC invoice when the user requested BTC.
-  if (planId !== 'creator_monthly') {
-    let resumeRes;
-    if (validPayCurrency) {
-      resumeRes = await dbQuery(
-        `SELECT id, btcpay_invoice_id, usd_amount, plan_id, metadata FROM dash_subscription_orders
-         WHERE user_id = $1 AND plan_id = $2 AND status = 'pending'
-           AND metadata->>'flow' = 'hosted'
-           AND metadata->>'payCurrency' = $3
-           AND created_at > NOW() - INTERVAL '23 hours'
-         ORDER BY created_at DESC LIMIT 1`,
-        [userId, planId, validPayCurrency]
-      );
-    } else {
-      resumeRes = await dbQuery(
-        `SELECT id, btcpay_invoice_id, usd_amount, plan_id, metadata FROM dash_subscription_orders
-         WHERE user_id = $1 AND plan_id = $2 AND status = 'pending'
-           AND metadata->>'flow' = 'hosted'
-           AND (metadata->>'payCurrency' IS NULL OR metadata->>'payCurrency' = '')
-           AND created_at > NOW() - INTERVAL '23 hours'
-         ORDER BY created_at DESC LIMIT 1`,
-        [userId, planId]
-      );
-    }
-    if (resumeRes.rows.length > 0) {
-      const resumable = resumeRes.rows[0];
-      const meta = resumable.metadata || {};
-      if (meta.invoiceUrl) {
-        logger.info('[NOWPayments] Prepare: resuming existing pending order', { userId, planId, orderId: resumable.btcpay_invoice_id, payCurrency: validPayCurrency });
-        const resumePlan = await dbQuery('SELECT display_name, name FROM plans WHERE id = $1', [planId]).catch(() => ({ rows: [] }));
-        const resumePlanName = resumePlan.rows[0]?.display_name || resumePlan.rows[0]?.name || planId;
-        return res.json({
-          success: true,
-          orderId: resumable.btcpay_invoice_id,
-          usdAmount: parseFloat(resumable.usd_amount),
-          planName: resumePlanName,
-          invoiceUrl: meta.invoiceUrl,
-          resumed: true,
-        });
-      }
-    }
-  }
-
-  let planDisplayName;
-  let usdAmount;
-  let discountInfo = null;
-
-  if (planId === 'creator_monthly') {
-    if (!creatorId) return res.status(400).json({ success: false, error: 'creatorId is required for creator subscriptions' });
-    if (String(creatorId) === userId) return res.status(400).json({ success: false, error: 'You cannot subscribe to yourself' });
-    const creatorRes = await dbQuery(
-      'SELECT id, username, first_name, creator_price_usd, creator_locked, creator_subscription_paused FROM users WHERE id = $1 AND creator_status = $2',
-      [String(creatorId), 'active']
-    );
-    if (creatorRes.rows.length === 0) return res.status(404).json({ success: false, error: 'Creator not found or not active' });
-    const creator = creatorRes.rows[0];
-    if (creator.creator_locked) {
-      return res.status(423).json({ success: false, error: 'This creator is completing onboarding and cannot accept new subscriptions yet.', code: 'CREATOR_LOCKED' });
-    }
-    if (creator.creator_subscription_paused) {
-      return res.status(423).json({ success: false, error: 'This creator has paused new memberships.', code: 'SUBSCRIPTIONS_PAUSED' });
-    }
-    // CS-PAY-M-01: require pnp-member before creating a creator_monthly invoice
-    const EASPrepare = require('../../services/entitlementAccessService');
-    const hasMemberPrepare = await EASPrepare.hasEntitlement(String(userId), 'pnp-member');
-    if (!hasMemberPrepare) {
-      return res.status(403).json({
-        success: false,
-        error: 'Se requiere membresía Basic para suscribirse a un creador.',
-        code: 'MEMBER_REQUIRED',
-      });
-    }
-    const price = parseFloat(creator.creator_price_usd);
-    if (!Number.isFinite(price) || price <= 0) return res.status(400).json({ success: false, error: 'Creator has no active subscription price' });
-    usdAmount = price;
-    planDisplayName = 'Premium subscription';
-  } else {
-    const { query: planQuery } = require('../../config/postgres');
-    const planRes = await planQuery('SELECT * FROM plans WHERE id = $1 AND active = true', [planId]);
-    const plan = planRes.rows[0];
-    if (!plan) return res.status(404).json({ success: false, error: 'Plan not found' });
-    const basePrice = parseFloat(plan.price);
-    // crypto payment_method = fixed promo price, no stacking discount
-    if (plan.payment_method === 'crypto') {
-      usdAmount = basePrice;
-    } else if (basePrice > 50) {
-      usdAmount = Math.round(basePrice * 0.80 * 100) / 100;
-      discountInfo = { originalAmount: basePrice, discountPct: 20 };
-    } else {
-      usdAmount = basePrice;
-    }
-    planDisplayName = plan.display_name || plan.name;
-  }
-
-  // NowPayments raised their effective minimum (post-fee) around 2026-09-20.
-  // Invoices below ~$18.95 are accepted by their API but the pay_amount they
-  // return is often rejected by the user's wallet (fee > principal) or lands
-  // below NP's own confirm threshold, so 99%+ expire. Hard-block server-side
-  // so no sub-floor invoices get created regardless of which flow calls this
-  // (subscribe, hangouts, channels, creator_monthly all route through here).
-  if (usdAmount < 18.95) {
-    logger.warn('[NOWPayments] Rejected sub-floor invoice', { userId, planId, usdAmount });
-    return res.status(400).json({
-      success: false,
-      error: 'This plan is below the crypto rail minimum. Pay with your card or wallet instead.',
-      code: 'BELOW_NP_MINIMUM',
-      minimumUsd: 18.95,
-    });
-  }
-
-  const orderId = `pnptv-nowp-${userId}-${Date.now()}`;
-  const ipnCallbackUrl = `${webappUrl}/api/webhooks/nowpayments`;
-
-  let invoiceUrl;
-  let npPayInfo2 = {};
-  try {
-    const paymentResp = await axios.post(`${NOWPAYMENTS_URL}/invoice`, {
-      price_amount: usdAmount,
-      price_currency: 'usd',
-      pay_currency: validPayCurrency || 'usdcsol',
-      order_id: orderId,
-      order_description: `${planDisplayName} – PNPtv!`,
-      ipn_callback_url: ipnCallbackUrl,
-      ...(email ? { customer_email: email } : {}),
-    }, {
-      headers: { 'x-api-key': NOWPAYMENTS_API_KEY, 'Content-Type': 'application/json' },
-      timeout: 10000,
-    });
-    const { id: nowpaymentsInvoiceId, invoice_url: npInvoiceUrl } = paymentResp.data;
-    if (!nowpaymentsInvoiceId) throw new Error('No invoice id in response');
-    invoiceUrl = npInvoiceUrl || nowpaymentsWidgetUrl(nowpaymentsInvoiceId);
-    npPayInfo2 = { nowpaymentsInvoiceId: String(nowpaymentsInvoiceId), payCurrency: validPayCurrency || 'usdcsol' };
-  } catch (err) {
-    logger.error('[NOWPayments] Payment creation failed', { userId, planId, orderId, payCurrency: validPayCurrency, error: err.message });
-    return res.status(502).json({ success: false, error: 'Could not reach NOWPayments. Please try again.', code: 'NOWPAYMENTS_ERROR' });
-  }
-
-  await dbQuery(
-    `INSERT INTO dash_subscription_orders
-       (user_id, plan_id, email, usd_amount, btcpay_invoice_id, status, creator_id, metadata)
-     VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7)
-     ON CONFLICT (btcpay_invoice_id) DO NOTHING`,
-    [
-      userId,
-      planId,
-      email || null,
-      usdAmount,
-      orderId,
-      creatorId ? String(creatorId) : null,
-      JSON.stringify({
-        provider: 'nowpayments',
-        flow: 'hosted',
-        invoiceUrl,
-        ...(npPayInfo2?.nowpaymentsInvoiceId ? { nowpaymentsInvoiceId: npPayInfo2.nowpaymentsInvoiceId } : {}),
-        ...(validPayCurrency ? { payCurrency: validPayCurrency } : {}),
-      }),
-    ]
-  );
-
-  logger.info('[NOWPayments] Invoice created', { userId, planId, orderId, usdAmount, payCurrency: validPayCurrency, invoiceUrl });
-
-  return res.json({
-    success: true,
-    orderId,
-    usdAmount,
-    planName: planDisplayName,
-    invoiceUrl,
-    ...(discountInfo || {}),
-    ...npPayInfo2,
-  });
-}));
-
-// POST /api/webapp/payments/onchain/prepare — create a NowPayments direct
-// payment (not a hosted invoice) so the frontend can pull pay_address +
-// pay_amount and drive an in-wallet sendTransaction from Privy/injected
-// MetaMask. Forces pay_currency=etharb (Arbitrum ETH, cheapest L2 confirmed
-// on NowPayments). Currently wired to Donate only; other checkout callers
-// still route through /prepare until the Web3 flow is validated.
-app.post('/api/webapp/payments/onchain/prepare', requireSessionAuth, usdcPrepareLimiter, asyncHandler(async (req, res) => {
-  if (!NOWPAYMENTS_API_KEY) {
-    return res.status(503).json({ success: false, error: 'Crypto payments are not configured.', code: 'NOWPAYMENTS_NOT_CONFIGURED' });
-  }
-  const user = req.session.user;
-  const { planId, creatorId, payCurrency: reqPayCurrency } = req.body || {};
-  if (!planId) return res.status(400).json({ success: false, error: 'planId is required' });
-
-  const userId = String(user.telegram_id || user.id);
-  const { query: dbQuery } = require('../../config/postgres');
-  const webappUrl = process.env.WEBAPP_URL || 'https://pnptv.app';
-  const ALLOWED_CURRENCIES = ['btc', 'eth', 'etharb', 'usdcmatic', 'usdterc20', 'ltc'];
-  const PAY_CURRENCY = ALLOWED_CURRENCIES.includes(reqPayCurrency) ? reqPayCurrency : 'btc';
-
-  // Resume: if there's a pending onchain order for this plan < 23h old, reuse it
-  // so we don't spam NP with a fresh pay_address on every page refresh.
-  const resumeRes = await dbQuery(
-    `SELECT btcpay_invoice_id, usd_amount, plan_id, metadata FROM dash_subscription_orders
-     WHERE user_id = $1 AND plan_id = $2 AND status = 'pending'
-       AND metadata->>'flow' = 'onchain'
-       AND metadata->>'payCurrency' = $3
-       AND created_at > NOW() - INTERVAL '23 hours'
-     ORDER BY created_at DESC LIMIT 1`,
-    [userId, planId, PAY_CURRENCY]
-  );
-  if (resumeRes.rows.length > 0) {
-    const r = resumeRes.rows[0];
-    const meta = r.metadata || {};
-    if (meta.payAddress && meta.payAmount) {
-      const planRow = await dbQuery('SELECT display_name, name FROM plans WHERE id = $1', [planId]).catch(() => ({ rows: [] }));
-      return res.json({
-        success: true,
-        orderId: r.btcpay_invoice_id,
-        usdAmount: parseFloat(r.usd_amount),
-        planName: planRow.rows[0]?.display_name || planRow.rows[0]?.name || planId,
-        payAddress: meta.payAddress,
-        payAmount: meta.payAmount,
-        payCurrency: PAY_CURRENCY,
-        resumed: true,
-      });
-    }
-  }
-
-  const planRes = await dbQuery('SELECT * FROM plans WHERE id = $1 AND active = true', [planId]);
-  const plan = planRes.rows[0];
-  if (!plan) return res.status(404).json({ success: false, error: 'Plan not found' });
-  const usdAmount = parseFloat(plan.price);
-  if (!Number.isFinite(usdAmount) || usdAmount <= 0) {
-    return res.status(400).json({ success: false, error: 'Plan has no payable price' });
-  }
-  const planDisplayName = plan.display_name || plan.name;
-
-  const orderId = `pnptv-nowp-${userId}-${Date.now()}`;
-  const ipnCallbackUrl = `${webappUrl}/api/webhooks/nowpayments`;
-
-  let payAddress, payAmount, nowpaymentsPaymentId;
-  try {
-    const resp = await axios.post(`${NOWPAYMENTS_URL}/payment`, {
-      price_amount: usdAmount,
-      price_currency: 'usd',
-      pay_currency: PAY_CURRENCY,
-      order_id: orderId,
-      order_description: `${planDisplayName} – PNPtv!`,
-      ipn_callback_url: ipnCallbackUrl,
-    }, {
-      headers: { 'x-api-key': NOWPAYMENTS_API_KEY, 'Content-Type': 'application/json' },
-      timeout: 15000,
-    });
-    payAddress = resp.data?.pay_address;
-    payAmount = resp.data?.pay_amount;
-    nowpaymentsPaymentId = resp.data?.payment_id;
-    if (!payAddress || !payAmount || !nowpaymentsPaymentId) {
-      throw new Error('NOWPayments response missing pay_address/pay_amount/payment_id');
-    }
-  } catch (err) {
-    logger.error('[NOWPayments onchain] Payment creation failed', {
-      userId, planId, orderId,
-      error: err.response?.data || err.message,
-    });
-    return res.status(502).json({ success: false, error: 'Could not reach NOWPayments. Please try again.', code: 'NOWPAYMENTS_ERROR' });
-  }
-
-  await dbQuery(
-    `INSERT INTO dash_subscription_orders
-       (user_id, plan_id, email, usd_amount, btcpay_invoice_id, status, creator_id, metadata)
-     VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7)
-     ON CONFLICT (btcpay_invoice_id) DO NOTHING`,
-    [
-      userId, planId, null, usdAmount, orderId, creatorId || null,
-      JSON.stringify({
-        flow: 'onchain',
-        payCurrency: PAY_CURRENCY,
-        payAddress,
-        payAmount: String(payAmount),
-        nowpaymentsPaymentId: String(nowpaymentsPaymentId),
-      }),
-    ]
-  );
-
-  logger.info('[NOWPayments onchain] Order created', { userId, planId, orderId, usdAmount, payAddress, payAmount });
-  res.json({
-    success: true,
-    orderId,
-    usdAmount,
-    planName: planDisplayName,
-    payAddress,
-    payAmount: String(payAmount),
-    payCurrency: PAY_CURRENCY,
-  });
-}));
 
 const usdcStatusLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
@@ -16494,7 +15564,8 @@ app.post('/api/webapp/tip-tokens', requireSessionAuth, tipLimiter, asyncHandler(
 
 // ── Creator tip endpoints ─────────────────────────────────────────────────────
 // Tips take the standard 30% platform fee (TIP_CREATOR_RATE = 0.70 since 2026-09-06).
-// Uses NowPayments hosted invoice. Idempotency key = UUID stored in creator_tips.order_id.
+// Crypto tip flow retired 2026-10-20. Tips use wallet_usdc via
+// POST /api/wallet/checkout/initiate with surface='tip'.
 
 const creatorTipLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
@@ -16505,118 +15576,15 @@ const creatorTipLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// POST /api/webapp/creators/:creatorId/tip
-app.post('/api/webapp/creators/:creatorId/tip', requireSessionAuth, creatorTipLimiter, asyncHandler(async (req, res) => {
-  const user = req.session?.user;
-  if (!user) return res.status(401).json({ success: false, error: 'Authentication required' });
-
-  if (!NOWPAYMENTS_API_KEY) {
-    return res.status(503).json({ success: false, error: 'Crypto payments are not configured.', code: 'NOWPAYMENTS_NOT_CONFIGURED' });
-  }
-
-  const { amount, message: rawMessage, email: rawEmail, payCurrency } = req.body || {};
-  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-  // Validate amount
-  const parsedAmount = typeof amount === 'number' ? amount : parseFloat(amount);
-  if (!Number.isFinite(parsedAmount) || parsedAmount < 1 || parsedAmount > 500) {
-    return res.status(400).json({ success: false, error: 'Amount must be between $1 and $500.' });
-  }
-
-  // Validate message (optional)
-  if (rawMessage != null && (typeof rawMessage !== 'string' || rawMessage.length > 500)) {
-    return res.status(400).json({ success: false, error: 'Message must be a string of 500 characters or fewer.' });
-  }
-  const sanitizedMessage = rawMessage ? String(rawMessage).trim().slice(0, 500) : null;
-
-  // Validate email (optional)
-  if (rawEmail != null && (typeof rawEmail !== 'string' || rawEmail.length > 254 || !EMAIL_RE.test(rawEmail.trim()))) {
-    return res.status(400).json({ success: false, error: 'Invalid email address.' });
-  }
-  const customerEmail = rawEmail ? String(rawEmail).trim().toLowerCase() : null;
-
-  const { query: dbQuery } = require('../../config/postgres');
-  const { creatorId } = req.params;
-
-  // Look up the creator by username OR uuid
-  const creatorRes = await dbQuery(
-    `SELECT u.id, u.email, u.username, p.user_id AS performer_user_id
-     FROM users u
-     JOIN performers p ON p.user_id = u.id
-     WHERE (u.username ILIKE $1 OR u.id::text = $1) AND p.status = 'active'
-     LIMIT 1`,
-    [String(creatorId)]
-  );
-  if (creatorRes.rows.length === 0) {
-    return res.status(404).json({ success: false, error: 'Creator not found' });
-  }
-  const creator = creatorRes.rows[0];
-  const creatorUserId = String(creator.id);
-  const creatorUsername = creator.username || creatorId;
-
-  // Prevent self-tipping
-  const payerUserId = String(user.telegram_id || user.id);
-  if (payerUserId === creatorUserId) {
-    return res.status(400).json({ success: false, error: 'You cannot tip yourself' });
-  }
-
-  const orderId = crypto.randomUUID();
-  const webappUrl = process.env.WEBAPP_URL || 'https://pnptv.app';
-
-  // Create NowPayments hosted invoice
-  let invoiceData;
-  try {
-    const invoiceBody = {
-      price_amount: parsedAmount,
-      price_currency: 'usd',
-      order_id: orderId,
-      order_description: `Tip for ${creatorUsername} on PNPtv!`,
-      ipn_callback_url: `${webappUrl}/api/webhooks/nowpayments`,
-    };
-    if (customerEmail) invoiceBody.customer_email = customerEmail;
-    if (payCurrency) invoiceBody.pay_currency = String(payCurrency).toLowerCase();
-
-    const invoiceResp = await axios.post(`${NOWPAYMENTS_URL}/invoice`, invoiceBody, {
-      headers: { 'x-api-key': NOWPAYMENTS_API_KEY, 'Content-Type': 'application/json' },
-      timeout: 10000,
-    });
-    invoiceData = invoiceResp.data;
-  } catch (invoiceErr) {
-    logger.error('[tip/create] NowPayments invoice creation failed', { error: invoiceErr.message, creatorId, payerUserId });
-    return res.status(502).json({ success: false, error: 'Payment provider error. Please try again.', code: 'INVOICE_FAILED' });
-  }
-
-  const nowpaymentsInvoiceId = invoiceData?.id || invoiceData?.invoice_id || null;
-  const invoiceUrl = invoiceData?.invoice_url
-    || (nowpaymentsInvoiceId ? nowpaymentsWidgetUrl(nowpaymentsInvoiceId) : null);
-
-  // Insert into dash_subscription_orders
-  await dbQuery(
-    `INSERT INTO dash_subscription_orders (user_id, plan_id, email, usd_amount, btcpay_invoice_id, status, creator_id, metadata)
-     VALUES ($1, 'creator_tip', $2, $3, $4, 'pending', $5, $6)
-     ON CONFLICT (btcpay_invoice_id) DO NOTHING`,
-    [
-      payerUserId,
-      customerEmail || null,
-      parsedAmount,
-      orderId,
-      creatorUserId,
-      JSON.stringify({ provider: 'nowpayments', flow: 'tip', creatorUsername, message: sanitizedMessage, invoiceUrl, ...(nowpaymentsInvoiceId ? { nowpaymentsInvoiceId: String(nowpaymentsInvoiceId) } : {}) }),
-    ]
-  );
-
-  // Insert into creator_tips
-  await dbQuery(
-    `INSERT INTO creator_tips (payer_id, creator_id, amount_usd, order_id, message, status)
-     VALUES ($1, $2, $3, $4, $5, 'pending')
-     ON CONFLICT (order_id) DO NOTHING`,
-    [payerUserId, creatorUserId, parsedAmount, orderId, sanitizedMessage]
-  );
-
-  logger.info('[tip/create] Tip invoice created', { orderId, payerUserId, creatorUserId, amount: parsedAmount });
-
-  return res.json({ success: true, orderId, invoiceUrl, nowpaymentsInvoiceId, amount: parsedAmount });
-}));
+// POST /api/webapp/creators/:creatorId/tip — retired. Use /api/wallet/checkout/initiate surface='tip'.
+app.post('/api/webapp/creators/:creatorId/tip', requireSessionAuth, creatorTipLimiter, (req, res) => {
+  return res.status(410).json({
+    success: false,
+    error: 'retired',
+    code: 'PROVIDER_RETIRED',
+    message: 'This tip endpoint is retired. Send tips via the wallet checkout.',
+  });
+});
 
 // GET /api/webapp/creators/:creatorId/tip/status/:orderId
 app.get('/api/webapp/creators/:creatorId/tip/status/:orderId', requireSessionAuth, asyncHandler(async (req, res) => {
@@ -16723,1642 +15691,6 @@ app.get('/api/webapp/payments/history', requireSessionAuth, asyncHandler(async (
   });
 
   return res.json({ success: true, payments });
-}));
-
-// Central revenue logger for NP IPN branches → Zoho Books + CRM sync.
-// Called once per successful payment branch (after DSO marked completed).
-// Fire-and-forget so a Books/Zoho outage never breaks payment fulfillment.
-function _npLogRevenueAndSync(order, paymentId) {
-  setImmediate(async () => {
-    try {
-      if (!order || !order.user_id) return;
-      const zohoBooks = require('../../services/zohoBooksService');
-      if (!zohoBooks.isConfigured()) return;
-      const usd = Number(order.usd_amount) || 0;
-      if (usd <= 0) return;
-
-      const meta = order.metadata || {};
-      const planId = order.plan_id;
-      const skuMap = {
-        token_purchase:      `Ru$h tokens${meta.packageId ? ` — ${meta.packageId}` : ''}`,
-        creator_tip:         `Tip → creator ${order.creator_id ? String(order.creator_id).slice(0, 12) : 'unknown'}`,
-        call_package:        `Call package${meta.packageId ? ` — ${meta.packageId}` : ''}`,
-        crystal_creator:     meta.isGift ? 'Crystal Creator Pass — Gift' : 'Crystal Creator Pass — Self',
-        crystal_service:     `Crystal service — ${meta.serviceType || 'unknown'}`,
-        promo_token_bundle:  `Promo token bundle${meta.promoCode ? ` — ${meta.promoCode}` : ''}`,
-        channel_access:      `Channel access — ${meta.channelId || 'unknown'}`,
-        hangout_access:      `Hangout access — ${meta.hangoutGroupId || 'unknown'}`,
-        creator_monthly:     `Creator sub → ${order.creator_id ? String(order.creator_id).slice(0, 12) : 'unknown'}`,
-      };
-      const sku = skuMap[planId] || `PRIME/Membership — ${planId}`;
-
-      const { rows: uRows } = await query(
-        `SELECT email, first_name, username FROM users WHERE id = $1`, [String(order.user_id)]
-      );
-      const u = uRows[0] || {};
-
-      await zohoBooks.logRevenue({
-        buyerUserId: String(order.user_id),
-        buyerEmail: u.email || order.email || null,
-        buyerName: u.first_name || null,
-        buyerUsername: u.username || null,
-        sku,
-        priceCents: Math.round(usd * 100),
-        provider: 'nowpayments',
-        reference: `np:${paymentId}`,
-        notes: order.creator_id ? `Creator: ${order.creator_id}` : null,
-      });
-
-      // CRM sync — buyer's contact reflects the new purchase (tier + earnings +
-      // sub count all recompute in the sync query).
-      require('../../services/zohoSyncService').syncOneUser(String(order.user_id)).catch(() => {});
-    } catch (err) {
-      require('../../utils/logger').warn('[np-ipn] revenue log hook failed', {
-        planId: order?.plan_id, paymentId, error: err.message,
-      });
-    }
-  });
-}
-
-// POST /api/webhooks/nowpayments — NOWPayments IPN webhook
-// Processes synchronously so NOWPayments retries on any 5xx (no fire-and-forget).
-// Grant runs BEFORE marking completed so a crash leaves the order retryable.
-app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandler(async (req, res) => {
-  const sig = req.headers['x-nowpayments-sig'];
-  if (!validateNowpaymentsIpn(req.body, sig)) {
-    logger.warn('[NOWPayments] Invalid IPN signature');
-    return res.status(400).json({ error: 'invalid_signature' });
-  }
-
-  const { payment_id, payment_status, order_id, actually_paid, pay_amount, price_amount, price_currency, pay_currency } = req.body;
-
-  // NP-M-05: reject IPNs missing required fields
-  if (!payment_id || !payment_status || !order_id) {
-    logger.warn('[NOWPayments] IPN: missing required fields', { payment_id, payment_status, order_id });
-    return res.status(400).json({ error: 'missing_fields' });
-  }
-
-  logger.info('[NOWPayments] IPN received', { payment_id, payment_status, order_id });
-
-  const { query: dbQuery } = require('../../config/postgres');
-
-  // Intermediate / terminal non-success statuses — update DB and ack immediately
-  if (payment_status === 'wrong_asset_confirmed') {
-    logger.error('[NOWPayments] IPN: wrong asset sent', { order_id, pay_currency, payment_id });
-    await dbQuery(
-      `UPDATE dash_subscription_orders SET status = 'failed', notes = $2 WHERE btcpay_invoice_id = $1 AND status NOT IN ('completed','failed')`,
-      [order_id, `nowpayments:${payment_id}:wrong_asset`]
-    );
-    try {
-      const slackOps = require('../../services/slackOpsService');
-      slackOps.notifyPaymentFailed({ orderId: order_id, userId: null, username: '', amount: 0, reason: `Wrong asset sent: ${pay_currency}`, provider: 'NowPayments' }).catch(() => {});
-    } catch (_) {}
-    return res.json({ received: true });
-  }
-
-  if (payment_status === 'partially_paid') {
-    const paidCrypto = Number(actually_paid) || 0;
-    const owedCrypto = Number(pay_amount) || 0;
-    const paidRatio = owedCrypto > 0 ? paidCrypto / owedCrypto : 0;
-    logger.warn('[NOWPayments] IPN: partial payment', {
-      order_id, payment_id, actually_paid: paidCrypto, pay_amount: owedCrypto,
-      pay_currency, paidRatio: paidRatio.toFixed(4),
-    });
-
-    // Auto-prorate for token purchases in the 50-98% range. Safer than
-    // touching entitlement plans (binary access + duration math) — token
-    // credit is a pure numeric grant. Above 98% falls into the finished
-    // branch on the follow-up IPN.
-    if (paidRatio >= 0.50 && paidRatio < 0.98) {
-      try {
-        const { rows: [order] } = await dbQuery(
-          `SELECT id, user_id, plan_id, metadata FROM dash_subscription_orders
-             WHERE btcpay_invoice_id = $1 AND status NOT IN ('completed','failed')`,
-          [order_id]
-        );
-        if (order && order.plan_id === 'token_purchase') {
-          const meta = order.metadata || {};
-          const baseTokens = Math.max(0, Number(meta.tokens) || 0);
-          const prorated = Math.floor(baseTokens * paidRatio);
-          if (prorated > 0) {
-            const TokenSvc = require('../../services/tokenService');
-            await TokenSvc.creditTokens(order.user_id, prorated, `nowpayments:auto_prorate:${payment_id}`);
-            await dbQuery(
-              `UPDATE dash_subscription_orders SET status = 'completed', completed_at = NOW(),
-                 notes = $2 WHERE btcpay_invoice_id = $1`,
-              [order_id, `nowpayments:${payment_id}:auto_prorated:${paidRatio.toFixed(3)}:${prorated}_of_${baseTokens}`]
-            );
-            try {
-              const NotificationEmitter = require('../../services/notificationEmitter');
-              await NotificationEmitter.emit({
-                type: 'token_partial_credit',
-                category: 'commerce',
-                priority: 'normal',
-                targetUserId: String(order.user_id),
-                entityType: 'token_purchase',
-                entityId: String(order.id),
-                message: `You paid ${(paidRatio * 100).toFixed(0)}% of your Ru$h order — we credited ${prorated} Ru$h (of ${baseTokens} full).`,
-                metadata: { url: '/?openWallet=1', pushTitle: 'Ru$h 💎 credited', pushBody: `${prorated} Ru$h added — top up any time for the rest.` },
-              }).catch(() => {});
-            } catch (_) { /* non-fatal */ }
-            logger.info('[NOWPayments] auto-prorated token grant', {
-              order_id, userId: order.user_id, prorated, of: baseTokens, ratio: paidRatio,
-            });
-            return res.json({ received: true });
-          }
-        }
-      } catch (proErr) {
-        logger.error('[NOWPayments] auto-prorate token grant failed', {
-          order_id, error: proErr.message,
-        });
-        // Fall through — mark as partial so manual review kicks in.
-      }
-    }
-
-    // ≥98% for entitlement plans: within typical network-fee rounding — settle as complete
-    // rather than leaving access permanently denied over a dust shortfall.
-    if (paidRatio >= 0.98) {
-      try {
-        const { rows: [orderFor98] } = await dbQuery(
-          `SELECT id, user_id, plan_id, usd_amount, creator_id, metadata FROM dash_subscription_orders
-             WHERE btcpay_invoice_id = $1 AND status NOT IN ('completed','failed')`,
-          [order_id]
-        );
-        if (orderFor98 && orderFor98.plan_id !== 'token_purchase' && !orderFor98.plan_id?.startsWith('donation')) {
-          const lockRes98 = await dbQuery(
-            `UPDATE dash_subscription_orders SET status = 'processing'
-             WHERE btcpay_invoice_id = $1 AND status NOT IN ('completed','failed','processing')
-             RETURNING id, user_id, plan_id, usd_amount, creator_id`,
-            [order_id]
-          );
-          if (lockRes98.rows.length > 0) {
-            const ord98 = lockRes98.rows[0];
-            const PaySvc98 = require('../../services/paymentService');
-            const gr98 = await PaySvc98.grantEntitlementsForPlan(
-              ord98.user_id, ord98.plan_id, 'nowpayments',
-              ord98.creator_id ? { creatorId: String(ord98.creator_id) } : null,
-              order_id
-            );
-            if (!gr98 || gr98.granted === 0) throw new Error('grant_zero_partial98');
-            await dbQuery(
-              `UPDATE dash_subscription_orders SET status = 'completed', completed_at = NOW(),
-                 notes = $2 WHERE btcpay_invoice_id = $1`,
-              [order_id, `nowpayments:${payment_id}:partial98_settled:${paidRatio.toFixed(4)}`]
-            );
-            try {
-              const NotificationEmitter98 = require('../../services/notificationEmitter');
-              await NotificationEmitter98.emit({
-                type: 'payment_completed',
-                category: 'commerce',
-                priority: 'high',
-                targetUserId: String(ord98.user_id),
-                entityType: 'nowpayments_order',
-                entityId: String(order_id),
-                message: `Your payment was accepted — access unlocked! (${(paidRatio * 100).toFixed(1)}% received, within fee tolerance)`,
-                metadata: { url: '/subscribe', pushTitle: 'Access unlocked!', pushBody: 'Your crypto payment was accepted.' },
-              }).catch(() => {});
-            } catch (_) { /* non-fatal */ }
-            logger.info('[NOWPayments] IPN: partial ≥98% entitlement plan settled', {
-              order_id, paidRatio: paidRatio.toFixed(4), planId: ord98.plan_id,
-            });
-            return res.json({ received: true });
-          }
-        }
-      } catch (p98Err) {
-        logger.error('[NOWPayments] IPN: partial ≥98% entitlement settle failed — falling through to partial', {
-          order_id, error: p98Err.message,
-        });
-        // Fall through — mark as partially_paid for manual review
-        await dbQuery(
-          `UPDATE dash_subscription_orders SET status = 'pending', notes = $2 WHERE btcpay_invoice_id = $1 AND status = 'processing'`,
-          [order_id, `nowpayments:partial98_failed:${p98Err.message}`.slice(0, 500)]
-        ).catch(() => {});
-      }
-    }
-
-    // Default path: not-eligible for auto-prorate (entitlement plan, below 50%,
-    // or grant failed). Mark partial + notify user of the shortfall so they can
-    // top up. Below 50% still gets flagged for manual review.
-    await dbQuery(
-      `UPDATE dash_subscription_orders SET status = 'partially_paid', notes = $2 WHERE btcpay_invoice_id = $1 AND status NOT IN ('completed','failed')`,
-      [order_id, `nowpayments:${payment_id}:partial:${actually_paid}${pay_currency ? ' ' + pay_currency : ''}`]
-    );
-    try {
-      const { rows: [ord] } = await dbQuery(
-        `SELECT user_id, usd_amount FROM dash_subscription_orders WHERE btcpay_invoice_id = $1 LIMIT 1`,
-        [order_id]
-      );
-      if (ord) {
-        const NotificationEmitter = require('../../services/notificationEmitter');
-        const shortUsd = Number(ord.usd_amount) * (1 - paidRatio);
-        await NotificationEmitter.emit({
-          type: 'payment_partial_shortfall',
-          category: 'commerce',
-          priority: 'high',
-          targetUserId: String(ord.user_id),
-          entityType: 'nowpayments_order',
-          entityId: String(order_id),
-          message: `Your crypto payment came up ${(1 - paidRatio) * 100 >= 1 ? `${((1 - paidRatio) * 100).toFixed(0)}%` : 'a bit'} short — about $${shortUsd.toFixed(2)}. Top up in your wallet and send again to unlock access.`,
-          metadata: { url: '/subscribe', pushTitle: 'Payment short by ~$' + shortUsd.toFixed(2), pushBody: 'Send the remaining amount to unlock.' },
-        }).catch(() => {});
-      }
-    } catch (_) { /* non-fatal */ }
-    return res.json({ received: true });
-  }
-
-  if (payment_status === 'failed' || payment_status === 'refunded') {
-    await dbQuery(
-      `UPDATE dash_subscription_orders SET status = 'failed', notes = $2 WHERE btcpay_invoice_id = $1 AND status NOT IN ('completed','failed')`,
-      [order_id, `nowpayments:${payment_id}:${payment_status}`]
-    );
-
-    // C-2: For refunds, also revoke entitlements regardless of whether the order
-    // was already marked completed (the UPDATE above no-ops on completed orders).
-    if (payment_status === 'refunded') {
-      try {
-        const orderRes = await dbQuery(
-          `SELECT user_id, creator_id, plan_id, metadata FROM dash_subscription_orders WHERE btcpay_invoice_id = $1 LIMIT 1`,
-          [order_id]
-        );
-        const order = orderRes.rows[0];
-
-        // Token purchases have no creator_id — claw back credited tokens.
-        // Regular balance goes back to zero (clamped), bonus tokens (creator_gifts)
-        // are voided by decrementing the Santino pool by the same amount.
-        if (order && order.plan_id === 'token_purchase') {
-          const meta = order.metadata || {};
-          const totalTokens = Math.max(0, Number(meta.tokens) || 0);
-          const bonusTokens = Math.max(0, Number(meta.bonusTokens) || 0);
-          const baseTokens = Math.max(0, totalTokens - bonusTokens);
-          try {
-            if (baseTokens > 0) {
-              await dbQuery(
-                `UPDATE user_token_wallets
-                   SET balance_tokens = GREATEST(0, balance_tokens - $2), updated_at = NOW()
-                 WHERE user_id = $1`,
-                [String(order.user_id), baseTokens]
-              );
-            }
-            if (bonusTokens > 0) {
-              const { SANTINO_USER_ID: SANTINO_ID } = require('../../config/monetizationConfig');
-              await dbQuery(
-                `UPDATE user_token_wallets
-                   SET creator_gifts = jsonb_set(
-                         creator_gifts,
-                         ARRAY[$2::text],
-                         to_jsonb(GREATEST(0, COALESCE((creator_gifts->>$2)::int, 0) - $3))
-                       ),
-                       updated_at = NOW()
-                 WHERE user_id = $1`,
-                [String(order.user_id), String(SANTINO_ID), bonusTokens]
-              );
-            }
-            await dbQuery(
-              `UPDATE dash_subscription_orders SET status = 'failed', notes = $2 WHERE btcpay_invoice_id = $1`,
-              [order_id, `nowpayments:refunded:${payment_id}:reversed:${totalTokens}`]
-            );
-            await dbQuery(
-              `UPDATE token_purchases SET status = 'invalid'
-               WHERE btcpay_invoice_id = $1 AND status = 'paid'`,
-              [order_id]
-            ).catch(() => {});
-            try {
-              const io = require('../../services/socketSingleton').get();
-              if (io) io.to(`user:${order.user_id}`).emit('wallet:updated', { refunded: totalTokens });
-            } catch (_) { /* non-fatal */ }
-            logger.info('[NOWPayments] Refund: tokens clawed back', {
-              order_id, userId: order.user_id, baseTokens, bonusTokens,
-            });
-          } catch (clawbackErr) {
-            logger.error('[NOWPayments] Refund: token clawback failed', {
-              order_id, error: clawbackErr.message,
-            });
-          }
-          return res.json({ received: true });
-        }
-
-        // creator_tip refund: mark tip refunded and void the earnings record
-        if (order && order.plan_id === 'creator_tip') {
-          await dbQuery(
-            `UPDATE creator_tips SET status = 'refunded' WHERE order_id = $1`,
-            [order_id]
-          );
-          await dbQuery(
-            `UPDATE creator_earnings SET status = 'void' WHERE source_payment_id = $1`,
-            [order_id]
-          );
-          logger.info('[NOWPayments] Tip refunded', { order_id });
-          return res.json({ received: true });
-        }
-
-        if (order && order.creator_id) {
-          const { user_id: refundUserId, creator_id: refundCreatorId } = order;
-          await dbQuery(
-            `UPDATE user_entitlements SET expires_at = NOW(), updated_at = NOW()
-             WHERE user_id = $1 AND add_on_id = 'creator-subscription' AND creator_id = $2
-               AND expires_at > NOW()`,
-            [String(refundUserId), String(refundCreatorId)]
-          );
-          await dbQuery(
-            `UPDATE creator_subscriptions SET status = 'cancelled', cancelled_at = NOW()
-             WHERE subscriber_id = $1 AND creator_id = $2 AND status = 'active'`,
-            [String(refundUserId), String(refundCreatorId)]
-          );
-          // Also revoke any channel-access entitlement tied to this payment
-          // and refresh subscriber_count for the affected channel(s)
-          const revokedChannelRes = await dbQuery(
-            `UPDATE user_entitlements SET expires_at = NOW(), updated_at = NOW()
-             WHERE user_id = $1 AND add_on_id = 'channel-access'
-               AND source_payment_id = $2 AND expires_at > NOW()
-             RETURNING creator_id`,
-            [String(refundUserId), order_id]
-          );
-          if (revokedChannelRes.rows.length > 0) {
-            const affectedChannelIds = [...new Set(revokedChannelRes.rows.map(r => r.creator_id).filter(Boolean))];
-            for (const chId of affectedChannelIds) {
-              try {
-                await dbQuery(
-                  `UPDATE creator_channels
-                     SET subscriber_count = (
-                       SELECT COUNT(*) FROM user_entitlements
-                       WHERE add_on_id = 'channel-access'
-                         AND creator_id = $1::text
-                         AND is_consumed = false
-                         AND (is_lifetime = true OR expires_at > NOW())
-                     )
-                   WHERE id = $1::integer`,
-                  [chId]
-                );
-              } catch (_scErr) { /* non-critical */ }
-            }
-          }
-          await dbQuery(
-            `UPDATE creator_earnings SET status = 'void'
-             WHERE source_payment_id = $1 AND status IN ('holding', 'pending')`,
-            [order_id]
-          );
-          // Revoke all non-lifetime entitlements sourced from this order
-          try {
-            await dbQuery(
-              `DELETE FROM user_entitlements WHERE user_id = $1 AND source_payment_id = $2 AND is_lifetime = false`,
-              [String(refundUserId), order_id]
-            );
-          } catch (revokeErr) {
-            logger.error('[NOWPayments] Failed to revoke entitlements on refund', { order_id, error: revokeErr.message });
-          }
-          try {
-            await EntitlementAccessService.invalidateCache(String(refundUserId));
-          } catch (_) { /* non-fatal */ }
-          logger.info('[NOWPayments] Refund: entitlements revoked and earnings voided', {
-            order_id, userId: refundUserId, creatorId: refundCreatorId,
-          });
-        }
-      } catch (refundErr) {
-        logger.error('[NOWPayments] Refund: entitlement revocation failed', { order_id, error: refundErr.message });
-      }
-    }
-
-    return res.json({ received: true });
-  }
-
-  if (payment_status === 'expired') {
-    await dbQuery(
-      `UPDATE dash_subscription_orders SET status = 'expired', notes = $2 WHERE btcpay_invoice_id = $1 AND status NOT IN ('completed','failed','expired')`,
-      [order_id, `nowpayments:${payment_id}:expired`]
-    );
-    return res.json({ received: true });
-  }
-
-  if (payment_status === 'confirming' || payment_status === 'sending') {
-    const internalStatus = 'confirming';
-    const confirmUpdateRes = await dbQuery(
-      `UPDATE dash_subscription_orders SET status = $2 WHERE btcpay_invoice_id = $1 AND status NOT IN ('completed','failed','confirmed',$2)
-       RETURNING user_id`,
-      [order_id, internalStatus]
-    );
-    // Inform frontend immediately so UI can switch to "confirming" state without waiting for next poll
-    if (confirmUpdateRes.rows.length > 0) {
-      const confirmingUserId = confirmUpdateRes.rows[0].user_id;
-      try {
-        const io = require('../../services/socketSingleton').get();
-        io?.to(`user:${confirmingUserId}`).emit('payment:confirming', { orderId: order_id });
-      } catch (_) { /* non-fatal */ }
-      setImmediate(async () => {
-        try {
-          const NotificationEmitter = require('../../services/notificationEmitter');
-          await NotificationEmitter.emit({
-            type: 'payment_confirming',
-            category: 'commerce',
-            priority: 'normal',
-            targetUserId: String(confirmingUserId),
-            entityType: 'nowpayments_order',
-            entityId: String(order_id),
-            message: 'Your crypto payment was detected on-chain — confirming now. This usually takes 1–3 minutes.',
-            metadata: { url: '/subscribe', pushTitle: 'Payment detected!', pushBody: 'Your crypto payment is confirming on-chain.' },
-          });
-        } catch (_) { /* non-fatal */ }
-      });
-    }
-    return res.json({ received: true });
-  }
-
-  // For stablecoins, on-chain confirmation = settled — treat as finished immediately.
-  const STABLECOIN_CURRENCIES = new Set(['usdttrc20', 'usdterc20', 'usdcsol', 'usdcerc20', 'usdcmatic', 'usdc', 'usdt', 'usdcbsc', 'usdtbsc']);
-  const isStablecoin = pay_currency && STABLECOIN_CURRENCIES.has(pay_currency.toLowerCase());
-
-  if (payment_status === 'confirmed') {
-    await dbQuery(
-      `UPDATE dash_subscription_orders SET status = 'confirmed' WHERE btcpay_invoice_id = $1 AND status NOT IN ('completed','failed','confirmed')`,
-      [order_id]
-    );
-    if (!isStablecoin) {
-      return res.json({ received: true });
-    }
-    logger.info('[NOWPayments] IPN: stablecoin confirmed — falling through to grant', { order_id, pay_currency });
-    // fall through to the grant path below
-  }
-
-  if (payment_status === 'waiting') {
-    return res.json({ received: true });
-  }
-
-  if (payment_status !== 'finished' && !(payment_status === 'confirmed' && isStablecoin)) {
-    logger.warn('[NOWPayments] IPN: unknown payment_status', { payment_status, order_id });
-    return res.json({ received: true });
-  }
-
-  // Verify payment exists in NowPayments API before granting (covers both 'finished' and stablecoin 'confirmed').
-  // Guards against test IPNs sent from the merchant dashboard (they pass HMAC but have fake payment IDs).
-  // Also used to resolve actually_paid when the IPN body omits it (observed on some stablecoin confirmed IPNs).
-  let _verifiedActuallyPaid = actually_paid;
-  try {
-    const verifyRes = await fetch(`${NOWPAYMENTS_URL}/payment/${payment_id}`, {
-      headers: { 'x-api-key': NOWPAYMENTS_API_KEY },
-    });
-    if (verifyRes.status === 404) {
-      logger.error('[NOWPayments] IPN: payment_id not found in NowPayments API — likely test IPN, rejecting', { payment_id, order_id });
-      return res.status(400).json({ error: 'payment_not_found' });
-    }
-    if (!verifyRes.ok) {
-      logger.error('[NOWPayments] IPN: payment verification API error — rejecting for retry', { payment_id, status: verifyRes.status });
-      return res.status(500).json({ error: 'payment_verification_unavailable' });
-    }
-    if (_verifiedActuallyPaid == null) {
-      try {
-        const verifyData = await verifyRes.json();
-        if (verifyData.actually_paid != null) {
-          _verifiedActuallyPaid = parseFloat(verifyData.actually_paid);
-          logger.info('[NOWPayments] IPN: resolved actually_paid from API', { payment_id, order_id, actually_paid: _verifiedActuallyPaid });
-        } else if (isStablecoin && verifyData.price_amount != null) {
-          // For stablecoins (USDC/USDT) price_amount ≈ actually_paid; use as safe fallback.
-          _verifiedActuallyPaid = parseFloat(verifyData.price_amount);
-          logger.info('[NOWPayments] IPN: stablecoin actually_paid still null — using price_amount as fallback', { payment_id, order_id, fallback: _verifiedActuallyPaid });
-        }
-      } catch (_) { /* non-fatal: verification body parse error, proceed with null */ }
-    }
-  } catch (verifyErr) {
-    logger.error('[NOWPayments] IPN: payment verification request failed — rejecting for retry', { payment_id, error: verifyErr.message });
-    return res.status(500).json({ error: 'payment_verification_unavailable' });
-  }
-
-  // NP-H-01: atomic processing lock — prevents double-grant on concurrent IPN deliveries
-  const lockRes = await dbQuery(
-    `UPDATE dash_subscription_orders SET status = 'processing'
-     WHERE btcpay_invoice_id = $1 AND status NOT IN ('completed','failed','processing')
-     RETURNING id, user_id, plan_id, usd_amount, creator_id, metadata`,
-    [order_id]
-  );
-
-  if (lockRes.rows.length === 0) {
-    // Either already completed/failed, or another delivery is processing — idempotent ack
-    const existingRes = await dbQuery(
-      `SELECT id, status, user_id, plan_id, usd_amount, creator_id FROM dash_subscription_orders WHERE btcpay_invoice_id = $1 LIMIT 1`,
-      [order_id]
-    );
-    const existing = existingRes.rows[0];
-    if (!existing) {
-      logger.error('[NOWPayments] IPN: order not found', { order_id });
-      return res.status(404).json({ error: 'order_not_found' });
-    }
-
-    // Subscription renewal: the original order is already completed but NOWPayments fires a new
-    // IPN with the same order_id for each billing cycle. Create a renewal order and re-grant.
-    if (existing.status === 'completed' && req.body.subscription_id) {
-      const renewalOrderId = `${order_id}:renewal:${payment_id}`;
-      const renewalCheck = await dbQuery(
-        `SELECT id FROM dash_subscription_orders WHERE btcpay_invoice_id = $1 LIMIT 1`,
-        [renewalOrderId]
-      );
-      if (renewalCheck.rows.length > 0) {
-        logger.info('[NOWPayments] IPN: renewal already processed', { order_id, renewalOrderId });
-        return res.json({ received: true });
-      }
-
-      logger.info('[NOWPayments] IPN: subscription renewal detected', { order_id, renewalOrderId, subscriptionId: req.body.subscription_id });
-
-      // Verify renewal payment exists (same test-IPN guard as the primary grant path)
-      try {
-        const renewalVerifyRes = await fetch(`${NOWPAYMENTS_URL}/payment/${payment_id}`, {
-          headers: { 'x-api-key': NOWPAYMENTS_API_KEY },
-        });
-        if (renewalVerifyRes.status === 404) {
-          logger.error('[NOWPayments] IPN: renewal payment_id not found in API — likely test IPN, rejecting', { payment_id, renewalOrderId });
-          return res.status(400).json({ error: 'payment_not_found' });
-        }
-        if (!renewalVerifyRes.ok) {
-          logger.error('[NOWPayments] IPN: renewal payment verification API error — rejecting for retry', { payment_id, status: renewalVerifyRes.status });
-          return res.status(500).json({ error: 'payment_verification_unavailable' });
-        }
-      } catch (renewalVerifyErr) {
-        logger.error('[NOWPayments] IPN: renewal payment verification failed — rejecting for retry', { payment_id, error: renewalVerifyErr.message });
-        return res.status(500).json({ error: 'payment_verification_unavailable' });
-      }
-
-      await dbQuery(
-        `INSERT INTO dash_subscription_orders
-           (user_id, plan_id, usd_amount, btcpay_invoice_id, status, metadata)
-         VALUES ($1, $2, $3, $4, 'processing', $5)
-         ON CONFLICT (btcpay_invoice_id) DO NOTHING`,
-        [
-          existing.user_id,
-          existing.plan_id,
-          existing.usd_amount,
-          renewalOrderId,
-          JSON.stringify({ provider: 'nowpayments', flow: 'subscription_renewal', subscriptionId: req.body.subscription_id, originalOrderId: order_id, paymentId: String(payment_id) }),
-        ]
-      );
-
-      try {
-        const PaymentServiceRenewal = require('../../services/paymentService');
-        const isRenewalDonation = existing.plan_id?.startsWith('donation');
-
-        // CS-PAY-M-02: creator_monthly renewal must still hold pnp-member — same gate as initial purchase
-        if (existing.plan_id === 'creator_monthly') {
-          const EAS = require('../../services/entitlementAccessService');
-          const hasMember = await EAS.hasEntitlement(String(existing.user_id), 'pnp-member');
-          if (!hasMember) {
-            logger.warn('[NOWPayments] IPN: creator_monthly renewal — user lost pnp-member, skipping grant', {
-              userId: existing.user_id, renewalOrderId,
-            });
-            await dbQuery(
-              `UPDATE dash_subscription_orders SET status = 'pending', notes = $2 WHERE btcpay_invoice_id = $1`,
-              [renewalOrderId, 'creator_monthly_renewal:no_pnp_member']
-            ).catch(() => {});
-            return res.json({ received: true });
-          }
-        }
-
-        // CS-PAY-C-02 parity for renewals: creator_monthly must route through
-        // subscribeToCreator ONLY. grantEntitlementsForPlan + subscribeToCreator
-        // would both upsert the same creator-subscription entitlement, doubling
-        // the expiry extension (60 days per renewal instead of 30).
-        if (existing.plan_id === 'creator_monthly' && existing.creator_id) {
-          const CreatorServiceRenewalGrant = require('../../services/creatorService');
-          await CreatorServiceRenewalGrant.subscribeToCreator(
-            existing.user_id, String(existing.creator_id), renewalOrderId
-          );
-        } else {
-          const renewalGrantResult = await PaymentServiceRenewal.grantEntitlementsForPlan(
-            existing.user_id,
-            existing.plan_id,
-            'nowpayments',
-            existing.creator_id ? { creatorId: String(existing.creator_id) } : null,
-            renewalOrderId
-          );
-          if (!isRenewalDonation && (!renewalGrantResult || renewalGrantResult.granted === 0)) {
-            await dbQuery(
-              `UPDATE dash_subscription_orders SET status = 'pending', notes = $2 WHERE btcpay_invoice_id = $1`,
-              [renewalOrderId, `renewal:grant_zero:${existing.plan_id}`]
-            ).catch(() => {});
-            throw new Error(`grantEntitlementsForPlan returned zero grants for renewal plan ${existing.plan_id}`);
-          }
-        }
-      } catch (renewalGrantErr) {
-        await dbQuery(
-          `UPDATE dash_subscription_orders SET status = 'pending', notes = $2 WHERE btcpay_invoice_id = $1`,
-          [renewalOrderId, `renewal:grant_failed:${renewalGrantErr.message}`.slice(0, 500)]
-        ).catch(() => {});
-        throw renewalGrantErr;
-      }
-
-      await dbQuery(
-        `UPDATE dash_subscription_orders SET status = 'completed', completed_at = NOW(), notes = $2 WHERE btcpay_invoice_id = $1`,
-        [renewalOrderId, `nowpayments:renewal:${payment_id}`]
-      );
-
-      try {
-        const { cache: renewalCache } = require('../../config/redis');
-        await renewalCache.del(`user:${existing.user_id}`);
-        await renewalCache.del(`session:user:${existing.user_id}`);
-        await renewalCache.del(`entitlements:${existing.user_id}`);
-        await renewalCache.del(`user:tier:${existing.user_id}`);
-      } catch {}
-
-      logger.info('[NOWPayments] IPN: subscription renewal completed', { userId: existing.user_id, planId: existing.plan_id, renewalOrderId });
-      return res.json({ received: true });
-    }
-
-    logger.info('[NOWPayments] IPN: already processed or in-flight', { order_id, status: existing.status });
-    return res.json({ received: true });
-  }
-
-  const order = lockRes.rows[0];
-
-  // NP-M-06: price_amount mismatch guard when actually_paid is null
-  if (_verifiedActuallyPaid == null && price_amount != null) {
-    const dbExpected = parseFloat(order.usd_amount);
-    const reportedPrice = parseFloat(price_amount);
-    if (dbExpected > 0 && Number.isFinite(reportedPrice) && Math.abs(reportedPrice - dbExpected) > 0.01) {
-      logger.error('[NOWPayments] IPN: price_amount mismatch vs DB order amount', { order_id, dbExpected, reportedPrice });
-      return res.status(422).json({ error: 'price_mismatch' });
-    }
-  }
-
-  // NP-M-01: amount validation — reject underpayments > 2%
-  // For cross-currency payments (e.g. BTC paying a USD invoice) compare actually_paid
-  // against pay_amount (both in pay_currency). If pay_amount is missing from the IPN body
-  // (observed with some BTC finished IPNs), skip the check entirely — the API verification
-  // above already confirmed the payment exists, and the reconciler will catch any real shortfall.
-  if (_verifiedActuallyPaid != null) {
-    const paid = parseFloat(_verifiedActuallyPaid);
-    const isCrossCurrency = pay_currency && (price_currency || 'usd').toLowerCase() !== pay_currency.toLowerCase();
-    // Only run underpayment check when we can compare amounts in the same currency.
-    // Cross-currency with missing pay_amount would compare crypto vs fiat — skip to avoid false positives.
-    if (!isCrossCurrency || pay_amount != null) {
-      const referenceAmount = (isCrossCurrency && pay_amount != null)
-        ? parseFloat(pay_amount)
-        : (price_amount != null ? parseFloat(price_amount) : null);
-      if (referenceAmount != null && Number.isFinite(paid) && Number.isFinite(referenceAmount) && referenceAmount > 0 && paid < referenceAmount * 0.98) {
-        logger.warn('[NOWPayments] IPN: underpayment detected', { order_id, actually_paid: _verifiedActuallyPaid, pay_amount, price_amount, pay_currency, isCrossCurrency });
-        await dbQuery(
-          `UPDATE dash_subscription_orders SET status = 'partially_paid', notes = $2 WHERE btcpay_invoice_id = $1`,
-          [order_id, `nowpayments:${payment_id}:underpaid:${_verifiedActuallyPaid}/${referenceAmount}`]
-        );
-        return res.json({ received: true });
-      }
-    }
-  }
-
-  // ── Creator tip settlement ────────────────────────────────────────────────
-  if (order.plan_id === 'creator_tip') {
-    const { TIP_CREATOR_RATE } = require('../../config/monetizationConfig');
-    const grossAmount = parseFloat(order.usd_amount) || 0;
-    const tipCreatorId = order.creator_id ? String(order.creator_id) : null;
-
-    try {
-      // Insert creator earnings. Idempotent on the partial unique index:
-      // (source_payment_id, creator_id) WHERE source_payment_id IS NOT NULL.
-      if (grossAmount > 0 && tipCreatorId) {
-        const amountCreator = Math.round(grossAmount * TIP_CREATOR_RATE * 100) / 100;
-        const amountPlatform = Math.round((grossAmount - amountCreator) * 100) / 100;
-        const earningsInsert = await dbQuery(
-          `INSERT INTO creator_earnings
-             (creator_id, amount_gross, amount_creator, amount_platform, status,
-              available_at, source_payment_id, period_month, is_tip)
-           VALUES ($1, $2, $3, $4, 'available', NOW(), $5, date_trunc('month', CURRENT_DATE), true)
-           ON CONFLICT (source_payment_id, creator_id) WHERE source_payment_id IS NOT NULL DO NOTHING
-           RETURNING id`,
-          [
-            tipCreatorId,
-            grossAmount,
-            amountCreator,
-            amountPlatform,
-            order_id,
-          ]
-        );
-        const earningsId = earningsInsert.rows[0]?.id || null;
-
-        // Update creator_tips record to completed
-        await dbQuery(
-          `UPDATE creator_tips
-           SET status = 'completed', nowpayments_payment_id = $2, pay_currency = $3,
-               earnings_id = $4, completed_at = NOW()
-           WHERE order_id = $1`,
-          [order_id, String(payment_id), pay_currency || null, earningsId]
-        );
-      }
-
-      // Mark DSO completed
-      await dbQuery(
-        `UPDATE dash_subscription_orders SET status = 'completed', completed_at = NOW(), notes = $2 WHERE btcpay_invoice_id = $1`,
-        [order_id, `nowpayments:tip:${payment_id}`]
-      );
-
-      logger.info('[NOWPayments] Creator tip settled', {
-        order_id, creator_id: tipCreatorId, payerId: order.user_id, grossAmount, payCurrency: pay_currency,
-      });
-    } catch (tipErr) {
-      logger.error('[NOWPayments] Creator tip settlement failed', { order_id, error: tipErr.message });
-      await dbQuery(
-        `UPDATE dash_subscription_orders SET status = 'pending', notes = $2 WHERE btcpay_invoice_id = $1`,
-        [order_id, `nowpayments:tip_failed:${tipErr.message}`.slice(0, 500)]
-      ).catch(() => {});
-      return res.status(500).json({ error: 'tip_settlement_failed' });
-    }
-
-    maybeGrantFirstHourCryptoBonus(order.user_id).catch(() => {});
-    _npLogRevenueAndSync(order, payment_id);
-    return res.json({ received: true, type: 'creator_tip' });
-  }
-
-  // call_package orders: route to callCheckoutService.onCallPaymentSuccess instead of grantEntitlementsForPlan
-  if (order.plan_id === 'call_package') {
-    const callMeta = order.metadata || {};
-    const callPaymentId = callMeta.paymentId;
-    if (!callPaymentId) {
-      await dbQuery(
-        `UPDATE dash_subscription_orders SET status = 'pending', notes = $2 WHERE btcpay_invoice_id = $1`,
-        [order_id, 'call_package:missing_paymentId']
-      ).catch(() => {});
-      throw new Error(`call_package IPN: missing paymentId in DSO metadata for order ${order_id}`);
-    }
-    try {
-      const CallCheckoutSvc = require('../../services/callCheckoutService');
-      await CallCheckoutSvc.onCallPaymentSuccess(callPaymentId);
-    } catch (callGrantErr) {
-      await dbQuery(
-        `UPDATE dash_subscription_orders SET status = 'pending', notes = $2 WHERE btcpay_invoice_id = $1`,
-        [order_id, `call_package:grant_failed:${callGrantErr.message}`.slice(0, 500)]
-      ).catch(() => {});
-      throw callGrantErr;
-    }
-    // Fire-and-forget: notify #ops-calls of the new confirmed booking
-    try {
-      const _bookingRow = await dbQuery(
-        `SELECT b.id, b.duration_minutes, b.price_cents, b.start_time_utc,
-                u.username  AS client_username,
-                u2.username AS creator_username
-           FROM bookings b
-           JOIN payments p  ON p.id = $1::text
-           JOIN users u     ON u.id = b.user_id
-           JOIN performers pf ON pf.id = b.performer_id
-           JOIN users u2    ON u2.id = pf.user_id
-          WHERE p.id = $1::text
-          LIMIT 1`,
-        [callPaymentId]
-      );
-      if (_bookingRow.rows[0]) {
-        const _b = _bookingRow.rows[0];
-        const slackOps = require('../../services/slackOpsService');
-        slackOps.notifyNewBooking({
-          bookingId: _b.id,
-          clientUsername: _b.client_username,
-          creatorUsername: _b.creator_username,
-          durationMinutes: _b.duration_minutes,
-          priceUsd: ((_b.price_cents || 0) / 100).toFixed(2),
-          startTimeUtc: _b.start_time_utc,
-          startTimeCol: _b.start_time_utc
-            ? new Date(_b.start_time_utc).toLocaleString('en-US', { timeZone: 'America/Bogota', hour12: false })
-            : 'N/A',
-        }).catch(() => {});
-      }
-    } catch (_) { /* non-fatal — never block IPN response */ }
-    await dbQuery(
-      `UPDATE dash_subscription_orders SET status = 'completed', completed_at = NOW(), notes = $2 WHERE btcpay_invoice_id = $1`,
-      [order_id, `nowpayments:call:${payment_id}`]
-    );
-    logger.info('[NOWPayments] IPN: call_package credits granted', { order_id, callPaymentId, userId: order.user_id });
-    // Confirmation notification for call_package (was missing before — path exited early)
-    try {
-      const PaymentNotifSvcCall = require('../../services/paymentNotificationService');
-      await PaymentNotifSvcCall.deliverPurchaseConfirmation(order.user_id, {
-        planId: 'call_package',
-        planName: 'Call Package',
-        amount: parseFloat(order.usd_amount) || 0,
-        transactionId: String(payment_id),
-        provider: 'nowpayments',
-      });
-    } catch (_) { /* non-fatal */ }
-    maybeGrantFirstHourCryptoBonus(order.user_id).catch(() => {});
-    return res.json({ received: true });
-  }
-
-  // parche_booking: confirm the Parche group-call booking via parcheService.confirmBooking
-  if (order.plan_id === 'parche_booking') {
-    const parchemeta = typeof order.metadata === 'string' ? JSON.parse(order.metadata) : (order.metadata || {});
-    const parcheBookingId = parchemeta.bookingId;
-    if (!parcheBookingId) {
-      await dbQuery(
-        `UPDATE dash_subscription_orders SET status = 'pending', notes = $2 WHERE btcpay_invoice_id = $1`,
-        [order_id, 'parche_booking:missing_bookingId']
-      ).catch(() => {});
-      throw new Error(`parche_booking IPN: missing bookingId in DSO metadata for order ${order_id}`);
-    }
-    try {
-      const parcheService = require('../../services/parcheService');
-      await parcheService.confirmBooking(parcheBookingId);
-    } catch (parcheGrantErr) {
-      await dbQuery(
-        `UPDATE dash_subscription_orders SET status = 'pending', notes = $2 WHERE btcpay_invoice_id = $1`,
-        [order_id, `parche_booking:confirm_failed:${parcheGrantErr.message}`.slice(0, 500)]
-      ).catch(() => {});
-      throw parcheGrantErr;
-    }
-    await dbQuery(
-      `UPDATE dash_subscription_orders SET status = 'completed', completed_at = NOW(), notes = $2 WHERE btcpay_invoice_id = $1`,
-      [order_id, `nowpayments:parche:${payment_id}`]
-    );
-    logger.info('[NOWPayments] IPN: parche_booking confirmed', { order_id, parcheBookingId, userId: order.user_id });
-    maybeGrantFirstHourCryptoBonus(order.user_id).catch(() => {});
-    return res.json({ received: true, type: 'parche_booking' });
-  }
-
-  // channel_pass: grant creator channel subscription via channelPassService.
-  // Detected by meta.flow = 'channel_pass' (set at invoice creation).
-  // Must run BEFORE token_purchase to prevent fall-through on unrecognised plan_id.
-  {
-    const cpMeta = typeof order.metadata === 'string' ? JSON.parse(order.metadata) : (order.metadata || {});
-    if (cpMeta.flow === 'channel_pass') {
-      try {
-        const channelPassService = require('../../services/channelPassService');
-        await channelPassService.fulfillChannelPassFromPayment({
-          userId: order.user_id,
-          creatorId: cpMeta.creatorId,
-          priceUsd: Number(cpMeta.priceUsd || order.usd_amount),
-          sourceProvider: 'nowpayments',
-          sourceRef: order_id,
-        });
-        // Atomic status flip — AND status='processing' guard prevents double-flip
-        // on replay (idempotency: fulfillChannelPassFromPayment is safe to re-enter,
-        // but the DSO flip must be atomic so the outer lock gate stays consistent).
-        await dbQuery(
-          `UPDATE dash_subscription_orders SET status = 'completed', completed_at = NOW(), notes = $2
-           WHERE btcpay_invoice_id = $1 AND status = 'processing'`,
-          [order_id, `nowpayments:channel_pass:${payment_id}`]
-        );
-        logger.info('[NOWPayments] IPN: channel_pass fulfilled', {
-          order_id, userId: order.user_id, creatorId: cpMeta.creatorId, payment_id,
-        });
-      } catch (cpErr) {
-        logger.error('[NOWPayments] IPN: channel_pass fulfillment failed', {
-          order_id, error: cpErr.message,
-        });
-        await dbQuery(
-          `UPDATE dash_subscription_orders SET status = 'pending', notes = $2 WHERE btcpay_invoice_id = $1`,
-          [order_id, `channel_pass:grant_failed:${cpErr.message}`.slice(0, 500)]
-        ).catch(() => {});
-        // Return 500 so NowPayments retries — fulfillChannelPassFromPayment is idempotent.
-        return res.status(500).json({ error: 'channel_pass_fulfillment_failed' });
-      }
-      _npLogRevenueAndSync(order, payment_id);
-      return res.json({ received: true, type: 'channel_pass' });
-    }
-  }
-
-  // token_purchase orders: credit tokens directly, do not call grantEntitlementsForPlan
-  if (order.plan_id === 'token_purchase') {
-    const tokenMeta = order.metadata || {};
-    const tokensToCredit = Number(tokenMeta.tokens);
-    if (!tokensToCredit || tokensToCredit <= 0) {
-      await dbQuery(
-        `UPDATE dash_subscription_orders SET status = 'pending', notes = $2 WHERE btcpay_invoice_id = $1`,
-        [order_id, 'token_purchase:missing_tokens_in_metadata']
-      ).catch(() => {});
-      throw new Error(`token_purchase IPN: missing or zero tokens in DSO metadata for order ${order_id}`);
-    }
-    // Split: package-tier bonus tokens go to creator_gifts (Santino-restricted);
-    // base tokens (usd×100) go to regular balance_tokens.
-    const bonusTokens = Math.max(0, Math.floor(Number(tokenMeta.bonusTokens) || 0));
-    const baseTokens = tokensToCredit - bonusTokens;
-    const creditLockKey = `nowpayments:token_credit:${order_id}`;
-    const lockAcquired = await cache.acquireLock(creditLockKey, 120).catch(() => true);
-    if (!lockAcquired) {
-      logger.warn('[NOWPayments] IPN: token_purchase credit already in flight, skipping', { order_id });
-      return res.json({ received: true });
-    }
-    // Atomic credit: the DSO status flip and the wallet credit must succeed or
-    // fail together. Otherwise a crash between them would allow the reconciler
-    // to replay creditTokens, double-crediting the user. (Audit finding H-01.)
-    let newBalance = null;
-    const creditClient = await getPool().connect();
-    try {
-      const { SANTINO_USER_ID: SANTINO_ID } = require('../../config/monetizationConfig');
-      await creditClient.query('BEGIN');
-      // Row-lock the DSO so a concurrent reconciler cannot re-enter the credit
-      // path; the outer signature+processing gate above already scopes concurrency
-      // to a single winner, but this guarantees crash-safety.
-      const dsoUpd = await creditClient.query(
-        `UPDATE dash_subscription_orders
-            SET status = 'completed',
-                completed_at = NOW(),
-                notes = $2
-          WHERE btcpay_invoice_id = $1
-            AND status IN ('pending','processing')
-         RETURNING id`,
-        [order_id, `nowpayments:tokens:${payment_id}:credited:${tokensToCredit}${bonusTokens > 0 ? `:bonus:${bonusTokens}` : ''}`]
-      );
-      if (dsoUpd.rowCount === 0) {
-        // Another worker already completed this order — nothing to credit.
-        await creditClient.query('ROLLBACK');
-        logger.info('[NOWPayments] IPN: token_purchase already completed elsewhere', { order_id });
-        cache.releaseLock(creditLockKey).catch(() => {});
-        return res.json({ received: true });
-      }
-      const balRow = await creditClient.query(
-        `INSERT INTO user_token_wallets (user_id, balance_tokens)
-              VALUES ($1, $2)
-         ON CONFLICT (user_id) DO UPDATE
-           SET balance_tokens = user_token_wallets.balance_tokens + $2,
-               updated_at = NOW()
-         RETURNING balance_tokens, gifted_balance`,
-        [String(order.user_id), baseTokens]
-      );
-      newBalance = (Number(balRow.rows[0].balance_tokens) || 0) + (Number(balRow.rows[0].gifted_balance) || 0);
-      if (bonusTokens > 0) {
-        await creditClient.query(
-          `INSERT INTO user_token_wallets (user_id, creator_gifts)
-                VALUES ($1, jsonb_build_object($2::text, $3::numeric))
-           ON CONFLICT (user_id) DO UPDATE
-             SET creator_gifts = jsonb_set(
-                   COALESCE(user_token_wallets.creator_gifts, '{}'),
-                   ARRAY[$2],
-                   to_jsonb(COALESCE((user_token_wallets.creator_gifts->>$2)::numeric, 0) + $3)
-                 ),
-                 updated_at = NOW()`,
-          [String(order.user_id), String(SANTINO_ID), bonusTokens]
-        );
-      }
-      await creditClient.query('COMMIT');
-      await Promise.all([
-        cache.del(`wallet:${order.user_id}`).catch(() => {}),
-        cache.del(`wallet:obj:${order.user_id}`).catch(() => {}),
-      ]);
-      try {
-        const io = require('../../services/socketSingleton').get();
-        if (io) io.to(`user:${order.user_id}`).emit('wallet:updated', { balance: newBalance, credited: tokensToCredit });
-      } catch (_) { /* non-fatal */ }
-      logger.info('[NOWPayments] IPN: token_purchase credited', { order_id, userId: order.user_id, tokens: tokensToCredit, baseTokens, bonusTokens, newBalance });
-    } catch (txErr) {
-      try { await creditClient.query('ROLLBACK'); } catch (_) {}
-      logger.error('[NOWPayments] IPN: token_purchase credit transaction failed', { order_id, error: txErr.message });
-      throw txErr;
-    } finally {
-      creditClient.release();
-      cache.releaseLock(creditLockKey).catch(() => {});
-    }
-    try {
-      const PaymentNotifSvcTok = require('../../services/paymentNotificationService');
-      await PaymentNotifSvcTok.deliverPurchaseConfirmation(order.user_id, {
-        planId: 'token_purchase',
-        planName: `${tokensToCredit} PNP Tokens`,
-        amount: parseFloat(order.usd_amount) || 0,
-        transactionId: String(payment_id),
-        provider: 'nowpayments',
-      });
-    } catch (_) { /* non-fatal */ }
-    maybeGrantFirstHourCryptoBonus(order.user_id).catch(() => {});
-    return res.json({ received: true });
-  }
-
-  // crystal_creator: pass activation for both self-purchases ($100) and fan gifts ($150)
-  if (order.plan_id === 'crystal_creator') {
-    const crystalMeta = order.metadata || {};
-    const isGift = crystalMeta.isGift === true || crystalMeta.isGift === 'true';
-    // targetCreatorId is in metadata for gift orders; order.creator_id also holds it.
-    // For self-purchases, order.user_id is the creator.
-    const targetCreatorId = isGift
-      ? (crystalMeta.targetCreatorId || (order.creator_id ? String(order.creator_id) : null))
-      : String(order.user_id);
-
-    if (!targetCreatorId) {
-      logger.error('[Crystal] IPN: missing targetCreatorId', { order_id, isGift });
-      await dbQuery(
-        `UPDATE dash_subscription_orders SET status = 'pending', notes = $2 WHERE btcpay_invoice_id = $1`,
-        [order_id, 'crystal_creator:missing_targetCreatorId']
-      ).catch(() => {});
-      return res.status(422).json({ error: 'crystal_creator:missing_targetCreatorId' });
-    }
-
-    try {
-      const CreatorSvc = require('../../services/creatorService');
-      await CreatorSvc.activateCrystalPass(targetCreatorId, {
-        isGift,
-        giftedBy: isGift ? (crystalMeta.giftedBy || null) : null,
-        giftNote: isGift ? (crystalMeta.giftNote || null) : null,
-        months: 1,
-        provider: 'nowpayments',
-        ref: `np:${payment_id}`,
-        priceCents: Math.round((parseFloat(order.usd_amount) || 0) * 100),
-      });
-    } catch (crystalGrantErr) {
-      logger.error('[Crystal] IPN: activateCrystalPass failed', { order_id, error: crystalGrantErr.message });
-      await dbQuery(
-        `UPDATE dash_subscription_orders SET status = 'pending', notes = $2 WHERE btcpay_invoice_id = $1`,
-        [order_id, `crystal_creator:grant_failed:${crystalGrantErr.message}`.slice(0, 500)]
-      ).catch(() => {});
-      return res.status(500).json({ error: 'crystal_creator:grant_failed' });
-    }
-
-    await dbQuery(
-      `UPDATE dash_subscription_orders SET status = 'completed', completed_at = NOW(), notes = $2 WHERE btcpay_invoice_id = $1`,
-      [order_id, `nowpayments:crystal_creator:${payment_id}`]
-    );
-
-    // Record the grant in crystal_grants (parity with wallet path which calls purchaseMonths).
-    try {
-      const crystalEntSvc = require('../../services/crystalEntitlementService');
-      await crystalEntSvc.purchaseMonths({
-        creatorId: String(targetCreatorId),
-        months: 1,
-        grantType: isGift ? 'gift' : 'purchase',
-        source: 'nowpayments',
-        grantedBy: String(crystalMeta.giftedBy || targetCreatorId),
-        amountUsd: parseFloat(order.usd_amount) || null,
-        externalRef: `np:${payment_id}`,
-      });
-    } catch (crystalEntErr) {
-      logger.warn('[Crystal] IPN: crystalEntitlementService.purchaseMonths failed (non-fatal)', {
-        order_id, targetCreatorId, error: crystalEntErr.message,
-      });
-    }
-
-    // Notify target creator via in-app notification (no price disclosed)
-    try {
-      const NotificationEmitterCrystal = require('../../services/notificationEmitter');
-      const msgType = isGift ? 'crystal_creator_gifted' : 'crystal_creator_activated';
-      const msgText = isGift
-        ? 'A fan just gifted you a Crystal Creator pass — your badge is now active!'
-        : 'Your Crystal Creator pass is now active! Enjoy your new benefits.';
-      await NotificationEmitterCrystal.emit({
-        type: msgType,
-        category: 'commerce',
-        priority: 'high',
-        targetUserId: String(targetCreatorId),
-        entityType: 'crystal_creator_pass',
-        entityId: String(order_id),
-        message: msgText,
-        metadata: { url: '/creator/dashboard', pushTitle: 'Crystal Creator activated!', pushBody: msgText },
-      }).catch(() => {});
-    } catch (_) { /* non-fatal */ }
-
-    // Slack ops ping — creator handle only, no dollar amounts (price-secrecy invariant).
-    // Uses notifyRushConversion slot (freeform plan label) routed to #ops-payments.
-    try {
-      const slackOps = require('../../services/slackOpsService');
-      const { rows: creatorRow } = await dbQuery(
-        `SELECT username FROM users WHERE id = $1`, [targetCreatorId]
-      ).catch(() => ({ rows: [] }));
-      const handle = creatorRow[0]?.username ? `@${creatorRow[0].username}` : targetCreatorId;
-      const label = isGift ? 'gift' : 'self-purchase';
-      // Price-secrecy: amount=0, plan label carries the signal instead.
-      slackOps.notifyPaymentSuccess({
-        orderId: order_id,
-        userId: targetCreatorId,
-        username: handle,
-        amount: '',
-        currency: '',
-        plan: `Crystal Creator pass (${label})`,
-        provider: 'NowPayments',
-      }).catch(() => {});
-    } catch (_) { /* non-fatal */ }
-
-    logger.info('[Crystal] IPN: Crystal Creator pass activated', {
-      order_id, targetCreatorId, isGift, payment_id,
-    });
-    _npLogRevenueAndSync(order, payment_id);
-    return res.json({ received: true, type: 'crystal_creator' });
-  }
-
-  // crystal_service: fan booked a premium service (private call, custom
-  // content, priority DM, private main stage, BTS sub). Records a booking row
-  // + fires creator DM + Slack ops ping. Same idempotency guard as wallet.
-  if (order.plan_id === 'crystal_service') {
-    const meta = order.metadata || {};
-    const serviceId = Number(meta.serviceId);
-    const targetCreatorId = String(meta.targetCreatorId || order.creator_id || '');
-    const buyerId = String(order.user_id || '');
-    if (!serviceId || !targetCreatorId || !buyerId) {
-      logger.error('[Crystal] IPN: crystal_service missing ids', { order_id });
-      return res.status(422).json({ error: 'crystal_service:missing_ids' });
-    }
-    try {
-      const CrystalSvc = require('../../services/crystalServiceService');
-      const { bookingId, alreadyApplied } = await CrystalSvc.recordBooking({
-        serviceId,
-        creatorUserId: targetCreatorId,
-        buyerUserId: buyerId,
-        serviceType: meta.serviceType || 'unknown',
-        priceCents: Number(meta.priceCents) || Math.round((parseFloat(order.usd_amount) || 0) * 100),
-        paymentProvider: 'nowpayments',
-        paymentRef: `np:${payment_id}`,
-        buyerNote: meta.buyerNote || null,
-        fulfillmentDays: meta.fulfillmentDays || null,
-      });
-      await dbQuery(
-        `UPDATE dash_subscription_orders SET status = 'completed', completed_at = NOW(), notes = $2 WHERE btcpay_invoice_id = $1`,
-        [order_id, `nowpayments:crystal_service:${payment_id}${alreadyApplied ? ':dup' : ''}`]
-      );
-      logger.info('[Crystal] IPN: crystal_service booking recorded', {
-        order_id, bookingId, alreadyApplied, targetCreatorId, buyerId, serviceId,
-      });
-    } catch (svcErr) {
-      logger.error('[Crystal] IPN: crystal_service record failed', { order_id, error: svcErr.message });
-      return res.status(500).json({ error: 'crystal_service:record_failed' });
-    }
-    _npLogRevenueAndSync(order, payment_id);
-    return res.json({ received: true, type: 'crystal_service' });
-  }
-
-  // promo_token_bundle: bespoke one-off promos (e.g. $40 pay → $50 buyer tokens +
-  // 10% shared bonus to co-founders + 20/40/40 cash split). All parameters live in
-  // DSO metadata — no plan row. Minted by apps/backend/scripts/mint-promo-bundle-*.js.
-  if (order.plan_id === 'promo_token_bundle') {
-    const bundleMeta = order.metadata || {};
-    const buyerTokens = Math.max(0, Math.floor(Number(bundleMeta.tokensForBuyer) || 0));
-    const bonusRecipients = Array.isArray(bundleMeta.bonusRecipients) ? bundleMeta.bonusRecipients : [];
-    const cashSplit = bundleMeta.cashSplit || null;
-    if (buyerTokens <= 0) {
-      await dbQuery(
-        `UPDATE dash_subscription_orders SET status = 'pending', notes = $2 WHERE btcpay_invoice_id = $1`,
-        [order_id, 'promo_token_bundle:missing_tokensForBuyer']
-      ).catch(() => {});
-      throw new Error(`promo_token_bundle IPN: missing tokensForBuyer in metadata for order ${order_id}`);
-    }
-    const bundleLockKey = `nowpayments:promo_bundle:${order_id}`;
-    const bundleLockAcquired = await cache.acquireLock(bundleLockKey, 120).catch(() => true);
-    if (!bundleLockAcquired) {
-      logger.warn('[NOWPayments] IPN: promo_token_bundle credit already in flight, skipping', { order_id });
-      return res.json({ received: true });
-    }
-    let bundleNewBalance = null;
-    const bundleClient = await getPool().connect();
-    try {
-      await bundleClient.query('BEGIN');
-      const bundleUpd = await bundleClient.query(
-        `UPDATE dash_subscription_orders
-            SET status = 'completed', completed_at = NOW(), notes = $2
-          WHERE btcpay_invoice_id = $1 AND status IN ('pending','processing')
-         RETURNING id`,
-        [order_id, `nowpayments:promo_bundle:${payment_id}:buyer:${buyerTokens}:bonusRecipients:${bonusRecipients.length}`]
-      );
-      if (bundleUpd.rowCount === 0) {
-        await bundleClient.query('ROLLBACK');
-        logger.info('[NOWPayments] IPN: promo_token_bundle already completed elsewhere', { order_id });
-        cache.releaseLock(bundleLockKey).catch(() => {});
-        return res.json({ received: true });
-      }
-      const buyerBal = await bundleClient.query(
-        `INSERT INTO user_token_wallets (user_id, balance_tokens)
-              VALUES ($1, $2)
-         ON CONFLICT (user_id) DO UPDATE
-           SET balance_tokens = user_token_wallets.balance_tokens + $2,
-               updated_at = NOW()
-         RETURNING balance_tokens, gifted_balance`,
-        [String(order.user_id), buyerTokens]
-      );
-      bundleNewBalance = (Number(buyerBal.rows[0].balance_tokens) || 0) + (Number(buyerBal.rows[0].gifted_balance) || 0);
-      for (const recip of bonusRecipients) {
-        const rUserId = recip && recip.userId ? String(recip.userId) : null;
-        const rTokens = Math.max(0, Math.floor(Number(recip?.tokens) || 0));
-        if (!rUserId || rTokens <= 0) continue;
-        await bundleClient.query(
-          `INSERT INTO user_token_wallets (user_id, balance_tokens)
-                VALUES ($1, $2)
-           ON CONFLICT (user_id) DO UPDATE
-             SET balance_tokens = user_token_wallets.balance_tokens + $2,
-                 updated_at = NOW()`,
-          [rUserId, rTokens]
-        );
-      }
-      await bundleClient.query('COMMIT');
-      await Promise.all([
-        cache.del(`wallet:${order.user_id}`).catch(() => {}),
-        cache.del(`wallet:obj:${order.user_id}`).catch(() => {}),
-        ...bonusRecipients.map(r => r?.userId
-          ? Promise.all([
-              cache.del(`wallet:${r.userId}`).catch(() => {}),
-              cache.del(`wallet:obj:${r.userId}`).catch(() => {}),
-            ])
-          : Promise.resolve()),
-      ]);
-      try {
-        const io = require('../../services/socketSingleton').get();
-        if (io) {
-          io.to(`user:${order.user_id}`).emit('wallet:updated', { balance: bundleNewBalance, credited: buyerTokens });
-          for (const r of bonusRecipients) {
-            if (r?.userId) io.to(`user:${r.userId}`).emit('wallet:updated', { credited: Number(r.tokens) || 0, reason: 'promo_bundle_bonus' });
-          }
-        }
-      } catch (_) { /* non-fatal */ }
-      logger.info('[NOWPayments] IPN: promo_token_bundle credited', {
-        order_id, buyer: order.user_id, buyerTokens, bonusRecipients, newBalance: bundleNewBalance,
-      });
-    } catch (bundleErr) {
-      try { await bundleClient.query('ROLLBACK'); } catch (_) {}
-      logger.error('[NOWPayments] IPN: promo_token_bundle credit failed', { order_id, error: bundleErr.message });
-      throw bundleErr;
-    } finally {
-      bundleClient.release();
-      cache.releaseLock(bundleLockKey).catch(() => {});
-    }
-    if (cashSplit && cashSplit.gross > 0 && Array.isArray(cashSplit.creatorRecipients) && cashSplit.creatorRecipients.length > 0) {
-      const { EARNINGS_HOLD_HOURS: HOLD_HRS } = require('../../config/monetizationConfig');
-      const gross = Number(cashSplit.gross) || 0;
-      const perCreator = Math.round(gross * (Number(cashSplit.perCreatorRate) || 0) * 100) / 100;
-      const platformCut = Math.round(gross * (Number(cashSplit.platformRate) || 0) * 100) / 100;
-      // Composite UNIQUE (source_payment_id, creator_id) added in migration
-      // 341 — the ON CONFLICT clause dedups per-creator so a promo split
-      // across N co-founders writes N rows without racing on retry.
-      for (const creatorId of cashSplit.creatorRecipients) {
-        try {
-          const ins = await dbQuery(
-            `INSERT INTO creator_earnings (creator_id, amount_gross, amount_creator, amount_platform, status, available_at, source_payment_id, period_month)
-             VALUES ($1, $2, $3, $4, 'holding', NOW() + ($5 || ' hours')::interval, $6, date_trunc('month', CURRENT_DATE))
-             ON CONFLICT (source_payment_id, creator_id) WHERE source_payment_id IS NOT NULL DO NOTHING
-             RETURNING id`,
-            [String(creatorId), gross, perCreator, platformCut, String(HOLD_HRS), order_id]
-          );
-          if (ins.rowCount > 0) {
-            logger.info('[NOWPayments] promo_token_bundle: cash split recorded', { order_id, creatorId, gross, perCreator, platformCut });
-          }
-        } catch (splitErr) {
-          // Genuine failures now (constraint dedup is handled by ON CONFLICT).
-          // Log as error, not warn — a split failure means the creator loses money.
-          logger.error('[NOWPayments] promo_token_bundle: cash split failed', { order_id, creatorId, error: splitErr.message });
-        }
-      }
-    }
-    try {
-      const PaymentNotifSvcBundle = require('../../services/paymentNotificationService');
-      await PaymentNotifSvcBundle.deliverPurchaseConfirmation(order.user_id, {
-        planId: 'promo_token_bundle',
-        planName: `${buyerTokens} PNP Tokens (promo bundle)`,
-        amount: parseFloat(order.usd_amount) || 0,
-        transactionId: String(payment_id),
-        provider: 'nowpayments',
-      });
-    } catch (_) { /* non-fatal */ }
-    maybeGrantFirstHourCryptoBonus(order.user_id).catch(() => {});
-    return res.json({ received: true });
-  }
-
-  // channel_pass: creator Channel Pass via NowPayments.
-  // Fulfillment delegates to channelPassService.fulfillChannelPassFromPayment() which
-  // runs the subscription+entitlement+earnings upsert and is idempotent on sourceRef.
-  if (order.plan_id === 'channel_pass') {
-    const cpMeta = order.metadata || {};
-    const cpCreatorId    = String(cpMeta.creatorId    || order.creator_id || '');
-    const cpSubscriberId = String(cpMeta.subscriberId || order.user_id    || '');
-
-    if (!cpCreatorId || !cpSubscriberId) {
-      logger.error('[NOWPayments] IPN: channel_pass missing creatorId or subscriberId', { order_id, cpMeta });
-      await dbQuery(
-        `UPDATE dash_subscription_orders SET status = 'pending', notes = $2 WHERE btcpay_invoice_id = $1`,
-        [order_id, 'channel_pass:missing_ids']
-      ).catch(() => {});
-      return res.status(422).json({ error: 'channel_pass:missing_ids' });
-    }
-
-    try {
-      const ChannelPassSvc = require('../../services/channelPassService');
-      const cpResult = await ChannelPassSvc.fulfillChannelPassFromPayment({
-        userId:         cpSubscriberId,
-        creatorId:      cpCreatorId,
-        priceUsd:       parseFloat(order.usd_amount) || parseFloat(cpMeta.priceUsd) || 0,
-        sourceProvider: 'nowpayments',
-        sourceRef:      order_id,
-      });
-
-      await dbQuery(
-        `UPDATE dash_subscription_orders SET status = 'completed', completed_at = NOW(), notes = $2
-         WHERE btcpay_invoice_id = $1`,
-        [order_id, `nowpayments:channel_pass:${payment_id}${cpResult.already_fulfilled ? ':dup' : ''}`]
-      );
-
-      logger.info('[NOWPayments] IPN: channel_pass fulfilled', {
-        order_id, cpCreatorId, cpSubscriberId,
-        alreadyFulfilled: cpResult.already_fulfilled, payment_id,
-      });
-    } catch (cpErr) {
-      logger.error('[NOWPayments] IPN: channel_pass fulfillment failed', { order_id, error: cpErr.message });
-      await dbQuery(
-        `UPDATE dash_subscription_orders SET status = 'pending', notes = $2 WHERE btcpay_invoice_id = $1`,
-        [order_id, `channel_pass:fulfill_failed:${cpErr.message}`.slice(0, 500)]
-      ).catch(() => {});
-      return res.status(500).json({ error: 'channel_pass:fulfill_failed' });
-    }
-
-    _npLogRevenueAndSync(order, payment_id);
-    return res.json({ received: true, type: 'channel_pass' });
-  }
-
-  // Scoped resource purchase (channel_access / hangout_access via NowPayments)
-  const orderMetaScoped = order.metadata || {};
-  if ((order.plan_id === 'channel_access' || order.plan_id === 'hangout_access') &&
-      (orderMetaScoped.channelId || orderMetaScoped.hangoutGroupId)) {
-    try {
-      const PaymentServiceScoped = require('../../services/paymentService');
-      const scopedGrant = await PaymentServiceScoped.grantEntitlementsForPlan(
-        order.user_id,
-        order.plan_id,
-        'nowpayments',
-        orderMetaScoped,
-        order_id
-      );
-      if (!scopedGrant || scopedGrant.granted === 0) {
-        await dbQuery(
-          `UPDATE dash_subscription_orders SET status = 'pending', notes = $2 WHERE btcpay_invoice_id = $1`,
-          [order_id, `nowpayments:scoped_grant_zero:${order.plan_id}`]
-        ).catch(() => {});
-        throw new Error(`grantEntitlementsForPlan returned zero grants for scoped plan ${order.plan_id}`);
-      }
-      await dbQuery(
-        `UPDATE dash_subscription_orders SET status = 'completed', completed_at = NOW(), notes = $2 WHERE btcpay_invoice_id = $1`,
-        [order_id, `nowpayments:scoped:${payment_id}`]
-      );
-      logger.info('[NOWPayments] IPN: scoped purchase granted', {
-        order_id, planId: order.plan_id,
-        channelId: orderMetaScoped.channelId, hangoutGroupId: orderMetaScoped.hangoutGroupId,
-      });
-      maybeGrantFirstHourCryptoBonus(order.user_id).catch(() => {});
-      return res.json({ received: true });
-    } catch (scopedErr) {
-      await dbQuery(
-        `UPDATE dash_subscription_orders SET status = 'pending', notes = $2 WHERE btcpay_invoice_id = $1`,
-        [order_id, `nowpayments:scoped_failed:${scopedErr.message}`.slice(0, 500)]
-      ).catch(() => {});
-      throw scopedErr;
-    }
-  }
-
-  // CS-PAY-C-03: creator_monthly requires pnp-member — gate before any grant attempt
-  if (order.plan_id === 'creator_monthly') {
-    const EAS = require('../../services/entitlementAccessService');
-    const hasMember = await EAS.hasEntitlement(String(order.user_id), 'pnp-member');
-    if (!hasMember) {
-      logger.error('[NOWPayments] IPN: creator_monthly order but user has no pnp-member — skipping grant', { userId: order.user_id, order_id });
-      return res.json({ received: true }); // Ack without granting — do not 400
-    }
-  }
-
-  // Grant FIRST — if this throws, roll back to pending so NOWPayments retries
-  let creatorSubExpiresAt = null;
-  try {
-    const PaymentServiceGf = require('../../services/paymentService');
-    // Donation plans (donation-10, donation-25, etc.) have no plan_add_ons and
-    // intentionally return zero grants — treat as a successful no-op, not an error.
-    const isDonationPlan = order.plan_id?.startsWith('donation');
-
-    // CS-PAY-C-02: for creator_monthly, subscribeToCreator is the sole entitlement grant path.
-    // Do NOT also call grantEntitlementsForPlan — it would double-extend the expiry.
-    if (order.plan_id === 'creator_monthly' && order.creator_id) {
-      const CreatorService = require('../../services/creatorService');
-      const subResult = await CreatorService.subscribeToCreator(order.user_id, String(order.creator_id), order_id);
-      creatorSubExpiresAt = subResult?.expiresAt || null;
-    } else {
-      const grantResult = await PaymentServiceGf.grantEntitlementsForPlan(
-        order.user_id,
-        order.plan_id,
-        'nowpayments',
-        order.creator_id ? { creatorId: String(order.creator_id) } : null,
-        order_id
-      );
-
-      // NP-H-03: zero-grant guard — roll back so NOWPayments retries (skip for donations)
-      if (!isDonationPlan && (!grantResult || grantResult.granted === 0)) {
-        await dbQuery(
-          `UPDATE dash_subscription_orders SET status = 'pending', notes = $2 WHERE btcpay_invoice_id = $1`,
-          [order_id, `nowpayments:grant_zero:${order.plan_id}`.slice(0, 500)]
-        ).catch(() => {});
-        throw new Error(`grantEntitlementsForPlan returned zero grants for plan ${order.plan_id}`);
-      }
-    }
-  } catch (grantErr) {
-    // Roll back lock so this IPN delivery can be retried
-    await dbQuery(
-      `UPDATE dash_subscription_orders SET status = 'pending', notes = $2 WHERE btcpay_invoice_id = $1`,
-      [order_id, `nowpayments:grant_failed:${grantErr.message}`.slice(0, 500)]
-    ).catch(() => {});
-    throw grantErr;
-  }
-
-  // Mark completed only after successful grant
-  await dbQuery(
-    `UPDATE dash_subscription_orders SET status = 'completed', completed_at = NOW(), notes = $2 WHERE btcpay_invoice_id = $1`,
-    [order_id, `nowpayments:${payment_id}`]
-  );
-
-  // Finalize promo redemption if this order carried one. Non-fatal — the
-  // grant succeeded and the payment is already marked completed; a stuck
-  // 'claimed' redemption is a metrics issue, not a service outage.
-  try {
-    const redemptionId = order?.metadata?.redemptionId;
-    if (redemptionId) {
-      const PromoService = require('../../services/promoService');
-      await PromoService.completePromoRedemption(redemptionId, String(order_id));
-      logger.info('[NOWPayments] Promo redemption completed', { order_id, redemptionId, promoCode: order.metadata?.promoCode });
-    }
-  } catch (promoErr) {
-    logger.warn('[NOWPayments] Promo redemption complete failed (non-fatal)', { order_id, error: promoErr.message });
-  }
-
-  // Sync users.plan_id + plan_expiry for admin visibility — skip for creator_monthly.
-  // NP-NOTE: tier + subscription_status are already synced by recomputeUserTier inside
-  // grantEntitlementsForPlan above. We only need plan_id + plan_expiry here.
-  // Uses bypass transaction so the lifetime-fields trigger never blocks a legitimate grant.
-  if (order.plan_id !== 'creator_monthly') {
-    const isDonationForTier = order.plan_id?.startsWith('donation');
-    if (isDonationForTier) {
-      // Donation plans have no plan_add_ons; recomputeUserTier (already called inside
-      // grantEntitlementsForPlan) handles tier. Nothing else to do.
-    } else {
-      try {
-        const PlanModelNpTier = require('../../models/planModel');
-        const planForTier = await PlanModelNpTier.getById(order.plan_id).catch(() => null);
-        if (planForTier) {
-          // NP-H-02: lifetime plans store NULL expiry
-          const isLifetimePlan = planForTier.is_lifetime === true || (planForTier.duration_days && planForTier.duration_days >= 36500);
-          const newExpiry = isLifetimePlan
-            ? null
-            : planForTier.duration_days
-              ? new Date(Date.now() + planForTier.duration_days * 86400000).toISOString()
-              : null;
-          const { getClient: _npGetClient } = require('../../config/postgres');
-          const _npTx = await _npGetClient();
-          try {
-            await _npTx.query('BEGIN');
-            await _npTx.query("SET LOCAL pnptv.superadmin_bypass = 'true'");
-            await _npTx.query(
-              `UPDATE users SET plan_id = $2,
-                 plan_expiry = CASE
-                   WHEN plan_expiry IS NULL THEN NULL
-                   WHEN $3::timestamptz IS NULL THEN NULL
-                   WHEN plan_expiry > $3::timestamptz THEN plan_expiry
-                   ELSE $3::timestamptz
-                 END,
-                 updated_at = NOW()
-               WHERE id = $1`,
-              [order.user_id, planForTier.id, newExpiry]
-            );
-            await _npTx.query('COMMIT');
-          } catch (txErr) {
-            await _npTx.query('ROLLBACK').catch(() => {});
-            throw txErr;
-          } finally {
-            _npTx.release();
-          }
-        }
-      } catch (planSyncErr) {
-        logger.warn('[NOWPayments] IPN: plan_id/plan_expiry sync failed (non-critical)', { userId: order.user_id, planId: order.plan_id, error: planSyncErr.message });
-      }
-    }
-  }
-
-  // Invalidate user session cache so tier update is reflected immediately
-  try {
-    const { cache: npCache } = require('../../config/redis');
-    await npCache.del(`user:${order.user_id}`);
-    await npCache.del(`session:user:${order.user_id}`);
-  } catch (cacheErr) {
-    logger.warn('[NOWPayments] IPN: cache invalidation failed (non-fatal)', { userId: order.user_id, error: cacheErr.message });
-  }
-
-  // Send confirmation notifications (non-fatal)
-  try {
-    const PlanModelNP = require('../../models/planModel');
-    const planForNotif = await PlanModelNP.getById(order.plan_id).catch(() => null);
-    const planName = planForNotif?.display_name || planForNotif?.name || order.plan_id;
-    const isLifetime = planForNotif?.is_lifetime || false;
-    const durationDays = planForNotif?.duration_days || 30;
-    const expiryDate = order.plan_id === 'creator_monthly' && creatorSubExpiresAt
-      ? creatorSubExpiresAt
-      : (isLifetime ? null : new Date(Date.now() + durationDays * 86400000));
-    const PaymentNotifSvcNP = require('../../services/paymentNotificationService');
-    await PaymentNotifSvcNP.deliverPurchaseConfirmation(order.user_id, {
-      planId: order.plan_id,
-      planName,
-      amount: parseFloat(order.usd_amount) || 0,
-      transactionId: String(payment_id),
-      provider: 'nowpayments',
-      expiryDate,
-      isLifetime,
-    });
-  } catch (notifErr) {
-    logger.warn('[NOWPayments] IPN: notification block failed (non-fatal)', { userId: order.user_id, error: notifErr.message });
-  }
-
-  // Operator alerts — fire-and-forget.
-  try {
-    const PaymentNotificationServiceNP = require('../../services/paymentNotificationService');
-    const BusinessNotificationServiceNP = require('../../services/businessNotificationService');
-    const { getBotInstance: getNPBot } = require('../core/bot');
-    const { query: pgQ2 } = require('../../config/postgres');
-    const PlanModelNP2 = require('../../models/planModel');
-    const planForAlert = await PlanModelNP2.getById(order.plan_id).catch(() => null);
-    const planNameAlert = planForAlert?.display_name || planForAlert?.name || order.plan_id;
-    const uDataAlert = await pgQ2('SELECT first_name FROM users WHERE id = $1', [order.user_id]);
-    const customerNameAlert = uDataAlert.rows[0]?.first_name || order.user_id;
-    await PaymentNotificationServiceNP.sendAdminPaymentNotification({
-      bot: getNPBot(),
-      userId: order.user_id,
-      planName: planNameAlert,
-      amount: parseFloat(order.usd_amount) || 0,
-      provider: 'nowpayments',
-      transactionId: String(payment_id),
-      customerName: customerNameAlert,
-      customerEmail: 'N/A',
-      planType: order.plan_id === 'token_purchase' ? 'token_purchase'
-        : order.plan_id === 'call_package' ? 'call_package'
-        : 'subscription',
-    });
-    await BusinessNotificationServiceNP.notifyPayment({
-      userId: order.user_id,
-      planName: planNameAlert,
-      amount: parseFloat(order.usd_amount) || 0,
-      provider: 'USDC (NowPayments)',
-      transactionId: String(payment_id),
-      customerName: customerNameAlert,
-    });
-  } catch (alertErr) {
-    logger.warn('[NOWPayments] IPN: operator alert failed (non-fatal)', { error: alertErr.message });
-  }
-
-  // Record in payment_history for admin visibility
-  try {
-    const PaymentHistoryService = require('../../services/paymentHistoryService');
-    await PaymentHistoryService.recordPayment({
-      userId: order.user_id,
-      paymentMethod: 'nowpayments',
-      amount: parseFloat(order.usd_amount) || 0,
-      currency: 'USD',
-      planId: order.plan_id,
-      product: order.plan_id,
-      paymentReference: order_id,
-      providerTransactionId: String(payment_id),
-      providerPaymentId: String(payment_id),
-      webhookData: req.body,
-      status: 'completed',
-    });
-  } catch (histErr) {
-    logger.warn('[NOWPayments] IPN: payment_history write failed (non-fatal)', { error: histErr.message });
-  }
-
-  // Insert canonical payments row — required for admin panel, reconciliation, and refund tracking
-  try {
-    const { query: pgInsert } = require('../../config/postgres');
-    const PlanModelNP3 = require('../../models/planModel');
-    const planForPayment = await PlanModelNP3.getById(order.plan_id).catch(() => null);
-    const planNameForPayment = planForPayment?.display_name || planForPayment?.name || order.plan_id;
-    await pgInsert(
-      `INSERT INTO payments (
-         user_id, plan_id, plan_name, amount, currency, provider, payment_method,
-         status, payment_id, reference, transaction_id, completed_at, completed_by,
-         manual_completion, metadata, created_at, updated_at
-       ) VALUES ($1,$2,$3,$4,'USD','nowpayments','usdc','completed',$5,$6,$7,NOW(),'nowpayments_webhook',false,$8::jsonb,NOW(),NOW())
-       ON CONFLICT (provider, transaction_id) WHERE transaction_id IS NOT NULL DO NOTHING`,
-      [
-        order.user_id,
-        order.plan_id,
-        planNameForPayment,
-        parseFloat(order.usd_amount) || 0,
-        order_id,
-        order_id,
-        String(payment_id),
-        JSON.stringify({
-          nowpayments_payment_id: String(payment_id),
-          pay_currency,
-          actually_paid: _verifiedActuallyPaid,
-          ...(order.creator_id ? { creator_id: String(order.creator_id) } : {}),
-        }),
-      ]
-    );
-  } catch (paymentsErr) {
-    logger.warn('[NOWPayments] IPN: payments table insert failed (non-fatal)', { error: paymentsErr.message });
-  }
-
-  logger.info('[NOWPayments] IPN: payment completed', { userId: order.user_id, planId: order.plan_id, order_id });
-
-  // Slack ops-payments alert (best-effort, fire-and-forget)
-  try {
-    const slackOps = require('../../services/slackOpsService');
-    const orderMeta = order.metadata || {};
-    slackOps.notifyPaymentSuccess({
-      orderId: order_id,
-      userId: order.user_id,
-      username: orderMeta.username || '',
-      amount: parseFloat(order.usd_amount) || 0,
-      currency: price_currency || 'USD',
-      plan: order.plan_id || 'unknown',
-      provider: 'NowPayments',
-    }).catch(() => {});
-  } catch (_) {}
-
-  maybeGrantFirstHourCryptoBonus(order.user_id).catch(() => {});
-  _npLogRevenueAndSync(order, payment_id);
-  return res.json({ received: true });
-}));
-
-// POST /api/webhooks/nowpayments/payout — NowPayments creator payout status webhook
-app.post('/api/webhooks/nowpayments/payout', webhookLimiter, express.json(), asyncHandler(async (req, res) => {
-  const sig = req.headers['x-nowpayments-sig'];
-  if (!validateNowpaymentsIpn(req.body, sig)) {
-    logger.warn('[NowPayments Payout Webhook] Invalid IPN signature');
-    return res.status(400).json({ error: 'invalid_signature' });
-  }
-  const { handlePayoutWebhook } = require('../../services/nowpaymentsPayoutService');
-  const { id: npPayoutId, batch_withdrawal_id, status } = req.body;
-  await handlePayoutWebhook(npPayoutId || batch_withdrawal_id, status, req.body);
-  return res.json({ ok: true });
 }));
 
 // POST /api/webhooks/btcpay — BTCPay Server webhook (Dash payment confirmed)
@@ -20971,10 +18303,8 @@ app.get('/api/creator/crystal/self', requireSessionAuth, asyncHandler(async (req
 }));
 
 // POST /api/creator/crystal/self/checkout — initiate Crystal Creator self-purchase ($100)
-// Providers: 'wallet' (USDC on Base via walletCheckoutService) | 'nowpayments' (hosted invoice)
-// Returns:
-//   wallet      → { intentId, receivingAddress, usdcContract, amountUsdc, expiresAt, gasPolicyId }
-//   nowpayments → { nowpaymentsInvoiceId, invoiceUrl }
+// Provider: 'wallet' (USDC on Base via walletCheckoutService)
+// Returns: { intentId, receivingAddress, usdcContract, amountUsdc, expiresAt, gasPolicyId }
 const crystalSelfCheckoutLimiter = require('express-rate-limit')({
   windowMs: 3600_000,
   max: 5,
@@ -20984,85 +18314,15 @@ const crystalSelfCheckoutLimiter = require('express-rate-limit')({
   legacyHeaders: false,
 });
 app.post('/api/creator/crystal/self/checkout', requireSessionAuth, crystalSelfCheckoutLimiter, asyncHandler(async (req, res) => {
-  const { query: dbQuery } = require('../../config/postgres');
-  const { CRYSTAL_CREATOR_SELF_PRICE_CENTS: SELF_PRICE } = require('../../config/monetizationConfig');
-  const userId = String(req.session.user.id);
-
   const { provider } = req.body || {};
-  if (!provider || !['wallet', 'nowpayments'].includes(provider)) {
-    return res.status(400).json({ error: 'invalid_provider', message: "provider must be 'wallet' or 'nowpayments'" });
+  if (!provider || provider !== 'wallet') {
+    return res.status(400).json({ error: 'invalid_provider', message: "provider must be 'wallet'. Use POST /api/wallet/checkout/initiate with surface='crystal_self'." });
   }
-
-  // Invite gate
-  const { rows } = await dbQuery(
-    `SELECT crystal_creator_invited_at FROM users WHERE id = $1`,
-    [userId]
-  );
-  if (!rows[0] || !rows[0].crystal_creator_invited_at) {
-    return res.status(403).json({ error: 'not_invited' });
-  }
-
-  const usdAmount = SELF_PRICE / 100;
-  const webappUrl = (process.env.WEBAPP_URL || 'https://pnptv.app').replace(/\/$/, '');
-
-  // ── Wallet (USDC on Base) ────────────────────────────────────────────────
-  // WalletPayCard hits POST /api/wallet/checkout/initiate directly with
-  // surface='crystal_self'. This route must not duplicate that logic.
-  if (provider === 'wallet') {
-    return res.status(400).json({
-      error: 'wallet_path_changed',
-      message: 'Wallet USDC purchases use POST /api/wallet/checkout/initiate with surface="crystal_self" directly.',
-    });
-  }
-
-  // ── NowPayments (hosted invoice) ─────────────────────────────────────────
-  if (!NOWPAYMENTS_API_KEY) {
-    return res.status(503).json({ error: 'nowpayments_not_configured' });
-  }
-
-  const orderId = `pnptv-crystal-self-${userId}-${Date.now()}`;
-  const ipnCallbackUrl = `${webappUrl}/api/webhooks/nowpayments`;
-
-  try {
-    const paymentResp = await axios.post(`${NOWPAYMENTS_URL}/invoice`, {
-      price_amount: usdAmount,
-      price_currency: 'usd',
-      order_id: orderId,
-      order_description: 'Crystal Creator pass – PNPtv!',
-      ipn_callback_url: ipnCallbackUrl,
-      success_url: `${webappUrl}/creator/dashboard?crystal=1`,
-      cancel_url: `${webappUrl}/creator/dashboard`,
-    }, {
-      headers: { 'x-api-key': NOWPAYMENTS_API_KEY, 'Content-Type': 'application/json' },
-      timeout: 10000,
-    });
-    const { id: npInvoiceId, invoice_url: npInvoiceUrl } = paymentResp.data;
-    if (!npInvoiceId) throw new Error('No invoice id in NowPayments response');
-    const invoiceUrl = npInvoiceUrl || nowpaymentsWidgetUrl(npInvoiceId);
-
-    await dbQuery(
-      `INSERT INTO dash_subscription_orders
-         (user_id, plan_id, email, usd_amount, btcpay_invoice_id, status, metadata)
-       VALUES ($1, 'crystal_creator', NULL, $2, $3, 'pending', $4)
-       ON CONFLICT (btcpay_invoice_id) DO NOTHING`,
-      [
-        userId, usdAmount, orderId,
-        JSON.stringify({
-          provider: 'nowpayments',
-          flow: 'crystal_creator_self',
-          invoiceUrl,
-          nowpaymentsInvoiceId: String(npInvoiceId),
-          isGift: false,
-        }),
-      ]
-    );
-
-    logger.info('[Crystal] NowPayments invoice created (self)', { userId, orderId, usdAmount });
-    return res.json({ provider: 'nowpayments', nowpaymentsInvoiceId: String(npInvoiceId), invoiceUrl });
-  } catch (err) {
-    logger.error('[Crystal] NowPayments invoice creation failed (self)', { userId, error: err.message });
-    return res.status(502).json({ error: 'checkout_unavailable' });
-  }
+  // WalletPayCard hits POST /api/wallet/checkout/initiate directly with surface='crystal_self'.
+  return res.status(400).json({
+    error: 'wallet_path_changed',
+    message: 'Wallet USDC purchases use POST /api/wallet/checkout/initiate with surface="crystal_self" directly.',
+  });
 }));
 
 // GET /api/creators/:id/crystal/gift — PUBLIC: creator name + gift price only ($150)
@@ -21088,11 +18348,9 @@ app.get('/api/creators/:id/crystal/gift', asyncHandler(async (req, res) => {
 }));
 
 // POST /api/creators/:id/crystal/gift/checkout — initiate Crystal Creator gift ($150)
-// Providers: 'wallet' (USDC on Base via walletCheckoutService) | 'nowpayments' (hosted invoice)
+// Provider: 'wallet' (USDC on Base via walletCheckoutService)
 // Auth: optional (anonymous gifts allowed for public page; wallet requires session)
-// Returns:
-//   wallet      → { intentId, receivingAddress, usdcContract, amountUsdc, expiresAt, gasPolicyId }
-//   nowpayments → { nowpaymentsInvoiceId, invoiceUrl }
+// Returns: { intentId, receivingAddress, usdcContract, amountUsdc, expiresAt, gasPolicyId }
 const crystalGiftCheckoutLimiter = require('express-rate-limit')({
   windowMs: 3600_000,
   max: 5,
@@ -21102,99 +18360,15 @@ const crystalGiftCheckoutLimiter = require('express-rate-limit')({
   legacyHeaders: false,
 });
 app.post('/api/creators/:id/crystal/gift/checkout', crystalGiftCheckoutLimiter, asyncHandler(async (req, res) => {
-  const { query: dbQuery } = require('../../config/postgres');
-  const { CRYSTAL_CREATOR_GIFT_PRICE_CENTS: GIFT_PRICE } = require('../../config/monetizationConfig');
-  const creatorId = String(req.params.id);
-
   const { provider } = req.body || {};
-  if (!provider || !['wallet', 'nowpayments'].includes(provider)) {
-    return res.status(400).json({ error: 'invalid_provider', message: "provider must be 'wallet' or 'nowpayments'" });
+  if (!provider || provider !== 'wallet') {
+    return res.status(400).json({ error: 'invalid_provider', message: "provider must be 'wallet'. Use POST /api/wallet/checkout/initiate with surface='crystal_gift'." });
   }
-
-  const giftNote = typeof req.body?.giftNote === 'string' ? req.body.giftNote.slice(0, 500) : null;
-  // Gifter identity — optional (anonymous gifts allowed for public page, but wallet requires auth)
-  const giftedBy = req.session?.user?.id ? String(req.session.user.id) : null;
-
-  // Wallet provider requires a logged-in gifter so we can attribute the intent.
-  if (provider === 'wallet' && !giftedBy) {
-    return res.status(401).json({ error: 'unauthenticated', message: 'Wallet payments require a signed-in account.' });
-  }
-
-  const { rows } = await dbQuery(
-    `SELECT id, creator_status FROM users WHERE id = $1`,
-    [creatorId]
-  );
-  if (!rows[0] || rows[0].creator_status !== 'active') {
-    return res.status(404).json({ error: 'creator_not_found' });
-  }
-
-  const usdAmount = GIFT_PRICE / 100;
-  const webappUrl = (process.env.WEBAPP_URL || 'https://pnptv.app').replace(/\/$/, '');
-
-  // ── Wallet (USDC on Base) ────────────────────────────────────────────────
-  // WalletPayCard hits POST /api/wallet/checkout/initiate directly with
-  // surface='crystal_gift'. This route must not duplicate that logic.
-  if (provider === 'wallet') {
-    return res.status(400).json({
-      error: 'wallet_path_changed',
-      message: 'Wallet USDC purchases use POST /api/wallet/checkout/initiate with surface="crystal_gift" directly.',
-    });
-  }
-
-  // ── NowPayments (hosted invoice) ─────────────────────────────────────────
-  if (!NOWPAYMENTS_API_KEY) {
-    return res.status(503).json({ error: 'nowpayments_not_configured' });
-  }
-
-  const orderId = `pnptv-crystal-gift-${creatorId}-${Date.now()}`;
-  const ipnCallbackUrl = `${webappUrl}/api/webhooks/nowpayments`;
-
-  try {
-    const paymentResp = await axios.post(`${NOWPAYMENTS_URL}/invoice`, {
-      price_amount: usdAmount,
-      price_currency: 'usd',
-      order_id: orderId,
-      order_description: 'Crystal Creator gift – PNPtv!',
-      ipn_callback_url: ipnCallbackUrl,
-      success_url: `${webappUrl}/c/${creatorId}?crystal_gift=1`,
-      cancel_url: `${webappUrl}/c/${creatorId}`,
-    }, {
-      headers: { 'x-api-key': NOWPAYMENTS_API_KEY, 'Content-Type': 'application/json' },
-      timeout: 10000,
-    });
-    const { id: npInvoiceId, invoice_url: npInvoiceUrl } = paymentResp.data;
-    if (!npInvoiceId) throw new Error('No invoice id in NowPayments response');
-    const invoiceUrl = npInvoiceUrl || nowpaymentsWidgetUrl(npInvoiceId);
-
-    await dbQuery(
-      `INSERT INTO dash_subscription_orders
-         (user_id, plan_id, email, usd_amount, btcpay_invoice_id, creator_id, status, metadata)
-       VALUES ($1, 'crystal_creator', NULL, $2, $3, $4, 'pending', $5)
-       ON CONFLICT (btcpay_invoice_id) DO NOTHING`,
-      [
-        giftedBy, // NULL for anonymous gifts — never fall back to creator (double-counts them as the buyer)
-        usdAmount,
-        orderId,
-        creatorId,
-        JSON.stringify({
-          provider: 'nowpayments',
-          flow: 'crystal_creator_gift',
-          invoiceUrl,
-          nowpaymentsInvoiceId: String(npInvoiceId),
-          isGift: true,
-          giftedBy,
-          giftNote,
-          targetCreatorId: creatorId,
-        }),
-      ]
-    );
-
-    logger.info('[Crystal] NowPayments invoice created (gift)', { creatorId, giftedBy, orderId, usdAmount });
-    return res.json({ provider: 'nowpayments', nowpaymentsInvoiceId: String(npInvoiceId), invoiceUrl });
-  } catch (err) {
-    logger.error('[Crystal] Gift invoice creation failed (NowPayments)', { creatorId, error: err.message });
-    return res.status(502).json({ error: 'checkout_unavailable' });
-  }
+  // WalletPayCard hits POST /api/wallet/checkout/initiate directly with surface='crystal_gift'.
+  return res.status(400).json({
+    error: 'wallet_path_changed',
+    message: 'Wallet USDC purchases use POST /api/wallet/checkout/initiate with surface="crystal_gift" directly.',
+  });
 }));
 
 // Channel cover image upload — separate from creatorRoutes because it needs its own multer middleware
@@ -21886,10 +19060,9 @@ app.post('/api/creator/services/bookings/:bookingId/status', requireSessionAuth,
   return res.json(result);
 }));
 
-// ── Book a Crystal Service — returns wallet USDC intent or NP invoice URL ───
-// Body: { provider: 'wallet'|'nowpayments', buyerNote?: string }
+// ── Book a Crystal Service — returns wallet USDC intent ──────────────────────
+// Body: { provider: 'wallet', buyerNote?: string }
 // Wallet flow: returns { intentId, receivingAddress, amountUsdc, expiresAt }
-// NP flow:     returns { nowpaymentsInvoiceId, invoiceUrl }
 const crystalBookingLimiter = require('express-rate-limit')({
   windowMs: 3600_000, max: 10,
   keyGenerator: (req) => String(req.session?.user?.id || req.ip),
@@ -21904,8 +19077,8 @@ app.post('/api/creators/:id/services/:serviceId/book',
     const serviceId = String(req.params.serviceId);
     const creatorIdParam = String(req.params.id);
     const { provider, buyerNote = null } = req.body || {};
-    if (!['wallet', 'nowpayments'].includes(provider)) {
-      return res.status(400).json({ error: 'invalid_provider' });
+    if (!['wallet'].includes(provider)) {
+      return res.status(400).json({ error: 'invalid_provider', message: "provider must be 'wallet'" });
     }
 
     const audience = await crystalSvc.getViewerAudience(buyerId);
@@ -21954,54 +19127,8 @@ app.post('/api/creators/:id/services/:serviceId/book',
       }
     }
 
-    // ── NowPayments (hosted invoice) ─────────────────────────────────────────
-    if (!NOWPAYMENTS_API_KEY) return res.status(503).json({ error: 'nowpayments_not_configured' });
-    const orderId = `pnptv-crystal-svc-${svc.id}-${Date.now()}`;
-    try {
-      const paymentResp = await axios.post(`${NOWPAYMENTS_URL}/invoice`, {
-        price_amount: usdAmount,
-        price_currency: 'usd',
-        order_id: orderId,
-        order_description: `Crystal service: ${svc.service_type}`,
-        ipn_callback_url: `${webappUrl}/api/webhooks/nowpayments`,
-        success_url: `${webappUrl}/c/${svc.username || svc.creator_user_id}?service_booked=1`,
-        cancel_url: `${webappUrl}/c/${svc.username || svc.creator_user_id}`,
-      }, {
-        headers: { 'x-api-key': NOWPAYMENTS_API_KEY, 'Content-Type': 'application/json' },
-        timeout: 10000,
-      });
-      const npInvoiceId = paymentResp.data?.id;
-      if (!npInvoiceId) throw new Error('no invoice id from NP');
-      const invoiceUrl = paymentResp.data?.invoice_url || nowpaymentsWidgetUrl(npInvoiceId);
-
-      await query(
-        `INSERT INTO dash_subscription_orders
-           (user_id, plan_id, email, usd_amount, btcpay_invoice_id, creator_id, status, metadata)
-         VALUES ($1, 'crystal_service', NULL, $2, $3, $4, 'pending', $5)
-         ON CONFLICT (btcpay_invoice_id) DO NOTHING`,
-        [
-          buyerId, usdAmount, orderId, String(svc.creator_user_id),
-          JSON.stringify({
-            provider: 'nowpayments',
-            flow: 'crystal_service',
-            invoiceUrl,
-            nowpaymentsInvoiceId: String(npInvoiceId),
-            serviceId: Number(svc.id),
-            serviceType: svc.service_type,
-            fulfillmentDays: svc.fulfillment_days,
-            buyerNote,
-            targetCreatorId: String(svc.creator_user_id),
-            priceCents: gate.price_cents,
-          }),
-        ]
-      );
-
-      logger.info('[crystal-service] NP invoice created', { buyerId, serviceId: svc.id, orderId, usdAmount });
-      return res.json({ provider: 'nowpayments', nowpaymentsInvoiceId: String(npInvoiceId), invoiceUrl });
-    } catch (err) {
-      logger.error('[crystal-service] NP invoice failed', { buyerId, serviceId, error: err.message });
-      return res.status(502).json({ error: 'checkout_unavailable' });
-    }
+    // Crypto checkout retired — wallet is the only provider; already handled above.
+    return res.status(400).json({ error: 'invalid_provider' });
   })
 );
 
@@ -23269,46 +20396,6 @@ const checkoutLimiter = rateLimit({
   message: { success: false, error: 'Too many invoice attempts. Please wait a few minutes before trying again.' },
 });
 
-
-// Call-booking payment rails: Ru$h tokens (below), Wallet USDC (handled
-// by /api/webapp/wallet-checkout/*), and NowPayments onchain (below).
-//
-// NowPayments onchain (address-based) checkout for call packages.
-// Uses createCallCheckoutNowPayments which is already in callCheckoutService.js
-// and whose webhook handler lives at line ~16072 (plan_id = 'call_package').
-app.post('/api/webapp/book-call/checkout/nowpayments',
-  requireSessionAuth, checkoutLimiter,
-  asyncHandler(async (req, res) => {
-    if (!process.env.NOWPAYMENTS_API_KEY) {
-      return res.status(503).json({ success: false, error: 'Crypto payments are not configured.', code: 'NOWPAYMENTS_NOT_CONFIGURED' });
-    }
-    const user = req.session.user;
-    const { packageId, startTimeUtc, endTimeUtc, payCurrency, email, clientNotes } = req.body || {};
-    if (!packageId || !Number.isInteger(Number(packageId)) || Number(packageId) < 1) {
-      return res.status(400).json({ success: false, error: 'packageId must be a positive integer' });
-    }
-    const CallCheckoutSvc = require('../../services/callCheckoutService');
-    try {
-      const result = await CallCheckoutSvc.createCallCheckoutNowPayments({
-        userId: String(user.telegram_id || user.id),
-        packageId: Number(packageId),
-        startTimeUtc: startTimeUtc || null,
-        endTimeUtc: endTimeUtc || null,
-        payCurrency: payCurrency || 'btc',
-        clientNotes: clientNotes || null,
-        email: email || null,
-      });
-      return res.status(201).json({ success: true, ...result });
-    } catch (err) {
-      if (err.code === 'PACKAGE_NOT_FOUND') return res.status(404).json({ success: false, error: 'Call package not found or inactive' });
-      if (err.code === 'NOWPAYMENTS_NOT_CONFIGURED') return res.status(503).json({ success: false, error: err.message, code: err.code });
-      if (err.code === 'SLOT_TAKEN') return res.status(409).json({ success: false, error: 'That time slot is no longer available.', code: 'SLOT_TAKEN' });
-      if (err.code === 'PERFORMER_NOT_FOUND') return res.status(404).json({ success: false, error: 'Creator has no performer profile configured.' });
-      if (err.code === 'CHECKOUT_MUTEX_BUSY') return res.status(429).json({ success: false, error: 'Another checkout is already in progress. Please wait a moment.', code: err.code });
-      require('../../utils/logger').error('[book-call/checkout/nowpayments] error', { error: err.message, packageId });
-      return res.status(500).json({ success: false, error: 'Failed to create checkout' });
-    }
-  }));
 
 // Token checkout for call packages (instant, no payment gateway)
 app.post('/api/webapp/book-call/checkout/tokens',

@@ -185,7 +185,7 @@ class PaymentNotificationService {
       epayco:      { en: 'ePayco',               es: 'ePayco' },
       dash:        { en: 'Dash (BTCPay)',         es: 'Dash (BTCPay)' },
       btcpay:      { en: 'Dash (BTCPay)',         es: 'Dash (BTCPay)' },
-      nowpayments: { en: 'USDC (NowPayments)',    es: 'USDC (NowPayments)' },
+      wallet_usdc: { en: 'USDC on Base',          es: 'USDC en Base' },
     };
 
     return providers[provider]?.[lang] || provider.toUpperCase();

@@ -359,7 +359,7 @@ export default function PaymentsSettings() {
                 const providerRaw = (pay.provider ?? pay.payment_method ?? "").toLowerCase();
                 const providerLabel =
                   providerRaw === "dash" || providerRaw === "btcpay" ? p.txMethodDash :
-                  providerRaw === "nowpayments" ? p.txMethodNowpayments :
+                  providerRaw === "nowpayments" || providerRaw === "np" ? "Crypto (legacy)" :
                   providerRaw === "epayco" || providerRaw === "card" || providerRaw === "tokenized_card" ? p.txMethodCard :
                   providerRaw === "usdc" ? p.txMethodUsdc :
                   providerRaw === "usdt" ? p.txMethodUsdt :
@@ -369,7 +369,7 @@ export default function PaymentsSettings() {
 
                 const providerColor =
                   providerRaw === "dash" || providerRaw === "btcpay" ? { bg: "rgba(0,141,228,0.15)", fg: "#008DE4" } :
-                  providerRaw === "nowpayments" || providerRaw === "btc" ? { bg: "rgba(247,147,26,0.15)", fg: "#F7931A" } :
+                  providerRaw === "nowpayments" || providerRaw === "np" || providerRaw === "btc" ? { bg: "rgba(247,147,26,0.15)", fg: "#F7931A" } :
                   providerRaw === "epayco" || providerRaw === "card" ? { bg: "rgba(52,199,89,0.15)", fg: "#34C759" } :
                   providerRaw === "usdc" ? { bg: "rgba(39,117,202,0.15)", fg: "#2775CA" } :
                   providerRaw === "usdt" ? { bg: "rgba(38,161,123,0.15)", fg: "#26A17B" } :

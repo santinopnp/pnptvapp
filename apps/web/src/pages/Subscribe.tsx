@@ -140,11 +140,6 @@ export default function Subscribe() {
   const [onlineStats, setOnlineStats] = useState<{ online: number; prime: number } | null>(null);
 
 
-  // Free trial
-
-  // NowPayments hook retired 2026-08-09 — Wallet (USDC on Base) is the only
-  // crypto path now. Any resumed NP order from sessionStorage is ignored.
-
   useEffect(() => {
     getSubscriptionPlans()
       .then((res) => {

@@ -13,7 +13,6 @@
  * `initialDuration` is used as the fixed duration (set by CallPackageCards).
  *
  * Payment rails: card-via-Wallet (Privy USDC on Base) or Ru$h tokens.
- * NowPayments / BTC / USDT retired 2026-08-09.
  */
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
@@ -30,8 +29,6 @@ import {
   trackEvent,
   getWalletBalance,
   payCallWithTokens,
-  prepareCallNowPayments,
-  getBookingPaymentStatus,
   GIFTED_ELIGIBLE_PERFORMER_USER_IDS,
   type CallPackage,
   type BookingSlot,
@@ -45,10 +42,7 @@ import { BuyTokensModal } from "@/components/BuyTokensModal";
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type Step = "SELECT_MODEL" | "SELECT_PACKAGE" | "SELECT_SLOT" | "CHECKOUT" | "SUCCESS";
-type Provider = "wallet" | "tokens" | "nowpayments";
-
-// Floor enforced server-side; show button for any amount.
-const NOWPAYMENTS_MINIMUM_USD = 0;
+type Provider = "wallet" | "tokens";
 
 export interface BookCallModalProps {
   creator: CreatorCardCreator;
@@ -203,12 +197,6 @@ export function BookCallModal({
   // Ru$h purchase modal — opened when user picks Ru$h but doesn't have enough
   const [showBuyRush, setShowBuyRush] = useState(false);
 
-  // NowPayments (crypto popup) state
-  const [npPaymentId, setNpPaymentId] = useState<string | null>(null);
-  const [npPolling, setNpPolling] = useState(false);
-  const npPopupRef = useRef<Window | null>(null);
-  const npPollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
   // Join Call state (loading/error shown while navigating)
   const [joinCallLoading, setJoinCallLoading] = useState(false);
   const [joinCallError, setJoinCallError] = useState<string | null>(null);
@@ -305,10 +293,6 @@ export function BookCallModal({
     setJoinCallLoading(false);
     setJoinCallError(null);
     setShowBuyRush(false);
-    setNpPaymentId(null);
-    setNpPolling(false);
-    if (npPollTimerRef.current) { clearInterval(npPollTimerRef.current); npPollTimerRef.current = null; }
-    if (npPopupRef.current) { try { npPopupRef.current.close(); } catch (_) {} npPopupRef.current = null; }
     checkoutInFlight.current = false;
     setSlots([]);
     setSlotsOffset(0);
@@ -554,7 +538,6 @@ export function BookCallModal({
 
   const handleCheckout = useCallback(async () => {
     if (checkoutInFlight.current || !activePackage) return;
-    if (provider === "nowpayments") return; // handled by handleNpCheckout
     checkoutInFlight.current = true;
     setCheckoutLoading(true);
     setIsProcessing(true);
@@ -612,63 +595,6 @@ export function BookCallModal({
       checkoutInFlight.current = false;
     }
   }, [activePackage, provider, email, selectedSlot]);
-
-  // ── NowPayments popup checkout ───────────────────────────────────────────────
-
-  const handleNpCheckout = useCallback(async () => {
-    if (!activePackage) return;
-    setCheckoutError(null);
-    setCheckoutLoading(true);
-    try {
-      const res = await prepareCallNowPayments({
-        packageId: activePackage.id,
-        startTimeUtc: selectedSlot?.startUtc ?? null,
-        endTimeUtc: selectedSlot?.endUtc ?? null,
-        email: email.trim() || null,
-        clientNotes: clientNotes.trim() || null,
-      });
-      if (!res.success || !res.invoiceUrl || !res.paymentId) {
-        throw new Error(res.error || (t.lang === "es" ? "No se pudo crear el pago cripto." : "Could not create crypto payment."));
-      }
-      trackEvent("payment_started", { provider: "nowpayments", package: activePackage.id });
-      const w = window.open(res.invoiceUrl, "np_call_checkout", "width=480,height=720,left=200,top=100");
-      npPopupRef.current = w;
-      setNpPaymentId(res.paymentId);
-      setNpPolling(true);
-    } catch (err: unknown) {
-      setCheckoutError(err instanceof Error ? err.message : (t.lang === "es" ? "Error al iniciar pago cripto." : "Crypto payment error."));
-    } finally {
-      setCheckoutLoading(false);
-    }
-  }, [activePackage, selectedSlot, email, clientNotes, t.lang]);
-
-  // Poll for NP payment completion
-  useEffect(() => {
-    if (!npPolling || !npPaymentId) return;
-    const pid = npPaymentId;
-    npPollTimerRef.current = setInterval(async () => {
-      try {
-        const status = await getBookingPaymentStatus(pid);
-        if (status.status === "paid") {
-          clearInterval(npPollTimerRef.current!);
-          npPollTimerRef.current = null;
-          setNpPolling(false);
-          try { npPopupRef.current?.close(); } catch (_) {}
-          npPopupRef.current = null;
-          if (status.bookingId) setConfirmedBookingId(status.bookingId);
-          if (selectedSlot?.startUtc) setConfirmedStartAt(selectedSlot.startUtc);
-          setStep("SUCCESS");
-        } else if (status.status === "failed" || status.status === "expired") {
-          clearInterval(npPollTimerRef.current!);
-          npPollTimerRef.current = null;
-          setNpPolling(false);
-          setNpPaymentId(null);
-          setCheckoutError(t.lang === "es" ? "El pago falló o expiró. Intenta de nuevo." : "Payment failed or expired. Please try again.");
-        }
-      } catch (_) { /* non-fatal — keep polling */ }
-    }, 5000);
-    return () => { if (npPollTimerRef.current) { clearInterval(npPollTimerRef.current); npPollTimerRef.current = null; } };
-  }, [npPolling, npPaymentId, selectedSlot, t.lang]);
 
   if (!open) return null;
 
@@ -1290,7 +1216,7 @@ export function BookCallModal({
         </div>
       </div>
 
-      {/* Payment method selector — Wallet (USDC on Base), Ru$h tokens, NowPayments (crypto). */}
+      {/* Payment method selector — Wallet (USDC on Base), Ru$h tokens. */}
       <div>
         <p className="text-xs font-semibold uppercase tracking-wider mb-2.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>{t.creator.paymentMethodLabel}</p>
         <div className="flex gap-2 flex-wrap">
@@ -1317,18 +1243,6 @@ export function BookCallModal({
           >
             🎫 Ru$h 💎
           </button>
-          {effectivePriceUsd >= NOWPAYMENTS_MINIMUM_USD && (
-            <button
-              type="button"
-              onClick={() => setProvider("nowpayments")}
-              className="flex-1 min-w-[80px] min-h-[44px] rounded-xl text-sm font-semibold transition-colors"
-              style={provider === "nowpayments"
-                ? { background: "rgba(255,183,0,0.16)", border: "1.5px solid rgba(255,183,0,0.80)", color: "rgba(255,183,0,0.95)" }
-                : { background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "var(--pnp-text-secondary, #8E8E93)" }}
-            >
-              ₿ Apps & wallets
-            </button>
-          )}
         </div>
         {provider === "tokens" && activePackage && (() => {
           const tokenCost = Math.round(Number(activePackage.price_usd ?? 0) * 6);
@@ -1384,55 +1298,8 @@ export function BookCallModal({
                 if (bookingId) setConfirmedBookingId(bookingId);
                 setStep("SUCCESS");
               }}
-              onCryptoFallback={() => setProvider("nowpayments")}
+              onCryptoFallback={undefined}
             />
-          </div>
-        )}
-        {/* NowPayments crypto popup */}
-        {provider === "nowpayments" && activePackage && (
-          <div className="mt-3 space-y-3">
-            {npPolling ? (
-              <div className="rounded-xl p-4 text-center space-y-2" style={{ background: "rgba(255,183,0,0.07)", border: "1px solid rgba(255,183,0,0.30)" }}>
-                <div className="flex items-center justify-center gap-2">
-                  <span className="inline-block w-4 h-4 rounded-full border-2 border-amber-400/40 border-t-amber-400 animate-spin" />
-                  <span className="text-sm font-semibold" style={{ color: "rgba(255,183,0,0.90)" }}>
-                    {t.lang === "es" ? "Esperando tu pago…" : "Waiting for your payment…"}
-                  </span>
-                </div>
-                <p className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-                  {t.lang === "es"
-                    ? "Completa el pago en la ventana que se abrió. Esta pantalla se actualizará automáticamente."
-                    : "Complete the payment in the window that opened. This screen will update automatically."}
-                </p>
-                <button
-                  type="button"
-                  onClick={() => { setNpPolling(false); setNpPaymentId(null); try { npPopupRef.current?.close(); } catch (_) {} npPopupRef.current = null; }}
-                  className="text-xs underline underline-offset-2"
-                  style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}
-                >
-                  {t.lang === "es" ? "Cancelar" : "Cancel"}
-                </button>
-              </div>
-            ) : (
-              <button
-                type="button"
-                disabled={checkoutLoading}
-                onClick={handleNpCheckout}
-                className="w-full min-h-[48px] rounded-xl text-sm font-bold transition-all active:scale-[0.98] flex items-center justify-center gap-2 disabled:opacity-60"
-                style={{ background: "rgba(255,183,0,0.12)", border: "1.5px solid rgba(255,183,0,0.55)", color: "rgba(255,183,0,0.95)" }}
-              >
-                {checkoutLoading
-                  ? <span className="inline-block w-4 h-4 rounded-full border-2 border-amber-400/40 border-t-amber-400 animate-spin" />
-                  : <>
-                      <span>₿</span>
-                      <span>{t.lang === "es" ? `₿ Pagar $${effectivePriceUsd.toFixed(2)} · Apps y wallets` : `₿ Pay $${effectivePriceUsd.toFixed(2)} · Apps & wallets`}</span>
-                    </>
-                }
-              </button>
-            )}
-            <p className="text-[10px] text-center" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-              BTC · ETH · USDC · USDT · {t.lang === "es" ? "y más" : "and more"}
-            </p>
           </div>
         )}
 

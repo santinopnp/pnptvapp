@@ -89,7 +89,7 @@ class PaymentService {
      * @returns {Promise<boolean>} Success status
      */
     static async sendPaymentConfirmationNotification({
-      userId, plan, transactionId, amount, expiryDate, language = 'es', provider = 'nowpayments',
+      userId, plan, transactionId, amount, expiryDate, language = 'es', provider = 'wallet_usdc',
     }) {
       try {
         const bot = getBotInstance();
@@ -254,7 +254,7 @@ class PaymentService {
       const checkoutDomain = process.env.CHECKOUT_DOMAIN || 'https://pnptv.app';
 
       // Any unsupported provider at this point — reject.
-      if (!['nowpayments', 'btcpay', 'dash'].includes(provider)) {
+      if (!['wallet_usdc', 'btcpay', 'dash'].includes(provider)) {
         throw new Error(`Invalid payment provider: ${provider}`);
       }
 
@@ -1135,7 +1135,7 @@ class PaymentService {
         // Referral reward — grant PNP Live tokens to the referrer ONCE, when
         // the referee makes their first PAID plan purchase. Only fires for
         // payment sources; admin/manual grants must not trigger token rewards.
-        const PAID_SOURCES = ['payment', 'dash', 'nowpayments', 'btcpay', 'webhook', 'efipay_easybots'];
+        const PAID_SOURCES = ['payment', 'dash', 'wallet_usdc', 'btcpay', 'webhook', 'efipay_easybots'];
         if (PAID_SOURCES.includes(source)) {
           try {
             const referralService = require('./referralService');

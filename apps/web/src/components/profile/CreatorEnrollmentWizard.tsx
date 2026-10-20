@@ -62,7 +62,7 @@ async function compressImageForUpload(file: File, maxDim: number, quality: numbe
   }
 }
 
-// Display labels for NowPayments currency codes — kept in sync with the
+// Display labels for payout currency codes — kept in sync with the
 // <select id="pnp-creatorenrollmentwizard-1"> options in step 3 and with ADDRESS_VALIDATORS on the backend.
 const TOKEN_LABELS: Record<string, string> = {
   privy_wallet: "My PNPtv Wallet (USDC on Base) ★ Recommended",
@@ -355,7 +355,7 @@ export default function CreatorEnrollmentWizard({
   const canProceedStep2 = termsAccepted && commitmentAccepted && privacyAccepted;
   // Minimum address length per token — matches the tightest of each family's
   // real formats. Full validation happens server-side against a per-currency
-  // regex in nowpaymentsPayoutService.ADDRESS_VALIDATORS.
+  // regex in the payout service.
   const PAYMENT_MIN_LENGTH: Record<string, number> = {
     privy_wallet: 42,
     btc: 26, btcln: 6, eth: 42, ltc: 26, xmr: 95, bch: 34,

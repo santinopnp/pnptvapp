@@ -4,8 +4,8 @@
  * walletCheckoutService.js
  *
  * Unified purchase handler that replaces the scattered per-provider payment
- * services (nowPaymentsService, meruService, dashTokenService, and the
- * per-surface debit code paths in routes.js). Every purchase across every
+ * services (meruService, dashTokenService, and the per-surface debit code
+ * paths in routes.js). Every purchase across every
  * surface — memberships, PRIME, creator subs, calls, Ru$h, channel/hangout
  * access — resolves to one of two rails:
  *
@@ -1197,7 +1197,7 @@ async function _fulfillCrystalPass(client, { userId, entitlementSpec, provider, 
       creatorId: String(targetCreatorId),
       months: Number(months) || 1,
       grantType: isGift ? 'gift' : 'purchase',
-      source: provider.startsWith('wallet') ? 'wallet' : 'nowpayments',
+      source: provider.startsWith('wallet') ? 'wallet' : 'crypto',
       // Quien paga, que no siempre es quien recibe: en un regalo es el cliente.
       grantedBy: String(giftedBy || targetCreatorId),
       amountUsd: priceCents != null ? Number(priceCents) / 100 : null,
@@ -1521,7 +1521,7 @@ async function _fulfillEntitlement(client, { userId, entitlementSpec, surface, p
   // Creator revenue split — every wallet_usdc purchase of a creator_sub (or any
   // entitlement scoped to a specific creator) must credit creator_earnings at
   // the canonical rate. Legacy paymentService.js has the same insert for
-  // NowPayments/Meru/BTCPay paths; the new wallet rail was missing it and
+  // Meru/BTCPay paths; the new wallet rail was missing it and
   // silently dropped ~3 payments to DUKEOFDENSITY on 2026-08-31 before we
   // caught it. Held for EARNINGS_HOLD_HOURS to cover chargeback window.
   if (creator_id && surface === 'creator_sub' && Number(amountUsd) > 0) {
@@ -1592,7 +1592,7 @@ async function _invalidateCaches(userId) {
 
 /**
  * Post-sale notifications for wallet-checkout grants. Matches parity with the
- * legacy providers (NowPayments/Banxa) which fire the same two channels
+ * legacy providers (Banxa/BTCPay) which fire the same two channels
  * from paymentSettlementService. Fire-and-forget — never rejects. Never call
  * this before the grant is committed; callers must invoke after their COMMIT.
  *

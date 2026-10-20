@@ -176,8 +176,8 @@ async function handleEpaycoTutorial(ctx) {
     const lang = getLanguage(ctx);
     await ctx.answerCbQuery().catch(() => {});
     const text = lang === 'es'
-      ? `💳 *ePayco (Retirado)*\n\n⚠️ _ePayco ya no está activo. Por favor usa Dash (Crypto) o NOWPayments en https://pnptv.app/subscribe._`
-      : `💳 *ePayco (Retired)*\n\n⚠️ _ePayco is no longer active. Please use Dash (Crypto) or NOWPayments at https://pnptv.app/subscribe._`;
+      ? `💳 *ePayco (Retirado)*\n\n⚠️ _ePayco ya no está activo. Por favor suscríbete en https://pnptv.app/subscribe._`
+      : `💳 *ePayco (Retired)*\n\n⚠️ _ePayco is no longer active. Please subscribe at https://pnptv.app/subscribe._`;
     const keyboard = Markup.inlineKeyboard([
       [Markup.button.callback(lang === 'es' ? '« Volver al Menu' : '« Back to Menu', 'pay_menu')],
     ]);
@@ -194,8 +194,8 @@ async function handleDaimoTutorial(ctx) {
     const lang = getLanguage(ctx);
     await ctx.answerCbQuery().catch(() => {});
     const text = lang === 'es'
-      ? `🪙 *Daimo Pay (Retirado)*\n\n⚠️ _Daimo Pay ya no está activo. Por favor usa Dash (Crypto) o NOWPayments en https://pnptv.app/subscribe._`
-      : `🪙 *Daimo Pay (Retired)*\n\n⚠️ _Daimo Pay is no longer active. Please use Dash (Crypto) or NOWPayments at https://pnptv.app/subscribe._`;
+      ? `🪙 *Daimo Pay (Retirado)*\n\n⚠️ _Daimo Pay ya no está activo. Por favor suscríbete en https://pnptv.app/subscribe._`
+      : `🪙 *Daimo Pay (Retired)*\n\n⚠️ _Daimo Pay is no longer active. Please subscribe at https://pnptv.app/subscribe._`;
     const keyboard = Markup.inlineKeyboard([
       [Markup.button.callback(lang === 'es' ? '« Volver al Menu' : '« Back to Menu', 'pay_menu')],
     ]);

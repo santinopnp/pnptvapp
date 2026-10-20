@@ -67,7 +67,7 @@ const strings = {
     usdc: "Pay",
     // Dash and Lightning i18n strings removed 2026-07-31 (BTCPay/Dash/Lightning retired)
 
-    // ── USDC / USDT stablecoin (NOWPayments) ─────────────────────────────────
+    // ── USDC / USDT stablecoin ────────────────────────────────────────────────
     usdcPayment: "USDC / USDT",
     usdcDesc: "20+ networks · No price swings",
     usdcComingSoon: "Coming soon",
@@ -210,7 +210,7 @@ const strings = {
     usdc: "Pagar",
     // Dash y Lightning strings eliminados 2026-07-31 (BTCPay/Dash/Lightning retirados)
 
-    // ── USDC / USDT stablecoin (NOWPayments) ─────────────────────────────────
+    // ── USDC / USDT stablecoin ────────────────────────────────────────────────
     usdcPayment: "USDC / USDT",
     usdcDesc: "20+ redes · Sin volatilidad",
     usdcComingSoon: "Próximamente",
@@ -345,7 +345,7 @@ const strings = {
     usdc: "Pagar",
     // Dash and Lightning info strings removed 2026-07-31
 
-    // ── USDC / USDT stablecoin (NOWPayments) ─────────────────────────────────
+    // ── USDC / USDT stablecoin ────────────────────────────────────────────────
     usdcPayment: "USDC / USDT",
     usdcDesc: "20+ networks · Stable",
     usdcComingSoon: "Em breve",
@@ -353,7 +353,7 @@ const strings = {
     usdcInfoText: "Pague com USDC ou USDT — valor estável, sem volatilidade, aceito em qualquer rede. Escolha sua rede preferida no checkout.",
     usdcRedirecting: "Abrindo checkout seguro...",
     usdcWaitingTitle: "Aguardando pagamento USDC",
-    usdcWaitingDesc: "Conclua o pagamento na janela da NOWPayments. Esta página atualiza automaticamente quando confirmado.",
+    usdcWaitingDesc: "Conclua o pagamento na janela de checkout. Esta página atualiza automaticamente quando confirmado.",
     usdcPaymentConfirmed: "Pagamento confirmado!",
     usdcExpired: "Pagamento não concluído. Tente novamente ou entre em contato com o suporte se você enviou fundos.",
     failedToCreateUsdcInvoice: "Falha ao criar fatura USDC",

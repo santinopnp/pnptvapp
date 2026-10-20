@@ -858,7 +858,7 @@ class CreatorService {
 
     // Payment verification is the caller's responsibility:
     // - REST controller verifies ownership, status, plan_id, and creatorId before reaching here.
-    // - Webhook handlers (BTCPay/NowPayments/ePayco) verify payment server-side before calling.
+    // - Webhook handlers (BTCPay/ePayco) verify payment server-side before calling.
     // The former hasPrime gate was removed: it conflated platform PRIME with per-creator payment,
     // allowing any PRIME user to subscribe to any creator for free.
 
@@ -1653,8 +1653,8 @@ class CreatorService {
     }
 
     // Build a locked-post payload that carries the fields the paywall UI needs
-    // to render a blurred-preview video card + open the correct NowPayments
-    // invoice inline. Only video posts get the preview clip; text/image posts
+    // to render a blurred-preview video card + open the correct checkout
+    // inline. Only video posts get the preview clip; text/image posts
     // keep the classic static lock UI.
     const buildLockedPayload = (p) => {
       const meta = typeof p.metadata === 'string'
@@ -1674,7 +1674,7 @@ class CreatorService {
         video_title: null,
         video_description: null,
         // Enriched paywall hints — client uses these to render the CTA + trigger
-        // the correct NowPayments checkout flow without an intermediate page.
+        // the correct checkout flow without an intermediate page.
         preview_gif_url: isVideo ? (meta?.preview_gif_url || null) : null,
         is_video_exclusive: isVideo,
         unlock_target: authorPrime ? 'prime' : 'creator_sub',
@@ -2216,7 +2216,7 @@ class CreatorService {
       throw new Error(`Monthly price must be between $${CreatorService.PRICE_MIN} and $${CreatorService.PRICE_MAX}.`);
     }
 
-    // All NowPayments currency codes accepted by the enrollment wizard dropdown,
+    // Accepted payout currency codes for the enrollment wizard dropdown,
     // plus 'privy_wallet' (Privy embedded wallet / USDC on Base — the default
     // since 2026-09-14), and 'meru' (legacy LATAM bank transfer path).
     const validMethods = [
@@ -2421,11 +2421,10 @@ class CreatorService {
     // wizard only writes to creator_enrollments; without this copy the checker
     // (creatorController.getSetupStatus) reports payout as unconfigured.
     //
-    // Post-migration 326: payment_method is now the NowPayments currency code
+    // Post-migration 326: payment_method is the payout currency code
     // itself (btc, usdttrc20, dash, …). Every crypto code lands in
     // creator_wallet_address; the specific code is preserved on the enrollment
-    // row (used at payout time by nowpaymentsPayoutService). 'meru' stays
-    // grandfathered on the legacy fiat path.
+    // row for payout routing. 'meru' stays grandfathered on the legacy fiat path.
     if (enrollment.payment_address) {
       const addr = enrollment.payment_address.trim();
       const method = String(enrollment.payment_method || '').toLowerCase();
@@ -2450,9 +2449,8 @@ class CreatorService {
           [enrollment.user_id, addr]
         );
       } else if (method) {
-        // All other NowPayments crypto tokens (btc, btcln, eth, ltc, xmr, bch,
-        // usdt/*, usdc/*, sol, doge). Address format is currency-specific and
-        // validated by nowpaymentsPayoutService before the payout API call.
+        // All other crypto tokens (btc, btcln, eth, ltc, xmr, bch,
+        // usdt/*, usdc/*, sol, doge). Address format is currency-specific.
         await query(
           `UPDATE users SET creator_wallet_address = COALESCE(NULLIF(creator_wallet_address, ''), $2),
                             payout_method = 'crypto'
@@ -2686,7 +2684,7 @@ class CreatorService {
    * @param {string|null} opts.giftedBy
    * @param {string|null} opts.giftNote
    * @param {number|null} opts.months        — null = lifetime
-   * @param {string} opts.provider           — wallet_usdc|nowpayments|founder_grant
+   * @param {string} opts.provider           — wallet_usdc|founder_grant
    * @param {string|null} opts.ref           — payment reference (invoice id / tx hash)
    * @param {number} opts.priceCents
    * @returns {Promise<{passId: string, expiresAt: string|null, alreadyApplied?: boolean}>}

@@ -9,8 +9,6 @@ import {
   getWalletEthPrice,
   getWalletUsdcMainnetBalance,
   activateTokenCode,
-  buyTokensWithNowPayments,
-  getNowPaymentsOrderStatus,
   assertPaymentUrl,
   requestGasTopup,
   reportWalletClientError,
@@ -32,37 +30,6 @@ const USDC_TRANSFER_ABI = [{
   outputs: [{ name: "", type: "bool" }],
 }];
 
-// ── "Pay from your app" — familiar app picker over NowPayments BTC ───────────
-const NP_APPS = [
-  { id: 'revolut',  label: 'Revolut',  geo: 'EU',     emoji: '🟣', bgSelected: 'rgba(91,106,208,0.22)',  borderColor: 'rgba(91,106,208,0.55)'  },
-  { id: 'cashapp',  label: 'Cash App', geo: 'US/UK',  emoji: '💚', bgSelected: 'rgba(0,214,79,0.15)',    borderColor: 'rgba(0,214,79,0.50)'    },
-  { id: 'paypal',   label: 'PayPal',   geo: 'Global', emoji: '🔵', bgSelected: 'rgba(0,48,135,0.40)',    borderColor: 'rgba(0,112,255,0.50)'   },
-  { id: 'venmo',    label: 'Venmo',    geo: 'US',     emoji: '🔵', bgSelected: 'rgba(0,140,255,0.22)',   borderColor: 'rgba(0,140,255,0.50)'   },
-  { id: 'n26',      label: 'N26',      geo: 'EU',     emoji: '⚫', bgSelected: 'rgba(80,80,80,0.30)',    borderColor: 'rgba(120,120,120,0.50)' },
-  { id: 'binance',  label: 'Binance',  geo: 'Global', emoji: '🟡', bgSelected: 'rgba(240,185,11,0.15)',  borderColor: 'rgba(240,185,11,0.45)'  },
-  { id: 'coinbase', label: 'Coinbase', geo: 'Global', emoji: '🔵', bgSelected: 'rgba(0,82,255,0.22)',    borderColor: 'rgba(0,82,255,0.50)'    },
-  { id: 'other',    label: 'Other',    geo: null,     emoji: '🔗', bgSelected: 'rgba(255,255,255,0.08)', borderColor: 'rgba(255,255,255,0.28)' },
-] as const;
-
-const NP_APP_STEPS_EN: Record<string, string[]> = {
-  revolut:  ["Open Revolut → search 'Bitcoin' in the top search bar", "Tap Bitcoin (BTC) → tap 'Send'", "Tap 'Send to crypto address'", "Paste the BTC address from the checkout window", "Enter the exact amount shown → Confirm"],
-  cashapp:  ["Open Cash App → tap the Bitcoin tab (₿) at the bottom", "Tap 'Send Bitcoin'", "Paste the BTC address from the checkout window", "Enter the exact amount shown → tap Confirm"],
-  paypal:   ["Open PayPal → tap 'Crypto'", "Tap 'Bitcoin (BTC)'", "Tap 'Transfer' → 'External wallet'", "Paste the BTC address from the checkout window", "Enter the exact amount → Review → Send"],
-  venmo:    ["Open Venmo → tap 'Crypto' in the bottom menu", "Tap 'Bitcoin (BTC)'", "Tap 'Transfer out' → 'External wallet'", "Paste the BTC address from the checkout window", "Enter the exact amount → Confirm"],
-  n26:      ["Open N26 → tap 'Crypto' in the bottom menu", "Tap 'Bitcoin (BTC)'", "Tap 'Send' → 'External address'", "Paste the BTC address from the checkout window", "Enter the exact amount → Confirm"],
-  binance:  ["Open Binance → tap 'Wallets' → 'Spot'", "Find Bitcoin (BTC) → tap 'Send'", "⚠️ Select network: Bitcoin (BTC) — do NOT pick BNB or other networks", "Paste the BTC address from the checkout window", "Enter the exact amount → Confirm"],
-  coinbase: ["Open Coinbase → tap 'Assets' → find 'Bitcoin'", "Tap 'Send'", "Paste the BTC address from the checkout window", "Enter the exact amount → Continue → Send now"],
-};
-
-const NP_APP_STEPS_ES: Record<string, string[]> = {
-  revolut:  ["Abre Revolut → busca 'Bitcoin' en la barra de búsqueda arriba", "Toca Bitcoin (BTC) → toca 'Enviar'", "Toca 'Enviar a dirección cripto'", "Pega la dirección BTC de la ventana de pago", "Ingresa el monto exacto → Confirma"],
-  cashapp:  ["Abre Cash App → toca la pestaña Bitcoin (₿) abajo", "Toca 'Enviar Bitcoin'", "Pega la dirección BTC de la ventana de pago", "Ingresa el monto exacto → Confirma"],
-  paypal:   ["Abre PayPal → toca 'Criptomonedas'", "Toca 'Bitcoin (BTC)'", "Toca 'Transferir' → 'Billetera externa'", "Pega la dirección BTC de la ventana de pago", "Ingresa el monto exacto → Revisar → Enviar"],
-  venmo:    ["Abre Venmo → toca 'Cripto' en el menú inferior", "Toca 'Bitcoin (BTC)'", "Toca 'Transferir' → 'Billetera externa'", "Pega la dirección BTC de la ventana de pago", "Ingresa el monto exacto → Confirma"],
-  n26:      ["Abre N26 → toca 'Cripto' en el menú inferior", "Toca 'Bitcoin (BTC)'", "Toca 'Enviar' → 'Dirección externa'", "Pega la dirección BTC de la ventana de pago", "Ingresa el monto exacto → Confirma"],
-  binance:  ["Abre Binance → toca 'Billeteras' → 'Spot'", "Busca Bitcoin (BTC) → toca 'Enviar'", "⚠️ Elige la red: Bitcoin (BTC) — NO elijas BNB ni otra red", "Pega la dirección BTC de la ventana de pago", "Ingresa el monto exacto → Confirma"],
-  coinbase: ["Abre Coinbase → toca 'Activos' → busca 'Bitcoin'", "Toca 'Enviar'", "Pega la dirección BTC de la ventana de pago", "Ingresa el monto exacto → Continuar → Enviar ahora"],
-};
 
 interface BuyTokensModalProps {
   isOpen: boolean;
@@ -128,16 +95,9 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
   const [customUsd, setCustomUsd] = useState<string>("");
   const [payingCustom, setPayingCustom] = useState(false);
 
-  // NowPayments alternate-coin option — for users who want to pay in USDC (any
-  // chain), BTC, or ETH outside our Base wallet flow. Must live before the
-  // `if (!isOpen) return null` early return — hook order must be identical on
-  // every render or React #310 fires when the modal opens/closes.
-  const [npCoin, setNpCoin] = useState<'usdcsol' | 'btc' | 'eth'>('btc');
-  const [npFallbackPackageId, setNpFallbackPackageId] = useState<string | null>(null);
-  const [selectedApp, setSelectedApp] = useState<string | null>(null);
   // Tracks when the auto-trigger path has explicitly exited to show the full UI
   // (non-cancel errors). Until this is true, keep showing the spinner so a
-  // silent Privy cancel doesn't flash the old NowPayments panel.
+  // silent Privy cancel doesn't flash the payment UI before it's ready.
   const [autoTriggerDone, setAutoTriggerDone] = useState(false);
   // Last card top-up failed in a way only a real browser fixes (MoonPay
   // popup) → offer the one-tap "Open in browser / Safari" escape.
@@ -186,7 +146,6 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
     setActivationCode("");
     setPayingPackageId(null);
     setPayingCustom(false);
-    setNpFallbackPackageId(null);
     setStripeHasFailed(false);
     if (initialAmountUsd && initialAmountUsd >= 1) setCustomUsd(String(initialAmountUsd));
     else setCustomUsd("");
@@ -416,103 +375,6 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
     } finally { setPayingCustom(false); }
   };
 
-  // NowPayments alternate-coin handler — state moved above the `if (!isOpen)`
-  // early return (see hook-order note there). Restricted to USDC/BTC/ETH per
-  // product policy (2026-08-19); NP full picker is only on /subscribe.
-  // Popup-based per NP iframe rules.
-  const handlePayWithNowPayments = async (pkg: TokenPackage) => {
-    setError(null);
-    setNpFallbackPackageId(pkg.id);
-    let popup: Window | null = null;
-    try {
-      const res = await buyTokensWithNowPayments(pkg.id, npCoin);
-      if (!res.success || !res.checkoutUrl || !res.invoiceId) {
-        throw new Error(res.error || "no_url");
-      }
-      assertPaymentUrl(res.checkoutUrl);
-      const w = 480, h = 720;
-      const left = Math.max(0, Math.round((window.outerWidth - w) / 2 + (window.screenX || 0)));
-      const top = Math.max(0, Math.round((window.outerHeight - h) / 2 + (window.screenY || 0)));
-      popup = window.open(
-        res.checkoutUrl,
-        "pnp_np_wallet",
-        `width=${w},height=${h},left=${left},top=${top},resizable=yes,scrollbars=yes`
-      );
-      if (!popup) {
-        // Popup blocked. Instead of navigating away (loses the modal + user
-        // context), show an error with a clickable link the user can tap.
-        setError(es
-          ? `El navegador bloqueó la ventana. Toca aquí para abrir el checkout: ${res.checkoutUrl}`
-          : `Your browser blocked the popup. Tap here to open checkout: ${res.checkoutUrl}`);
-        setNpFallbackPackageId(null);
-        return;
-      }
-      const orderId = res.invoiceId;
-      const startedAt = Date.now();
-      const maxWait = 30 * 60 * 1000; // 30 min
-      while (Date.now() - startedAt < maxWait) {
-        await new Promise((r) => setTimeout(r, 5000));
-        try {
-          const s = await getNowPaymentsOrderStatus(orderId);
-          if (s.completed) {
-            const credited = Number(pkg.tokens);
-            setSuccess({ tokens: credited });
-            refreshBalance();
-            if (onSuccess) onSuccess(credited);
-            try { popup?.close(); } catch (_) { /* popup may be cross-origin */ }
-            return;
-          }
-          if (s.failed) throw new Error(t.subscribe.npPaymentFailedExpired);
-          if (popup && popup.closed) {
-            // User closed popup — the payment may have already settled or
-            // may still be in flight. Persist the invoice ID + poll for
-            // another 90s before giving up, so late confirmations still
-            // credit the user's balance.
-            try {
-              const pending = JSON.parse(localStorage.getItem("pnp_pending_np_orders") || "[]");
-              if (!pending.find((p: {id: string}) => p.id === orderId)) {
-                pending.push({ id: orderId, tokens: Number(pkg.tokens), ts: Date.now() });
-                localStorage.setItem("pnp_pending_np_orders", JSON.stringify(pending.slice(-10)));
-              }
-            } catch (_) { /* localStorage may be unavailable */ }
-            const graceUntil = Date.now() + 90_000;
-            setError(es ? "Verificando pago… puede tardar hasta 90s." : "Verifying payment… may take up to 90s.");
-            while (Date.now() < graceUntil) {
-              await new Promise((r) => setTimeout(r, 5000));
-              try {
-                const s2 = await getNowPaymentsOrderStatus(orderId);
-                if (s2.completed) {
-                  const credited = Number(pkg.tokens);
-                  setError(null);
-                  setSuccess({ tokens: credited });
-                  refreshBalance();
-                  if (onSuccess) onSuccess(credited);
-                  try {
-                    const pending = JSON.parse(localStorage.getItem("pnp_pending_np_orders") || "[]");
-                    localStorage.setItem("pnp_pending_np_orders", JSON.stringify(pending.filter((p: {id: string}) => p.id !== orderId)));
-                  } catch (_) { /* ignore */ }
-                  return;
-                }
-              } catch (_) { /* keep trying */ }
-            }
-            return;
-          }
-        } catch (pollErr) {
-          // Transient poll failure — keep trying until maxWait.
-          void pollErr;
-        }
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setError(es ? `No se pudo abrir el pago: ${msg}` : `Could not open payment: ${msg}`);
-      reportWalletClientError("buyTokensNowPayments", err, {
-        surface: "rush", packageId: pkg.id, npCoin,
-      });
-      try { popup?.close(); } catch (_) { /* ignore */ }
-    } finally {
-      setNpFallbackPackageId(null);
-    }
-  };
 
   const handleFundForPackage = async (pkg: TokenPackage, opts?: { forceMoonPay?: boolean }) => {
     if (!activeWallet) return;
@@ -664,7 +526,6 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
         await _executeIntent("usdc", { tokens: actualTokens, ...(pkgId ? { packageId: pkgId } : {}) }, actualTokens, usd);
       } else if (closeOnCancel) {
         // Auto-trigger mode: user closed Privy onramp (or it resolved silently).
-        // Close the modal so the old NowPayments UI never flashes.
         onClose();
       } else {
         setError(es
@@ -698,8 +559,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
         onrampErrorKind: kind,
       });
       if (closeOnCancel && kind === "other") {
-        // Auto-trigger mode: close on generic errors rather than flashing the
-        // full NowPayments UI. User can re-tap to retry.
+        // Auto-trigger mode: close on generic errors rather than flashing the UI.
         onClose();
         return;
       }
@@ -799,7 +659,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
   // loading screen while auto-trigger fires OR while payment is in flight.
   // Keep spinner visible until checkout fully resolves so the full UI never
   // flashes in mid-transaction.
-  // Auto-trigger mode: show spinner instead of the full NowPayments UI.
+  // Auto-trigger mode: show spinner while checkout is in flight.
   // Stays active until autoTriggerDone (non-cancel error unlocks full UI)
   // or success is set. Cancels call onClose() which unmounts the modal cleanly.
   const isAutoTriggerMode = (!!initialAmountUsd || !!initialPackageId) && !autoTriggerDone && !success;
@@ -1241,153 +1101,6 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
                   : "1 USD = 6 Ru$h (base). Larger packs include a bonus."}
               </p>
 
-              {/* Pay from your app — app picker that maps to NowPayments BTC */}
-              <div className="mt-3 pt-3 border-t border-white/5">
-                <p className="text-[10px] font-semibold text-white/35 uppercase tracking-wider mb-2.5 text-center">
-                  {es ? "O paga desde tu app" : "Or pay from your app"}
-                </p>
-
-                {/* 4-column app grid */}
-                <div className="grid grid-cols-4 gap-1.5 mb-1">
-                  {NP_APPS.map((app) => {
-                    const isSelected = selectedApp === app.id;
-                    return (
-                      <button
-                        key={app.id}
-                        type="button"
-                        onClick={() => {
-                          const next = isSelected ? null : app.id;
-                          setSelectedApp(next);
-                          if (next && next !== 'other') setNpCoin('btc');
-                        }}
-                        className="flex flex-col items-center gap-0.5 py-2.5 px-1 rounded-xl border transition active:scale-[0.95]"
-                        style={isSelected
-                          ? { background: app.bgSelected, borderColor: app.borderColor }
-                          : { background: 'rgba(255,255,255,0.03)', borderColor: 'rgba(255,255,255,0.08)' }
-                        }
-                      >
-                        <span className="text-[16px] leading-none">{app.emoji}</span>
-                        <span className="text-[9px] font-semibold text-white/80 leading-tight text-center">{app.label}</span>
-                        {app.geo && <span className="text-[7.5px] text-white/30 leading-none">{app.geo}</span>}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {/* Step-by-step instructions for the selected app */}
-                {selectedApp && selectedApp !== 'other' && (() => {
-                  const steps = (es ? NP_APP_STEPS_ES : NP_APP_STEPS_EN)[selectedApp] ?? [];
-                  const appLabel = NP_APPS.find(a => a.id === selectedApp)?.label ?? selectedApp;
-                  return (
-                    <div className="mt-2 rounded-xl border border-white/10 bg-white/[0.03] p-3 animate-in fade-in slide-in-from-top-1 duration-150">
-                      {npFallbackPackageId ? (
-                        <div className="flex items-start gap-2 mb-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/25 px-2.5 py-2">
-                          <span className="text-sm flex-shrink-0 mt-px">✅</span>
-                          <p className="text-[11px] font-semibold text-emerald-300 leading-snug">
-                            {es
-                              ? `Ventana abierta — ahora abre ${appLabel} y sigue estos pasos:`
-                              : `Checkout open — now open ${appLabel} and follow these steps:`}
-                          </p>
-                        </div>
-                      ) : (
-                        <p className="text-[10px] font-semibold text-white/45 uppercase tracking-wide mb-2">
-                          {es ? `Cómo pagar desde ${appLabel}` : `How to pay from ${appLabel}`}
-                        </p>
-                      )}
-                      <ol className="space-y-1.5 mb-2">
-                        {steps.map((step, i) => (
-                          <li key={i} className="flex items-start gap-2">
-                            <span className="flex-shrink-0 w-4 h-4 rounded-full bg-white/10 flex items-center justify-center text-[9px] font-bold text-white/55 mt-0.5">{i + 1}</span>
-                            <span className="text-[11px] text-white/75 leading-relaxed">{step}</span>
-                          </li>
-                        ))}
-                      </ol>
-                      <p className="text-[10px] text-white/30 leading-relaxed">
-                        {es
-                          ? "⚡ El pago se detecta automáticamente — no necesitas hacer nada más en PNPtv."
-                          : "⚡ Payment is detected automatically — no action needed in PNPtv once sent."}
-                      </p>
-                    </div>
-                  );
-                })()}
-
-                {/* Package grid — shown once any app is selected */}
-                {selectedApp && selectedApp !== 'other' && (
-                  <div className="grid grid-cols-2 gap-1.5 mt-2">
-                    {eligiblePackages.map((pkg) => {
-                      const price = Number(pkg.usd);
-                      const isPaying = npFallbackPackageId === pkg.id;
-                      const disabled = isPaying || success !== null || npFallbackPackageId !== null;
-                      return (
-                        <button
-                          key={`np-${pkg.id}`}
-                          type="button"
-                          disabled={disabled}
-                          onClick={() => handlePayWithNowPayments(pkg)}
-                          className="flex items-center justify-between gap-1 px-2.5 py-2 rounded-lg border border-white/[0.08] bg-white/[0.02] text-left transition hover:bg-white/[0.05] active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
-                        >
-                          <span className="text-[10px] font-semibold text-white/70 leading-tight truncate">
-                            {Number(pkg.tokens).toLocaleString()} 💎
-                          </span>
-                          <span className="text-[9px] text-white/45 flex-shrink-0">
-                            {isPaying ? "…" : `$${price.toFixed(0)} · BTC`}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {/* Other — shows the raw coin picker for advanced users */}
-                {selectedApp === 'other' && (
-                  <div className="mt-2 space-y-2 animate-in fade-in slide-in-from-top-1 duration-150">
-                    <div className="flex gap-1.5 justify-center flex-wrap">
-                      {([
-                        { id: 'usdcsol' as const, label: 'USDC', tint: '#2775ca' },
-                        { id: 'btc'       as const, label: 'BTC',  tint: '#F7931A' },
-                        { id: 'eth'       as const, label: 'ETH',  tint: '#627EEA' },
-                      ]).map((c) => (
-                        <button
-                          key={c.id}
-                          type="button"
-                          onClick={() => setNpCoin(c.id)}
-                          className={`text-[10px] font-semibold px-2.5 py-1.5 rounded-lg border transition ${
-                            npCoin === c.id
-                              ? "bg-orange-500/15 border-orange-400/50 text-orange-200"
-                              : "bg-white/[0.03] border-white/8 text-white/50 hover:text-white/70 hover:bg-white/[0.06]"
-                          }`}
-                        >
-                          <span style={{ color: c.tint }}>●</span> {c.label}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="grid grid-cols-2 gap-1.5">
-                      {eligiblePackages.map((pkg) => {
-                        const price = Number(pkg.usd);
-                        const isPaying = npFallbackPackageId === pkg.id;
-                        const disabled = isPaying || success !== null || npFallbackPackageId !== null;
-                        const coinLabel = npCoin === 'usdcsol' ? 'USDC' : npCoin === 'btc' ? 'BTC' : 'ETH';
-                        return (
-                          <button
-                            key={`np-${pkg.id}`}
-                            type="button"
-                            disabled={disabled}
-                            onClick={() => handlePayWithNowPayments(pkg)}
-                            className="flex items-center justify-between gap-1 px-2.5 py-2 rounded-lg border border-white/[0.08] bg-white/[0.02] text-left transition hover:bg-white/[0.05] active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
-                          >
-                            <span className="text-[10px] font-semibold text-white/70 leading-tight truncate">
-                              {Number(pkg.tokens).toLocaleString()} 💎
-                            </span>
-                            <span className="text-[9px] text-white/45 flex-shrink-0">
-                              {isPaying ? "…" : `$${price.toFixed(0)} +fees ${coinLabel}`}
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-              </div>
             </div>
           )}
 

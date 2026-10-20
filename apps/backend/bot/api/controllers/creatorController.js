@@ -411,10 +411,8 @@ const toggleSubscription = async (req, res) => {
   }
 };
 
-// Payout method allowlist — must match the NowPayments accepted-currency set
-// used by the incoming-payments checkout (routes.js:11071) and the payout API
-// Active crypto payout tokens accepted by NowPayments as of 2026-08.
-// All other crypto lanes (BTC, Dash, USDT-Tron, USDT-Base, Meru) are retired.
+// Payout method allowlist — accepted crypto lanes for creator payouts.
+// All other lanes (BTC, Dash, USDT-Tron, USDT-Base, Meru) are retired.
 const NP_PAYOUT_CURRENCIES = new Set(['eth', 'usdcerc20']);
 
 // POST /api/webapp/creator/enroll
@@ -427,7 +425,7 @@ const submitEnrollment = async (req, res) => {
     if (!dateOfBirth)         return res.status(400).json({ error: 'Date of birth is required' });
     if (!idType)              return res.status(400).json({ error: 'ID type is required' });
 
-    // Payout method must be one of the NowPayments token codes. Meru is
+    // Payout method must be one of the supported payout token codes. Meru is
     // grandfathered at the DB level but not offered to new creators.
     const methodLc = String(paymentMethod || '').toLowerCase();
     if (!NP_PAYOUT_CURRENCIES.has(methodLc)) {

@@ -5,7 +5,7 @@
  *
  * All flags default to FALSE (legacy path). When flipped to TRUE via env,
  * the corresponding purchase surface routes through walletCheckoutService
- * instead of its legacy provider (NowPayments / Meru / raw SQL debit).
+ * instead of its legacy provider (Meru / raw SQL debit).
  *
  * Rollout order (planned in Phase 2+):
  *   1. RUSH        — lowest risk, small amounts, easy to reconcile

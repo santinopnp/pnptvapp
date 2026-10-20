@@ -77,7 +77,6 @@ import {
   followUser,
   unfollowUser,
   getFollowStatus,
-  NP_COINS_SUBSCRIBE,
   prepareUsdcSubscription,
   assertPaymentUrl,
   ApiError,

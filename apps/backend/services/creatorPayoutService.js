@@ -198,8 +198,8 @@ class CreatorPayoutService {
    *   1. payout_reenroll_needed = true AND no valid crypto lane → skip with nudge.
    *   2. payout_method === 'fiat'  → Peer Protocol fiat off-ramp.
    *   3. creator_payout_destinations.bre_b set → fiat off-ramp via bre_b.
-   *   4. creator_payout_destinations.usdc_erc20 set → NowPayments payout.
-   *   5. creator_payout_destinations.eth set → NowPayments payout.
+   *   4. creator_payout_destinations.usdc_erc20 set → manual payout required (crypto rail retired).
+   *   5. creator_payout_destinations.eth set → manual payout required (crypto rail retired).
    *   6. nothing configured → skip + notify creator to set USDC (Ethereum) address.
    *
    * @param {Object} creator - Row from the aggregate query in runMonthlyPayouts
@@ -325,63 +325,27 @@ class CreatorPayoutService {
       return { skipped: false };
     }
 
-    // ── Route 2: Crypto via NowPayments payout (usdc_erc20 preferred, eth fallback) ──
+    // ── Route 2: Crypto payout via usdc_erc20/eth destination ──────────────────
+    // Crypto payout API retired. Earnings with only usdc_erc20/eth
+    // destinations must be paid manually via Privy or direct USDC transfer until
+    // a new on-chain payout rail is wired. Skip with ops alert.
     if (hasUsdcErc20 || hasEth) {
       const cryptoCurrency = hasUsdcErc20 ? 'usdcerc20' : 'eth';
       const cryptoAddress = hasUsdcErc20 ? destinations.usdc_erc20.address : destinations.eth.address;
-
-      // Reserve the earnings: move 'available' → 'in_payout' atomically.
-      const { rows: reservedRows } = await query(`
-        UPDATE creator_earnings
-        SET status = 'in_payout',
-            metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb
-        WHERE id = ANY($2)
-          AND status  = 'available'
-          AND paid_at IS NULL
-        RETURNING id
-      `, [
-        JSON.stringify({ payoutCurrency: cryptoCurrency, payoutAddress: cryptoAddress }),
-        earning_ids,
-      ]);
-
-      if (reservedRows.length === 0) {
-        logger.warn('CreatorPayoutService: earnings already reserved by concurrent run — skipping', { creatorId: creator_id });
-        return { skipped: true };
-      }
-
-      const reservedIds = reservedRows.map((r) => r.id);
-
-      // Dispatch via NowPayments payout API.
-      let npPayoutRow;
+      logger.warn('CreatorPayoutService: crypto payout route needs manual action — crypto rail retired', {
+        creatorId: creator_id, displayName, amountUsd, cryptoCurrency, cryptoAddress,
+      });
+      // Alert ops so the payout is not silently dropped.
       try {
-        const nowpaymentsPayoutService = require('./nowpaymentsPayoutService');
-        npPayoutRow = await nowpaymentsPayoutService.requestPayout({
-          userId: creator_id,
-          address: cryptoAddress,
-          currency: cryptoCurrency,
-          method: 'crypto',
-        });
-      } catch (npErr) {
-        // Roll earnings back to 'available' so the next cron tick retries.
-        await query(
-          `UPDATE creator_earnings SET status='available' WHERE id = ANY($1) AND status='in_payout' AND paid_at IS NULL`,
-          [reservedIds]
-        ).catch((re) => logger.error('CreatorPayoutService: failed to roll back earnings after NP error', { creatorId: creator_id, error: re.message }));
-        throw new Error(`NowPayments payout failed: ${npErr.message}`);
-      }
-
-      await NotificationEmitter.emit({
-        type: 'payment', category: 'commerce', priority: 'high', actorId: null,
-        targetUserId: creator_id, entityType: 'creator', entityId: String(creator_id),
-        message: `Your payout of $${amountUsd.toFixed(2)} (${cryptoCurrency === 'usdcerc20' ? 'USDC' : 'ETH'}) is being processed.`,
-        metadata: { amountUsd, payoutMethod: cryptoCurrency, npPayoutId: npPayoutRow?.nowpayments_payout_id },
-      });
-
-      logger.info('CreatorPayoutService: NowPayments payout dispatched', {
-        creatorId: creator_id, displayName, amountUsd, cryptoCurrency,
-        npPayoutId: npPayoutRow?.nowpayments_payout_id, earningsCount: reservedIds.length,
-      });
-      return { skipped: false };
+        const BusinessNotificationService = require('./businessNotificationService');
+        await BusinessNotificationService.send(
+          `⚠️ <b>Manual crypto payout required</b>\n` +
+          `Creator <b>${displayName}</b> (${creator_id}) has $${amountUsd.toFixed(2)} available.\n` +
+          `Destination: <code>${cryptoAddress}</code> (${cryptoCurrency})\n` +
+          `Crypto payout rail is retired — pay manually via Privy or direct USDC transfer.`
+        );
+      } catch (_alertErr) { /* non-critical */ }
+      return { skipped: true };
     }
 
     // Defensive throw — routing guards above should cover all branches.
@@ -683,7 +647,7 @@ class CreatorPayoutService {
 
     // Fallback (Dash retired, card auto-charge deferred, Ru$h insufficient):
     // disable auto_renew and prompt subscriber to re-subscribe manually via
-    // any working rail (card, on-chain USDC, or NowPayments crypto).
+    // any working rail (on-chain USDC or Ru$h).
     try {
       await dbQuery(
         'UPDATE creator_subscriptions SET auto_renew=FALSE, updated_at=NOW() WHERE id=$1',

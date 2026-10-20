@@ -2,7 +2,7 @@ import React, { lazy, Suspense } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import type { CreatorDashboard as DashboardData } from "@/lib/api";
-import { checkoutCrystalSelf, getWalletUsdcBalance, getStrandedUsdcBalances, getRelayBridgeQuote, executeRelayBridge, type StrandedUsdcChain } from "@/lib/api";
+import { getWalletUsdcBalance, getStrandedUsdcBalances, getRelayBridgeQuote, executeRelayBridge, type StrandedUsdcChain } from "@/lib/api";
 import { useWallets } from "@privy-io/react-auth";
 import type { CreatorStrings } from "@/lib/i18n/creator";
 import { AppShell, RightRail, SuggestedFollowRow, ContextHintCard, useForYou } from "@/components/Layout";
@@ -265,35 +265,14 @@ export function OverviewTab({ dashboard, user, withdrawable, t, onTabChange }: O
 
   // Crystal Creator checkout state — mirrors Subscribe.tsx walletPanelPlanId pattern.
   const [crystalWalletOpen, setCrystalWalletOpen] = React.useState(false);
-  const [crystalNpLoading, setCrystalNpLoading] = React.useState(false);
-  const [crystalNpError, setCrystalNpError] = React.useState<string | null>(null);
   const crystalWalletPanelRef = React.useRef<HTMLDivElement>(null);
 
   function handleCrystalWalletToggle() {
-    setCrystalNpError(null);
     setCrystalWalletOpen((prev) => !prev);
     if (!crystalWalletOpen) {
       setTimeout(() => {
         crystalWalletPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
       }, 100);
-    }
-  }
-
-  async function handleCrystalNowPayments() {
-    setCrystalNpError(null);
-    setCrystalNpLoading(true);
-    try {
-      const res = await checkoutCrystalSelf("nowpayments");
-      if (!res.invoiceUrl) throw new Error("No invoice URL returned");
-      const w = 520;
-      const h = 700;
-      const left = Math.max(0, Math.round(window.screenX + (window.outerWidth - w) / 2));
-      const top = Math.max(0, Math.round(window.screenY + (window.outerHeight - h) / 2));
-      window.open(res.invoiceUrl, "crystal_np_self", `width=${w},height=${h},left=${left},top=${top},scrollbars=yes,resizable=yes`);
-    } catch (err) {
-      setCrystalNpError(err instanceof Error ? err.message : "Could not open checkout");
-    } finally {
-      setCrystalNpLoading(false);
     }
   }
 
@@ -528,9 +507,7 @@ export function OverviewTab({ dashboard, user, withdrawable, t, onTabChange }: O
 
       {/* Crystal Creator status card — only shown when invited or active.
           Active creators see a read-only status pill.
-          Invited-but-not-yet-active creators see the same two-provider
-          checkout UX used on CreatorProfilePage (wallet inline panel +
-          NowPayments hosted popup). */}
+          Invited-but-not-yet-active creators see the wallet inline checkout panel. */}
       {(crystalActive || crystalInvited) && (
         <div
           className="glass-card-sm mb-4"
@@ -560,28 +537,17 @@ export function OverviewTab({ dashboard, user, withdrawable, t, onTabChange }: O
             )}
           </div>
 
-          {/* Two-provider checkout buttons — only for invited-not-yet-active */}
+          {/* Wallet checkout button — only for invited-not-yet-active */}
           {!crystalActive && crystalInvited && (
             <>
-              <div className="px-4 pb-4 grid grid-cols-2 gap-2">
+              <div className="px-4 pb-4">
                 <button
                   onClick={handleCrystalWalletToggle}
-                  className={`py-2.5 rounded-lg font-bold text-sm text-white transition-all ${crystalWalletOpen ? "bg-gradient-to-r from-emerald-400 to-emerald-500 ring-2 ring-emerald-300" : "bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500"}`}
+                  className={`w-full py-2.5 rounded-lg font-bold text-sm text-white transition-all ${crystalWalletOpen ? "bg-gradient-to-r from-emerald-400 to-emerald-500 ring-2 ring-emerald-300" : "bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500"}`}
                 >
                   💳 Upgrade $100
                 </button>
-                <button
-                  type="button"
-                  onClick={handleCrystalNowPayments}
-                  disabled={crystalNpLoading}
-                  className="py-2.5 rounded-lg font-bold text-sm text-white bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 transition-all disabled:opacity-60"
-                >
-                  {crystalNpLoading ? "…" : (tGlobal.lang === "es" ? "₿ Apps y wallets" : "₿ Apps & wallets")}
-                </button>
               </div>
-              {crystalNpError && (
-                <p className="px-4 pb-3 text-[11px]" style={{ color: "#ff6b6b" }}>{crystalNpError}</p>
-              )}
               {crystalWalletOpen && (
                 <div className="px-4 pb-4" ref={crystalWalletPanelRef}>
                   <WalletPayCard

@@ -803,7 +803,7 @@ const completeOnboarding = async (ctx) => {
   }
 };
 const verifyAndActivateMeruPayment = async (ctx, meruCode, lang = 'es') => {
-  // Meru retired 2026-08. Direct users to NowPayments crypto checkout.
+  // Meru retired 2026-08. Direct users to wallet checkout at /subscribe.
   logger.info('verifyAndActivateMeruPayment: Meru retired — sending support reply', { userId: ctx.from?.id, code: meruCode });
   const msg = lang === 'es'
     ? '❌ Los pagos con Meru ya no están disponibles. Si ya pagaste, contacta a soporte: /support'

@@ -33,10 +33,10 @@ const DASHBOARD_CACHE_TTL = 300; // 5 minutes
 const AMOUNT_USD = `CASE WHEN amount::text = 'NaN' THEN 0 WHEN currency = 'COP' THEN amount / 4250.0 ELSE amount END`;
 
 // Resolve the real payment provider from payment_method + metadata fallback chain.
-// payment_method is NULL for NowPayments, BTCPay, ePayco, and Daimo rows
+// payment_method is NULL for BTCPay, ePayco, and Daimo rows
 // that were recorded before the field was standardized.
 const PROVIDER_COALESCE = `COALESCE(
-  CASE WHEN payment_method = 'usdc' THEN 'nowpayments' END,
+  CASE WHEN payment_method = 'usdc' THEN 'wallet_usdc' END,
   NULLIF(payment_method, ''),
   NULLIF(metadata->>'provider', ''),
   CASE WHEN metadata->>'epayco_ref'       IS NOT NULL THEN 'epayco'      END,

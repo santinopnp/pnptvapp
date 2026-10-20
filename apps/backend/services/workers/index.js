@@ -54,7 +54,7 @@ async function paymentProcessor(job) {
           userId,
           planId,
           paymentId: sourcePaymentId,
-          provider: source || 'nowpayments',
+          provider: source || 'wallet_usdc',
         });
       }
     } catch (err) {
@@ -338,14 +338,6 @@ async function cronProcessor(job) {
       if (results.drifted > 0 || results.orphaned > 0 || results.errors > 0) {
         logger.info('[BullMQ] wallet-reconcile completed', results);
       }
-      return;
-    }
-
-    case 'nowpayments-reconcile': {
-      const PaymentRecoveryService = _safeRequire('../paymentRecoveryService');
-      if (!PaymentRecoveryService) { logger.warn('[BullMQ] nowpayments-reconcile: service not found'); return; }
-      const results = await PaymentRecoveryService.processStuckNowpaymentsOrders();
-      if (results.settled > 0 || results.errors > 0) logger.info('NOWPayments reconciler completed', results);
       return;
     }
 
@@ -750,10 +742,8 @@ async function cronProcessor(job) {
     }
 
     case 'reconcile-stuck-payouts': {
-      const NowPaymentsPayoutSvc = _safeRequire('../nowpaymentsPayoutService');
-      if (!NowPaymentsPayoutSvc) { logger.warn('[BullMQ] reconcile-stuck-payouts: service not found'); return; }
-      const count = await NowPaymentsPayoutSvc.reconcileStuckPayouts();
-      if (count > 0) logger.warn(`[cron] Reconciled ${count} creators with stuck in_payout earnings`);
+      // Payout reconciliation — no-op (crypto payout rail retired).
+      logger.info('[BullMQ] reconcile-stuck-payouts: no-op');
       return;
     }
 
@@ -1401,8 +1391,7 @@ async function subscribeRetargetProcessor(job) {
   const user = rows[0];
   if (!user) return;
   if (user.tier === 'prime') return;
-  // Skip early for unreachable users — creating a NowPayments invoice we'll
-  // never DM out is wasted quota + an orphan DSO row.
+  // Skip early for unreachable users.
   if (!user.telegram) {
     logger.info('[BullMQ] subscribeRetargetProcessor: no telegram, skipped', { userId });
     return;
@@ -1413,73 +1402,8 @@ async function subscribeRetargetProcessor(job) {
   if (!stillPending) return;
 
   const webappUrl = (process.env.WEBAPP_URL || 'https://pnptv.app').replace(/\/$/, '');
-  const orderId = `pnptv-nowp-retarget-${userId}-${Date.now()}`;
-
-  // Insert the DSO row BEFORE calling the NowPayments API so the IPN webhook
-  // can find the order by btcpay_invoice_id when the user pays.
-  // If the insert fails we abort: sending a DM with a payment link that would
-  // silently lose the payment is worse than not sending the DM at all.
-  try {
-    await pgQuery(
-      `INSERT INTO dash_subscription_orders
-         (user_id, plan_id, usd_amount, btcpay_invoice_id, status, metadata)
-       VALUES ($1, 'yearly50', 50.00, $2, 'pending', $3)
-       ON CONFLICT (btcpay_invoice_id) DO NOTHING`,
-      [
-        String(userId),
-        orderId,
-        JSON.stringify({
-          provider: 'nowpayments',
-          flow: 'retarget',
-          source: 'subscribe-retarget-worker',
-        }),
-      ]
-    );
-  } catch (dbErr) {
-    logger.error('[BullMQ] subscribeRetargetProcessor: DSO insert failed — aborting DM', { userId, orderId, error: dbErr.message });
-    return;
-  }
-
-  let invoiceUrl = webappUrl + '/subscribe';
-  try {
-    const npRes = await axios.post(
-      'https://api.nowpayments.io/v1/invoice',
-      {
-        price_amount: 50,
-        price_currency: 'usd',
-        pay_currency: 'usdtbsc',
-        order_id: orderId,
-        order_description: 'PNPtv PRIME Annual — $50/yr',
-        ipn_callback_url: webappUrl + '/api/webhooks/nowpayments',
-        success_url: webappUrl + '/subscribe?nowpayments=success',
-      },
-      { headers: { 'x-api-key': process.env.NOWPAYMENTS_API_KEY }, timeout: 10000 }
-    );
-    if (npRes.data?.invoice_url) {
-      // NowPayments returns the URL with a trailing slash before `?` (e.g.
-      // `/payment/?iid=…`), which 301-redirects to HTTP. Some Telegram in-app
-      // browsers refuse the HTTPS→HTTP downgrade silently. Strip the slash.
-      invoiceUrl = String(npRes.data.invoice_url).replace('/payment/?', '/payment?');
-      // Backfill the invoice URL into metadata so it can be resumed on retry.
-      const nowpaymentsInvoiceId = npRes.data?.id ? String(npRes.data.id) : null;
-      await pgQuery(
-        `UPDATE dash_subscription_orders
-           SET metadata = metadata || $2::jsonb
-         WHERE btcpay_invoice_id = $1 AND status = 'pending'`,
-        [
-          orderId,
-          JSON.stringify({
-            invoiceUrl,
-            ...(nowpaymentsInvoiceId ? { nowpaymentsInvoiceId } : {}),
-          }),
-        ]
-      ).catch((updateErr) => {
-        logger.warn('[BullMQ] subscribeRetargetProcessor: metadata backfill failed (non-fatal)', { userId, orderId, error: updateErr.message });
-      });
-    }
-  } catch (err) {
-    logger.warn('[BullMQ] subscribeRetargetProcessor: NowPayments invoice failed — DM will use /subscribe fallback', { userId, orderId, error: err.message });
-  }
+  // NowPayments retired 2026-10-20 — always use the /subscribe page link.
+  const invoiceUrl = webappUrl + '/subscribe';
 
   let dmSent = false;
   try {
@@ -1489,8 +1413,7 @@ async function subscribeRetargetProcessor(job) {
     const text =
       `🔥 <b>Hey!</b> Viste los planes PRIME en PNPtv — te dejé el link listo:\n\n` +
       `💎 <b>$50/año</b> — acceso total, sin límites\n` +
-      `<a href="${invoiceUrl}">👉 Pagar ahora con crypto</a>\n\n` +
-      `🌐 <a href="https://pnptv.app/subscribe">Ver todas las opciones</a>`;
+      `<a href="${invoiceUrl}">👉 Ver planes y suscribirte</a>`;
     await bot.telegram.sendMessage(user.telegram, text, {
       parse_mode: 'HTML',
       disable_web_page_preview: false,
@@ -1500,8 +1423,7 @@ async function subscribeRetargetProcessor(job) {
     logger.warn('[BullMQ] subscribeRetargetProcessor: telegram dm failed', { userId, error: err.message });
   }
 
-  // Always clear the visit key — retrying on failure would spawn duplicate
-  // DSOs and NowPayments invoices on every subsequent job tick.
+  // Always clear the visit key — retrying on failure would spawn duplicate DSOs on every subsequent job tick.
   await getRedis().del(visitKey);
   if (dmSent) logger.info('[BullMQ] subscribeRetargetProcessor: dm sent', { userId, visitedAt });
 }
