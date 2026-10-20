@@ -34,7 +34,7 @@ const PLAN_LABELS = {
   'lifetime-pass':           'Lifetime Access — $249.99',
   'prime-diamond-pass-365d': 'PRIME Diamond (1 year) — $99.99',
   'monthly-pass':            'Monthly Pass — $25.00',
-  'prime-week-pass-7d':      'PRIME Week Pass — $15.00',
+  'prime-week-pass-7d':      'PRIME Week Pass — $14.99',
   'week-trial-pass':         'Week Trial — $14.99',
 };
 

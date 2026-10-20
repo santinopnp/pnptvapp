@@ -296,19 +296,7 @@
     border: 1px solid rgba(212, 0, 122, 0.3);
   }
 
-  .badge-gradient-text {
-    background: linear-gradient(135deg, #D4007A, #E69138);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-  }
 
-  /* Gradient border-left for cards */
-  .border-l-gradient {
-    border-image: linear-gradient(to bottom, #D4007A, #E69138) 1;
-    border-left-width: 4px;
-    border-left-style: solid;
-  }
 
   /* Gradient dot (for LIVE indicators etc) */
   .dot-gradient {
