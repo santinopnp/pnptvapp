@@ -12,6 +12,8 @@ import {
   assertPaymentUrl,
   requestGasTopup,
   reportWalletClientError,
+  getEmbeddedWalletUsdc,
+  sweepEmbeddedToRush,
   type TokenPackage,
 } from "@/lib/api";
 import { usePrivy, useWallets, useAddFunds, useFundWallet, useSendTransaction } from "@privy-io/react-auth";
@@ -125,6 +127,12 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
   const [activationError, setActivationError] = useState<string | null>(null);
   const [activationSuccess, setActivationSuccess] = useState<number | null>(null);
 
+  // Embedded-wallet sweep — shows a pill when the user has USDC stranded in
+  // their Privy embedded wallet (deprecated). Null = dismissed or swept.
+  const [sweepData, setSweepData] = useState<{ usdc: number; rush: number; wallet: string | null } | null>(null);
+  const [sweepLoading, setSweepLoading] = useState(false);
+  const [sweepError, setSweepError] = useState<string | null>(null);
+
   // Load packages on open. Also resets transient UI state (error / success /
   // activation echo / custom amount) so a re-opened modal doesn't show stale
   // results from a previous session.
@@ -156,6 +164,16 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
       })
       .catch(() => {})
       .finally(() => setLoadingPackages(false));
+
+    // Probe for stranded USDC in the Privy embedded wallet. Fires once per
+    // modal open; result shown only when usdc >= 0.10 (meaningful to sweep).
+    setSweepData(null);
+    setSweepError(null);
+    getEmbeddedWalletUsdc()
+      .then((res) => {
+        if (res.usdc >= 0.10) setSweepData(res);
+      })
+      .catch(() => {});
   }, [isOpen]);
 
   // Load USDC + ETH balance + ETH spot price on open. All three drive rail
@@ -653,6 +671,51 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
     }
   };
 
+  // Sweep handler: encodes a USDC ERC-20 transfer from the embedded wallet to
+  // the PNPtv treasury, then calls the backend to credit Ru$h tokens.
+  // Treasury address is hardcoded — no env var needed in frontend.
+  const SWEEP_TREASURY = "0x8FA3Ef05a67cEaF88D45E1c1cD6aF2Aa8C055B2C" as `0x${string}`;
+  const handleSweep = async () => {
+    if (!sweepData || sweepLoading) return;
+    const embeddedWallet = wallets.find((w) => w.walletClientType === "privy");
+    if (!embeddedWallet) {
+      setSweepError(es ? "Billetera no conectada" : "Wallet not connected");
+      return;
+    }
+    setSweepLoading(true);
+    setSweepError(null);
+    try {
+      // Switch to Base if needed
+      try {
+        const provider = await embeddedWallet.getEthereumProvider();
+        await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x2105" }] });
+      } catch (_) {}
+
+      const data = encodeFunctionData({
+        abi: USDC_TRANSFER_ABI,
+        functionName: "transfer",
+        args: [SWEEP_TREASURY, parseUnits(sweepData.usdc.toFixed(6), 6)],
+      });
+
+      const tx = await privySendTransaction(
+        { chainId: 8453, to: USDC_BASE_ADDRESS, data, value: "0" },
+        { sponsor: false, address: embeddedWallet.address, uiOptions: { showWalletUIs: true } }
+      );
+
+      const result = await sweepEmbeddedToRush(tx.hash);
+      setSweepData(null);
+      if (onSuccess) onSuccess(result.new_balance);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const isCancel = /User rejected|user denied|cancel/i.test(msg);
+      setSweepError(isCancel
+        ? (es ? "Cancelado" : "Cancelled")
+        : (es ? "Error al canjear. Intentá de nuevo." : "Sweep failed. Please try again."));
+    } finally {
+      setSweepLoading(false);
+    }
+  };
+
   const eligiblePackages = packages.filter((p) => Number(p.usd) >= 1);
 
   // When opened from a preset (initialAmountUsd or initialPackageId set), show a minimal
@@ -696,6 +759,46 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
 
         {/* Body — scrollable */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
+
+          {/* ── Embedded-wallet sweep pill ──────────────────────────────────────
+              Shown when the user has ≥ $0.10 USDC stranded in their deprecated
+              Privy embedded wallet. Disappears instantly after a successful
+              sweep; uses amber/gold palette — distinct from PRIME pink. */}
+          {sweepData !== null && (
+            <div
+              className="rounded-xl p-3 flex items-center gap-3"
+              style={{ background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.35)" }}
+            >
+              <span className="text-xl leading-none flex-shrink-0">⚡</span>
+              <div className="flex-1 min-w-0">
+                <p className="text-[13px] font-bold leading-snug" style={{ color: "#FCD34D" }}>
+                  {es
+                    ? `Tenés $${sweepData.usdc.toFixed(2)} en tu wallet PNPtv — obtené ${sweepData.rush} Ru$h`
+                    : `You have $${sweepData.usdc.toFixed(2)} in your PNPtv wallet — get ${sweepData.rush} Ru$h`}
+                </p>
+                {sweepError && (
+                  <p className="text-[11px] mt-0.5" style={{ color: "#FCA5A5" }}>{sweepError}</p>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={handleSweep}
+                disabled={sweepLoading}
+                aria-label={es ? "Canjear Rush de tu wallet" : "Claim Rush from your wallet"}
+                className="flex-shrink-0 min-h-[36px] px-3 rounded-lg text-[12px] font-bold text-white transition active:scale-[0.97] disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{
+                  background: sweepLoading
+                    ? "rgba(245,158,11,0.3)"
+                    : "linear-gradient(135deg,#F59E0B,#D97706)",
+                }}
+              >
+                {sweepLoading
+                  ? (es ? "Firmando…" : "Signing…")
+                  : (es ? "Canjear" : "Claim")}
+              </button>
+            </div>
+          )}
+
           {/* Auto-trigger loading screen — shown briefly while Privy checkout launches */}
           {isAutoTriggerMode && usdcMainnet == null && (
             <div className="flex flex-col items-center justify-center py-10 gap-4">

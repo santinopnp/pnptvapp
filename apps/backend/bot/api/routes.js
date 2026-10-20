@@ -13959,6 +13959,204 @@ app.get('/api/wallet/balance', requireSessionAuth, asyncHandler(async (req, res)
   res.json({ success: true, balance: regular, regularBalance: regular, giftedBalance: gifted, creatorGifts, dpnsHandle: row.dash_dpns || null });
 }));
 
+// GET /api/wallet/embedded-usdc — returns the USDC balance held in the user's
+// Privy embedded wallet on Base, and the equivalent Rush token amount they
+// would receive via a sweep. Used by the wallet-deprecation UI to show the
+// user what they stand to gain by sweeping before the embedded wallet is
+// retired. Returns { usdc, rush, wallet } or { usdc:0, rush:0, wallet:null }.
+app.get('/api/wallet/embedded-usdc', walletStatusLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
+  const userId = req.session?.user?.id;
+  const { query: dbQuery } = require('../../config/postgres');
+
+  const { rows } = await dbQuery(
+    `SELECT wallet_address, privy_id FROM users WHERE id = $1 LIMIT 1`,
+    [String(userId)]
+  );
+  const wallet = rows[0]?.wallet_address?.toLowerCase() ?? null;
+  if (!wallet) {
+    return res.json({ usdc: 0, rush: 0, wallet: null });
+  }
+
+  const apiKey = process.env.ALCHEMY_API_KEY;
+  if (!apiKey) {
+    logger.warn('[wallet/embedded-usdc] ALCHEMY_API_KEY not set');
+    return res.json({ usdc: 0, rush: 0, wallet, reason: 'alchemy_not_configured' });
+  }
+
+  const USDC_BASE = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+  const rpcUrl = `https://base-mainnet.g.alchemy.com/v2/${apiKey}`;
+  // balanceOf(address) — selector 0x70a08231, address left-padded to 32 bytes
+  const callData = '0x70a08231' + wallet.replace(/^0x/, '').padStart(64, '0');
+
+  try {
+    const rpcRes = await fetch(rpcUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: 1, method: 'eth_call',
+        params: [{ to: USDC_BASE, data: callData }, 'latest'],
+      }),
+    });
+    const j = await rpcRes.json();
+    const hex = j.result || '0x0';
+    const usdc = Number(BigInt(hex)) / 1_000_000;
+    const rush = Math.floor(usdc * 6);
+    return res.json({ usdc, rush, wallet });
+  } catch (err) {
+    logger.warn('[wallet/embedded-usdc] alchemy rpc failed', { err: err.message, userId });
+    return res.json({ usdc: 0, rush: 0, wallet, reason: 'rpc_failed' });
+  }
+}));
+
+// POST /api/wallet/sweep-to-rush — after the user has sent USDC from their
+// embedded Privy wallet to the treasury, verify the on-chain tx and credit
+// Rush tokens at 1 USDC = 6 Rush. Clears wallet_address/privy_id once
+// credited so the sweep cannot be repeated.
+//
+// Body: { tx_hash: string }  (0x-prefixed, 66 hex chars)
+// Returns: { ok: true, rush_credited, new_balance }
+// Idempotent: repeated calls with the same tx_hash return the cached result.
+app.post('/api/wallet/sweep-to-rush', walletStatusLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
+  const userId = req.session?.user?.id;
+  const { query: dbQuery } = require('../../config/postgres');
+  const tokenLedger = require('../../services/tokenLedgerService');
+
+  const txHash = typeof req.body?.tx_hash === 'string' ? req.body.tx_hash.trim().toLowerCase() : '';
+  if (!/^0x[a-f0-9]{64}$/.test(txHash)) {
+    return res.status(400).json({ ok: false, error: 'TX_INVALID', detail: 'tx_hash must be a 0x-prefixed 66-char hex string' });
+  }
+
+  // Idempotency — if this tx_hash was already processed, return the cached result
+  const dupCheck = await dbQuery(
+    `SELECT delta_balance, balance_after FROM token_ledger
+     WHERE reason = 'wallet_sweep' AND source_id = $1
+     LIMIT 1`,
+    [txHash]
+  );
+  if (dupCheck.rows.length > 0) {
+    const dup = dupCheck.rows[0];
+    return res.json({
+      ok: true,
+      rush_credited: Number(dup.delta_balance),
+      new_balance: Number(dup.balance_after),
+      idempotent: true,
+    });
+  }
+
+  // Look up user's embedded wallet
+  const { rows: userRows } = await dbQuery(
+    `SELECT wallet_address, privy_id FROM users WHERE id = $1 LIMIT 1`,
+    [String(userId)]
+  );
+  const userWallet = userRows[0]?.wallet_address?.toLowerCase() ?? null;
+  if (!userWallet) {
+    return res.status(409).json({ ok: false, error: 'ALREADY_SWEPT' });
+  }
+
+  const apiKey = process.env.ALCHEMY_API_KEY;
+  if (!apiKey) {
+    logger.error('[wallet/sweep-to-rush] ALCHEMY_API_KEY not set');
+    return res.status(503).json({ ok: false, error: 'ALCHEMY_NOT_CONFIGURED' });
+  }
+
+  const treasury = (process.env.PRIVY_SPLIT_TREASURY_ADDRESS || '').toLowerCase();
+  if (!treasury) {
+    logger.error('[wallet/sweep-to-rush] PRIVY_SPLIT_TREASURY_ADDRESS not set');
+    return res.status(503).json({ ok: false, error: 'TREASURY_NOT_CONFIGURED' });
+  }
+
+  const USDC_BASE = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'; // lowercase
+  const rpcUrl = `https://base-mainnet.g.alchemy.com/v2/${apiKey}`;
+
+  // Fetch the transaction receipt
+  let receipt;
+  try {
+    const rpcRes = await fetch(rpcUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: 1, method: 'eth_getTransactionReceipt',
+        params: [txHash],
+      }),
+    });
+    const j = await rpcRes.json();
+    receipt = j.result;
+  } catch (err) {
+    logger.warn('[wallet/sweep-to-rush] failed to fetch tx receipt', { err: err.message, txHash, userId });
+    return res.status(400).json({ ok: false, error: 'TX_INVALID', detail: 'could not fetch receipt' });
+  }
+
+  if (!receipt || receipt.status !== '0x1') {
+    return res.status(400).json({ ok: false, error: 'TX_INVALID', detail: 'tx not found or reverted' });
+  }
+
+  // Decode the USDC Transfer log from the receipt
+  // Transfer(address indexed from, address indexed to, uint256 value)
+  // topic[0] = keccak256("Transfer(address,address,uint256)")
+  const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+  let usdcAmount = BigInt(0);
+  let matchedLog = false;
+
+  for (const log of (receipt.logs || [])) {
+    if (log.address.toLowerCase() !== USDC_BASE) continue;
+    if (!log.topics || log.topics[0] !== TRANSFER_TOPIC) continue;
+    if (log.topics.length < 3) continue;
+
+    // topics[1] = from (indexed, padded to 32 bytes)
+    // topics[2] = to (indexed, padded to 32 bytes)
+    const fromAddr = '0x' + log.topics[1].slice(-40);
+    const toAddr   = '0x' + log.topics[2].slice(-40);
+
+    if (fromAddr.toLowerCase() !== userWallet) continue;
+    if (toAddr.toLowerCase() !== treasury) continue;
+
+    // data = ABI-encoded uint256 value (non-indexed)
+    usdcAmount = BigInt(log.data || '0x0');
+    matchedLog = true;
+    break;
+  }
+
+  if (!matchedLog || usdcAmount === BigInt(0)) {
+    return res.status(400).json({ ok: false, error: 'TX_INVALID', detail: 'no matching USDC transfer to treasury found in tx' });
+  }
+
+  const usdcFloat = Number(usdcAmount) / 1_000_000;
+  const rush = Math.max(1, Math.floor(usdcFloat * 6));
+
+  // Credit Rush tokens
+  const creditResult = await tokenLedger.credit({
+    userId: String(userId),
+    balanceDelta: rush,
+    reason: 'wallet_sweep',
+    sourceType: 'wallet_sweep',
+    sourceId: txHash,
+    actorId: String(userId),
+    metadata: { usdc: usdcFloat, txHash, fromWallet: userWallet, treasury },
+  });
+
+  // Clear the embedded wallet record — user has swept, wallet is now retired
+  await dbQuery(
+    `UPDATE users
+       SET wallet_address = NULL,
+           privy_id = NULL,
+           previous_wallet_address = $2,
+           wallet_linked_at = NULL,
+           wallet_lock_reason = 'swept_to_rush'
+     WHERE id = $1`,
+    [String(userId), userWallet]
+  );
+
+  logger.info('[wallet/sweep-to-rush] sweep credited', {
+    userId, txHash, usdcFloat, rush, newBalance: creditResult.balance_after,
+  });
+
+  return res.json({
+    ok: true,
+    rush_credited: rush,
+    new_balance: creditResult.balance_after + creditResult.gifted_after,
+  });
+}));
+
 // GET /api/wallet/packages — available token packages (auth required to prevent
 // information disclosure of pricing/availability to unauthenticated visitors)
 app.get('/api/wallet/packages', requireSessionAuth, (req, res) => {

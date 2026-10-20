@@ -35,6 +35,7 @@ const VALID_REASONS = new Set([
   'withdraw_hold',
   'withdraw_paid',
   'withdraw_reverse',
+  'wallet_sweep',
 ]);
 
 // Optional externally-supplied pg client (for callers already inside a transaction)

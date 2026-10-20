@@ -1350,6 +1350,29 @@ export function getTokenActivationStatus(
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── Embedded-wallet USDC → Ru$h sweep ────────────────────────────────────────
+// Used by BuyTokensModal to detect and drain stranded USDC from Privy
+// embedded wallets that are being deprecated. Rate: 1 USDC = 6 Ru$h.
+
+export async function getEmbeddedWalletUsdc(): Promise<{ usdc: number; rush: number; wallet: string | null }> {
+  const r = await fetch('/api/wallet/embedded-usdc', { credentials: 'include' });
+  if (!r.ok) return { usdc: 0, rush: 0, wallet: null };
+  return r.json();
+}
+
+export async function sweepEmbeddedToRush(tx_hash: string): Promise<{ ok: boolean; rush_credited: number; new_balance: number }> {
+  const r = await fetch('/api/wallet/sweep-to-rush', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tx_hash }),
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 export function getRecentTips(
   limit = 10
 ): Promise<{ success: boolean; tips: RecentTip[] }> {
