@@ -225,9 +225,9 @@ function PlanStep({ initialPlanId, onSelect }: PlanStepProps) {
   const selected = plans.find((p) => p.id === selectedId);
 
   return (
-    <div className="space-y-3">
-      <h2 className="text-lg font-bold text-pnp-textPrimary mb-1">Choose your plan</h2>
-      <p className="text-sm text-pnp-textSecondary mb-4">
+    <div className="space-y-2">
+      <h2 className="text-base font-bold text-pnp-textPrimary">Choose your plan</h2>
+      <p className="text-xs text-pnp-textSecondary mb-2">
         Pay once, unlock full PRIME access.
       </p>
 
@@ -245,7 +245,7 @@ function PlanStep({ initialPlanId, onSelect }: PlanStepProps) {
               type="button"
               onClick={() => setSelectedId(plan.id)}
               className={[
-                "w-full text-left p-4 rounded-xl border-2 transition-all duration-200 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-pnp-background focus-visible:ring-pnp-accent",
+                "w-full text-left px-3 py-3 sm:p-4 rounded-xl border-2 transition-all duration-200 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-pnp-background focus-visible:ring-pnp-accent",
                 isSelected
                   ? "border-pnp-accent bg-pnp-accent/10"
                   : "border-white/10 bg-pnp-surface hover:border-white/20",
@@ -253,15 +253,15 @@ function PlanStep({ initialPlanId, onSelect }: PlanStepProps) {
               style={{ touchAction: "manipulation", WebkitTapHighlightColor: "transparent" }}
               aria-pressed={isSelected}
             >
-              <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center justify-between gap-2">
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap mb-1">
-                    <span className="font-semibold text-pnp-textPrimary text-sm">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="font-semibold text-pnp-textPrimary text-sm leading-tight">
                       {plan.display_name || plan.name}
                     </span>
                     <span
                       className={[
-                        "text-[10px] font-bold px-1.5 py-0.5 rounded-full border",
+                        "text-[9px] font-bold px-1.5 py-0.5 rounded-full border flex-shrink-0",
                         tier === "PRIME"
                           ? "border-amber-500/40 bg-amber-500/10 text-amber-400"
                           : "border-blue-400/40 bg-blue-400/10 text-blue-400",
@@ -270,16 +270,16 @@ function PlanStep({ initialPlanId, onSelect }: PlanStepProps) {
                       {tier}
                     </span>
                     {isRecommended && (
-                      <span className="text-[10px] font-bold uppercase tracking-wider bg-amber-400 text-[#1C1C1E] px-2 py-0.5 rounded-full">
+                      <span className="text-[9px] font-bold uppercase tracking-wider bg-amber-400 text-[#1C1C1E] px-1.5 py-0.5 rounded-full flex-shrink-0">
                         Best value
                       </span>
                     )}
                   </div>
-                  <p className="text-xs text-pnp-textSecondary">{durationLabel(days)}</p>
+                  <p className="text-[11px] text-pnp-textSecondary mt-0.5">{durationLabel(days)}</p>
                 </div>
 
                 <div className="flex-shrink-0 text-right">
-                  <div className="text-2xl font-black text-pnp-textPrimary">{fmt(plan.price)}</div>
+                  <div className="text-xl font-black text-pnp-textPrimary">{fmt(plan.price)}</div>
                   <p className="text-[10px] text-pnp-textSecondary">USD</p>
                 </div>
               </div>
@@ -291,7 +291,7 @@ function PlanStep({ initialPlanId, onSelect }: PlanStepProps) {
                     e.stopPropagation();
                     setExpandedId(isExpanded ? null : plan.id);
                   }}
-                  className="flex items-center gap-1 mt-2 text-xs font-semibold transition-colors focus-visible:outline-none"
+                  className="flex items-center gap-1 mt-1.5 text-xs font-semibold transition-colors focus-visible:outline-none"
                   style={{ color: "#D4007A" }}
                   aria-expanded={isExpanded}
                 >
@@ -318,25 +318,27 @@ function PlanStep({ initialPlanId, onSelect }: PlanStepProps) {
                   ))}
                 </ul>
               )}
+
+              {isSelected && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSelect(plan);
+                  }}
+                  className="w-full min-h-[44px] mt-2.5 rounded-xl font-bold text-sm text-white transition-all duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-pnp-background focus-visible:ring-pnp-accent"
+                  style={{
+                    background: "linear-gradient(135deg, #D4007A, #9B00B0)",
+                    boxShadow: "0 4px 20px rgba(212,0,122,0.35)",
+                  }}
+                >
+                  Continue — {fmt(plan.price)}
+                </button>
+              )}
             </button>
           </div>
         );
       })}
-
-      <button
-        type="button"
-        disabled={!selected}
-        onClick={() => selected && onSelect(selected)}
-        className="w-full min-h-[52px] rounded-2xl font-bold text-sm text-white transition-all duration-150 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-pnp-background focus-visible:ring-pnp-accent mt-2"
-        style={{
-          background: "linear-gradient(135deg, #D4007A, #9B00B0)",
-          boxShadow: selected ? "0 4px 24px rgba(212,0,122,0.35)" : "none",
-        }}
-      >
-        {selected
-          ? `Continue — ${fmt(selected.price)}`
-          : "Select a plan to continue"}
-      </button>
     </div>
   );
 }
@@ -578,6 +580,7 @@ function PayStep({ plan, email, receiverAddress, onBack, onSuccess }: PayStepPro
           environment: "production",
           defaultAmount: gross.toFixed(2),
           preferredProvider: "meld",
+          source: { defaultAsset: "usd" },
         },
       });
 
@@ -715,7 +718,7 @@ function PayStep({ plan, email, receiverAddress, onBack, onSuccess }: PayStepPro
 
       <p className="flex items-center justify-center gap-1.5 text-center text-[11px] text-pnp-textSecondary/50 leading-relaxed">
         <Lock className="w-3 h-3 flex-shrink-0" aria-hidden="true" />
-        Secured by Stripe · MoonPay · Meld · Privy
+        Secured by Meld · Privy
       </p>
     </div>
   );
@@ -786,7 +789,7 @@ function CheckoutInner() {
 
   return (
     <div
-      className="min-h-dvh flex flex-col items-center justify-start py-8 px-4"
+      className="min-h-dvh w-full overflow-y-auto flex flex-col items-center py-6 px-4 pb-10"
       style={{ background: "#0A0A0F" }}
     >
       <Helmet>
@@ -795,7 +798,7 @@ function CheckoutInner() {
       </Helmet>
 
       {/* Logo */}
-      <div className="mb-8 flex flex-col items-center gap-1">
+      <div className="mb-4 flex flex-col items-center gap-1">
         <a
           href="/"
           className="flex items-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pnp-accent rounded-lg"
@@ -825,7 +828,7 @@ function CheckoutInner() {
       >
         {/* Card header */}
         <div
-          className="px-6 pt-6 pb-4"
+          className="px-4 pt-4 pb-3 sm:px-6 sm:pt-6 sm:pb-4"
           style={{
             background: "linear-gradient(180deg, rgba(212,0,122,0.06) 0%, transparent 100%)",
             borderBottom: "1px solid rgba(255,255,255,0.06)",
@@ -835,7 +838,7 @@ function CheckoutInner() {
         </div>
 
         {/* Card body */}
-        <div className="p-6">
+        <div className="p-4 sm:p-6">
           {step === "plan" && (
             <PlanStep initialPlanId={initialPlanId} onSelect={handlePlanSelect} />
           )}

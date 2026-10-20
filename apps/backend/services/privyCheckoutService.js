@@ -513,25 +513,33 @@ async function verifyCheckoutPayment({ txHash, planId, privyUserId, pnptvUserId 
     });
   }
 
-  // Fire-and-forget Zoho Books revenue log — never blocks fulfillment.
+  // Fire-and-forget Zoho revenue log + CRM sync — never blocks fulfillment.
   setImmediate(async () => {
     try {
       const zohoBooks = require('./zohoBooksService');
-      if (!zohoBooks.isConfigured()) return;
-      if (receivedUsd <= 0) return;
-      await zohoBooks.logRevenue({
-        buyerUserId: pnptvUserId ? String(pnptvUserId) : null,
-        buyerEmail: null,
-        buyerName: null,
-        buyerUsername: null,
-        sku: `PRIME (checkout) — ${planId}`,
-        priceCents: Math.round(receivedUsd * 100),
-        provider: isOnramp ? 'privy_checkout_onramp' : 'privy_checkout_usdc',
-        reference: `checkout_payment:${checkoutPaymentId || txHashForRecord}`,
-        notes: `privyUser=${privyUserId || 'unknown'}; mode=${isOnramp ? 'onramp' : 'onchain'}`,
-      });
+      if (zohoBooks.isConfigured() && receivedUsd > 0) {
+        await zohoBooks.logRevenue({
+          buyerUserId: pnptvUserId ? String(pnptvUserId) : null,
+          buyerEmail: null,
+          buyerName: null,
+          buyerUsername: null,
+          sku: `PRIME (checkout) — ${planId}`,
+          priceCents: Math.round(receivedUsd * 100),
+          provider: isOnramp ? 'privy_checkout_onramp' : 'privy_checkout_usdc',
+          reference: `checkout_payment:${checkoutPaymentId || txHashForRecord}`,
+          notes: `privyUser=${privyUserId || 'unknown'}; mode=${isOnramp ? 'onramp' : 'onchain'}`,
+        });
+      }
     } catch (err) {
       logger.warn('[privyCheckout] zohoBooksService.logRevenue failed', { txHash: txHashForRecord, err: err.message });
+    }
+    if (pnptvUserId) {
+      try {
+        const zohoSync = require('./zohoSyncService');
+        await zohoSync.syncOneUser(pnptvUserId);
+      } catch (err) {
+        logger.warn('[privyCheckout] zohoSyncService.syncOneUser failed', { pnptvUserId, err: err.message });
+      }
     }
   });
 
