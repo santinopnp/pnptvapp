@@ -7,7 +7,6 @@ import type { CreatorStrings } from "@/lib/i18n/creator";
 import { WalletPayCard } from "@/components/payments/PayInWalletChips";
 import {
   getParcheInfo,
-  bookParcheCall,
   assertPaymentUrl,
   type ParcheDetail,
   type ParchePackage,
@@ -60,146 +59,6 @@ function MemberAvatarStrip({ parche }: { parche: ParcheDetail }) {
         );
       })}
     </div>
-  );
-}
-
-// ── NowPayments checkout for Parche ──────────────────────────────────────────
-function NpParcheCheckout({
-  parcheId,
-  packageId,
-  onSuccess,
-  onError,
-  t,
-}: {
-  parcheId: string;
-  packageId: number;
-  onSuccess: (bookingId: string) => void;
-  onError: (msg: string) => void;
-  t: CreatorStrings;
-}) {
-  const [loading, setLoading] = useState(false);
-  const [polling, setPolling] = useState(false);
-  const [bookingId, setBookingId] = useState<string | null>(null);
-  const popupRef = useRef<Window | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const pollDeadlineRef = useRef<number>(0);
-
-  const stopPolling = useCallback((clearBooking = false) => {
-    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-    setPolling(false);
-    if (clearBooking) setBookingId(null);
-    try { popupRef.current?.close(); } catch (_) {}
-    popupRef.current = null;
-  }, []);
-
-  useEffect(() => {
-    return () => stopPolling();
-  }, [stopPolling]);
-
-  useEffect(() => {
-    if (!polling || !bookingId) return;
-    const bid = bookingId;
-    pollDeadlineRef.current = Date.now() + 10 * 60 * 1000; // 10-minute cap
-    pollRef.current = setInterval(async () => {
-      if (Date.now() > pollDeadlineRef.current) {
-        stopPolling(true);
-        onError(t.parcheBookPayExpired);
-        return;
-      }
-      try {
-        const res = await fetch(`/api/webapp/parche-bookings/${encodeURIComponent(bid)}/status`, {
-          credentials: "same-origin",
-        });
-        if (!res.ok) return;
-        const data = await res.json();
-        if (data.status === "confirmed" || data.status === "paid") {
-          stopPolling();
-          onSuccess(bid);
-        } else if (data.status === "failed" || data.status === "expired" || data.status === "cancelled") {
-          stopPolling(true);
-          onError(t.parcheBookPayFailed);
-        }
-      } catch (_) { /* keep polling */ }
-    }, 5000);
-    return () => {
-      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-    };
-  }, [polling, bookingId, onSuccess, onError, stopPolling]);
-
-  const handleLaunch = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await bookParcheCall({ parcheId, packageId, provider: "nowpayments" });
-      if (!res.bookingId) throw new Error(t.parcheBookCryptoError);
-      const rawUrl = (res as any).checkoutUrl || (res as any).paymentUrl;
-      const invoiceUrl = rawUrl ? assertPaymentUrl(rawUrl) : null;
-      const w = invoiceUrl
-        ? window.open(invoiceUrl, "np_parche_checkout", "width=480,height=720,left=200,top=100")
-        : null;
-      popupRef.current = w;
-      setBookingId(res.bookingId);
-      setPolling(true);
-    } catch (err) {
-      onError(err instanceof Error ? err.message : t.parcheBookCryptoError);
-    } finally {
-      setLoading(false);
-    }
-  }, [parcheId, packageId, onError]);
-
-  if (polling) {
-    return (
-      <div
-        className="rounded-xl p-4 text-center space-y-2"
-        style={{ background: "rgba(255,183,0,0.07)", border: "1px solid rgba(255,183,0,0.30)" }}
-      >
-        <div className="flex items-center justify-center gap-2">
-          <span className="inline-block w-4 h-4 rounded-full border-2 border-amber-400/40 border-t-amber-400 animate-spin" />
-          <span className="text-sm font-semibold" style={{ color: "rgba(255,183,0,0.90)" }}>
-            {t.parcheBookWaiting}
-          </span>
-        </div>
-        <p className="text-xs" style={{ color: "rgba(255,255,255,0.45)" }}>
-          {t.parcheBookWaitingDesc}
-        </p>
-        <button
-          type="button"
-          onClick={() => {
-            if (pollRef.current) clearInterval(pollRef.current);
-            pollRef.current = null;
-            setPolling(false);
-            setBookingId(null);
-            try { popupRef.current?.close(); } catch (_) {}
-            popupRef.current = null;
-          }}
-          className="text-xs underline underline-offset-2"
-          style={{ color: "rgba(255,255,255,0.40)" }}
-        >
-          {t.parcheBookCancel}
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <button
-      type="button"
-      disabled={loading}
-      onClick={handleLaunch}
-      className="w-full min-h-[48px] rounded-xl text-sm font-bold transition-all active:scale-[0.98] flex items-center justify-center gap-2 disabled:opacity-60"
-      style={{
-        background: "rgba(255,183,0,0.12)",
-        border: "1.5px solid rgba(255,183,0,0.55)",
-        color: "rgba(255,183,0,0.95)",
-      }}
-    >
-      {loading
-        ? <span className="inline-block w-4 h-4 rounded-full border-2 border-amber-400/40 border-t-amber-400 animate-spin" />
-        : <>
-            <span>₿</span>
-            <span>{t.parcheBookCryptoBtn}</span>
-          </>
-      }
-    </button>
   );
 }
 
@@ -601,27 +460,6 @@ export default function BookParche() {
                     }}
                   />
 
-                  {/* Divider */}
-                  <div className="flex items-center gap-3">
-                    <div className="flex-1 h-px" style={{ background: "rgba(255,255,255,0.08)" }} />
-                    <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: "rgba(255,255,255,0.30)" }}>
-                      {t.parcheBookOrCrypto}
-                    </span>
-                    <div className="flex-1 h-px" style={{ background: "rgba(255,255,255,0.08)" }} />
-                  </div>
-
-                  {/* NowPayments crypto popup */}
-                  <NpParcheCheckout
-                    parcheId={parche.id}
-                    packageId={selectedPkg.id}
-                    onSuccess={handlePaySuccess}
-                    onError={handlePayError}
-                    t={t}
-                  />
-
-                  <p className="text-[10px] text-center" style={{ color: "rgba(255,255,255,0.30)" }}>
-                    BTC · ETH · USDT · USDC · and more
-                  </p>
 
                   {payStep === "error" && payError && (
                     <div

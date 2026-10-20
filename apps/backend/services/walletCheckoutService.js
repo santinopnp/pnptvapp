@@ -761,6 +761,8 @@ async function _fulfill(client, { userId, entitlementSpec, surface, provider, in
     fulfillResult = await _fulfillCrystalService(client, { userId, entitlementSpec, provider, intentId, amountUsd });
   } else if (surface === 'channel_pass') {
     fulfillResult = await _fulfillChannelPass(client, { userId, entitlementSpec, provider, intentId, amountUsd });
+  } else if (surface === 'channel' || surface === 'hangout') {
+    fulfillResult = await _fulfillScopedAccess({ userId, entitlementSpec, surface, provider, intentId });
   } else {
     fulfillResult = await _fulfillEntitlement(client, { userId, entitlementSpec, surface, provider, intentId, amountUsd });
   }
@@ -978,6 +980,41 @@ async function _fulfillChannelPass(client, { userId, entitlementSpec, provider, 
     subscriptionId: result.subscription_id, alreadyFulfilled: result.already_fulfilled,
   });
   return { subscriptionId: result.subscription_id, alreadyApplied: !!result.already_fulfilled };
+}
+
+/**
+ * Paid channel / standalone paid hangout access. Reuses the same grant path the
+ * NowPayments IPN used (PaymentService.grantEntitlementsForPlan with plan
+ * channel_access / hangout_access), which writes the scoped entitlement,
+ * auto-joins the linked hangout and records the creator's 70/30 earnings —
+ * idempotent on the checkout_intent reference.
+ */
+async function _fulfillScopedAccess({ userId, entitlementSpec, surface, provider, intentId }) {
+  const spec = entitlementSpec || {};
+  const planId = surface === 'channel' ? 'channel_access' : 'hangout_access';
+  if (surface === 'channel' && !spec.channelId) {
+    throw new Error(`_fulfillScopedAccess: channelId required (intentId=${intentId})`);
+  }
+  if (surface === 'hangout' && !spec.hangoutGroupId) {
+    throw new Error(`_fulfillScopedAccess: hangoutGroupId required (intentId=${intentId})`);
+  }
+  const paymentRef = `checkout_intent:${intentId}`;
+  const PaymentService = require('./paymentService');
+  const grant = await PaymentService.grantEntitlementsForPlan(
+    String(userId),
+    planId,
+    `wallet_${provider || 'usdc'}`,
+    {
+      channelId: spec.channelId || undefined,
+      hangoutGroupId: spec.hangoutGroupId || undefined,
+      paymentId: paymentRef,
+    },
+    paymentRef
+  );
+  if (!grant || grant.granted === 0) {
+    throw new Error(`_fulfillScopedAccess: zero grants for ${planId} (intentId=${intentId})`);
+  }
+  return { entitlementId: null, scopedGrant: grant.granted };
 }
 
 /**

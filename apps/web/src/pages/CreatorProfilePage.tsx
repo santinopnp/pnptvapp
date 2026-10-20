@@ -54,8 +54,6 @@ import {
   deleteCoverPhoto,
   tipTokens,
   getWalletBalance,
-  checkoutCrystalGift,
-  checkoutCrystalSelf,
   CRYSTAL_UI_ENABLED,
   INTRO_CALL_ENABLED,
   bookIntroCall,

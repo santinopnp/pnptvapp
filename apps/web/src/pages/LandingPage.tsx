@@ -188,9 +188,9 @@ export const sheets: Record<string, { title: string; emoji: string; body: React.
     emoji: "💳",
     body: (
       <div className="space-y-2">
-        <p className="text-pnp-textSecondary text-sm mb-3">Discreet, crypto-native payments — no card traces, no chargebacks.</p>
+        <p className="text-pnp-textSecondary text-sm mb-3">One wallet for every payment in the app.</p>
         {[
-          { e: "⚡", t: "Crypto (BTC, USDT, Dash +100 coins)", b: "Pay with crypto via NowPayments. Near-instant confirmation, low fees, no bank involved." },
+          { e: "💳", t: "PNPtv Wallet", b: "Card, Apple Pay, Google Pay or USDC on Base — one tap through the built-in wallet." },
           { e: "⚡💲", t: "Ru$h", b: "Buy Ru$h inside the app for tips, subscriptions & exclusive content. 1 USD = 6 Ru$h." },
         ].map(c => (
           <div key={c.t} className="flex gap-3 p-3 rounded-xl bg-pnp-surface border border-pnp-border">

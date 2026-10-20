@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
-import { submitCallSurvey, CallSurveyPayload, createCreatorTip } from "@/lib/api";
+import { submitCallSurvey, CallSurveyPayload } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
-import { PayInWalletChips } from "@/components/payments/PayInWalletChips";
+import { WalletPayCard } from "@/components/payments/PayInWalletChips";
 
 interface PostCallSurveyModalProps {
   open: boolean;
@@ -9,6 +9,8 @@ interface PostCallSurveyModalProps {
   creatorName: string;
   /** Username (no @) or user-id passed straight to POST /api/webapp/creators/:handle/tip */
   creatorHandle?: string;
+  /** Creator user id — required for the Privy tip checkout (surface "tip"). */
+  creatorId?: string | number;
   onClose: () => void;
 }
 
@@ -16,7 +18,7 @@ interface PostCallSurveyModalProps {
 // outline grey. Capping at 4 (not 5) removes the lukewarm-middle default and
 // forces a decisive rating.
 const FLAME_LEVELS = [1, 2, 3, 4] as const;
-// Post-call tips are USD-priced (paid via NowPayments hosted checkout) —
+// Post-call tips are USD-priced (paid via Privy WalletPayCard, surface "tip") —
 // $5 / $10 / $15 / $20 / $25 map 1:1 to the Ru$h tip presets 30/60/90/120/150.
 const TIP_QUICK_PICKS = [5, 10, 15, 20, 25] as const;
 
@@ -84,6 +86,7 @@ export function PostCallSurveyModal({
   bookingId,
   creatorName,
   creatorHandle,
+  creatorId,
   onClose,
 }: PostCallSurveyModalProps) {
   const t = useI18n();
@@ -100,9 +103,7 @@ export function PostCallSurveyModal({
   // Tip flow state — kicks in on the post-submit screen.
   const [tipAmount, setTipAmount] = useState<number | null>(null);
   const [customTip, setCustomTip] = useState<string>("");
-  const [tipStarting, setTipStarting] = useState(false);
-  const [tipInvoiceUrl, setTipInvoiceUrl] = useState<string | null>(null);
-  const [tipError, setTipError] = useState<string | null>(null);
+  const [tipConfirmed, setTipConfirmed] = useState(false);
 
   useEffect(() => {
     if (open) {
@@ -116,9 +117,7 @@ export function PostCallSurveyModal({
       setError(null);
       setTipAmount(null);
       setCustomTip("");
-      setTipStarting(false);
-      setTipInvoiceUrl(null);
-      setTipError(null);
+      setTipConfirmed(false);
     }
   }, [open]);
 
@@ -183,24 +182,6 @@ export function PostCallSurveyModal({
     }
   };
 
-  const handleStartTip = async () => {
-    if (!creatorHandle || !effectiveTip) return;
-    setTipStarting(true);
-    setTipError(null);
-    try {
-      const res = await createCreatorTip(creatorHandle, {
-        amount: effectiveTip,
-        message: comment.trim() ? comment.trim().slice(0, 200) : undefined,
-      });
-      if (!res.invoiceUrl) throw new Error("No invoice URL returned");
-      setTipInvoiceUrl(res.invoiceUrl);
-    } catch (err) {
-      setTipError(err instanceof Error ? err.message : t.creator.tipFailedToStart);
-    } finally {
-      setTipStarting(false);
-    }
-  };
-
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
@@ -235,20 +216,28 @@ export function PostCallSurveyModal({
                 {t.creator.surveyFeedbackHelps}
               </span>
 
-              {creatorHandle && (
+              {creatorHandle && creatorId != null && (
                 <>
                   <div style={{ borderTop: "1px solid rgba(255,255,255,0.08)", width: "100%", margin: "16px 0 8px" }} />
 
-                  {tipInvoiceUrl ? (
-                    // Payment step — swap in the shared wallet chips widget.
+                  {tipConfirmed && effectiveTip ? (
+                    // Payment step — Privy checkout (card, Apple Pay, wallet).
                     <div className="w-full flex flex-col gap-2">
                       <p className="text-sm text-white text-center">
-                        {t.creator.tipAmountConfirm(effectiveTip ?? 0, creatorName)}
+                        {t.creator.tipAmountConfirm(effectiveTip, creatorName)}
                       </p>
-                      <PayInWalletChips
-                        invoiceUrl={tipInvoiceUrl}
-                        lang={t.lang}
-                        onOtherWallets={() => window.open(tipInvoiceUrl, "_blank", "noopener,noreferrer")}
+                      <WalletPayCard
+                        surface="tip"
+                        amountUsd={effectiveTip}
+                        entitlementSpec={{
+                          creator_id: String(creatorId),
+                          message: comment.trim() ? comment.trim().slice(0, 200) : undefined,
+                        }}
+                        metadata={{ context: "post_call_survey", bookingId: String(bookingId) }}
+                        label={t.creator.tipSendAmount(effectiveTip)}
+                        lang={t.lang === "es" ? "es" : "en"}
+                        onSuccess={() => setTimeout(onClose, 1200)}
+                        compact
                       />
                       <button
                         onClick={onClose}
@@ -298,19 +287,13 @@ export function PostCallSurveyModal({
                         </div>
                       </div>
 
-                      {tipError && (
-                        <p className="text-xs text-center mb-2" style={{ color: "#FF6B6B" }}>{tipError}</p>
-                      )}
-
                       <button
-                        onClick={handleStartTip}
-                        disabled={!effectiveTip || tipStarting}
+                        onClick={() => setTipConfirmed(true)}
+                        disabled={!effectiveTip}
                         className="w-full py-3 rounded-xl font-semibold text-sm text-white transition-opacity disabled:opacity-40"
                         style={{ background: "linear-gradient(135deg, #FF6A00, #FFD60A)" }}
                       >
-                        {tipStarting
-                          ? t.creator.tipStarting
-                          : effectiveTip
+                        {effectiveTip
                             ? t.creator.tipSendAmount(effectiveTip)
                             : t.creator.tipSend}
                       </button>
@@ -327,8 +310,8 @@ export function PostCallSurveyModal({
                 </>
               )}
 
-              {!creatorHandle && (
-                // No creator handle → skip tip UI, just auto-close.
+              {(!creatorHandle || creatorId == null) && (
+                // No creator → skip tip UI, just auto-close.
                 <button
                   onClick={onClose}
                   className="w-full py-2 mt-3 text-sm text-center"

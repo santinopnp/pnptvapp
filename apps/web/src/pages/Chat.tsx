@@ -61,10 +61,6 @@ import {
   toggleMessageReaction,
   translateGroupMessage,
   getOwnChannels,
-  purchaseChannelAccess,
-  purchaseHangoutAccess,
-  assertPaymentUrl,
-  getUsdcSubscriptionStatus,
   fetchOgPreview,
   createHangoutTopic,
   updateHangoutTopic,
@@ -103,6 +99,7 @@ import { UserAvatar } from "@/components/UserAvatar";
 import { VideoCallButton } from "@/components/hangouts/VideoCallButton";
 import LiveKitCallDock from "@/components/hangouts/LiveKitCallDock";
 import { BuyTokensModal } from "@/components/BuyTokensModal";
+import { WalletPayCard } from "@/components/payments/PayInWalletChips";
 import { ForwardTargetPicker } from "@/components/forwarding/ForwardTargetPicker";
 import { MentionText } from "@/components/MentionText";
 import { SharedPostCard } from "@/components/social/SharedPostCard";
@@ -2417,12 +2414,6 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
     groupName?: string;
     videoCount?: number;
   } | null>(null);
-  const [pgProvider, setPgProvider] = useState<'nowpayments'>('nowpayments');
-  const [pgLoading, setPgLoading] = useState(false);
-  const [pgPolling, setPgPolling] = useState(false);
-  const [pgError, setPgError] = useState<string | null>(null);
-  const pgIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const pgTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Join requests management (for creators)
   const [joinRequests, setJoinRequests] = useState<Record<number, JoinRequest[]>>({});
@@ -3010,8 +3001,6 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
 
   // Cleanup payment polling on unmount
   useEffect(() => () => {
-    if (pgIntervalRef.current) clearInterval(pgIntervalRef.current);
-    if (pgTimeoutRef.current) clearTimeout(pgTimeoutRef.current);
   }, []);
 
   // Auto-dismiss error banners after 5s (Change 7)
@@ -3177,55 +3166,6 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
     }
   };
 
-  // ─── Payment gate handler ────────────────────────────────────────────
-  // Unified purchase handler: picks channel-access or hangout-access based on
-  // whether the gated resource is a channel-linked hangout (channelId present)
-  // or a standalone paid hangout.
-  const handlePurchaseChannel = async (provider: 'nowpayments' = pgProvider) => {
-    if (!paymentGateInfo) return;
-    const { channelId, groupId } = paymentGateInfo;
-    if (!channelId && !groupId) return;
-    setPgProvider(provider);
-    setPgLoading(true);
-    try {
-      const res = channelId
-        ? await purchaseChannelAccess(channelId, provider)
-        : await purchaseHangoutAccess(groupId!, provider);
-      if (res.checkoutUrl) {
-        const safeUrl = assertPaymentUrl(res.checkoutUrl);
-        const w = window.screen.width, h = window.screen.height;
-        const pw = 560, ph = 780;
-        window.open(safeUrl, 'pnptv_payment', `width=${pw},height=${ph},left=${Math.round((w - pw) / 2)},top=${Math.round((h - ph) / 2)},resizable=yes,scrollbars=yes,noopener,noreferrer`);
-      }
-      setPgPolling(true);
-      const invoiceId = res.invoiceId;
-      pgIntervalRef.current = setInterval(async () => {
-        try {
-          const poll = await getUsdcSubscriptionStatus(invoiceId);
-          const done = ('completed' in poll && (poll as { completed: boolean }).completed) || poll.status === 'completed' || poll.status === 'paid' || poll.status === 'success';
-          if (done) {
-            if (pgIntervalRef.current) { clearInterval(pgIntervalRef.current); pgIntervalRef.current = null; }
-            if (pgTimeoutRef.current) { clearTimeout(pgTimeoutRef.current); pgTimeoutRef.current = null; }
-            setPgPolling(false);
-            setShowPaymentGate(false);
-            setPaymentGateInfo(null);
-            loadGroups();
-            loadDiscover();
-          }
-        } catch {}
-      }, 5000);
-      pgTimeoutRef.current = setTimeout(() => {
-        if (pgIntervalRef.current) { clearInterval(pgIntervalRef.current); pgIntervalRef.current = null; }
-        pgTimeoutRef.current = null;
-        setPgPolling(false);
-      }, 600000);
-    } catch (err: any) {
-      setDiscoverError(err?.message || 'Payment failed');
-      setShowPaymentGate(false);
-    } finally {
-      setPgLoading(false);
-    }
-  };
 
   // ─── Join request management ──────────────────────────────────────────
 
@@ -6947,30 +6887,32 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                   )}
                 </div>
 
-                {pgPolling ? (
-                  <div className="flex flex-col items-center gap-3 py-4">
-                    <div className="w-8 h-8 border-2 border-pnp-accent border-t-transparent rounded-full animate-spin" />
-                    <p className="text-sm text-pnp-textSecondary">Waiting for payment confirmation...</p>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    <p className="text-[10px] text-pnp-textSecondary text-center uppercase tracking-wider font-semibold">Choose payment method</p>
-                    <button
-                      onClick={() => handlePurchaseChannel('nowpayments')}
-                      disabled={pgLoading}
-                      className="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-bold text-white transition-all active:scale-[0.98] disabled:opacity-50"
-                      style={{ background: "linear-gradient(135deg, #6366F1, #8B5CF6)" }}
-                    >
-                      💳 Pay with ETH / USDC
-                    </button>
-                    {pgError && <p className="text-xs text-red-400 text-center">{pgError}</p>}
-                  </div>
-                )}
+                <div className="space-y-2">
+                  {(paymentGateInfo.priceUsd ?? 0) > 0 ? (
+                    <WalletPayCard
+                      key={paymentGateInfo.channelId ? `ch-${paymentGateInfo.channelId}` : `hg-${paymentGateInfo.groupId}`}
+                      surface={paymentGateInfo.channelId ? "channel" : "hangout"}
+                      amountUsd={paymentGateInfo.priceUsd ?? 0}
+                      entitlementSpec={paymentGateInfo.channelId
+                        ? { channelId: paymentGateInfo.channelId }
+                        : { hangoutGroupId: paymentGateInfo.groupId }}
+                      metadata={{ source: "chat_payment_gate" }}
+                      label={`Pay $${(paymentGateInfo.priceUsd ?? 0).toFixed(2)}`}
+                      onSuccess={() => {
+                        setShowPaymentGate(false);
+                        setPaymentGateInfo(null);
+                        loadGroups();
+                        loadDiscover();
+                      }}
+                      compact
+                    />
+                  ) : null}
+                </div>
               </>
             )}
 
             <button
-              onClick={() => { setShowPaymentGate(false); setPgPolling(false); setPgError(null); }}
+              onClick={() => setShowPaymentGate(false)}
               className="w-full py-2 text-sm text-pnp-textSecondary hover:text-white transition-colors"
             >
               Cancel

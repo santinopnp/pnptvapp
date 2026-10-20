@@ -1161,9 +1161,6 @@ export async function enterLiveStream(channelRef: string): Promise<{ success: bo
   return res.json();
 }
 
-export function buyTokensWithNowPayments(packageId: string, payCurrency?: string): Promise<{ success: boolean; invoiceId: string; checkoutUrl: string; tokens: number; usdAmount: number; nowpaymentsInvoiceId?: string | null; payCurrency?: string | null; payAddress?: string | null; payAmount?: number | null; network?: string | null; validUntil?: string | null; presaleDiscount?: boolean; error?: string }> {
-  return request("/api/wallet/buy-nowpayments", { method: "POST", body: { packageId, ...(payCurrency ? { payCurrency } : {}) } });
-}
 
 export function getPresaleStatus(): Promise<{
   success: boolean;
@@ -4278,30 +4275,10 @@ export function getPaymentStatus(
   return request(`/api/payment/${encodeURIComponent(paymentId)}/status`);
 }
 
-export function purchaseChannelAccess(
-  channelId: number,
-  provider: 'nowpayments',
-  email?: string
-): Promise<{ success: boolean; paymentId: string; invoiceId: string; paymentUrl?: string; checkoutUrl: string }> {
-  return request(`/api/webapp/channels/${channelId}/purchase`, {
-    method: 'POST',
-    body: { provider, email },
-  });
-}
 
 // Purchase access to a standalone paid hangout (not linked to a channel).
 // For channel-linked paid hangouts, use purchaseChannelAccess instead —
 // channel-access grants cover both the channel and its linked hangout.
-export function purchaseHangoutAccess(
-  hangoutGroupId: number,
-  provider: 'nowpayments',
-  email?: string
-): Promise<{ success: boolean; paymentId: string; invoiceId: string; paymentUrl?: string; checkoutUrl: string }> {
-  return request(`/api/webapp/hangouts/groups/${hangoutGroupId}/purchase`, {
-    method: 'POST',
-    body: { provider, email },
-  });
-}
 
 // Dash/BTCPay retired 2026-07-31 — /api/wallet/buy, /payments/dash/create, and
 // /payments/dash/status all now return 410/tombstone responses server-side, and
@@ -4336,16 +4313,6 @@ export function getDashSubscriptionStatus(invoiceId: string): Promise<{
 // Poll a NowPayments dash_subscription_orders row by order id.
 // Preferred over polling the wallet balance — order-based signal doesn't
 // false-positive when unrelated credits (tips, admin grants) land during the wait.
-export function getNowPaymentsOrderStatus(orderId: string): Promise<{
-  success: boolean;
-  status: string;
-  completed: boolean;
-  confirming: boolean;
-  failed: boolean;
-  error?: string;
-}> {
-  return request(`/api/wallet/np-status/${encodeURIComponent(orderId)}`);
-}
 
 export function prepareUsdcSubscription(
   planId: string,
@@ -4372,54 +4339,7 @@ export function prepareUsdcSubscription(
 }
 
 
-export function prepareOnchainSubscription(
-  planId: string,
-  payCurrency: string = 'btc',
-  creatorId?: string,
-): Promise<{
-  success: boolean;
-  orderId: string;
-  usdAmount: number;
-  planName: string;
-  payAddress: string;
-  payAmount: string;
-  payCurrency: string;
-  resumed?: boolean;
-  error?: string;
-}> {
-  const body: Record<string, string> = { planId, payCurrency };
-  if (creatorId) body.creatorId = creatorId;
-  return request("/api/webapp/payments/onchain/prepare", { method: "POST", body });
-}
 
-export async function prepareCallNowPayments(opts: {
-  packageId: number;
-  startTimeUtc?: string | null;
-  endTimeUtc?: string | null;
-  payCurrency?: string;
-  email?: string | null;
-  clientNotes?: string | null;
-}): Promise<{
-  success: boolean;
-  invoiceUrl?: string;
-  nowpaymentsInvoiceId?: string;
-  paymentId?: string;
-  bookingId?: string;
-  amountUsd?: number;
-  error?: string;
-}> {
-  return request("/api/webapp/book-call/checkout/nowpayments", {
-    method: "POST",
-    body: {
-      packageId: opts.packageId,
-      startTimeUtc: opts.startTimeUtc ?? null,
-      endTimeUtc: opts.endTimeUtc ?? null,
-      payCurrency: opts.payCurrency ?? "btc",
-      email: opts.email ?? null,
-      clientNotes: opts.clientNotes ?? null,
-    },
-  });
-}
 
 export function getUsdcSubscriptionStatus(orderId: string): Promise<{
   success: boolean;
@@ -8566,15 +8486,6 @@ export interface CreatorTipResponse {
   amount: number;
 }
 
-export function createCreatorTip(
-  creatorId: string,
-  payload: CreatorTipPayload
-): Promise<CreatorTipResponse> {
-  return request(`/api/webapp/creators/${encodeURIComponent(creatorId)}/tip`, {
-    method: "POST",
-    body: payload,
-  });
-}
 
 export function getCreatorTipStatus(
   creatorId: string,
@@ -11270,16 +11181,6 @@ export async function getCrystalSelf(): Promise<CrystalSelfStatus> {
   return res.json();
 }
 
-export async function checkoutCrystalSelf(provider: CrystalCheckoutProvider): Promise<CrystalCheckoutResponse> {
-  const res = await fetch(`${API_BASE}/api/creator/crystal/self/checkout`, {
-    method: "POST",
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ provider }),
-  });
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Crystal self checkout failed");
-  return res.json();
-}
 
 export async function getCrystalGift(creatorId: string): Promise<CrystalGiftInfo> {
   const res = await fetch(`${API_BASE}/api/creators/${encodeURIComponent(creatorId)}/crystal/gift`, {
@@ -11289,20 +11190,6 @@ export async function getCrystalGift(creatorId: string): Promise<CrystalGiftInfo
   return res.json();
 }
 
-export async function checkoutCrystalGift(
-  creatorId: string,
-  provider: CrystalCheckoutProvider,
-  giftNote?: string | null,
-): Promise<CrystalCheckoutResponse> {
-  const res = await fetch(`${API_BASE}/api/creators/${encodeURIComponent(creatorId)}/crystal/gift/checkout`, {
-    method: "POST",
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ provider, giftNote: giftNote ?? undefined }),
-  });
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Crystal gift checkout failed");
-  return res.json();
-}
 
 export async function cancelCrystalSelf(): Promise<{ ok: boolean }> {
   const res = await fetch(`${API_BASE}/api/creator/crystal/self/cancel`, {
@@ -11942,18 +11829,6 @@ export function deactivateParchePackage(
 }
 
 // Booking
-export function bookParcheCall(data: {
-  parcheId: string;
-  packageId: number;
-  scheduledAt?: string;
-  buyerNote?: string;
-  provider: 'nowpayments';
-}): Promise<{ bookingId: string; checkoutUrl: string; invoiceId: string; amount: number; currency: string; sku: string }> {
-  return request<{ bookingId: string; checkoutUrl: string; invoiceId: string; amount: number; currency: string; sku: string }>(
-    '/api/webapp/book-parche/checkout',
-    { method: 'POST', body: data }
-  );
-}
 
 export function getParcheCallToken(
   bookingId: string

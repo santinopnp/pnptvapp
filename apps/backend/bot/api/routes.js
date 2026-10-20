@@ -18631,7 +18631,7 @@ app.post('/api/wallet/checkout/initiate', walletSpendLimiter, requireSessionAuth
   const { rail, surface, entitlementSpec: clientSpec = {}, metadata = {}, idempotencyKey } = req.body || {};
 
   if (!rail || !['usdc', 'rush', 'eth'].includes(rail)) return res.status(400).json({ error: 'invalid rail' });
-  const ALLOWED_SURFACES = new Set(['tip', 'creator_sub', 'rush', 'membership', 'prime', 'donation', 'call', 'crystal_self', 'crystal_gift', 'channel_pass']);
+  const ALLOWED_SURFACES = new Set(['tip', 'creator_sub', 'rush', 'membership', 'prime', 'donation', 'call', 'crystal_self', 'crystal_gift', 'channel_pass', 'crystal_service', 'channel', 'hangout']);
   if (!ALLOWED_SURFACES.has(surface)) return res.status(400).json({ error: 'invalid or unsupported surface' });
 
   // Guard against zero-amount intents that slip through when the frontend
@@ -19083,6 +19083,80 @@ async function _resolveCanonicalPurchase(userId, surface, spec, dbQuery) {
         creatorId: channelCreatorId,
         type: 'channel_pass',
       },
+    };
+  }
+
+  if (surface === 'crystal_service') {
+    const serviceId = spec?.serviceId != null ? String(spec.serviceId) : null;
+    if (!serviceId) throwErr('serviceId required for crystal_service', 400);
+    const crystalSvc = require('../../services/crystalServiceService');
+    const audience = await crystalSvc.getViewerAudience(userId);
+    const gate = await crystalSvc.loadServiceForBooking(serviceId, audience);
+    if (gate.gate === 'not_found') throwErr('service_not_found', 404);
+    if (gate.gate === 'inactive') throwErr('service_inactive', 410);
+    if (gate.gate === 'creator_not_crystal') throwErr('creator_no_longer_crystal', 409);
+    if (gate.gate === 'audience_too_low') throwErr('audience_too_low', 403);
+    const svc = gate.service;
+    if (String(svc.creator_user_id) === userId) throwErr('cannot_book_own_service', 400);
+    const price = Number(gate.price_cents) / 100;
+    if (!(price > 0)) throwErr('service has no price', 400);
+    const buyerNote = typeof spec?.buyerNote === 'string' ? spec.buyerNote.slice(0, 1000) : null;
+    return {
+      amountUsd: price,
+      resolvedSpec: {
+        serviceId: Number(svc.id),
+        creatorUserId: String(svc.creator_user_id),
+        serviceType: svc.service_type,
+        buyerNote,
+        fulfillmentDays: svc.fulfillment_days,
+      },
+    };
+  }
+
+  if (surface === 'channel') {
+    const channelId = parseInt(spec?.channelId, 10);
+    if (!Number.isFinite(channelId)) throwErr('channelId required for channel', 400);
+    const { rows } = await dbQuery(
+      `SELECT id, creator_id, access_type, price_usd, hangout_group_id, name
+         FROM creator_channels WHERE id = $1 AND is_active = true LIMIT 1`,
+      [channelId]
+    );
+    if (rows.length === 0) throwErr('channel not found', 404);
+    const channel = rows[0];
+    if (channel.access_type !== 'paid' || !(Number(channel.price_usd) > 0)) {
+      throwErr('this channel does not require payment', 400);
+    }
+    const { checkChannelAccess } = require('../../services/accessService');
+    const access = await checkChannelAccess(userId, channel);
+    if (access.allowed) throwErr('you already have access to this channel', 409);
+    return {
+      amountUsd: Number(channel.price_usd),
+      resolvedSpec: {
+        channelId: channel.id,
+        hangoutGroupId: channel.hangout_group_id,
+        channelName: channel.name,
+      },
+    };
+  }
+
+  if (surface === 'hangout') {
+    const hangoutGroupId = parseInt(spec?.hangoutGroupId, 10);
+    if (!Number.isFinite(hangoutGroupId)) throwErr('hangoutGroupId required for hangout', 400);
+    const { rows } = await dbQuery(
+      `SELECT id, is_paid, price_usd, channel_id, name FROM hangout_groups WHERE id = $1 LIMIT 1`,
+      [hangoutGroupId]
+    );
+    if (rows.length === 0) throwErr('hangout not found', 404);
+    const hangout = rows[0];
+    // Channel-linked hangouts are bought as channel access (covers both).
+    if (hangout.channel_id) throwErr('hangout is linked to a channel — buy channel access', 400);
+    if (!hangout.is_paid || !(Number(hangout.price_usd) > 0)) throwErr('this hangout does not require payment', 400);
+    const EntitlementAccessService = require('../../services/entitlementAccessService');
+    const decision = await EntitlementAccessService.hasResourceAccess(userId, 'hangout', String(hangout.id));
+    if (decision.allowed) throwErr('you already have access to this hangout', 409);
+    return {
+      amountUsd: Number(hangout.price_usd),
+      resolvedSpec: { hangoutGroupId: hangout.id, hangoutName: hangout.name },
     };
   }
 

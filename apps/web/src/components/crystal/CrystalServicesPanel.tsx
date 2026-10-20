@@ -54,10 +54,8 @@ export function CrystalServicesPanel({ creatorId, creatorUsername }: Props) {
   // Which service row has its inline booking panel expanded, and which
   // provider was picked. Null = no panel open.
   const [openBookingId, setOpenBookingId] = useState<number | null>(null);
-  const [bookingProvider, setBookingProvider] = useState<"wallet" | "nowpayments" | null>(null);
+  const [bookingProvider, setBookingProvider] = useState<"wallet" | null>(null);
   const [bookingNote, setBookingNote] = useState<string>("");
-  const [npLoading, setNpLoading] = useState<number | null>(null);
-  const [npError, setNpError] = useState<string | null>(null);
   const bookingPanelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -118,34 +116,6 @@ export function CrystalServicesPanel({ creatorId, creatorUsername }: Props) {
     }, 250);
   }, [services, searchParams]);
 
-  async function handleNowPayments(s: Service) {
-    setNpError(null);
-    setNpLoading(s.id);
-    try {
-      const resp = await fetch(`/api/creators/${encodeURIComponent(creatorId)}/services/${s.id}/book`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider: "nowpayments", buyerNote: bookingNote || undefined }),
-      });
-      if (!resp.ok) {
-        const body = await resp.json().catch(() => ({}));
-        throw new Error((body as { error?: string }).error || "checkout_unavailable");
-      }
-      const json = await resp.json();
-      const url = json?.invoiceUrl as string | undefined;
-      if (!url) throw new Error("no_invoice_url");
-      // NP checkout can't be iframed — centered popup per memory rule.
-      const w = 480, h = 720;
-      const left = (window.screen.width - w) / 2;
-      const top = (window.screen.height - h) / 2;
-      window.open(url, "np_crystal_service", `width=${w},height=${h},left=${left},top=${top}`);
-    } catch (err) {
-      setNpError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setNpLoading(null);
-    }
-  }
 
   function handleBookingSuccess() {
     // Close panel + strip URL param so a refresh doesn't reopen.
@@ -309,7 +279,7 @@ export function CrystalServicesPanel({ creatorId, creatorUsername }: Props) {
                       style={{ background: "rgba(0,0,0,0.35)", color: "#f5f0ff", border: "1px solid rgba(216,185,255,0.25)" }}
                     />
 
-                    <div className="grid grid-cols-2 gap-2 mb-2" onClick={(e) => e.stopPropagation()}>
+                    <div className="grid grid-cols-1 gap-2 mb-2" onClick={(e) => e.stopPropagation()}>
                       <button
                         type="button"
                         onClick={() => setBookingProvider((p) => (p === "wallet" ? null : "wallet"))}
@@ -318,19 +288,7 @@ export function CrystalServicesPanel({ creatorId, creatorUsername }: Props) {
                       >
                         💳 {es ? "Billetera USDC" : "USDC Wallet"}
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => handleNowPayments(s)}
-                        disabled={npLoading === s.id}
-                        className="py-2 rounded-lg font-bold text-xs text-white disabled:opacity-60"
-                        style={{ background: "linear-gradient(135deg,#f97316,#ea580c)" }}
-                      >
-                        {npLoading === s.id ? "…" : (es ? "₿ Apps y wallets" : "₿ Apps & wallets")}
-                      </button>
                     </div>
-                    {npError && (
-                      <p className="text-[11px] mb-2" style={{ color: "#ff6b6b" }}>{npError}</p>
-                    )}
                     {bookingProvider === "wallet" && (
                       <WalletPayCard
                         surface="crystal_service"

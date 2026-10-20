@@ -508,6 +508,7 @@ export default function BookingConfirmation() {
         bookingId={bookingId ?? ""}
         creatorName={booking.creator_display_name || booking.creator_username || s.creatorFallback}
         creatorHandle={booking.creator_username || String(booking.creator_id)}
+        creatorId={booking.creator_id}
         onClose={() => setShowSurvey(false)}
       />
     </div>

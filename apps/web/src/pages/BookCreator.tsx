@@ -6,8 +6,6 @@ import { WalletPayCard } from "@/components/payments/PayInWalletChips";
 import {
   getPublicCreatorBookingInfo,
   getPromoVideos,
-  prepareCallNowPayments,
-  getBookingPaymentStatus,
   type PublicBookingPackage,
   type PublicBookingCreator,
   type PublicBookingPerformer,
@@ -181,139 +179,6 @@ function PackageRow({
         )}
       </div>
     </div>
-  );
-}
-
-// ── NowPayments inline checkout (popup + poll) ────────────────────────────────
-function NpCallCheckout({
-  packageId,
-  clientNotes,
-  onSuccess,
-  onError,
-}: {
-  packageId: number;
-  clientNotes: string | null;
-  onSuccess: () => void;
-  onError: (msg: string) => void;
-}) {
-  const [loading, setLoading] = useState(false);
-  const [polling, setPolling] = useState(false);
-  const [pollRef_id, setPollRef_id] = useState<string | null>(null);
-  const popupRef = useRef<Window | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-      try { popupRef.current?.close(); } catch (_) {}
-    };
-  }, []);
-
-  // Poll for completion
-  useEffect(() => {
-    if (!polling || !pollRef_id) return;
-    const pid = pollRef_id;
-    pollRef.current = setInterval(async () => {
-      try {
-        const status = await getBookingPaymentStatus(pid);
-        if (status.status === "paid") {
-          if (pollRef.current) clearInterval(pollRef.current);
-          pollRef.current = null;
-          setPolling(false);
-          try { popupRef.current?.close(); } catch (_) {}
-          popupRef.current = null;
-          onSuccess();
-        } else if (status.status === "failed" || status.status === "expired") {
-          if (pollRef.current) clearInterval(pollRef.current);
-          pollRef.current = null;
-          setPolling(false);
-          setPollRef_id(null);
-          onError("Payment failed or expired. Please try again.");
-        }
-      } catch (_) { /* swallow — keep polling */ }
-    }, 5000);
-    return () => {
-      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-    };
-  }, [polling, pollRef_id, onSuccess, onError]);
-
-  const handleLaunch = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await prepareCallNowPayments({
-        packageId,
-        clientNotes: clientNotes || null,
-      });
-      // Prefer bookingId if backend returns it; fall back to paymentId
-      const pollTarget = (res as any).bookingId ?? res.paymentId;
-      if (!res.success || !res.invoiceUrl || !pollTarget) {
-        throw new Error(res.error || "Could not create crypto payment.");
-      }
-      const w = window.open(res.invoiceUrl, "np_book_checkout", "width=480,height=720,left=200,top=100");
-      popupRef.current = w;
-      setPollRef_id(String(pollTarget));
-      setPolling(true);
-    } catch (err) {
-      onError(err instanceof Error ? err.message : "Crypto payment error.");
-    } finally {
-      setLoading(false);
-    }
-  }, [packageId, clientNotes, onError]);
-
-  if (polling) {
-    return (
-      <div
-        className="rounded-xl p-4 text-center space-y-2"
-        style={{ background: "rgba(255,183,0,0.07)", border: "1px solid rgba(255,183,0,0.30)" }}
-      >
-        <div className="flex items-center justify-center gap-2">
-          <span className="inline-block w-4 h-4 rounded-full border-2 border-amber-400/40 border-t-amber-400 animate-spin" />
-          <span className="text-sm font-semibold" style={{ color: "rgba(255,183,0,0.90)" }}>
-            Waiting for your payment…
-          </span>
-        </div>
-        <p className="text-xs" style={{ color: "rgba(255,255,255,0.45)" }}>
-          Complete the payment in the window that opened. This screen updates automatically.
-        </p>
-        <button
-          type="button"
-          onClick={() => {
-            if (pollRef.current) clearInterval(pollRef.current);
-            pollRef.current = null;
-            setPolling(false);
-            setPollRef_id(null);
-            try { popupRef.current?.close(); } catch (_) {}
-            popupRef.current = null;
-          }}
-          className="text-xs underline underline-offset-2"
-          style={{ color: "rgba(255,255,255,0.40)" }}
-        >
-          Cancel
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <button
-      type="button"
-      disabled={loading}
-      onClick={handleLaunch}
-      className="w-full min-h-[48px] rounded-xl text-sm font-bold transition-all active:scale-[0.98] flex items-center justify-center gap-2 disabled:opacity-60"
-      style={{
-        background: "rgba(255,183,0,0.12)",
-        border: "1.5px solid rgba(255,183,0,0.55)",
-        color: "rgba(255,183,0,0.95)",
-      }}
-    >
-      {loading
-        ? <span className="inline-block w-4 h-4 rounded-full border-2 border-amber-400/40 border-t-amber-400 animate-spin" />
-        : <>
-            <span>₿</span>
-            <span>Pay with crypto · Apps &amp; wallets</span>
-          </>
-      }
-    </button>
   );
 }
 
@@ -752,26 +617,6 @@ export default function BookCreator() {
                                   handlePaySuccess((result as any)?.bookingId ?? null);
                                 }}
                               />
-
-                              <div className="flex items-center gap-3">
-                                <div className="flex-1 h-px" style={{ background: "rgba(255,255,255,0.08)" }} />
-                                <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: "rgba(255,255,255,0.30)" }}>
-                                  or pay with crypto
-                                </span>
-                                <div className="flex-1 h-px" style={{ background: "rgba(255,255,255,0.08)" }} />
-                              </div>
-
-                              <NpCallCheckout
-                                key={`np-${selectedPkg.id}`}
-                                packageId={selectedPkg.id}
-                                clientNotes={buildClientNotes(selectedPkg)}
-                                onSuccess={handlePaySuccess}
-                                onError={handlePayError}
-                              />
-
-                              <p className="text-[10px] text-center" style={{ color: "rgba(255,255,255,0.30)" }}>
-                                BTC · ETH · USDT · USDC · and more
-                              </p>
                             </>
                           );
                         })()}
