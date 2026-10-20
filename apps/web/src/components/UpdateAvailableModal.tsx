@@ -54,7 +54,7 @@ export function UpdateAvailableModal() {
       >
         <div
           className="w-full max-w-sm mx-4 mb-6 rounded-2xl shadow-2xl overflow-hidden"
-          style={{ background: "#1C1C1E", border: "1px solid rgba(255,255,255,0.12)" }}
+          style={{ background: "#181818", border: "1px solid rgba(255,255,255,0.12)" }}
         >
           <div className="h-1 w-full" style={{ background: "linear-gradient(90deg, #D4007A, #7B61FF, #5BB8F5)" }} />
 

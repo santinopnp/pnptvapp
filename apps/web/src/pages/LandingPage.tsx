@@ -1068,7 +1068,7 @@ export function LandingPage() {
       <div id="auth">
         <div
           className="flex flex-col items-center px-4 py-16"
-          style={{ background: "linear-gradient(180deg, #0A0A0F 0%, #0D0A14 100%)" }}
+          style={{ background: "linear-gradient(180deg, #121212 0%, #0D0A14 100%)" }}
         >
           <div className="w-full max-w-xs text-center mb-8">
             <p
@@ -1642,7 +1642,7 @@ export function LandingPage() {
                 <span className="text-xl">{sheet.emoji}</span>
                 <h2 className="text-sm font-bold text-white">{sheet.title}</h2>
               </div>
-              <button onClick={() => setActiveSheet(null)} className="p-1.5 rounded-lg text-pnp-textSecondary hover:text-white hover:bg-pnp-surface transition-colors" aria-label="Close">
+              <button onClick={() => setActiveSheet(null)} className="p-1.5 rounded-xl text-pnp-textSecondary hover:text-white hover:bg-pnp-surface transition-colors" aria-label="Close">
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                 </svg>

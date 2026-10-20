@@ -381,7 +381,7 @@ export default function Join() {
               <p className="text-xs font-semibold text-white/70">{t.longerPlansTitle}</p>
               <p className="text-xs text-white/35 mt-0.5">{t.longerPlansDesc}</p>
             </div>
-            <button onClick={handleGetPrime} className="text-xs font-semibold px-3 py-1.5 rounded-lg flex-shrink-0" style={{ color: "#D4007A", background: "rgba(212,0,122,0.1)", border: "1px solid rgba(212,0,122,0.2)" }}>
+            <button onClick={handleGetPrime} className="text-xs font-semibold px-3 py-1.5 rounded-xl flex-shrink-0" style={{ color: "#D4007A", background: "rgba(212,0,122,0.1)", border: "1px solid rgba(212,0,122,0.2)" }}>
               {t.longerPlansSeeAll}
             </button>
           </div>

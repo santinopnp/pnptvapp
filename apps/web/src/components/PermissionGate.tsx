@@ -198,7 +198,7 @@ export function PermissionGate({ onGranted, onCancel }: PermissionGateProps) {
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
       <div
         className="w-full max-w-sm rounded-2xl p-6 space-y-5 animate-fade-in-up"
-        style={{ background: "var(--pnp-surface, #1C1C1E)", border: "1px solid rgba(255,255,255,0.1)" }}
+        style={{ background: "var(--pnp-surface, #181818)", border: "1px solid rgba(255,255,255,0.1)" }}
       >
         {/* Icon */}
         <div className="flex justify-center">

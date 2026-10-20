@@ -43,7 +43,7 @@ export default function TakedownRequestPage() {
     }
   };
 
-  const input = "w-full rounded-xl px-3 py-2.5 text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-white/30";
+  const input = "w-full rounded-xl px-3 py-2.5 text-sm text-white bg-white/5 border border-pnp-controlBorder focus:outline-none focus:border-white/30";
 
   return (
     <>

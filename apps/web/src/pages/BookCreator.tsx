@@ -307,7 +307,7 @@ export default function BookCreator() {
     return (
       <div
         className="min-h-dvh flex items-center justify-center"
-        style={{ background: "var(--pnp-background, #0A0A0F)" }}
+        style={{ background: "var(--pnp-background, #121212)" }}
       >
         <Spinner />
       </div>
@@ -318,7 +318,7 @@ export default function BookCreator() {
     return (
       <div
         className="min-h-dvh flex flex-col items-center justify-center gap-4 px-6 text-center"
-        style={{ background: "var(--pnp-background, #0A0A0F)" }}
+        style={{ background: "var(--pnp-background, #121212)" }}
       >
         <p className="text-white font-semibold">{error || "Creator not found."}</p>
         <button
@@ -344,7 +344,7 @@ export default function BookCreator() {
 
       <div
         className="min-h-dvh"
-        style={{ background: "var(--pnp-background, #0A0A0F)" }}
+        style={{ background: "var(--pnp-background, #121212)" }}
       >
         {/* ── Hero ──────────────────────────────────────────────────────── */}
         <div className="relative w-full overflow-hidden" style={{ background: "#000" }}>

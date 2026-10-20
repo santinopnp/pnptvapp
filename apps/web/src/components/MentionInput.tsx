@@ -237,7 +237,7 @@ export function MentionInput({
           ref={dropdownRef}
           className="absolute bottom-full left-0 right-0 mb-1 rounded-xl overflow-hidden shadow-xl z-50"
           style={{
-            background: "var(--pnp-surface, #1C1C1E)",
+            background: "var(--pnp-surface, #181818)",
             border: "1px solid rgba(255,255,255,0.12)",
             maxHeight: "220px",
             overflowY: "auto",
@@ -317,7 +317,7 @@ export function MentionInput({
         style={style}
         className={
           className ??
-          "w-full bg-white/5 text-white text-xs rounded-lg px-3 py-2 outline-none border border-white/10 focus:border-white/30 placeholder:text-white/30 resize-none"
+          "w-full bg-white/5 text-white text-xs rounded-lg px-3 py-2 outline-none border border-pnp-controlBorder focus:border-white/30 placeholder:text-white/30 resize-none"
         }
       />
     </div>

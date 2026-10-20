@@ -249,7 +249,7 @@ function ThumbContextSheet({ fileId, altText, isCover, onSetAltText, onSetCover,
     >
       <div
         className="w-full max-w-lg rounded-t-2xl p-4 pb-8 space-y-3"
-        style={{ background: "#1C1C1E", border: "1px solid rgba(255,255,255,0.12)" }}
+        style={{ background: "#181818", border: "1px solid rgba(255,255,255,0.12)" }}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-1">
@@ -321,7 +321,7 @@ function HashtagPopover({ tags, onSelect, onClose }: HashtagPopoverProps) {
 
   if (tags.length === 0) return null;
   return (
-    <div className="absolute z-40 left-0 mt-1 rounded-xl overflow-hidden shadow-2xl" style={{ background: "#1C1C1E", border: "1px solid rgba(255,255,255,0.12)", minWidth: 180 }}>
+    <div className="absolute z-40 left-0 mt-1 rounded-xl overflow-hidden shadow-2xl" style={{ background: "#181818", border: "1px solid rgba(255,255,255,0.12)", minWidth: 180 }}>
       {tags.map((tag, i) => (
         <button
           key={tag}
@@ -387,7 +387,7 @@ function CopyCoachModal({ rawIdea, mediaAttached, userLanguage, onApply, onClose
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center" style={{ background: "rgba(0,0,0,0.75)" }} onClick={onClose}>
       <div
         className="w-full max-w-lg rounded-t-2xl sm:rounded-2xl p-5 pb-8 space-y-4 overflow-y-auto"
-        style={{ background: "#1C1C1E", border: "1px solid rgba(255,255,255,0.12)", maxHeight: "85vh" }}
+        style={{ background: "#181818", border: "1px solid rgba(255,255,255,0.12)", maxHeight: "85vh" }}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between">
@@ -1081,7 +1081,7 @@ export function PostComposer({
                     aria-label="Who can reply"
                   >
                     {REPLY_CONTROL_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value} style={{ background: "#1C1C1E", color: "#fff" }}>{o.label}</option>
+                      <option key={o.value} value={o.value} style={{ background: "#181818", color: "#fff" }}>{o.label}</option>
                     ))}
                   </select>
                   <svg className="w-3 h-3 absolute right-0 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: "#8E8E93" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
@@ -1250,7 +1250,7 @@ export function PostComposer({
                     <select id={`${baseId}-channel`} value={selectedChannelId ?? ""} onChange={(e) => setSelectedChannelId(e.target.value === "" ? null : Number(e.target.value))} disabled={isPosting} className="ml-3 flex-1 min-w-0 bg-transparent text-xs outline-none text-right disabled:opacity-40 cursor-pointer" style={{ color: selectedChannelId !== null ? "#D4007A" : "#8E8E93" }}>
                       <option value="">No channel</option>
                       {channels.map((ch) => (
-                        <option key={ch.id} value={ch.id} style={{ background: "var(--pnp-surface, #1C1C1E)", color: "#fff" }}>{ch.name}</option>
+                        <option key={ch.id} value={ch.id} style={{ background: "var(--pnp-surface, #181818)", color: "#fff" }}>{ch.name}</option>
                       ))}
                     </select>
                   </div>

@@ -96,10 +96,10 @@ export function Support() {
       {/* Tab bar */}
       {isAuthenticated && (
         <div className="flex gap-1 mb-4 p-1 rounded-xl bg-white/5">
-          <button onClick={() => setTab("cristina")} className={`flex-1 py-2 rounded-lg text-sm font-medium transition-all ${tab === "cristina" ? "text-white" : "text-pnp-textSecondary hover:text-white/70"}`} style={tab === "cristina" ? { background: "linear-gradient(135deg, #D4007A, #E69138)" } : undefined}>
+          <button onClick={() => setTab("cristina")} className={`flex-1 py-2 rounded-xl text-sm font-medium transition-all ${tab === "cristina" ? "text-white" : "text-pnp-textSecondary hover:text-white/70"}`} style={tab === "cristina" ? { background: "linear-gradient(135deg, #D4007A, #E69138)" } : undefined}>
             Ask Cristina
           </button>
-          <button onClick={() => setTab("ticket")} className={`flex-1 py-2 rounded-lg text-sm font-medium transition-all ${tab === "ticket" ? "text-white" : "text-pnp-textSecondary hover:text-white/70"}`} style={tab === "ticket" ? { background: "linear-gradient(135deg, #D4007A, #E69138)" } : undefined}>
+          <button onClick={() => setTab("ticket")} className={`flex-1 py-2 rounded-xl text-sm font-medium transition-all ${tab === "ticket" ? "text-white" : "text-pnp-textSecondary hover:text-white/70"}`} style={tab === "ticket" ? { background: "linear-gradient(135deg, #D4007A, #E69138)" } : undefined}>
             Support Ticket
           </button>
         </div>
@@ -454,7 +454,7 @@ function TicketChat({ userId }: { userId: string }) {
 
       {/* Input bar */}
       {ticket.status === "open" && (
-        <div className="border-t border-pnp-border px-3 py-2" style={{ background: "var(--pnp-surface, #1C1C1E)" }}>
+        <div className="border-t border-pnp-border px-3 py-2" style={{ background: "var(--pnp-surface, #181818)" }}>
           {/* Pending attachment preview */}
           {pendingAttachments.length > 0 && (
             <div className="flex flex-wrap gap-1.5 mb-2">

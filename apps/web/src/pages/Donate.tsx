@@ -462,7 +462,7 @@ export default function Donate() {
                       {notConnected && (
                         <div className="mx-4 mb-3 flex items-center gap-2 px-3 py-2.5 rounded-xl border border-[#7B61FF]/30 bg-[#7B61FF]/8">
                           <span className="text-[10px] text-[#A78BFA] flex-1">{es ? "Crea tu wallet para pagar con USDC/ETH" : "Create your wallet to pay with USDC / ETH"}</span>
-                          <button onClick={privyLogin} className="flex-shrink-0 px-2.5 py-1 rounded-lg text-[10px] font-bold text-white bg-[#7B61FF] hover:bg-[#8B71FF] transition-all active:scale-95">
+                          <button onClick={privyLogin} className="flex-shrink-0 px-2.5 py-1 rounded-xl text-[10px] font-bold text-white bg-[#7B61FF] hover:bg-[#8B71FF] transition-all active:scale-95">
                             {es ? "Conectar" : "Connect"}
                           </button>
                         </div>
@@ -529,7 +529,7 @@ export default function Donate() {
               <div className="flex items-center gap-3 mb-4">
                 <div className="relative flex-shrink-0">
                   <div className="w-14 h-14 rounded-2xl flex items-center justify-center text-2xl" style={{ background: "linear-gradient(135deg, #D4007A, #7B61FF)" }}>🎭</div>
-                  <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-green-500 border-2 border-[#1C1C1E]" />
+                  <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-green-500 border-2 border-[#181818]" />
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="font-bold text-pnp-textPrimary">Santino 🏳️‍🌈</p>

@@ -210,7 +210,7 @@ export default function BookingConfirmation() {
       <div className="min-h-dvh flex items-center justify-center" style={{ background: "var(--pnp-background, #121212)" }}>
         <div className="space-y-4 w-full max-w-md px-4">
           {[1, 2, 3].map((i) => (
-            <div key={i} className="h-16 rounded-xl animate-pulse" style={{ background: "var(--pnp-surface, #1C1C1E)" }} />
+            <div key={i} className="h-16 rounded-xl animate-pulse" style={{ background: "var(--pnp-surface, #181818)" }} />
           ))}
         </div>
       </div>
@@ -224,7 +224,7 @@ export default function BookingConfirmation() {
         <button
           onClick={() => navigate(-1)}
           className="px-6 py-2 rounded-xl text-sm font-medium text-white"
-          style={{ background: "var(--pnp-surface-hover, #2C2C2E)" }}
+          style={{ background: "var(--pnp-surface-hover, #1F1F1F)" }}
         >
           {s.goBack}
         </button>
@@ -262,7 +262,7 @@ export default function BookingConfirmation() {
         {/* Call details card */}
         <div
           className="rounded-2xl p-5 space-y-3"
-          style={{ background: "var(--pnp-surface, #1C1C1E)", border: "1px solid rgba(255,255,255,0.08)" }}
+          style={{ background: "var(--pnp-surface, #181818)", border: "1px solid rgba(255,255,255,0.08)" }}
         >
           <div className="flex justify-between text-sm">
             <span style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>{s.creator}</span>
@@ -299,7 +299,7 @@ export default function BookingConfirmation() {
         {!startTime && (
           <div
             className="rounded-2xl p-5 space-y-4"
-            style={{ background: "var(--pnp-surface, #1C1C1E)", border: "1px solid rgba(255,255,255,0.08)" }}
+            style={{ background: "var(--pnp-surface, #181818)", border: "1px solid rgba(255,255,255,0.08)" }}
           >
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold text-white">
@@ -403,7 +403,7 @@ export default function BookingConfirmation() {
         {/* Tutorial / Rules */}
         <details
           className="rounded-2xl overflow-hidden"
-          style={{ background: "var(--pnp-surface, #1C1C1E)", border: "1px solid rgba(255,255,255,0.08)" }}
+          style={{ background: "var(--pnp-surface, #181818)", border: "1px solid rgba(255,255,255,0.08)" }}
         >
           <summary className="px-5 py-3.5 text-sm font-semibold text-white cursor-pointer select-none">
             {s.howToJoinTitle}

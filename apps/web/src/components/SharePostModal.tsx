@@ -1119,7 +1119,7 @@ export function SharePostModal({
     >
       <div
         className="w-full max-w-lg rounded-t-2xl p-5 pb-8 space-y-2"
-        style={{ background: "var(--pnp-surface, #1C1C1E)", border: "1px solid rgba(255,255,255,0.08)" }}
+        style={{ background: "var(--pnp-surface, #181818)", border: "1px solid rgba(255,255,255,0.08)" }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Handle bar */}

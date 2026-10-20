@@ -79,7 +79,7 @@ export default function ReferralCenter() {
     <div
       className="min-h-screen"
       style={{
-        background: "linear-gradient(180deg, #0a0a0f 0%, #0d0d16 100%)",
+        background: "linear-gradient(180deg, #121212 0%, #0d0d16 100%)",
         paddingBottom: 80,
       }}
     >

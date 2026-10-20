@@ -81,7 +81,7 @@ export default function ConnectWallet() {
 
       {/* Card */}
       <div style={{
-        background: "#1C1C1E",
+        background: "#181818",
         borderRadius: 24,
         padding: 28,
         border: "1px solid rgba(255,255,255,0.08)",

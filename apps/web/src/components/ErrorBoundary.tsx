@@ -94,7 +94,7 @@ class ErrorBoundary extends Component<Props, State> {
             justifyContent: "center",
             minHeight: "100dvh",
             padding: "20px",
-            backgroundColor: "var(--pnp-surface, #1C1C1E)",
+            backgroundColor: "var(--pnp-surface, #181818)",
             color: "#fff",
             textAlign: "center",
           }}

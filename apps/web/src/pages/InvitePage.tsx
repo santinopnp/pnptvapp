@@ -300,7 +300,7 @@ function Shell({ children, lang, setLang, confettiRef }: {
   return (
     <div
       className="relative min-h-dvh flex flex-col items-center justify-center px-5 py-12"
-      style={{ background: "linear-gradient(160deg, #0A0A0F 0%, #12081A 50%, #0A0A0F 100%)" }}
+      style={{ background: "linear-gradient(160deg, #121212 0%, #12081A 50%, #121212 100%)" }}
     >
       <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-1"
         style={{ background: "linear-gradient(90deg,#E40303,#FF8C00,#FFED00,#008026,#004DFF,#750787)" }} />

@@ -418,14 +418,14 @@ function YouSheet({ onClose, onSwitchMode }: { onClose: () => void; onSwitchMode
 
   const initials = user?.displayName?.charAt(0)?.toUpperCase() || user?.username?.charAt(0)?.toUpperCase() || "?";
   const tierLabel = user?.tier === "prime" ? (nav.tierPrime || "PRIME") : user?.tier === "member" ? (nav.tierMember || "MEMBER") : (nav.tierFree || "FREE");
-  const tierColor = user?.tier === "prime" ? "#FFB454" : user?.tier === "member" ? "#60A5FA" : "#8A8A9A";
+  const tierColor = user?.tier === "prime" ? "#FFB454" : user?.tier === "member" ? "#60A5FA" : "#8A8A8E";
   const tierBg = user?.tier === "prime" ? "rgba(255,180,84,.12)" : user?.tier === "member" ? "rgba(96,165,250,.1)" : "rgba(255,255,255,.05)";
   const tierBorder = user?.tier === "prime" ? "rgba(255,180,84,.3)" : user?.tier === "member" ? "rgba(96,165,250,.2)" : "rgba(255,255,255,.1)";
 
   const menuItems = [
     { icon: "👤", label: nav.youProfileLabel || nav.profile, sub: nav.youProfileSub || "", to: "/profile", color: "#D4007A", bg: "rgba(212,0,122,.12)" },
     { icon: "🌟", label: nav.myAccess, sub: nav.youMyAccessSub || "", to: "/my-access", color: "#FFB454", bg: "rgba(255,180,84,.1)" },
-    { icon: "⚙️", label: nav.settings, sub: nav.youSettingsSub || "", to: "/settings", color: "#8A8A9A", bg: "rgba(255,255,255,.06)" },
+    { icon: "⚙️", label: nav.settings, sub: nav.youSettingsSub || "", to: "/settings", color: "#8A8A8E", bg: "rgba(255,255,255,.06)" },
     { icon: "💚", label: nav.youWellnessLabel || nav.selfCare, sub: nav.youWellnessSub || "", to: "/self-care", color: "#22C55E", bg: "rgba(34,197,94,.1)" },
   ];
 
@@ -481,7 +481,7 @@ function YouSheet({ onClose, onSwitchMode }: { onClose: () => void; onSwitchMode
                   <button
                     onClick={() => { onSwitchMode("classic"); onClose(); }}
                     className="px-3 py-1 rounded-full text-[11px] font-bold transition-all"
-                    style={{ background: "transparent", color: "#8A8A9A" }}
+                    style={{ background: "transparent", color: "#8A8A8E" }}
                   >
                     {nav.youNavClassic || "Classic"}
                   </button>
@@ -529,7 +529,7 @@ function YouSheet({ onClose, onSwitchMode }: { onClose: () => void; onSwitchMode
             <button onClick={handleSignOut}
               className="w-full flex items-center gap-4 px-3 py-3 rounded-[14px] transition-all active:bg-white/5 text-left">
               <div className="w-10 h-10 rounded-[11px] flex items-center justify-center flex-shrink-0" style={{ background: "rgba(255,255,255,.05)" }}>
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} style={{ color: "#8A8A9A" }}>
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} style={{ color: "#8A8A8E" }}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
                 </svg>
               </div>

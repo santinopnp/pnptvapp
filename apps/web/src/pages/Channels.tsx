@@ -1296,7 +1296,7 @@ function ChannelDetailView({
                 style={{ background: "linear-gradient(135deg,#FF9500,#E69138)" }}>
                 {hypePosting ? "Posting…" : "🔥 Post Hype"}
               </button>
-              <button onClick={() => setModalHypeOpen(false)} className="px-3 py-1.5 rounded-lg text-xs text-white/50 border border-white/10 hover:bg-white/5">Cancel</button>
+              <button onClick={() => setModalHypeOpen(false)} className="px-3 py-1.5 rounded-xl text-xs text-white/50 border border-white/10 hover:bg-white/5">Cancel</button>
             </div>
           </div>
         )}
@@ -1376,10 +1376,10 @@ function ChannelDetailView({
             </div>
             {videoEditError && <p className="text-xs text-red-400">{videoEditError}</p>}
             <div className="flex gap-2">
-              <button onClick={saveVideoEdit} disabled={videoEditSaving} className="flex-1 py-1.5 rounded-lg text-xs font-semibold text-white disabled:opacity-50" style={{ background: "linear-gradient(135deg,#D4007A,#E69138)" }}>
+              <button onClick={saveVideoEdit} disabled={videoEditSaving} className="flex-1 py-1.5 rounded-xl text-xs font-semibold text-white disabled:opacity-50" style={{ background: "linear-gradient(135deg,#D4007A,#E69138)" }}>
                 {videoEditSaving ? "Saving…" : "Save"}
               </button>
-              <button onClick={() => setEditingVideoId(null)} className="px-3 py-1.5 rounded-lg text-xs text-white/50 border border-white/10 hover:bg-white/5">Cancel</button>
+              <button onClick={() => setEditingVideoId(null)} className="px-3 py-1.5 rounded-xl text-xs text-white/50 border border-white/10 hover:bg-white/5">Cancel</button>
             </div>
           </div>
         )}
@@ -1389,10 +1389,10 @@ function ChannelDetailView({
           <div className="rounded-xl border border-red-500/20 p-3 space-y-2">
             <p className="text-xs text-red-300">Delete this video? This cannot be undone.</p>
             <div className="flex gap-2">
-              <button onClick={confirmVideoDelete} disabled={videoDeleteLoading} className="flex-1 py-1.5 rounded-lg text-xs font-semibold text-white bg-red-500 hover:bg-red-600 disabled:opacity-50 transition-colors">
+              <button onClick={confirmVideoDelete} disabled={videoDeleteLoading} className="flex-1 py-1.5 rounded-xl text-xs font-semibold text-white bg-red-500 hover:bg-red-600 disabled:opacity-50 transition-colors">
                 {videoDeleteLoading ? "Deleting…" : "Yes, Delete"}
               </button>
-              <button onClick={() => setDeletingVideoId(null)} className="px-3 py-1.5 rounded-lg text-xs text-white/50 border border-white/10 hover:bg-white/5">Cancel</button>
+              <button onClick={() => setDeletingVideoId(null)} className="px-3 py-1.5 rounded-xl text-xs text-white/50 border border-white/10 hover:bg-white/5">Cancel</button>
             </div>
           </div>
         )}

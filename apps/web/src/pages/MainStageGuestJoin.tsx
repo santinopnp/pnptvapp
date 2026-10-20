@@ -426,7 +426,7 @@ function GuestShell({ children }: { children: React.ReactNode }) {
   return (
     <div
       className="min-h-dvh flex flex-col items-center justify-center px-4 py-8"
-      style={{ background: "var(--pnp-background, #0A0A0F)" }}
+      style={{ background: "var(--pnp-background, #121212)" }}
     >
       {children}
     </div>

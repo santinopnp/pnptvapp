@@ -274,7 +274,7 @@ function HotPicksView() {
             bottom: "calc(0.75rem + env(safe-area-inset-bottom, 0px))",
             borderColor: "rgba(212,0,122,0.55)",
             boxShadow: "0 8px 32px rgba(0,0,0,0.6), 0 0 0 1px rgba(212,0,122,0.30)",
-            background: "#0A0A0F",
+            background: "#121212",
           }}
         >
           <video

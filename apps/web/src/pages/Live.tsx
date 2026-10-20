@@ -79,7 +79,7 @@ function ParcheCard({ parche, onBook }: { parche: ParcheListingItem; onBook: () 
                 left: i * 22,
                 zIndex: maxAvatars - i,
                 background: "linear-gradient(135deg, #D4007A, #7B61FF)",
-                border: "2px solid #0A0A0F",
+                border: "2px solid #121212",
               }}
             >
               {mp.photoUrl

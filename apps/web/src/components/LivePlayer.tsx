@@ -385,7 +385,7 @@ export function LivePlayer({ src, title, poster, className = "", overlay, onStat
             <p className="text-pnp-textSecondary font-medium">{t.live.streamOffline}</p>
             <p className="text-sm text-pnp-textSecondary/60 mt-1">{t.live.checkBackLater}</p>
             <div className="flex items-center justify-center gap-2 mt-4">
-              <button onClick={handleRetry} className="px-4 py-2 rounded-lg text-xs font-semibold text-white btn-gradient">
+              <button onClick={handleRetry} className="px-4 py-2 rounded-xl text-xs font-semibold text-white btn-gradient">
                 {t.live.retryLoading}
               </button>
               <a href="/live" className="px-4 py-2 rounded-lg text-xs font-semibold text-pnp-textSecondary bg-pnp-surface border border-pnp-border hover:border-pnp-accent/40 transition-colors">
@@ -406,7 +406,7 @@ export function LivePlayer({ src, title, poster, className = "", overlay, onStat
             <p className="text-pnp-textSecondary font-medium">{t.live.streamOffline}</p>
             <p className="text-sm text-pnp-textSecondary/60 mt-1">{t.live.checkBackLater}</p>
             <div className="flex items-center justify-center gap-2 mt-4">
-              <button onClick={handleRetry} className="px-4 py-2 rounded-lg text-xs font-semibold text-white btn-gradient">
+              <button onClick={handleRetry} className="px-4 py-2 rounded-xl text-xs font-semibold text-white btn-gradient">
                 {t.live.retryLoading}
               </button>
               <a href="/live" className="px-4 py-2 rounded-lg text-xs font-semibold text-pnp-textSecondary bg-pnp-surface border border-pnp-border hover:border-pnp-accent/40 transition-colors">

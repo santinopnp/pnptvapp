@@ -210,7 +210,7 @@ export default function SelfCareCenter() {
           background: `
             radial-gradient(ellipse at top right, rgba(94,209,196,0.10), transparent 55%),
             radial-gradient(ellipse at bottom left, rgba(167,139,250,0.08), transparent 60%),
-            #0A0A0F
+            #121212
           `,
         }}
       >

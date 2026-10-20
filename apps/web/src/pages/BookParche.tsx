@@ -47,7 +47,7 @@ function MemberAvatarStrip({ parche }: { parche: ParcheDetail }) {
               left: i * 28,
               zIndex: maxShow - i,
               background: "linear-gradient(135deg, #D4007A, #7B61FF)",
-              border: "2.5px solid #0A0A0F",
+              border: "2.5px solid #121212",
             }}
           >
             {m.photoUrl
@@ -143,7 +143,7 @@ export default function BookParche() {
     return (
       <div
         className="min-h-dvh flex items-center justify-center"
-        style={{ background: "var(--pnp-background, #0A0A0F)" }}
+        style={{ background: "var(--pnp-background, #121212)" }}
       >
         <Spinner />
       </div>
@@ -154,7 +154,7 @@ export default function BookParche() {
     return (
       <div
         className="min-h-dvh flex flex-col items-center justify-center gap-4 px-6 text-center"
-        style={{ background: "var(--pnp-background, #0A0A0F)" }}
+        style={{ background: "var(--pnp-background, #121212)" }}
       >
         <p className="text-white font-semibold">{error || t.parcheBookNotAccepting}</p>
         <button
@@ -180,7 +180,7 @@ export default function BookParche() {
 
       <div
         className="min-h-dvh"
-        style={{ background: "var(--pnp-background, #0A0A0F)" }}
+        style={{ background: "var(--pnp-background, #121212)" }}
       >
         {/* ── Hero ──────────────────────────────────────────────────────── */}
         <div
@@ -271,7 +271,7 @@ export default function BookParche() {
                         {m.isOnline && (
                           <span
                             className="absolute bottom-0 right-0 w-3 h-3 rounded-full border-2"
-                            style={{ background: "#34C759", borderColor: "#0A0A0F" }}
+                            style={{ background: "#34C759", borderColor: "#121212" }}
                           />
                         )}
                       </div>

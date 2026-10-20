@@ -219,7 +219,7 @@ function CreatorRightRail({ excludeCreatorId }: { excludeCreatorId: string }) {
     return (
       <div
         className="rounded-2xl p-4 animate-pulse"
-        style={{ background: "var(--pnp-surface, #1e1e1e)", border: "1px solid rgba(255,255,255,0.05)" }}
+        style={{ background: "var(--pnp-surface, #181818)", border: "1px solid rgba(255,255,255,0.05)" }}
       >
         <div className="h-4 w-24 rounded bg-white/10 mb-3" />
         <div className="space-y-2">
@@ -239,7 +239,7 @@ function CreatorRightRail({ excludeCreatorId }: { excludeCreatorId: string }) {
       {streams.length > 0 && (
         <div
           className="rounded-2xl overflow-hidden"
-          style={{ background: "var(--pnp-surface, #1e1e1e)", border: "1px solid rgba(255,255,255,0.05)" }}
+          style={{ background: "var(--pnp-surface, #181818)", border: "1px solid rgba(255,255,255,0.05)" }}
         >
           <div className="px-4 pt-3.5 pb-2 flex items-center gap-2">
             <span
@@ -288,7 +288,7 @@ function CreatorRightRail({ excludeCreatorId }: { excludeCreatorId: string }) {
       {nearby.length > 0 && (
         <div
           className="rounded-2xl overflow-hidden"
-          style={{ background: "var(--pnp-surface, #1e1e1e)", border: "1px solid rgba(255,255,255,0.05)" }}
+          style={{ background: "var(--pnp-surface, #181818)", border: "1px solid rgba(255,255,255,0.05)" }}
         >
           <div className="px-4 pt-3.5 pb-2">
             <span className="text-[13px] font-semibold text-white">Nearby now</span>
@@ -1184,7 +1184,7 @@ export default function CreatorProfilePage() {
             {menuOpen && (
               <div
                 className="absolute right-0 top-11 min-w-[180px] rounded-xl overflow-hidden z-30"
-                style={{ background: "var(--pnp-surface, #1e1e1e)", border: "1px solid rgba(255,255,255,0.08)", boxShadow: "0 8px 24px rgba(0,0,0,0.5)" }}
+                style={{ background: "var(--pnp-surface, #181818)", border: "1px solid rgba(255,255,255,0.08)", boxShadow: "0 8px 24px rgba(0,0,0,0.5)" }}
               >
                 {isOwnProfile ? (
                   <Link
@@ -2046,7 +2046,7 @@ export default function CreatorProfilePage() {
               {tipPanelOpen && (
                 <div
                   className="mt-2 rounded-2xl p-4"
-                  style={{ background: "var(--pnp-surface, #1e1e1e)", border: "1px solid rgba(255,255,255,0.08)" }}
+                  style={{ background: "var(--pnp-surface, #181818)", border: "1px solid rgba(255,255,255,0.08)" }}
                 >
                   <div className="flex items-center justify-between mb-3">
                     <span className="text-sm font-semibold text-white">Send a tip</span>
@@ -2219,7 +2219,7 @@ export default function CreatorProfilePage() {
           {/* About me — collapsible card above the wall */}
           <div
             className="rounded-xl mb-4 overflow-hidden"
-            style={{ background: "var(--pnp-surface, #1e1e1e)", border: "1px solid var(--pnp-border, #2a2a2a)" }}
+            style={{ background: "var(--pnp-surface, #181818)", border: "1px solid var(--pnp-border, #2a2a2a)" }}
           >
             <button
               onClick={() => setManualExpanded((v) => !v)}
@@ -2306,7 +2306,7 @@ export default function CreatorProfilePage() {
             {/* Video Upload Modal */}
             {showVideoUploadModal && (
               <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md" onClick={() => setShowVideoUploadModal(false)}>
-                <div className="relative w-full max-w-lg bg-[#1C1C1E] border border-white/15 rounded-2xl p-5 shadow-2xl space-y-4" onClick={(e) => e.stopPropagation()}>
+                <div className="relative w-full max-w-lg bg-pnp-surface border border-white/15 rounded-2xl p-5 shadow-2xl space-y-4" onClick={(e) => e.stopPropagation()}>
                   <div className="flex items-center justify-between border-b border-white/10 pb-3">
                     <div className="flex items-center gap-2 text-white font-bold text-base">
                       <Video className="w-5 h-5 text-pink-500" />
@@ -2383,7 +2383,7 @@ export default function CreatorProfilePage() {
                 {!postsLoading && postsError && posts.length === 0 && (
                   <div
                     className="text-center py-10 rounded-xl"
-                    style={{ background: "var(--pnp-surface, #1e1e1e)", color: "var(--pnp-text-secondary, #8E8E93)" }}
+                    style={{ background: "var(--pnp-surface, #181818)", color: "var(--pnp-text-secondary, #8E8E93)" }}
                   >
                     <p className="text-sm mb-2">
                       {t.lang === "es"
@@ -2410,7 +2410,7 @@ export default function CreatorProfilePage() {
                 {!postsLoading && !postsError && posts.length === 0 && (
                   <div
                     className="text-center py-10 rounded-xl"
-                    style={{ background: "var(--pnp-surface, #1e1e1e)", color: "var(--pnp-text-secondary, #8E8E93)" }}
+                    style={{ background: "var(--pnp-surface, #181818)", color: "var(--pnp-text-secondary, #8E8E93)" }}
                   >
                     <p className="text-sm">
                       {t.lang === "es" ? "Aún no hay publicaciones." : "No posts yet."}
@@ -2516,7 +2516,7 @@ export default function CreatorProfilePage() {
                 {!taggedLoading && taggedError && taggedPosts.length === 0 && (
                   <div
                     className="text-center py-10 rounded-xl"
-                    style={{ background: "var(--pnp-surface, #1e1e1e)", color: "var(--pnp-text-secondary, #8E8E93)" }}
+                    style={{ background: "var(--pnp-surface, #181818)", color: "var(--pnp-text-secondary, #8E8E93)" }}
                   >
                     <p className="text-sm mb-2">
                       {t.lang === "es"
@@ -2537,7 +2537,7 @@ export default function CreatorProfilePage() {
                 {!taggedLoading && !taggedError && taggedLoaded && taggedPosts.length === 0 && (
                   <div
                     className="text-center py-10 rounded-xl"
-                    style={{ background: "var(--pnp-surface, #1e1e1e)", color: "var(--pnp-text-secondary, #8E8E93)" }}
+                    style={{ background: "var(--pnp-surface, #181818)", color: "var(--pnp-text-secondary, #8E8E93)" }}
                   >
                     <AtSign size={22} className="mx-auto mb-2 opacity-60" aria-hidden="true" />
                     <p className="text-sm">
@@ -2591,7 +2591,7 @@ export default function CreatorProfilePage() {
             {(forYou?.suggestedCreators ?? []).length > 0 && (
               <div
                 className="rounded-2xl overflow-hidden"
-                style={{ background: "var(--pnp-surface, #1e1e1e)", border: "1px solid rgba(255,255,255,0.05)" }}
+                style={{ background: "var(--pnp-surface, #181818)", border: "1px solid rgba(255,255,255,0.05)" }}
               >
                 <div className="px-4 pt-3.5 pb-2">
                   <span className="text-[13px] font-semibold text-white">{t.nav.railMoreCreatorsLikeThis}</span>

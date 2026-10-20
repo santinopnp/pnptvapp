@@ -438,7 +438,7 @@ function UserQuickView({ user, onlineUser, onClose, onNavigate, onBlock }: UserQ
                 </div>
               )}
               {isOnline && (
-                <span className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-green-500 ring-2 ring-[#1C1C1E]" aria-label="Online now" />
+                <span className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-green-500 ring-2 ring-pnp-surface" aria-label="Online now" />
               )}
             </div>
 
@@ -732,7 +732,7 @@ function SubmitPlaceModal({ myPos, onClose }: { myPos: { lat: number; lng: numbe
             <div className="text-3xl mb-3">📍</div>
             <p className="text-pnp-textPrimary font-semibold mb-1">{t.booking.submitThanksTitle}</p>
             <p className="text-sm text-pnp-textSecondary mb-4">{t.booking.submitThanksBody}</p>
-            <button onClick={onClose} className="px-4 py-2 rounded-lg bg-pnp-accent text-white text-sm">{t.booking.close}</button>
+            <button onClick={onClose} className="px-4 py-2 rounded-xl bg-pnp-accent text-white text-sm">{t.booking.close}</button>
           </div>
         ) : (
           <div className="space-y-3">
@@ -1250,7 +1250,7 @@ export default function Nearby() {
       {(forYou?.contextHints ?? []).length > 0 && (
         <div
           className="rounded-2xl overflow-hidden"
-          style={{ background: "var(--pnp-surface, #1e1e1e)", border: "1px solid rgba(255,255,255,0.05)" }}
+          style={{ background: "var(--pnp-surface, #181818)", border: "1px solid rgba(255,255,255,0.05)" }}
         >
           <ul>{(forYou?.contextHints ?? []).slice(0, 3).map((hint, i) => (
             <ContextHintCard key={i} hint={hint} />

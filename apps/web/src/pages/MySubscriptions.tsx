@@ -99,7 +99,7 @@ function SubCard({ sub, walletBalance, onRenewed, onCancelled, onNeedTopUp }: Su
     <div
       className="rounded-2xl overflow-hidden"
       style={{
-        background: "var(--pnp-surface, #1E1E1E)",
+        background: "var(--pnp-surface, #181818)",
         border: `1px solid ${isCancelled || isExpired ? "rgba(255,255,255,0.06)" : daysUrgent ? "rgba(255,180,84,0.25)" : "rgba(255,255,255,0.08)"}`,
       }}
     >
@@ -316,7 +316,7 @@ export default function MySubscriptions() {
               <div
                 key={i}
                 className="h-28 rounded-2xl animate-pulse"
-                style={{ background: "var(--pnp-surface, #1E1E1E)" }}
+                style={{ background: "var(--pnp-surface, #181818)" }}
               />
             ))}
           </div>
@@ -326,7 +326,7 @@ export default function MySubscriptions() {
         {!loading && error && (
           <div
             className="rounded-2xl p-6 text-center space-y-3"
-            style={{ background: "var(--pnp-surface, #1E1E1E)", border: "1px solid rgba(255,255,255,0.06)" }}
+            style={{ background: "var(--pnp-surface, #181818)", border: "1px solid rgba(255,255,255,0.06)" }}
           >
             <p className="text-sm text-red-400">{error}</p>
             <button
@@ -344,7 +344,7 @@ export default function MySubscriptions() {
         {!loading && !error && subs.length === 0 && (
           <div
             className="rounded-2xl p-8 text-center space-y-4"
-            style={{ background: "var(--pnp-surface, #1E1E1E)", border: "1px solid rgba(255,255,255,0.06)" }}
+            style={{ background: "var(--pnp-surface, #181818)", border: "1px solid rgba(255,255,255,0.06)" }}
           >
             <div className="w-14 h-14 rounded-full flex items-center justify-center mx-auto"
               style={{ background: "rgba(212,0,122,0.1)", border: "1px solid rgba(212,0,122,0.2)" }}>
