@@ -50,7 +50,7 @@
     "helmet": "^8.3.0",
     "i18next": "^23.7.16",
     "imapflow": "^2.0.0",
-    "ioredis": "^5.11.1",
+    "ioredis": "^6.0.0",
     "joi": "^17.13.4",
     "jsonwebtoken": "^9.0.3",
     "livekit-server-sdk": "^2.17.0",
