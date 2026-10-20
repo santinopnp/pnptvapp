@@ -315,7 +315,7 @@ function resolveChannelPromoCta(
         ? { label: watchNow, href: `/channels?channel=${slug}`, canPlayInline: true, videoUrl }
         : {
             label: isEs ? "Suscríbete a PRIME →" : "Subscribe to PRIME →",
-            href: `/subscribe?plan=prime&return=${encodeURIComponent(`/channels?channel=${slug}`)}`,
+            href: `/checkout?plan=prime-diamond-pass-365d&return=${encodeURIComponent(`/channels?channel=${slug}`)}`,
             // Non-PRIME viewers cannot play inline — redirect them to subscribe.
             canPlayInline: false,
             videoUrl,
@@ -631,7 +631,7 @@ export default function SocialPostCard({
     error: null as string | null,
     showGuide: false,
     start: ({ planId }: { planId: string; isSubscription?: boolean; storageKey?: string; payCurrency?: string; creatorId?: string }) => {
-      navigate(`/subscribe?plan=${encodeURIComponent(planId)}`);
+      window.location.href = `/checkout?plan=${encodeURIComponent(planId)}`;
     },
     dismissGuide: () => {},
     confirmGuideAndStart: () => {},

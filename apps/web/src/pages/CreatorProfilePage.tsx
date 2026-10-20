@@ -782,10 +782,10 @@ export default function CreatorProfilePage() {
     if (!data) return;
     if (data.hangouts?.[0]) {
       if (viewerUnlocked || isOwnProfile) navigate(`/hangouts/${data.hangouts[0].id}`);
-      else if (isPrimeCreator) navigate("/subscribe");
+      else if (isPrimeCreator) { window.location.href = "/checkout"; }
       else handleSubscribeCta();
     } else if (isPrimeCreator) {
-      navigate("/subscribe");
+      window.location.href = "/checkout";
     } else {
       handleSubscribeCta();
     }
@@ -835,7 +835,7 @@ export default function CreatorProfilePage() {
     const isAdminViewer = user?.role === "admin" || user?.role === "superadmin";
     const viewerIsCreator = user?.creator_status === "active";
     if (!viewerUnlocked && !isOwnProfile && !isAdminViewer && !viewerIsCreator) {
-      if (isPrimeCreator) navigate("/subscribe");
+      if (isPrimeCreator) { window.location.href = "/checkout"; }
       else handleSubscribeCta();
       return;
     }
@@ -1904,7 +1904,7 @@ export default function CreatorProfilePage() {
           {!isOwnProfile && !viewerUnlocked && (
             <button
               onClick={() => {
-                if (isPrimeCreator) navigate("/subscribe");
+                if (isPrimeCreator) { window.location.href = "/checkout"; }
                 else handleSubscribeCta();
               }}
               className="w-full lg:max-w-md py-3 rounded-xl text-sm font-bold text-white mb-2.5 transition-opacity hover:opacity-90"
@@ -1919,7 +1919,7 @@ export default function CreatorProfilePage() {
             <div className="flex gap-2.5 mb-2.5 lg:max-w-md">
               <button
                 onClick={() => (isPrimeCreator && !isSubscribed
-                  ? navigate("/subscribe")
+                  ? (window.location.href = "/checkout")
                   : setShowSubInfoModal(true))}
                 className="flex-1 py-3 rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 transition-opacity hover:opacity-90"
                 style={{

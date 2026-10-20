@@ -387,7 +387,7 @@ export default function PostCard({
     error: null as string | null,
     showGuide: false,
     start: ({ planId }: { planId: string; isSubscription?: boolean; storageKey?: string; payCurrency?: string; creatorId?: string }) => {
-      navigate(`/subscribe?plan=${encodeURIComponent(planId)}`);
+      window.location.href = `/checkout?plan=${encodeURIComponent(planId)}`;
     },
     dismissGuide: () => {},
     confirmGuideAndStart: () => {},
