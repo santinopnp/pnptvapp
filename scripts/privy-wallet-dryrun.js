@@ -1,11 +1,20 @@
 'use strict';
 /**
- * Privy wallet dry-run — checks USDC balance across 4 EVM chains
- * for every wallet_address in the users table.
- * READS ONLY — does NOT modify any DB rows.
+ * Privy wallet maintenance script — two modes:
+ *
+ *  Default (no flags):
+ *    Checks USDC balance across 4 EVM chains for every wallet_address in users.
+ *    READS ONLY — does NOT modify any DB rows.
+ *
+ *  --sync-missing [--dry-run]:
+ *    Finds users with privy_id but no wallet_address, calls Privy getUserById,
+ *    extracts their embedded wallet address, and writes it to users.wallet_address.
+ *    Pass --dry-run to preview without writing.
  *
  * Run from pnptv-bot container:
  *   node /app/scripts/privy-wallet-dryrun.js
+ *   node /app/scripts/privy-wallet-dryrun.js --sync-missing --dry-run
+ *   node /app/scripts/privy-wallet-dryrun.js --sync-missing
  */
 
 const { Pool } = require('pg');
@@ -52,7 +61,91 @@ async function checkBalance(address) {
   return { total, perChain };
 }
 
+// ─── Privy sync helpers ───────────────────────────────────────────────────────
+
+function getPrivyClient() {
+  const appId     = process.env.PRIVY_APP_ID;
+  const appSecret = process.env.PRIVY_APP_SECRET;
+  if (!appId || !appSecret) throw new Error('PRIVY_APP_ID / PRIVY_APP_SECRET not set');
+  const { PrivyClient } = require('@privy-io/server-auth');
+  return new PrivyClient(appId, appSecret);
+}
+
+function extractEmbeddedWallet(privyUser) {
+  if (!privyUser) return null;
+  const linked = Array.isArray(privyUser.linkedAccounts) ? privyUser.linkedAccounts : [];
+  const embedded = linked.find(
+    (a) => a?.type === 'wallet' && (a.walletClientType === 'privy' || a.walletClient === 'privy'),
+  );
+  return embedded?.address ? String(embedded.address).toLowerCase() : null;
+}
+
+async function syncMissingWallets(dryRun) {
+  const { rows } = await pool.query(`
+    SELECT id, privy_id, creator_status, role
+    FROM users
+    WHERE privy_id IS NOT NULL
+      AND (wallet_address IS NULL OR wallet_address = '')
+    ORDER BY id
+  `);
+
+  console.log(`\n=== Privy Wallet Sync — ${new Date().toISOString()} ===`);
+  console.log(`Users with privy_id but no wallet_address: ${rows.length}`);
+  if (dryRun) console.log(`DRY-RUN — no DB writes\n`);
+  else        console.log(`LIVE RUN — will write to DB\n`);
+
+  if (rows.length === 0) {
+    console.log('Nothing to sync. All users with privy_id already have wallet_address.\n');
+    return;
+  }
+
+  const privy = getPrivyClient();
+  const updated  = [];
+  const noWallet = [];
+  const failed   = [];
+
+  for (const row of rows) {
+    try {
+      const privyUser = await privy.getUserById(row.privy_id);
+      const addr = extractEmbeddedWallet(privyUser);
+      if (!addr) {
+        noWallet.push({ id: row.id, privy_id: row.privy_id, reason: 'no embedded wallet in Privy' });
+        continue;
+      }
+      if (!dryRun) {
+        await pool.query(
+          `UPDATE users SET wallet_address = $1 WHERE id = $2`,
+          [addr, row.id],
+        );
+      }
+      updated.push({ id: row.id, privy_id: row.privy_id, addr, role: row.role, creator_status: row.creator_status });
+      console.log(`  ${dryRun ? '[DRY]' : '[OK] '} user:${row.id}  ${addr}  (${row.role}/${row.creator_status})`);
+    } catch (err) {
+      failed.push({ id: row.id, privy_id: row.privy_id, error: err.message });
+      console.log(`  [ERR] user:${row.id}  ${err.message}`);
+    }
+  }
+
+  console.log(`\n=== SUMMARY ===`);
+  console.log(`  ${dryRun ? 'Would update' : 'Updated'}:  ${updated.length}`);
+  console.log(`  No embedded wallet: ${noWallet.length}`);
+  console.log(`  Errors:             ${failed.length}`);
+  if (noWallet.length) {
+    console.log(`\n  No-wallet users (Privy account exists but no embedded wallet created yet):`);
+    for (const u of noWallet) console.log(`    user:${u.id}  privy:${u.privy_id}`);
+  }
+}
+
+// ─── Balance check mode ───────────────────────────────────────────────────────
+
 async function main() {
+  const args = process.argv.slice(2);
+  if (args.includes('--sync-missing')) {
+    await syncMissingWallets(args.includes('--dry-run'));
+    await pool.end();
+    return;
+  }
+
   const { rows } = await pool.query(`
     SELECT id, wallet_address, wallet_lock_reason, privy_id
     FROM users
