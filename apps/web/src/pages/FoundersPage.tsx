@@ -1,8 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { Helmet } from "react-helmet-async";
 import { WalletLoginGate, WalletPayCard } from "@/components/payments/PayInWalletChips";
-import { NpAppPickerSheet } from "@/components/payments/NowPaymentsWaitingPanel";
-
 // ── Constants ──────────────────────────────────────────────────────────────────
 
 const PLANS = {
@@ -88,7 +86,6 @@ const T = {
 
 export default function FoundersPage() {
   const [lang, setLang]             = useState(getInitialLang);
-  const [showCrypto, setShowCrypto] = useState(false);
   const [success, setSuccess]       = useState(false);
   const [selectedPlan, setSelectedPlan] = useState<PlanKey>("annual");
 
@@ -247,25 +244,8 @@ export default function FoundersPage() {
               lang={es ? "es" : "en"}
               label={t.payWallet}
               onSuccess={handleSuccess}
-              onCryptoFallback={() => setShowCrypto(true)}
             />
           </WalletLoginGate>
-
-          {/* Divider */}
-          <div style={styles.divider}>
-            <div style={styles.dividerLine} />
-            <span style={styles.dividerText}>{es ? "o pagar con crypto" : "or pay with crypto"}</span>
-            <div style={styles.dividerLine} />
-          </div>
-
-          {/* Crypto — no wallet login required */}
-          <button
-            type="button"
-            onClick={() => setShowCrypto(true)}
-            style={styles.cryptoBtn}
-          >
-            {t.payCrypto}
-          </button>
 
           <p style={styles.legalNote}>{t.legalNote}</p>
         </div>
@@ -280,15 +260,6 @@ export default function FoundersPage() {
         <a href="/support" style={styles.footerLink}>Support</a>
       </footer>
 
-      {/* ── Crypto sheet ─────────────────────────────────────────────────────── */}
-      <NpAppPickerSheet
-        isOpen={showCrypto}
-        onClose={() => setShowCrypto(false)}
-        planId={showCrypto ? plan.id : null}
-        lang={lang}
-        planLabel={`${isAnnual ? t.planAnnualLabel : t.planLifetimeLabel} · ${isAnnual ? t.planAnnualPrice : t.planLifetimePrice}`}
-        onSuccess={handleSuccess}
-      />
     </div>
   );
 }

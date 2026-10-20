@@ -15,7 +15,6 @@ import {
   type SuggestedFollow,
 } from "@/lib/api";
 import { WalletPayCard } from "@/components/payments/PayInWalletChips";
-import { NpAppPickerSheet } from "@/components/payments/NowPaymentsWaitingPanel";
 import { LanguageSelector } from "@/components/LanguageSelector";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -954,7 +953,6 @@ function FoundersUpsellScreen({
   const t = useI18n();
   const es = t.lang === "es";
   const [secsLeft, setSecsLeft] = useState(0);
-  const [npOpen, setNpOpen] = useState(false);
 
   useEffect(() => {
     const exp = foundersOfferExpiresAt;
@@ -1109,18 +1107,6 @@ function FoundersUpsellScreen({
             onSuccess={onSuccess}
             lang={es ? "es" : "en"}
           />
-          <button
-            type="button"
-            onClick={() => setNpOpen(true)}
-            className="w-full min-h-[44px] rounded-xl font-semibold text-sm transition-all active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-400/50"
-            style={{
-              background: "rgba(255,183,0,0.08)",
-              border: "1.5px solid rgba(255,183,0,0.50)",
-              color: "rgba(255,183,0,0.95)",
-            }}
-          >
-            {es ? "₿ Pagar con apps y wallets" : "₿ Pay with apps & wallets"}
-          </button>
         </div>
 
         {/* Skip */}
@@ -1133,14 +1119,6 @@ function FoundersUpsellScreen({
         </button>
       </div>
 
-      {/* NP address sheet */}
-      <NpAppPickerSheet
-        isOpen={npOpen}
-        onClose={() => setNpOpen(false)}
-        planId="lifetime-pass"
-        lang={t.lang}
-        planLabel={es ? "PNPtv! Fundadores" : "PNPtv! Founders"}
-      />
     </div>
   );
 }
