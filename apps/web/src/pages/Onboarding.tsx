@@ -14,7 +14,6 @@ import {
   type OnboardingStepKey,
   type SuggestedFollow,
 } from "@/lib/api";
-import { WalletPayCard } from "@/components/payments/PayInWalletChips";
 import { LanguageSelector } from "@/components/LanguageSelector";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -1099,14 +1098,14 @@ function FoundersUpsellScreen({
 
         {/* Payment CTAs */}
         <div className="space-y-3 mb-4">
-          <WalletPayCard
-            surface="prime"
-            amountUsd={99.99}
-            entitlementSpec={{ planId: "lifetime-pass" }}
-            label={es ? "💳 Pagar $99.99 · Fundadores" : "💳 Pay $99.99 · Founders"}
-            onSuccess={onSuccess}
-            lang={es ? "es" : "en"}
-          />
+          <button
+            type="button"
+            onClick={() => { window.location.href = "/checkout?plan=lifetime-pass"; }}
+            className="w-full py-4 rounded-2xl font-bold text-sm text-white transition-all active:scale-[0.98]"
+            style={{ background: "linear-gradient(135deg, #D4007A, #9B00B0)", boxShadow: "0 4px 20px rgba(212,0,122,0.4)", minHeight: 52 }}
+          >
+            Pay with card
+          </button>
         </div>
 
         {/* Skip */}

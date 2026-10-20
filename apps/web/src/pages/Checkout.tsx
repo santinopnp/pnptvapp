@@ -172,7 +172,7 @@ function PlanStep({ initialPlanId, onSelect }: PlanStepProps) {
       .then((r) => r.json())
       .then((data) => {
         if (!data.ok || !data.plans?.length) throw new Error("No plans available");
-        const visible = (data.plans as SubscriptionPlan[]).filter((p) => !HIDDEN_PLAN_IDS.has(p.id));
+        const visible = (data.plans as SubscriptionPlan[]).filter((p) => !HIDDEN_PLAN_IDS.has(p.id) || p.id === initialPlanId);
         if (data.recommendedPlanId) setRecommendedId(data.recommendedPlanId as string);
         setPlans(visible);
         const preselect = initialPlanId
@@ -188,6 +188,12 @@ function PlanStep({ initialPlanId, onSelect }: PlanStepProps) {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    if (!initialPlanId || loading || plans.length === 0) return;
+    const plan = plans.find((p) => p.id === selectedId);
+    if (plan) onSelect(plan);
+  }, [plans.length, loading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading) {
     return (
@@ -584,7 +590,7 @@ function PayStep({ plan, email, receiverAddress, onBack, onSuccess }: PayStepPro
         },
       });
 
-      if (result.method === "fiat" && (result.status === "submitted" || result.status === "confirmed")) {
+      if (result.method === "fiat" && result.status === "confirmed") {
         // Get a fresh JWT token after on-ramp completes to authenticate the verify call.
         const token = await getAccessToken();
         await verifyCheckout(
@@ -726,7 +732,7 @@ function PayStep({ plan, email, receiverAddress, onBack, onSuccess }: PayStepPro
 
 // ── Step 4: Success ────────────────────────────────────────────────────────────
 
-function SuccessStep({ plan }: { plan: SubscriptionPlan }) {
+function SuccessStep({ plan, returnUrl = "/" }: { plan: SubscriptionPlan; returnUrl?: string }) {
   return (
     <div className="text-center space-y-6 py-4">
       <div
@@ -745,7 +751,7 @@ function SuccessStep({ plan }: { plan: SubscriptionPlan }) {
         </p>
       </div>
       <a
-        href="/"
+        href={returnUrl}
         className="w-full min-h-[52px] rounded-2xl font-bold text-sm text-white flex items-center justify-center transition-all duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-pnp-background focus-visible:ring-pnp-accent"
         style={{
           background: "linear-gradient(135deg, #D4007A, #9B00B0)",
@@ -766,6 +772,8 @@ function CheckoutInner() {
     typeof window !== "undefined" ? window.location.search : "",
   );
   const initialPlanId = params.get("plan");
+  const rawReturn = params.get("return") || "";
+  const returnUrl = rawReturn.startsWith("/") && !rawReturn.startsWith("//") ? rawReturn : "/";
 
   const [step, setStep] = useState<CheckoutStep>("plan");
   const [selectedPlan, setSelectedPlan] = useState<SubscriptionPlan | null>(null);
@@ -854,7 +862,7 @@ function CheckoutInner() {
               onSuccess={() => setStep("success")}
             />
           )}
-          {step === "success" && selectedPlan && <SuccessStep plan={selectedPlan} />}
+          {step === "success" && selectedPlan && <SuccessStep plan={selectedPlan} returnUrl={returnUrl} />}
         </div>
       </div>
 

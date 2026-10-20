@@ -19,9 +19,6 @@ import { useAuth } from "@/hooks/useAuth";
 import { useTutorial } from "@/hooks/useTutorial";
 import { TutorialOverlay } from "@/components/tutorial/TutorialOverlay";
 import { useI18n } from "@/lib/i18n";
-import {
-  WalletPayCard,
-} from "@/components/payments/PayInWalletChips";
 import { connectSocket } from "@/lib/socket";
 
 const MEMBER_PLAN_IDS = new Set(["member_monthly"]);
@@ -609,7 +606,6 @@ export default function Subscribe() {
               .filter((plan) => !isLifetimePlan(plan))
               .map((plan) => {
               const isLifetime = isLifetimePlan(plan);
-              const isWalletOpen = walletPanelPlanId === plan.id;
 
               const cardStyle = isLifetime
                 ? { background: "linear-gradient(145deg,rgba(20,20,20,0.95),rgba(30,25,20,0.95))", border: "1px solid rgba(230,145,56,0.40)" }
@@ -663,40 +659,13 @@ export default function Subscribe() {
                   <div className="px-3 pb-3 space-y-1.5">
                     <button
                       type="button"
-                      onClick={() => setWalletPanelPlanId(isWalletOpen ? null : plan.id)}
-                      className="w-full py-2.5 rounded-xl text-[11px] font-black transition-all active:scale-[0.97]"
-                      style={{
-                        border: isWalletOpen ? "1.5px solid rgba(16,185,129,0.80)" : "1.5px solid rgba(16,185,129,0.60)",
-                        background: isWalletOpen ? "rgba(16,185,129,0.22)" : "rgba(16,185,129,0.10)",
-                        color: "#34d399",
-                      }}
+                      onClick={() => { window.location.href = `/checkout?plan=${plan.id}`; }}
+                      className="w-full py-3 rounded-xl font-bold text-sm text-white transition-all active:scale-[0.98]"
+                      style={{ background: "linear-gradient(135deg, #D4007A, #9B00B0)", minHeight: 48 }}
                     >
-                      {t.lang === "es" ? "💳 Tarjeta · Apple Pay · Wallet" : "💳 Card · Apple Pay · Wallet"}
+                      Pay with card
                     </button>
                   </div>
-
-                  {/* Inline wallet checkout panel */}
-                  {isWalletOpen && usdcAvailable !== false && (
-                    <div className="px-3 pb-3">
-                      <WalletPayCard
-                        key={`wallet-promo-${plan.id}`}
-                        surface="prime"
-                        amountUsd={parseFloat(String(plan.price))}
-                        entitlementSpec={{ planId: plan.id }}
-                        metadata={{ source: "subscribe_promo", planId: plan.id }}
-                        label={t.lang === "es"
-                          ? `Pagar $${parseFloat(String(plan.price)).toFixed(0)} · ${isLifetime ? "Membresía Founders" : "PRIME anual"}`
-                          : `Pay $${parseFloat(String(plan.price)).toFixed(0)} · ${isLifetime ? "Founders Membership" : "PRIME Annual"}`}
-                        lang={(t.lang as "es" | "en")}
-                        alreadyEntitled={user?.tier?.toLowerCase() === 'prime'}
-                        onSuccess={() => {
-                          setWalletPanelPlanId(null);
-                          setTimeout(() => navigate("/"), 1200);
-                        }}
-                        compact
-                      />
-                    </div>
-                  )}
                 </div>
               );
             })}
@@ -871,43 +840,16 @@ export default function Subscribe() {
                 </div>
               )}
 
-              {/* Quick-pay buttons — WalletPayCard handles card + Privy-wallet inline. */}
+              {/* Quick-pay buttons */}
               <div className="mt-3 pt-3 border-t border-white/5 space-y-2" onClick={(e) => e.stopPropagation()}>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); setWalletPanelPlanId(walletPanelPlanId === plan.id ? null : plan.id); }}
-                    className={`flex-1 py-3 rounded-lg font-bold text-xs text-white transition-all leading-tight ${walletPanelPlanId === plan.id ? "bg-gradient-to-r from-emerald-400 to-emerald-500 ring-2 ring-emerald-300" : "bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500"}`}
-                    style={{ touchAction: "manipulation", WebkitTapHighlightColor: "transparent" }}
-                  >
-                    {t.lang === "es" ? "💳 Tarjeta · Apple Pay · Wallet" : "💳 Card · Apple Pay · Wallet"}
-                  </button>
-                </div>
-                {walletPanelPlanId === plan.id && usdcAvailable !== false && (
-                  <div className="w-full mt-2" onClick={(e) => e.stopPropagation()}>
-                    {(() => {
-                      const pLabel = getPlanLabel(plan, MEMBER_PLAN_IDS.has(plan.id));
-                      const alreadyEnt = (pLabel === 'PRIME' && user?.tier?.toLowerCase() === 'prime') || (pLabel === 'BASIC' && user?.tier?.toLowerCase() === 'member');
-                      return (
-                        <WalletPayCard
-                          key={`wallet-${plan.id}`}
-                          surface={MEMBER_PLAN_IDS.has(plan.id) ? "membership" : "prime"}
-                          amountUsd={parseFloat(String(plan.price))}
-                          entitlementSpec={{ planId: plan.id }}
-                          metadata={{ source: "subscribe_page", planId: plan.id }}
-                          label={t.lang === "es" ? `Pagar $${parseFloat(String(plan.price)).toFixed(2)} · ${plan.name || plan.id}` : `Pay $${parseFloat(String(plan.price)).toFixed(2)} · ${plan.name || plan.id}`}
-                          lang={(t.lang as "es" | "en")}
-                          alreadyEntitled={alreadyEnt}
-                          onSuccess={() => {
-                            setWalletPanelPlanId(null);
-                            setTimeout(() => navigate("/"), 1200);
-                          }}
-                          compact
-                        />
-                      );
-                    })()}
-                  </div>
-                )}
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); window.location.href = `/checkout?plan=${plan.id}`; }}
+                  className="w-full py-3 rounded-xl font-bold text-sm text-white transition-all active:scale-[0.98]"
+                  style={{ background: "linear-gradient(135deg, #D4007A, #9B00B0)", minHeight: 48 }}
+                >
+                  Pay with card
+                </button>
               </div>
             </div>
             </div>
@@ -1033,43 +975,16 @@ export default function Subscribe() {
                 </div>
               )}
 
-              {/* Quick-pay buttons — WalletPayCard handles card + Privy-wallet inline. */}
+              {/* Quick-pay buttons */}
               <div className="mt-3 pt-3 border-t border-white/5 space-y-2" onClick={(e) => e.stopPropagation()}>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); setWalletPanelPlanId(walletPanelPlanId === plan.id ? null : plan.id); }}
-                    className={`flex-1 py-3 rounded-lg font-bold text-xs text-white transition-all leading-tight ${walletPanelPlanId === plan.id ? "bg-gradient-to-r from-emerald-400 to-emerald-500 ring-2 ring-emerald-300" : "bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500"}`}
-                    style={{ touchAction: "manipulation", WebkitTapHighlightColor: "transparent" }}
-                  >
-                    {t.lang === "es" ? "💳 Tarjeta · Apple Pay · Wallet" : "💳 Card · Apple Pay · Wallet"}
-                  </button>
-                </div>
-                {walletPanelPlanId === plan.id && usdcAvailable !== false && (
-                  <div className="w-full mt-2" onClick={(e) => e.stopPropagation()}>
-                    {(() => {
-                      const pLabel = getPlanLabel(plan, MEMBER_PLAN_IDS.has(plan.id));
-                      const alreadyEnt = (pLabel === 'PRIME' && user?.tier?.toLowerCase() === 'prime') || (pLabel === 'BASIC' && user?.tier?.toLowerCase() === 'member');
-                      return (
-                        <WalletPayCard
-                          key={`wallet-${plan.id}`}
-                          surface={MEMBER_PLAN_IDS.has(plan.id) ? "membership" : "prime"}
-                          amountUsd={parseFloat(String(plan.price))}
-                          entitlementSpec={{ planId: plan.id }}
-                          metadata={{ source: "subscribe_page", planId: plan.id }}
-                          label={t.lang === "es" ? `Pagar $${parseFloat(String(plan.price)).toFixed(2)} · ${plan.name || plan.id}` : `Pay $${parseFloat(String(plan.price)).toFixed(2)} · ${plan.name || plan.id}`}
-                          lang={(t.lang as "es" | "en")}
-                          alreadyEntitled={alreadyEnt}
-                          onSuccess={() => {
-                            setWalletPanelPlanId(null);
-                            setTimeout(() => navigate("/"), 1200);
-                          }}
-                          compact
-                        />
-                      );
-                    })()}
-                  </div>
-                )}
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); window.location.href = `/checkout?plan=${plan.id}`; }}
+                  className="w-full py-3 rounded-xl font-bold text-sm text-white transition-all active:scale-[0.98]"
+                  style={{ background: "linear-gradient(135deg, #D4007A, #9B00B0)", minHeight: 48 }}
+                >
+                  Pay with card
+                </button>
               </div>
             </div>
             </div>

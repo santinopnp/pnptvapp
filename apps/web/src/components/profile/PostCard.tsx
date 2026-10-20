@@ -29,7 +29,6 @@ import {
 } from "@/lib/api";
 import { translateText } from "@/lib/feedI18n";
 import { SharePostModal } from "@/components/SharePostModal";
-import { WalletPayCard, WalletLoginGate } from "@/components/payments/PayInWalletChips";
 // NP inline PRIME checkout retired 2026-08-09 — PRIME CTAs now deep-link
 // into /subscribe (which uses the wallet). Local shim below preserves the
 // JSX call sites without pulling in the NP hook.
@@ -2048,24 +2047,23 @@ export default function PostCard({
                   aria-label="Close"
                 >×</button>
               </div>
-              <WalletLoginGate lang={es ? "es" : "en"}>
-                <div className="px-5 py-4 space-y-3">
-                  <div className="flex items-center justify-between bg-white/5 border border-white/10 rounded-xl px-4 py-3">
-                    <div>
-                      <p className="text-xs text-white/50">{selectedPlan.tag}</p>
-                      <p className="text-sm font-bold text-white">{selectedPlan.label}</p>
-                    </div>
-                    <p className="text-lg font-black text-[#5ED1C4]">${selectedPlan.price}</p>
+              <div className="px-5 py-4 space-y-3">
+                <div className="flex items-center justify-between bg-white/5 border border-white/10 rounded-xl px-4 py-3">
+                  <div>
+                    <p className="text-xs text-white/50">{selectedPlan.tag}</p>
+                    <p className="text-sm font-bold text-white">{selectedPlan.label}</p>
                   </div>
-                  <WalletPayCard
-                    surface="prime"
-                    amountUsd={selectedPlan.price}
-                    entitlementSpec={{ planId: selectedPlan.id }}
-                    lang={es ? "es" : "en"}
-                    onSuccess={() => { setPromoModalPlanId(null); }}
-                  />
+                  <p className="text-lg font-black text-[#5ED1C4]">${selectedPlan.price}</p>
                 </div>
-              </WalletLoginGate>
+                <button
+                  type="button"
+                  onClick={() => { window.location.href = `/checkout?plan=${selectedPlan.id}`; }}
+                  className="w-full py-3.5 rounded-xl font-bold text-sm text-white transition-all active:scale-[0.98]"
+                  style={{ background: "linear-gradient(135deg, #D4007A, #9B00B0)", minHeight: 52, boxShadow: "0 4px 20px rgba(212,0,122,0.4)" }}
+                >
+                  {`Pay $${selectedPlan.price} · ${selectedPlan.label}`}
+                </button>
+              </div>
             </div>
           </div>
         );

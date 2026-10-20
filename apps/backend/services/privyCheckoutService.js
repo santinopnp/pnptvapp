@@ -53,37 +53,46 @@ const ONRAMP_IDEMPOTENCY_WINDOW_MINUTES = 5;
 
 // ── Lazy singletons ───────────────────────────────────────────────────────────
 let _checkoutPrivyClient = null;
+let _treasuryPrivyClient = null;
 
 /**
- * Return the PrivyClient scoped to the CHECKOUT Privy app.
- * Configured with the authorization key so server-side wallet operations
- * (including token verification) work correctly.
+ * Return the PrivyClient scoped to the CHECKOUT Privy app (cmvf3ecxm01760flbg4ij8aon).
+ * Used exclusively for JWT verification of checkout session tokens.
  *
  * @returns {import('@privy-io/server-auth').PrivyClient}
  */
 function getCheckoutClient() {
   if (_checkoutPrivyClient) return _checkoutPrivyClient;
 
-  // Accept both the VITE_-prefixed frontend var and the bare backend var so
-  // the service works without duplicating the value in .env.production.
   const appId = process.env.PRIVY_CHECKOUT_APP_ID || process.env.VITE_PRIVY_CHECKOUT_APP_ID;
   const appSecret = process.env.PRIVY_CHECKOUT_APP_SECRET;
   if (!appId || !appSecret) {
     throw new Error('privyCheckout: PRIVY_CHECKOUT_APP_ID / PRIVY_CHECKOUT_APP_SECRET not configured');
   }
 
-  const authKey = process.env.PRIVY_CHECKOUT_AUTHORIZATION_KEY;
-  const authKeyId = process.env.PRIVY_CHECKOUT_AUTHORIZATION_KEY_ID;
-
   const { PrivyClient } = require('@privy-io/server-auth');
+  _checkoutPrivyClient = new PrivyClient(appId, appSecret);
+  return _checkoutPrivyClient;
+}
 
-  const opts = {};
-  if (authKey && authKeyId) {
-    opts.walletApi = { authorizationPrivateKey: authKey, authorizationKeyId: authKeyId };
+/**
+ * Return the PrivyClient scoped to the TREASURY Privy app (cmvf3jmp301uf0fl6koud8g0y).
+ * Used for all server-wallet operations: executeSplit, _earnDeposit.
+ *
+ * @returns {import('@privy-io/server-auth').PrivyClient}
+ */
+function getTreasuryClient() {
+  if (_treasuryPrivyClient) return _treasuryPrivyClient;
+
+  const appId = process.env.PRIVY_TREASURY_APP_ID;
+  const appSecret = process.env.PRIVY_TREASURY_APP_SECRET;
+  if (!appId || !appSecret) {
+    throw new Error('privyCheckout: PRIVY_TREASURY_APP_ID / PRIVY_TREASURY_APP_SECRET not configured');
   }
 
-  _checkoutPrivyClient = new PrivyClient(appId, appSecret, opts);
-  return _checkoutPrivyClient;
+  const { PrivyClient } = require('@privy-io/server-auth');
+  _treasuryPrivyClient = new PrivyClient(appId, appSecret);
+  return _treasuryPrivyClient;
 }
 
 /**
@@ -620,7 +629,7 @@ async function executeSplit(totalAmountUsd) {
   ];
 
   const { encodeFunctionData, parseUnits } = require('viem');
-  const client = getCheckoutClient();
+  const client = getTreasuryClient();
 
   const results = [];
   for (const leg of outbound) {
@@ -676,13 +685,12 @@ async function executeSplit(totalAmountUsd) {
  * @param {string} label — descriptive label for logging
  */
 async function _earnDeposit(walletId, amountUsd, label) {
-  const appId    = process.env.PRIVY_CHECKOUT_APP_ID || process.env.VITE_PRIVY_CHECKOUT_APP_ID;
-  const appSecret = process.env.PRIVY_CHECKOUT_APP_SECRET;
-  const authKey  = process.env.PRIVY_CHECKOUT_AUTHORIZATION_KEY;
+  const appId    = process.env.PRIVY_TREASURY_APP_ID;
+  const appSecret = process.env.PRIVY_TREASURY_APP_SECRET;
   const vaultId  = process.env.PRIVY_EARN_VAULT_ID;
 
   if (!appId || !appSecret || !vaultId) {
-    throw new Error(`_earnDeposit(${label}): missing PRIVY_CHECKOUT_APP_ID/SECRET or PRIVY_EARN_VAULT_ID`);
+    throw new Error(`_earnDeposit(${label}): missing PRIVY_TREASURY_APP_ID/SECRET or PRIVY_EARN_VAULT_ID`);
   }
 
   // Amount in USDC token units (6 decimals), floored to avoid dust errors.
@@ -698,20 +706,6 @@ async function _earnDeposit(walletId, amountUsd, label) {
     'privy-app-id': appId,
     'Authorization': `Basic ${Buffer.from(`${appId}:${appSecret}`).toString('base64')}`,
   };
-
-  // Sign with the authorization key (wallet-auth:… format).
-  if (authKey) {
-    // Access the internal signing helper — the SDK does NOT export this at the
-    // top-level, but the function is available in the wallet-api sub-module and
-    // handles the wallet-auth: prefix key format via normalizeP256PrivateKeyToScalar.
-    const { generateAuthorizationSignature } =
-      require('@privy-io/server-auth/dist/cjs/wallet-api/index.js');
-    const sig = generateAuthorizationSignature({
-      input: { method: 'POST', url, body, headers: { 'privy-app-id': appId } },
-      authorizationPrivateKey: authKey,
-    });
-    if (sig) headers['privy-authorization-signature'] = sig;
-  }
 
   const res = await fetch(url, {
     method: 'POST',
