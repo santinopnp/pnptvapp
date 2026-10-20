@@ -60,6 +60,14 @@ CREATE TABLE IF NOT EXISTS ncmec_cases (
 CREATE INDEX IF NOT EXISTS idx_ncmec_cases_user ON ncmec_cases (reported_user_id);
 CREATE INDEX IF NOT EXISTS idx_ncmec_cases_open ON ncmec_cases (created_at) WHERE status = 'pending_review';
 
+-- Backfill: CSAM reports filed before this tracker existed still need a
+-- CyberTipline decision and preservation.
+INSERT INTO ncmec_cases (user_report_id, reported_user_id, evidence_type, evidence_id, created_at)
+SELECT ur.id::text, ur.reported_user_id::text, ur.evidence_type, ur.evidence_id::text, ur.created_at
+  FROM user_reports ur
+ WHERE ur.category = 'csam'
+   AND NOT EXISTS (SELECT 1 FROM ncmec_cases nc WHERE nc.user_report_id = ur.id::text);
+
 ALTER TABLE creator_2257_records
   DROP CONSTRAINT IF EXISTS creator_2257_records_user_id_fkey;
 ALTER TABLE creator_2257_records
