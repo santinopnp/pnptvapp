@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { WalletPayCard, WalletLoginGate } from '@/components/payments/PayInWalletChips';
-import { NpAppPickerSheet } from '@/components/payments/NowPaymentsWaitingPanel';
 import { useI18n } from '@/lib/i18n';
 
 interface FreeTierOverlayProps {
@@ -22,7 +21,6 @@ export default function FreeTierOverlay({ label, requiredTier = 'member', childr
 
   const [sheetOpen, setSheetOpen] = useState(false);
   const [walletPlanId, setWalletPlanId] = useState<string | null>(null);
-  const [npPickerPlanId, setNpPickerPlanId] = useState<string | null>(null);
 
   if (requiredTier === 'member') {
     return (
@@ -122,16 +120,6 @@ export default function FreeTierOverlay({ label, requiredTier = 'member', childr
                           {es ? '💳 Tarjeta · Apple Pay · Wallet' : '💳 Card · Apple Pay · Wallet'}
                         </button>
                       </WalletLoginGate>
-                      {/* Crypto button is outside WalletLoginGate — always visible */}
-                      <button
-                        type="button"
-                        onClick={() => setNpPickerPlanId(plan.id)}
-                        className="w-full py-2 rounded-xl text-[11px] font-semibold transition-all active:scale-[0.97]"
-                        style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.70)' }}
-                      >
-                        <span className="block">{es ? '₿ Apps y wallets' : '₿ Apps & wallets'}</span>
-                        <span className="block text-[9px] font-normal opacity-50 mt-0.5">BTC · ETH · USDC · USDT · etc.</span>
-                      </button>
                     </div>
                     {isWalletOpen && (
                       <div className="px-3 pb-3">
@@ -163,13 +151,6 @@ export default function FreeTierOverlay({ label, requiredTier = 'member', childr
         </div>
       )}
 
-      <NpAppPickerSheet
-        isOpen={!!npPickerPlanId}
-        onClose={() => setNpPickerPlanId(null)}
-        planId={npPickerPlanId}
-        lang={lang}
-        planLabel={npPickerPlanId === 'lifetime-pass' ? 'PNPtv Founders — 18 mo PRIME + Lifetime Basic' : 'PRIME Monthly'}
-      />
     </>
   );
 }

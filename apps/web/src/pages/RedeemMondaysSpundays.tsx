@@ -4,7 +4,6 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useI18n } from "@/lib/i18n";
 import { WalletPayCard } from "@/components/payments/PayInWalletChips";
-import { NpAppPickerSheet } from "@/components/payments/NowPaymentsWaitingPanel";
 import CountdownTimer from "@/components/CountdownTimer";
 
 const CAMPAIGN_ID = "mondays_spundays";
@@ -26,7 +25,6 @@ export default function RedeemMondaysSpundays() {
   const [paid, setPaid] = useState(false);
   const [expired, setExpired] = useState(() => Date.now() >= new Date(EXPIRES_AT).getTime());
   const [walletOpen, setWalletOpen] = useState(false);
-  const [npOpen, setNpOpen] = useState(false);
   const [payError, setPayError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -119,9 +117,7 @@ export default function RedeemMondaysSpundays() {
             </div>
           ) : (
             <>
-              {/* Pay button pair — mirrors /subscribe pattern.
-                  Left (emerald, primary): opens inline WalletPayCard (Privy USDC on Base + card + Apple Pay).
-                  Right (amber, secondary): opens NpAppPickerSheet (any-crypto popup). */}
+              {/* Pay with Privy — opens inline WalletPayCard (card, Apple Pay, wallet). */}
               <div className="flex gap-2">
                 <button
                   type="button"
@@ -129,19 +125,6 @@ export default function RedeemMondaysSpundays() {
                   className={`flex-1 py-3 rounded-lg font-bold text-xs text-white transition-all leading-tight ${walletOpen ? "bg-gradient-to-r from-emerald-400 to-emerald-500 ring-2 ring-emerald-300" : "bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500"}`}
                 >
                   {es ? "💳 Tarjeta · Apple Pay · Wallet" : "💳 Card · Apple Pay · Wallet"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setNpOpen(true)}
-                  className="flex-1 py-3 rounded-lg font-bold text-xs transition-all leading-tight"
-                  style={{
-                    border: "1.5px solid rgba(255,183,0,0.50)",
-                    background: "rgba(255,183,0,0.08)",
-                    color: "rgba(255,183,0,0.85)",
-                  }}
-                >
-                  <span className="block">₿ {es ? "Apps y wallets" : "Apps & wallets"}</span>
-                  <span className="block text-[9px] font-normal opacity-70 mt-0.5">BTC · ETH · USDC · USDT · etc.</span>
                 </button>
               </div>
 
@@ -189,14 +172,6 @@ export default function RedeemMondaysSpundays() {
         )}
       </div>
 
-      <NpAppPickerSheet
-        isOpen={npOpen}
-        onClose={() => setNpOpen(false)}
-        planId={PLAN_ID}
-        lang={es ? "es" : "en"}
-        planLabel={planLabel}
-        onSuccess={() => setPaid(true)}
-      />
     </div>
   );
 }

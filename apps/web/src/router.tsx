@@ -363,12 +363,6 @@ const AdminManualActivations = lazy(() => import("@/pages/admin/ManualActivation
 const ReferralAdmin = lazy(() => import("@/pages/admin/ReferralAdmin"));
 const Lifetime100 = lazy(() => import("@/pages/Lifetime100"));
 const FoundersPage = lazy(() => import("@/pages/FoundersPage"));
-const NequiNegociosPage = lazy(() =>
-  import("@/pages/Lifetime100").then((m) => ({ default: m.NequiNegociosPage }))
-);
-const MercadoPagoPage = lazy(() =>
-  import("@/pages/Lifetime100").then((m) => ({ default: m.MercadoPagoPage }))
-);
 const CryptoGuide = lazy(() => import("@/pages/CryptoGuide"));
 const ConnectWallet = lazy(() => import("@/pages/ConnectWallet"));
 const RefundRequest = lazy(() => import("@/pages/RefundRequest"));

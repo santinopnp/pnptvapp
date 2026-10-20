@@ -34,7 +34,6 @@ import { WalletPayCard, WalletLoginGate } from "@/components/payments/PayInWalle
 // into /subscribe (which uses the wallet). Local shim below preserves the
 // JSX call sites without pulling in the NP hook.
 import { CryptoOnboardingWizard } from "@/components/payments/CryptoOnboardingWizard";
-import { NpAppPickerSheet } from "@/components/payments/NowPaymentsWaitingPanel";
 import CreatorSubscribeWizard from "@/components/creators/CreatorSubscribeWizard";
 import { BookCallModal } from "@/components/creators/BookCallModal";
 // NearbyBadge removed — PostCard shows city name inline instead
@@ -346,7 +345,6 @@ export default function PostCard({
   }, [post.author_id]); // eslint-disable-line react-hooks/exhaustive-deps
   const [showBookCallModal, setShowBookCallModal] = useState(false);
   const [promoModalPlanId, setPromoModalPlanId] = useState<"yearly50" | "lifetime100" | null>(null);
-  const [npPickerPlanId, setNpPickerPlanId] = useState<string | null>(null);
   // Creator subscribe upsell — on FREE posts of active creators.
   const showCreatorSubscribeUpsell =
     !hideCreatorCta &&
@@ -2066,19 +2064,6 @@ export default function PostCard({
                     lang={es ? "es" : "en"}
                     onSuccess={() => { setPromoModalPlanId(null); }}
                   />
-                  <div className="relative flex items-center gap-2 py-1">
-                    <div className="flex-1 h-px bg-white/10" />
-                    <span className="text-[10px] text-white/40 flex-shrink-0">
-                      {es ? "o paga con cualquier cripto" : "or pay with any crypto"}
-                    </span>
-                    <div className="flex-1 h-px bg-white/10" />
-                  </div>
-                  <button
-                    onClick={() => setNpPickerPlanId(selectedPlan.id)}
-                    className="w-full py-3 rounded-xl border border-white/15 bg-white/[0.04] hover:bg-white/[0.08] text-sm font-semibold text-white/80 transition-colors"
-                  >
-                    {es ? "₿ Apps y wallets" : "₿ Apps & wallets"}
-                  </button>
 
                 </div>
               </WalletLoginGate>
@@ -2087,13 +2072,6 @@ export default function PostCard({
         );
       })()}
 
-      <NpAppPickerSheet
-        isOpen={!!npPickerPlanId}
-        onClose={() => setNpPickerPlanId(null)}
-        planId={npPickerPlanId}
-        lang={userLang}
-        planLabel={npPickerPlanId ? (CHECKOUT_MODAL_PLANS.find(p => p.id === npPickerPlanId)?.label ?? 'PRIME') : undefined}
-      />
       {showBookCallModal && (
         <BookCallModal
           open={showBookCallModal}

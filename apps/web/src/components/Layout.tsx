@@ -2954,7 +2954,6 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
   const [homeRushBalance, setHomeRushBalance] = useState<number | null>(null);
   const [homePlansError, setHomePlansError] = useState<string | null>(null);
   const [selectedHomePlan, setSelectedHomePlan] = useState<SubscriptionPlan | null>(null);
-  const [homeNpOpen, setHomeNpOpen] = useState(false);
   const [homeCallOpen, setHomeCallOpen] = useState(false);
   const [homeCallLexOpen, setHomeCallLexOpen] = useState(false);
   const formatLocalPrice = useLocalPrice();
@@ -3430,15 +3429,6 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
                                 onSuccess={() => setHomePanelOpen(false)}
                               />
                             </Suspense>
-                            {/* Pay with apps */}
-                            <button
-                              type="button"
-                              onClick={() => setHomeNpOpen(true)}
-                              className="mt-1.5 w-full flex items-center justify-center gap-1.5 rounded-xl py-2 text-[11px] font-bold active:scale-[0.97] transition"
-                              style={{ background: "rgba(212,0,122,0.18)", border: "1px solid rgba(212,0,122,0.4)", color: "#FF4DB2" }}
-                            >
-                              ₿ Apps &amp; wallets
-                            </button>
                           </div>
                         </div>
                       )}
@@ -3614,18 +3604,6 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
           </WalletBoundary>
         )}
 
-        {/* Founders NowPayments sheet — triggered from the Founders card in the panel */}
-        {homeNpOpen && (
-          <Suspense fallback={null}>
-            <LazyNpAppPickerSheet
-              isOpen={homeNpOpen}
-              onClose={() => setHomeNpOpen(false)}
-              planId="lifetime-pass"
-              lang={lang}
-              planLabel="PNPtv! Founders"
-            />
-          </Suspense>
-        )}
 
         {/* Book a call with Santino — triggered from the home panel */}
         {homeCallOpen && (
@@ -4076,11 +4054,6 @@ function useLocalPrice() {
   return format;
 }
 
-// Lazy-load NpAppPickerSheet for Founders crypto path in home panel.
-const LazyNpAppPickerSheet = lazy(async () => {
-  const mod = await import("@/components/payments/NowPaymentsWaitingPanel");
-  return { default: mod.NpAppPickerSheet };
-});
 
 // Lazy-load BookCallModal for the "Book a call with Santino" entry in the home panel.
 const LazyBookCallModal = lazy(() =>

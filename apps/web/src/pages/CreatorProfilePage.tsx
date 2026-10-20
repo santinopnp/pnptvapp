@@ -394,8 +394,6 @@ export default function CreatorProfilePage() {
   // crystalWalletMode: which inline WalletPayCard panel is currently open.
   // 'gift'  = fan gifting this creator; 'self' = creator self-upgrading.
   const [crystalWalletMode, setCrystalWalletMode] = useState<"gift" | "self" | null>(null);
-  const [crystalNpLoading, setCrystalNpLoading] = useState<"gift" | "self" | null>(null);
-  const [crystalNpError, setCrystalNpError] = useState<string | null>(null);
   const crystalWalletPanelRef = useRef<HTMLDivElement>(null);
   // Inner Circle (VIP audience) — only loaded when the viewer is an active
   // Crystal Creator. Backed by the internal Whale Pig list server-side but
@@ -432,8 +430,7 @@ export default function CreatorProfilePage() {
   const [channelPassError, setChannelPassError] = useState<string | null>(null);
   const channelPassPanelRef = useRef<HTMLDivElement>(null);
   // Crypto sub-state
-  const [cryptoMethod, setCryptoMethod] = useState<"usdc_base" | "any_crypto">("usdc_base");
-  const [cryptoCoin, setCryptoCoin] = useState<string>("btc");
+  const [cryptoMethod, setCryptoMethod] = useState<"usdc_base">("usdc_base");
   const channelPassPopupRef = useRef<Window | null>(null);
   const channelPassPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -982,33 +979,6 @@ export default function CreatorProfilePage() {
     }, 100);
   }
 
-  // Open NowPayments hosted checkout in a centered popup (iframe-blocked per memory).
-  async function handleCrystalNowPayments(mode: "gift" | "self") {
-    if (!isAuthenticated) { navigate("/login"); return; }
-    if (!data) return;
-    setCrystalNpError(null);
-    setCrystalNpLoading(mode);
-    try {
-      let invoiceUrl: string | undefined;
-      if (mode === "gift") {
-        const res = await checkoutCrystalGift(data.creator.id, "nowpayments");
-        invoiceUrl = res.invoiceUrl;
-      } else {
-        const res = await checkoutCrystalSelf("nowpayments");
-        invoiceUrl = res.invoiceUrl;
-      }
-      if (!invoiceUrl) throw new Error("No invoice URL returned");
-      const w = 520;
-      const h = 700;
-      const left = Math.max(0, Math.round(window.screenX + (window.outerWidth - w) / 2));
-      const top = Math.max(0, Math.round(window.screenY + (window.outerHeight - h) / 2));
-      window.open(invoiceUrl, "crystal_np_checkout", `width=${w},height=${h},left=${left},top=${top},scrollbars=yes,resizable=yes`);
-    } catch (err) {
-      setCrystalNpError(err instanceof Error ? err.message : "Could not open checkout");
-    } finally {
-      setCrystalNpLoading(null);
-    }
-  }
 
   // ─── Render ───────────────────────────────────────────────────────────────
 
@@ -1720,77 +1690,8 @@ export default function CreatorProfilePage() {
                                   </div>
                                 </button>
 
-                                {/* Any crypto */}
-                                <button
-                                  type="button"
-                                  onClick={() => { setCryptoMethod("any_crypto"); setChannelPassError(null); }}
-                                  className="w-full text-left px-3 py-2.5 rounded-lg transition-all"
-                                  style={{
-                                    background: cryptoMethod === "any_crypto" ? "rgba(212,0,122,0.12)" : "rgba(255,255,255,0.04)",
-                                    border: cryptoMethod === "any_crypto" ? "1px solid rgba(212,0,122,0.4)" : "1px solid rgba(255,255,255,0.08)",
-                                  }}
-                                >
-                                  <div className="flex items-start gap-2.5">
-                                    <span
-                                      className="mt-0.5 w-3.5 h-3.5 rounded-full border-2 shrink-0 flex items-center justify-center"
-                                      style={{
-                                        borderColor: cryptoMethod === "any_crypto" ? "#D4007A" : "rgba(255,255,255,0.25)",
-                                        background: cryptoMethod === "any_crypto" ? "#D4007A" : "transparent",
-                                      }}
-                                    >
-                                      {cryptoMethod === "any_crypto" && (
-                                        <span className="w-1.5 h-1.5 rounded-full bg-white block" />
-                                      )}
-                                    </span>
-                                    <div className="min-w-0">
-                                      <p className="text-xs font-semibold text-white leading-tight">
-                                        Any crypto
-                                      </p>
-                                      <p className="text-[11px] mt-0.5 leading-tight" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-                                        BTC, ETH, USDT, LTC, SOL, XMR, DOGE, TRX, MATIC, BNB &amp; more — pay via hosted invoice.
-                                      </p>
-                                    </div>
-                                  </div>
-                                </button>
                               </div>
 
-                              {/* Coin picker — only shown for "any_crypto" */}
-                              {cryptoMethod === "any_crypto" && (() => {
-                                const COINS: { value: string; label: string }[] = [
-                                  { value: "usdcsol",   label: "USDC on Solana" },
-                                  { value: "btc",       label: "BTC" },
-                                  { value: "eth",       label: "ETH" },
-                                  { value: "usdttrc20", label: "USDT on Tron" },
-                                  { value: "usdtbsc",   label: "USDT on BSC" },
-                                  { value: "usdterc20", label: "USDT on Ethereum" },
-                                  { value: "ltc",       label: "LTC" },
-                                  { value: "sol",       label: "SOL" },
-                                  { value: "trx",       label: "TRX" },
-                                  { value: "matic",     label: "MATIC (Polygon)" },
-                                  { value: "xmr",       label: "Monero (XMR)" },
-                                  { value: "doge",      label: "DOGE" },
-                                  { value: "bnbbsc",    label: "BNB (BSC)" },
-                                ];
-                                return (
-                                  <div className="grid grid-cols-2 gap-1.5">
-                                    {COINS.map((coin) => (
-                                      <button
-                                        key={coin.value}
-                                        type="button"
-                                        onClick={() => setCryptoCoin(coin.value)}
-                                        className="px-2 py-1.5 rounded-lg text-[11px] font-medium text-left transition-all truncate"
-                                        style={{
-                                          background: cryptoCoin === coin.value ? "rgba(212,0,122,0.2)" : "rgba(255,255,255,0.04)",
-                                          border: cryptoCoin === coin.value ? "1px solid rgba(212,0,122,0.5)" : "1px solid rgba(255,255,255,0.08)",
-                                          color: cryptoCoin === coin.value ? "#fff" : "rgba(255,255,255,0.6)",
-                                        }}
-                                      >
-                                        {coin.label}
-                                      </button>
-                                    ))}
-                                  </div>
-                                );
-                              })()}
 
                               {/* Error */}
                               {channelPassError && (
@@ -1821,90 +1722,6 @@ export default function CreatorProfilePage() {
                                 />
                               )}
 
-                              {/* Any-crypto — popup + polling via NowPayments */}
-                              {cryptoMethod === "any_crypto" && (
-                              <button
-                                type="button"
-                                disabled={channelPassBuying}
-                                onClick={async () => {
-                                  if (!isAuthenticated) { navigate("/login"); return; }
-                                  setChannelPassBuying(true);
-                                  setChannelPassError(null);
-                                  try {
-                                    {
-                                      const res = await checkoutChannelPass(creator.id, "nowpayments", cryptoCoin);
-                                      if (!res.payment_url) throw new Error(res.error || "No checkout URL returned");
-
-                                      const w = 480;
-                                      const h = 720;
-                                      const left = Math.max(0, Math.round(window.screenX + (window.outerWidth - w) / 2));
-                                      const top = Math.max(0, Math.round(window.screenY + (window.outerHeight - h) / 2));
-                                      const popup = window.open(
-                                        res.payment_url,
-                                        "pnp_np_channel_pass",
-                                        `width=${w},height=${h},left=${left},top=${top},resizable=yes,scrollbars=yes`
-                                      );
-
-                                      if (!popup) {
-                                        // Popup blocked — show fallback link
-                                        setChannelPassError(
-                                          `Your browser blocked the checkout window. Open it manually: ${res.payment_url}`
-                                        );
-                                        setChannelPassBuying(false);
-                                        return;
-                                      }
-
-                                      channelPassPopupRef.current = popup;
-                                      setChannelPassBuying(false);
-
-                                      // Poll getUserChannelPasses every 5s for up to 15 minutes.
-                                      // Interval id stored in ref so the useEffect cleanup can always
-                                      // clear it on unmount or creator navigation — no leak possible.
-                                      const deadline = Date.now() + 15 * 60 * 1000;
-                                      const currentCreatorId = creator.id;
-                                      // Clear any lingering interval before starting a new one
-                                      if (channelPassPollRef.current) {
-                                        clearInterval(channelPassPollRef.current);
-                                        channelPassPollRef.current = null;
-                                      }
-                                      channelPassPollRef.current = setInterval(() => {
-                                        if (Date.now() > deadline) {
-                                          clearInterval(channelPassPollRef.current!);
-                                          channelPassPollRef.current = null;
-                                          return;
-                                        }
-                                        getUserChannelPasses()
-                                          .then((passes) => {
-                                            const active = passes.find(
-                                              (p) => p.creator_id === currentCreatorId && p.status === "active"
-                                            );
-                                            if (active) {
-                                              clearInterval(channelPassPollRef.current!);
-                                              channelPassPollRef.current = null;
-                                              channelPassPopupRef.current?.close();
-                                              channelPassPopupRef.current = null;
-                                              setChannelPassResult({ expires_at: active.expires_at });
-                                              setChannelPass((prev) => prev ? { ...prev, is_active: true, expires_at: active.expires_at } : prev);
-                                            }
-                                          })
-                                          .catch(() => { /* ignore transient polling errors */ });
-                                      }, 5000);
-                                    }
-                                  } catch (err) {
-                                    setChannelPassError(err instanceof Error ? err.message : "Checkout failed. Please try again.");
-                                    setChannelPassBuying(false);
-                                  }
-                                }}
-                                className="w-full py-2.5 rounded-lg text-sm font-bold text-white flex items-center justify-center gap-2 transition-opacity hover:opacity-90 disabled:opacity-60"
-                                style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
-                              >
-                                {channelPassBuying ? (
-                                  <><Loader2 size={14} className="animate-spin" /> Processing…</>
-                                ) : (
-                                  <>Subscribe · ${channelPass.price_usd}/mo</>
-                                )}
-                              </button>
-                              )}
                             </div>
                           )}
                         </>
@@ -1949,25 +1766,14 @@ export default function CreatorProfilePage() {
                   </p>
                 </div>
               </div>
-              <div className="px-3 pb-3 grid grid-cols-2 gap-2" onClick={(e) => e.stopPropagation()}>
+              <div className="px-3 pb-3 grid grid-cols-1 gap-2" onClick={(e) => e.stopPropagation()}>
                 <button
                   onClick={() => handleCrystalWalletToggle("gift")}
                   className={`py-2.5 rounded-lg font-bold text-sm text-white transition-all ${crystalWalletMode === "gift" ? "bg-gradient-to-r from-emerald-400 to-emerald-500 ring-2 ring-emerald-300" : "bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500"}`}
                 >
                   {t.lang === "es" ? "💳 Regalar $150" : "💳 Gift $150"}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => handleCrystalNowPayments("gift")}
-                  disabled={crystalNpLoading === "gift"}
-                  className="py-2.5 rounded-lg font-bold text-sm text-white bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 transition-all disabled:opacity-60"
-                >
-                  {crystalNpLoading === "gift" ? "…" : (t.lang === "es" ? "₿ Apps y wallets" : "₿ Apps & wallets")}
-                </button>
               </div>
-              {crystalNpError && crystalWalletMode !== "gift" && (
-                <p className="px-3 pb-3 text-[11px]" style={{ color: "#ff6b6b" }}>{crystalNpError}</p>
-              )}
               {crystalWalletMode === "gift" && (
                 <div className="px-3 pb-3" ref={crystalWalletPanelRef} onClick={(e) => e.stopPropagation()}>
                   <WalletPayCard
@@ -1980,7 +1786,6 @@ export default function CreatorProfilePage() {
                     onSuccess={() => {
                       setCrystalWalletMode(null);
                     }}
-                    onCryptoFallback={() => { setCrystalWalletMode(null); handleCrystalNowPayments("gift"); }}
                     compact
                   />
                 </div>
@@ -2002,25 +1807,14 @@ export default function CreatorProfilePage() {
                     : "Unlock exclusive benefits & animated badge — $100 for 30 days"}
                 </p>
               </div>
-              <div className="px-3 pb-3 grid grid-cols-2 gap-2" onClick={(e) => e.stopPropagation()}>
+              <div className="px-3 pb-3 grid grid-cols-1 gap-2" onClick={(e) => e.stopPropagation()}>
                 <button
                   onClick={() => handleCrystalWalletToggle("self")}
                   className={`py-2.5 rounded-lg font-bold text-sm text-white transition-all ${crystalWalletMode === "self" ? "bg-gradient-to-r from-emerald-400 to-emerald-500 ring-2 ring-emerald-300" : "bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500"}`}
                 >
                   {t.lang === "es" ? "💳 Suscribirme $100" : "💳 Upgrade $100"}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => handleCrystalNowPayments("self")}
-                  disabled={crystalNpLoading === "self"}
-                  className="py-2.5 rounded-lg font-bold text-sm text-white bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 transition-all disabled:opacity-60"
-                >
-                  {crystalNpLoading === "self" ? "…" : (t.lang === "es" ? "₿ Apps y wallets" : "₿ Apps & wallets")}
-                </button>
               </div>
-              {crystalNpError && crystalWalletMode !== "self" && (
-                <p className="px-3 pb-3 text-[11px]" style={{ color: "#ff6b6b" }}>{crystalNpError}</p>
-              )}
               {crystalWalletMode === "self" && (
                 <div className="px-3 pb-3" ref={crystalWalletPanelRef} onClick={(e) => e.stopPropagation()}>
                   <WalletPayCard
@@ -2033,7 +1827,6 @@ export default function CreatorProfilePage() {
                     onSuccess={() => {
                       setCrystalWalletMode(null);
                     }}
-                    onCryptoFallback={() => { setCrystalWalletMode(null); handleCrystalNowPayments("self"); }}
                     compact
                   />
                 </div>

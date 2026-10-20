@@ -499,12 +499,6 @@ export interface WalletPayCardProps {
       caller can navigate or toast as needed. */
   onSuccess?: (result: { intentId: number; rushCredited?: number; entitlementId?: number | null; bookingId?: string | null }) => void;
   onError?: (err: unknown) => void;
-  /** When defined, called INSTEAD of showing the generic "card glitched" error
-   *  when Privy's Stripe fiat onramp fails (addFunds returns
-   *  "Unable to open payment window" / "Something went wrong setting up checkout").
-   *  Callers wire this to opening their NowPayments picker so a dead onramp
-   *  turns into a one-tap crypto fallback instead of a dead-end error. */
-  onCryptoFallback?: () => void;
   lang?: "es" | "en";
   compact?: boolean;
   /** Skip auto-pay when the user already holds this entitlement to avoid silent re-charges */
@@ -513,7 +507,7 @@ export interface WalletPayCardProps {
 
 export function WalletPayCard({
   surface, amountUsd: amountUsdRaw, entitlementSpec, metadata,
-  label, onSuccess, onError, onCryptoFallback, lang = "en", compact = false, alreadyEntitled = false,
+  label, onSuccess, onError, lang = "en", compact = false, alreadyEntitled = false,
 }: WalletPayCardProps) {
   const es = lang === "es";
   const t = useI18n();
@@ -947,12 +941,7 @@ export function WalletPayCard({
       const isCreatorLocked = /creator locked/i.test(msg);
 
       if (isRateLimited) {
-        // Too many retries — route to NowPayments if available, otherwise surface a clear message.
-        if (onCryptoFallback) {
-          setPaying(false);
-          onCryptoFallback();
-          return;
-        }
+        // Too many retries — surface a clear message.
         setError(es
           ? "Demasiados intentos. Esperá un minuto e intentá de nuevo."
           : "Too many attempts. Please wait a minute and try again.");
@@ -1000,34 +989,25 @@ export function WalletPayCard({
     // handlePay racing a manual Top-up tap.
     if (fundInFlightRef.current) return;
 
-    // Kill switch: Stripe onramp globally disabled → route straight to crypto fallback.
+    // Kill switch: Stripe onramp globally disabled.
     if (!_STRIPE_ENABLED) {
-      if (onCryptoFallback) {
-        onCryptoFallback();
-        return;
-      }
       setError(es
-        ? "Los pagos con tarjeta están temporalmente deshabilitados. Usa una opción de cripto."
-        : "Card payments are temporarily disabled. Pay with crypto instead.");
+        ? "Los pagos con tarjeta están temporalmente deshabilitados. Conecta una wallet con USDC en Base para pagar."
+        : "Card payments are temporarily disabled. Connect a wallet with USDC on Base to pay.");
       return;
     }
 
     // In SMS-verification-hostile environments (Android Telegram WebApp, iOS
     // in-app browsers) Stripe's phone-verify step is blocked by the webview.
     // If MoonPay is available we route straight through useFundWallet — no banner.
-    // Otherwise (e.g. iOS PWA where MoonPay also can't open), bias toward
-    // NowPayments when available; otherwise show a banner with an "Open in
-    // browser" escape. Never call addFunds or fundWallet in the banner path.
+    // Otherwise (e.g. iOS PWA where MoonPay also can't open), show a banner
+    // with an "Open in browser" escape. Never call addFunds or fundWallet in the banner path.
     //
     // forceMoonPay=true comes from the Stripe "Too many attempts" auto-switch
     // in the catch block — bypasses the platform heuristic and forces the
     // MoonPay branch below.
     const useMoonPay = opts?.forceMoonPay === true || shouldPreferMoonPay();
     if (smsVerifLikelyBlocked() && !useMoonPay) {
-      if (onCryptoFallback) {
-        onCryptoFallback();
-        return;
-      }
       setShowSmsBlockedBanner(true);
       return;
     }
@@ -1125,7 +1105,7 @@ export function WalletPayCard({
         setError(onrampErrorMessage(kind, es, msg));
         return;
       }
-      // Stripe rate-limited → try MoonPay first (one-shot), then NowPayments.
+      // Stripe rate-limited → try MoonPay once.
       if (kind === "rate_limited" && _MOONPAY_ENABLED && !useMoonPay && !autoSwitchedMoonPayRef.current) {
         autoSwitchedMoonPayRef.current = true;
         markStripeRateLimited();
@@ -1136,18 +1116,6 @@ export function WalletPayCard({
         fundInFlightRef.current = false;
         setFundingInFlight(false);
         setTimeout(() => { handleFund({ forceMoonPay: true }); }, 50);
-        return;
-      }
-      // Card onramp unrecoverable (Stripe SMS lockout after MoonPay hop, Stripe
-      // KYC-SDK, MoonPay status timeout). Route to NowPayments crypto if wired.
-      if (onCryptoFallback && (kind === "rate_limited" || kind === "stripe_failed" || kind === "status_timeout")) {
-        if (kind === "rate_limited") markStripeRateLimited();
-        reportWalletClientError("fundWallet_fallback_to_crypto", err, {
-          surface, amountUsd, address: activeWallet?.address,
-          walletType: activeWallet?.walletClientType,
-          onrampErrorKind: kind,
-        });
-        onCryptoFallback();
         return;
       }
       // popup_blocked from MoonPay → signal next tap uses Stripe (inline, no popup)
@@ -1199,15 +1167,6 @@ export function WalletPayCard({
           </svg>
           <span className="text-xs text-white/70">{es ? "Cargando billetera…" : "Loading wallet…"}</span>
         </div>
-        {onCryptoFallback && (
-          <button
-            type="button"
-            onClick={onCryptoFallback}
-            className="w-full py-1.5 rounded-xl text-xs text-white/50 hover:text-white/70 transition-colors"
-          >
-            {es ? "¿Problema? Pagar con cripto →" : "Having trouble? Pay with crypto →"}
-          </button>
-        )}
       </div>
     );
   }
@@ -1387,7 +1346,7 @@ export function WalletPayCard({
           })}
         </div>
       )}
-      {showSmsBlockedBanner && !onCryptoFallback && !shouldPreferMoonPay() && (
+      {showSmsBlockedBanner && !shouldPreferMoonPay() && (
         <div className="rounded-lg border border-amber-400/40 bg-amber-500/10 px-3 py-2.5 space-y-2">
           <p className="text-[11px] text-amber-200 leading-snug">
             {es
@@ -1521,18 +1480,6 @@ export function WalletPayCard({
             const showsLeftover = leftoverUsd >= 0.5;
             return (
               <>
-              {/* Pre-warn: card onramp uses Stripe Link SMS verification. Weekend
-                  2026-10-17/19 shipping ~10 "Link authentication abandoned"
-                  errors — users bail at the SMS modal. Giving an upfront heads-up
-                  + a visible crypto peer below cuts that confusion. Only shown
-                  when crypto escape is actually wired by the caller. */}
-              {onCryptoFallback && (
-                <p className="text-[11px] text-pnp-textSecondary text-center leading-snug px-1">
-                  {es
-                    ? "¿Prefieres sin verificación SMS? Paga con cripto abajo."
-                    : "Prefer no SMS verification? Pay with crypto below."}
-                </p>
-              )}
               <button
                 type="button"
                 onClick={() => {
@@ -1572,21 +1519,6 @@ export function WalletPayCard({
                           : `This purchase: $${amountUsd.toFixed(2)} (minimum charge)`)}
                 </span>
               </button>
-              {/* Crypto peer — always visible when the caller wires a NowPayments
-                  escape. Not a fallback; a sibling option. Styled smaller than
-                  the card CTA so card remains the default visual. */}
-              {onCryptoFallback && (
-                <button
-                  type="button"
-                  onClick={onCryptoFallback}
-                  disabled={fundingInFlight}
-                  className="w-full py-2 rounded-xl text-xs font-semibold text-white/80 border border-white/15 bg-white/[0.04] hover:bg-white/[0.08] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed transition flex items-center justify-center gap-1.5"
-                  style={{ touchAction: "manipulation", WebkitTapHighlightColor: "transparent" }}
-                >
-                  <span>{es ? "O paga con cripto · cualquier wallet o exchange" : "Or pay with crypto · any wallet or exchange"}</span>
-                  <span className="text-white/40">→</span>
-                </button>
-              )}
               {/* In popup-blocked contexts (Telegram / in-app browser / iOS PWA)
                   the card onramp runs inline — no popup needed. */}
               {popupsUnsupported() && !error && (

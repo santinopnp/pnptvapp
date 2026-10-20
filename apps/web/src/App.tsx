@@ -26,7 +26,6 @@ import { useAuth } from "@/hooks/useAuth";
 import { getSocket, connectSocket, disconnectSocket } from "@/lib/socket";
 import { redeemReferralCode, checkAuthStatus, attributePartnerGroup, ApiError, dismissFoundersPopup, dismissYear50Popup } from "@/lib/api";
 import { WalletPayCard } from "@/components/payments/PayInWalletChips";
-import { NpAppPickerSheet } from "@/components/payments/NowPaymentsWaitingPanel";
 
 
 const REFERRAL_STORAGE_KEY = "pnptv:pendingRef";
@@ -563,7 +562,6 @@ function AppOverlays() {
   const founders = useFoundersPopup();
   const year50 = useYear50Popup();
   const [widgetExpanded, setWidgetExpanded] = useState(false);
-  const [widgetNpOpen, setWidgetNpOpen] = useState(false);
   const [widgetSessionDismissed, setWidgetSessionDismissed] = useState(false);
   useDocumentDir();
   useScreenCaptureGuard();
@@ -689,18 +687,6 @@ function AppOverlays() {
                   }}
                   compact
                 />
-                <button
-                  type="button"
-                  onClick={() => setWidgetNpOpen(true)}
-                  className="w-full mt-2 min-h-[44px] rounded-xl font-semibold text-sm transition-all active:scale-[0.98]"
-                  style={{
-                    background: "rgba(255,183,0,0.08)",
-                    border: "1.5px solid rgba(255,183,0,0.50)",
-                    color: "rgba(255,183,0,0.95)",
-                  }}
-                >
-                  ₿ Apps & wallets
-                </button>
               </div>
             </div>
           )}
@@ -736,13 +722,6 @@ function AppOverlays() {
           </div>
         </div>
       )}
-      <NpAppPickerSheet
-        isOpen={widgetNpOpen}
-        onClose={() => setWidgetNpOpen(false)}
-        planId="lifetime-pass"
-        lang="en"
-        planLabel="PNPtv! Founders"
-      />
     </>
   );
 }

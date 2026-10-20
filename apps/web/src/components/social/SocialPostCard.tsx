@@ -55,7 +55,6 @@ import { MediaLightbox } from "@/components/hangouts/MediaLightbox";
 import { SocialMediaLightbox } from "@/components/social/MediaLightbox";
 // NP inline checkout retired 2026-08-09; PRIME CTAs deep-link to /subscribe.
 import { CryptoOnboardingWizard } from "@/components/payments/CryptoOnboardingWizard";
-import { NpAppPickerSheet } from "@/components/payments/NowPaymentsWaitingPanel";
 import CreatorSubscribeWizard from "@/components/creators/CreatorSubscribeWizard";
 import { WalletPayCard } from "@/components/payments/PayInWalletChips";
 import { BookCallModal } from "@/components/creators/BookCallModal";
@@ -489,7 +488,6 @@ export default function SocialPostCard({
   // Social lightbox (index-aware, alt-text aware)
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [promoModalPlanId, setPromoModalPlanId] = useState<string | null>(null);
-  const [npPickerPlanId, setNpPickerPlanId] = useState<string | null>(null);
   const hypeInFlight = useRef(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -2933,23 +2931,6 @@ export default function SocialPostCard({
                       onSuccess={() => { setShowPromoModal(false); }}
                     />
 
-                    {/* NowPayments fallback */}
-                    <div className="relative flex items-center gap-2 py-1">
-                      <div className="flex-1 h-px bg-white/10" />
-                      <span className="text-[10px] text-white/40 flex-shrink-0">
-                        {es ? "o paga con apps y wallets" : "or pay with apps & wallets"}
-                      </span>
-                      <div className="flex-1 h-px bg-white/10" />
-                    </div>
-                    <button
-                      onClick={() => setNpPickerPlanId(selectedPlan.id)}
-                      className="w-full py-3 rounded-xl border border-white/15 bg-white/[0.04] hover:bg-white/[0.08] transition-colors"
-                    >
-                      <span className="block text-sm font-semibold text-white/80">
-                        {es ? "₿ Apps y wallets" : "₿ Apps & wallets"}
-                      </span>
-                      <span className="block text-[10px] text-white/35 mt-0.5">BTC · ETH · USDC · USDT · etc.</span>
-                    </button>
                   </>
                 ) : (
                   <>
@@ -3002,13 +2983,6 @@ export default function SocialPostCard({
         );
       })()}
 
-      <NpAppPickerSheet
-        isOpen={!!npPickerPlanId}
-        onClose={() => setNpPickerPlanId(null)}
-        planId={npPickerPlanId}
-        lang={lang}
-        planLabel={npPickerPlanId ? (CHECKOUT_MODAL_PLANS.find(p => p.id === npPickerPlanId)?.label ?? 'PRIME') : undefined}
-      />
 
       {showBookCallModal && (
         <BookCallModal
