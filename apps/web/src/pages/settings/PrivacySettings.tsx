@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useI18n } from "@/lib/i18n";
+import { FaceMatchSettingsCard } from "@/components/safety/FaceMatchSettingsCard";
 import {
   getProfile,
   getBlockedUsers,
@@ -182,6 +183,9 @@ export default function PrivacySettings() {
           </div>
         </div>
       </div>
+
+      {/* ── Face matching consent (optional) ── */}
+      <FaceMatchSettingsCard />
 
       {/* ── Hide me from these regions ── */}
       <div className="glass-card-sm p-5">

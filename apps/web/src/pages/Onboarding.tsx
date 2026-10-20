@@ -10,6 +10,7 @@ import {
   followUser,
   getSuggestedFollows,
   dismissFoundersPopup,
+  grantFaceMatchConsent,
   type OnboardingStepKey,
   type SuggestedFollow,
 } from "@/lib/api";
@@ -350,8 +351,20 @@ function StepPrivacy({
   onNext: () => Promise<void>;
   state: StepState;
 }) {
-  const o = useI18n().onboarding;
+  const i18n = useI18n();
+  const o = i18n.onboarding;
+  const sf = i18n.safety;
   const [scrolled, setScrolled] = useState(false);
+  // Optional, unchecked by default, and never required to continue.
+  const [faceMatch, setFaceMatch] = useState(false);
+
+  const handleAgree = async () => {
+    if (faceMatch) {
+      // Non-blocking: the member can still opt in later from the upload prompt or settings.
+      await grantFaceMatchConsent().catch(() => {});
+    }
+    await onNext();
+  };
 
   return (
     <StepWrapper title={o.privacyTitle} subtitle={o.privacySubtitle}>
@@ -364,6 +377,7 @@ function StepPrivacy({
         <p>{o.privacyP2}</p>
         <p>{o.privacyP3}</p>
         <p>{o.privacyP4}</p>
+        <p>{sf.onboardingScanningNote}</p>
         <p>
           <a
             href="/privacy"
@@ -376,13 +390,26 @@ function StepPrivacy({
         </p>
       </ScrollAgreementCard>
 
+      <label className="flex items-start gap-2 text-xs text-pnp-textSecondary cursor-pointer">
+        <input
+          type="checkbox"
+          checked={faceMatch}
+          onChange={(e) => setFaceMatch(e.target.checked)}
+          className="mt-0.5"
+        />
+        <span>
+          <span className="font-semibold text-pnp-textPrimary">{sf.faceMatchOptionalTag}: </span>
+          {sf.faceMatchCheckbox}
+        </span>
+      </label>
+
       {state.error && (
         <p role="alert" className="text-sm text-pnp-error">{state.error}</p>
       )}
 
       <button
         type="button"
-        onClick={onNext}
+        onClick={handleAgree}
         disabled={!scrolled || state.isSubmitting}
         className="w-full min-h-[44px] rounded-xl font-semibold text-white transition-all duration-150 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pnp-accent focus-visible:ring-offset-2 focus-visible:ring-offset-pnp-background"
         style={{ background: "linear-gradient(135deg,#D4007A,#E69138)" }}

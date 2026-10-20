@@ -22,6 +22,8 @@ import { UserAvatar } from "@/components/UserAvatar";
 import { AdSlot, MenPageBanner } from "@/components/AdSlot";
 import { FeaturedModelInterstitial, PnpFamWelcomeGate } from "@/components/badges/PnpFamWelcomeGate";
 import { Toast } from "@/components/Toast";
+import { FaceMatchConsentHost } from "@/components/safety/FaceMatchConsentHost";
+import { PolicyUpdateModal } from "@/components/safety/PolicyUpdateModal";
 import { useNearbyToggle } from "@/components/NearbyBadge";
 import { getMessageThreads, getHangoutGroups, markThreadAsRead, getProfile, getForYouRecommendations, followUser, getCryptoGuideStatus, getPublicCreatorProfile, toggleSuperGod, getWalletUsdcBalance, getSubscriptionPlans, getWalletBalance, getTokenPackages, updateProfile, getExchangeRates, type MessageThread, type HangoutGroup, type ForYouRecommendations, type ForYouSuggestedCreator, type ForYouSuggestedFollow, type ForYouContextHint, type CryptoGuideStatus, type CreatorPublicProfile, type SubscriptionPlan, type TokenPackage } from "@/lib/api";
 import { useTier } from "@/hooks/useTier";
@@ -2128,6 +2130,16 @@ export function Layout() {
 
       {/* Wallet login tip — one-time popup explaining how to access PNP Wallet */}
       <WalletLoginTip />
+
+      {/* Safety scanning: re-acceptance of updated Terms/Privacy for existing
+          members, and the optional face matching prompt shown when the backend
+          blocks a photo/video upload or go-live (FACE_MATCH_CONSENT_REQUIRED). */}
+      {isAuthenticated && user?.ageVerified && user?.termsAccepted && (
+        <>
+          <PolicyUpdateModal />
+          <FaceMatchConsentHost />
+        </>
+      )}
 
       {/* Global announcement strip — only after verification */}
       {isAuthenticated && user?.ageVerified && user?.termsAccepted && !/^\/call\//.test(location.pathname) && (

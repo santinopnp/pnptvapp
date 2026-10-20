@@ -516,6 +516,38 @@ export function acceptTerms(): Promise<{ success: boolean }> {
   return request("/api/accept-terms", { method: "POST" });
 }
 
+// ── Safety scanning consent ──────────────────────────────────────────────────
+
+export interface FaceMatchConsentStatus {
+  consented: boolean;
+  consentedAt: string | null;
+  version: string | null;
+  currentVersion: string;
+}
+
+/** Error code the backend returns when a photo/video upload or go-live needs face matching consent. */
+export const FACE_MATCH_CONSENT_REQUIRED = "FACE_MATCH_CONSENT_REQUIRED";
+
+export function getFaceMatchConsent(): Promise<FaceMatchConsentStatus> {
+  return request("/api/webapp/me/face-match-consent");
+}
+
+export function grantFaceMatchConsent(): Promise<FaceMatchConsentStatus> {
+  return request("/api/webapp/me/face-match-consent", { method: "POST", body: { consent: true } });
+}
+
+export function withdrawFaceMatchConsent(): Promise<FaceMatchConsentStatus> {
+  return request("/api/webapp/me/face-match-consent", { method: "DELETE" });
+}
+
+export function getPolicyUpdateStatus(): Promise<{ needsUpdate: boolean; effectiveAt: string }> {
+  return request("/api/webapp/me/policy-update");
+}
+
+export function acceptPolicyUpdate(): Promise<{ ok: boolean }> {
+  return request("/api/webapp/me/policy-update/accept", { method: "POST" });
+}
+
 export function apiLogout(): Promise<{ success: boolean }> {
   return request("/api/logout", { method: "POST" });
 }
