@@ -1,3 +1,4 @@
+const { checkOutgoingText } = require('../../../services/antiLeakageGuard');
 const { query } = require('../../../config/postgres');
 const logger = require('../../../utils/logger');
 const { getRedis } = require('../../../config/redis');
@@ -488,6 +489,10 @@ const sendMessage = async (req, res) => {
     const senderRole = user.role || '';
     const isAdminSender = senderRole === 'admin' || senderRole === 'superadmin';
 
+    const guard = await checkOutgoingText({
+      userId: user.id, text: content, sourceType: 'dm', sourceRef: requestedRecipientId, isAdmin: isAdminSender,
+    });
+    if (!guard.ok) return res.status(guard.status).json(guard.body);
 
     const message = await DmService.sendMessage(
       user.id,
@@ -963,6 +968,12 @@ const forwardMessage = async (req, res) => {
   if (!Number.isFinite(messageId)) return res.status(400).json({ error: 'Invalid messageId' });
   if (!recipientIds.length || recipientIds.length > 5) return res.status(400).json({ error: 'recipientIds must be 1..5' });
   try {
+    const role = user.role || '';
+    const guard = await checkOutgoingText({
+      userId: user.id, text: note, sourceType: 'dm', sourceRef: recipientIds.join(','),
+      isAdmin: role === 'admin' || role === 'superadmin',
+    });
+    if (!guard.ok) return res.status(guard.status).json(guard.body);
     const result = await DmService.forwardMessage(user.id, messageId, recipientIds, note);
     // Best-effort socket fanout — let recipients see the new message immediately
     const io = req.app.get('io');

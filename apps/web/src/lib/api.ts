@@ -646,6 +646,48 @@ export function adminRejectContentReview(id: string, reason?: string): Promise<u
   return request(`/api/webapp/admin/content-reviews/${id}/reject`, { method: "POST", body: { reason } });
 }
 
+export interface AdminPolicyFlag {
+  id: string;
+  source: string;
+  source_ref: string | null;
+  categories: string[];
+  tier: "block" | "flag";
+  score: number;
+  excerpt: string | null;
+  matched_terms: { category: string; term: string; tier: string }[];
+  created_at: string;
+}
+
+export interface AdminPolicyFlagUser {
+  user_id: string;
+  username: string | null;
+  first_name: string | null;
+  is_active: boolean | null;
+  is_creator: boolean;
+  total_score: number;
+  flag_count: number;
+  strikes_30d: number;
+  categories: string[];
+  last_at: string;
+  flags: AdminPolicyFlag[];
+}
+
+export function adminListPolicyFlags(): Promise<{ users: AdminPolicyFlagUser[] }> {
+  return request("/api/webapp/admin/policy-flags");
+}
+
+export function adminDismissPolicyFlag(id: string): Promise<unknown> {
+  return request(`/api/webapp/admin/policy-flags/${id}/dismiss`, { method: "POST" });
+}
+
+export function adminConfirmPolicyFlag(id: string): Promise<{ strike: { strikeNumber: number; action: string } | null }> {
+  return request(`/api/webapp/admin/policy-flags/${id}/confirm`, { method: "POST" });
+}
+
+export function adminDismissUserPolicyFlags(userId: string): Promise<{ dismissed: number }> {
+  return request(`/api/webapp/admin/policy-flags/user/${encodeURIComponent(userId)}/dismiss`, { method: "POST" });
+}
+
 export function apiLogout(): Promise<{ success: boolean }> {
   return request("/api/logout", { method: "POST" });
 }

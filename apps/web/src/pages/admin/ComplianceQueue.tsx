@@ -8,12 +8,40 @@ import {
   adminResolveRemovalRequest,
   adminListNcmecCases,
   adminUpdateNcmecCase,
+  adminListPolicyFlags,
+  adminDismissPolicyFlag,
+  adminConfirmPolicyFlag,
+  adminDismissUserPolicyFlags,
+  type AdminPolicyFlagUser,
   type AdminContentReview,
   type AdminRemovalRequest,
   type AdminNcmecCase,
 } from "@/lib/api";
 
-type Tab = "reviews" | "removals" | "ncmec";
+type Tab = "flags" | "reviews" | "removals" | "ncmec";
+
+const CATEGORY_NAMES: Record<string, string> = {
+  off_platform_payment: "Off-app payment",
+  off_platform_services: "Charging outside the app",
+  off_platform_competitor: "Other platforms",
+  paid_meetup: "Paid meetups",
+  scam: "Scam",
+  copy_paste_blast: "Copy-paste blast",
+  contact_sharing: "Contact sharing",
+  external_link: "External link",
+  content_sales: "Selling content",
+  staff_impersonation: "Posing as staff",
+};
+
+const SOURCE_NAMES: Record<string, string> = {
+  dm: "DM",
+  dm_blast: "DM blast",
+  chat: "Chat",
+  post: "Post",
+  profile: "Profile",
+  album_caption: "Album caption",
+  channel_video: "Channel video",
+};
 
 const card: React.CSSProperties = { background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" };
 const muted: React.CSSProperties = { color: "var(--pnp-text-secondary, #8E8E93)" };
@@ -35,6 +63,100 @@ function Preview({ r }: { r: AdminContentReview }) {
   return type === "video" && r.content_type !== "channel_video"
     ? <video src={url} controls preload="metadata" className="w-full max-h-72 rounded-lg bg-black" />
     : <img src={url} alt="" className="w-full max-h-72 object-contain rounded-lg bg-black" />;
+}
+
+function PolicyFlagsTab() {
+  const [users, setUsers] = useState<AdminPolicyFlagUser[] | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    adminListPolicyFlags().then((r) => setUsers(r.users)).catch(() => setError("Could not load policy flags."));
+  }, []);
+  useEffect(load, [load]);
+
+  const act = async (key: string, fn: () => Promise<unknown>, after?: (r: unknown) => void) => {
+    setBusy(key);
+    setError(null);
+    try {
+      const r = await fn();
+      after?.(r);
+      load();
+    } catch {
+      setError("Action failed — refresh and try again.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  if (!users) return <p className="text-sm" style={muted}>{error || "Loading…"}</p>;
+  if (!users.length) return <p className="text-sm" style={muted}>No open flags. The scanner checks new messages, posts and profiles every 5 minutes.</p>;
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs" style={muted}>
+        Members are grouped and sorted with creators and the highest scores first. Confirm adds a strike for off-app payment, scams and paid meetups (warn → 24h mute → review); dismiss clears a false alarm.
+      </p>
+      {error && <p className="text-xs text-red-400">{error}</p>}
+      {notice && <p className="text-xs" style={{ color: "#5ED1C4" }}>{notice}</p>}
+      {users.map((u) => (
+        <div key={u.user_id} className="rounded-xl p-4 space-y-3" style={card}>
+          <div className="flex justify-between items-start gap-3 flex-wrap">
+            <div>
+              <p className="text-sm font-semibold text-white">
+                @{u.username || u.user_id}
+                {u.is_creator && <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] font-bold" style={{ background: "rgba(230,145,56,0.2)", color: "#E69138" }}>CREATOR</span>}
+                {u.is_active === false && <span className="ml-2 text-[10px]" style={muted}>inactive</span>}
+              </p>
+              <p className="text-xs mt-0.5" style={muted}>
+                Score {u.total_score} · {u.flag_count} flag{u.flag_count === 1 ? "" : "s"} · {u.strikes_30d} strike{u.strikes_30d === 1 ? "" : "s"} in 30 days
+              </p>
+              <div className="flex gap-1 flex-wrap mt-2">
+                {u.categories.map((c) => (
+                  <span key={c} className="px-2 py-0.5 rounded-full text-[11px]" style={{ background: "rgba(255,255,255,0.08)", color: "#fff" }}>{CATEGORY_NAMES[c] || c}</span>
+                ))}
+              </div>
+            </div>
+            <button
+              disabled={busy === u.user_id}
+              onClick={() => window.confirm(`Dismiss all ${u.flag_count} flags for @${u.username || u.user_id}?`) && act(u.user_id, () => adminDismissUserPolicyFlags(u.user_id))}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold disabled:opacity-50" style={btnGhost}
+            >
+              Dismiss all
+            </button>
+          </div>
+          {u.flags.map((f) => (
+            <div key={f.id} className="rounded-lg p-3 space-y-2" style={{ background: "rgba(0,0,0,0.25)", border: `1px solid ${f.tier === "block" ? "rgba(239,68,68,0.35)" : "rgba(255,255,255,0.06)"}` }}>
+              <div className="flex justify-between text-[11px]" style={muted}>
+                <span>{SOURCE_NAMES[f.source] || f.source}{f.source_ref ? ` · ${f.source_ref}` : ""} · {f.categories.map((c) => CATEGORY_NAMES[c] || c).join(", ")}</span>
+                <span>{new Date(f.created_at).toLocaleString()}</span>
+              </div>
+              {f.excerpt && <p className="text-sm text-white whitespace-pre-wrap break-words">{f.excerpt}</p>}
+              {f.matched_terms.length > 0 && (
+                <p className="text-[11px]" style={muted}>Matched: {f.matched_terms.map((t) => `"${t.term}"`).join(", ")}</p>
+              )}
+              <div className="flex gap-2">
+                <button
+                  disabled={busy === f.id}
+                  onClick={() => act(f.id, () => adminConfirmPolicyFlag(f.id), (r) => {
+                    const strike = (r as { strike?: { strikeNumber: number; action: string } | null }).strike;
+                    setNotice(strike ? `Strike ${strike.strikeNumber} logged for @${u.username || u.user_id} (${strike.action.replace("_", " ")}).` : "Marked as a violation.");
+                  })}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold disabled:opacity-50" style={btnPrimary}
+                >
+                  Confirm
+                </button>
+                <button disabled={busy === f.id} onClick={() => act(f.id, () => adminDismissPolicyFlag(f.id))} className="px-3 py-1.5 rounded-lg text-xs font-semibold disabled:opacity-50" style={btnGhost}>
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function ReviewsTab() {
@@ -204,8 +326,9 @@ function NcmecTab() {
 
 export default function ComplianceQueue() {
   const navigate = useNavigate();
-  const [tab, setTab] = useState<Tab>("reviews");
+  const [tab, setTab] = useState<Tab>("flags");
   const tabs: { id: Tab; label: string }[] = [
+    { id: "flags", label: "Policy flags" },
     { id: "reviews", label: "Pre-publication review" },
     { id: "removals", label: "Removal requests" },
     { id: "ncmec", label: "NCMEC cases" },
@@ -225,7 +348,7 @@ export default function ComplianceQueue() {
       </button>
       <h1 className="text-2xl font-bold text-white">Compliance Queue</h1>
       <p className="text-sm mt-0.5 mb-4" style={muted}>
-        Creator content waiting for approval, removal requests with legal deadlines, and CSAM reports for NCMEC.
+        Off-app payment and scam flags, creator content waiting for approval, removal requests with legal deadlines, and CSAM reports for NCMEC.
       </p>
       <div className="flex gap-2 mb-5 flex-wrap">
         {tabs.map((t) => (
@@ -239,6 +362,7 @@ export default function ComplianceQueue() {
           </button>
         ))}
       </div>
+      {tab === "flags" && <PolicyFlagsTab />}
       {tab === "reviews" && <ReviewsTab />}
       {tab === "removals" && <RemovalsTab />}
       {tab === "ncmec" && <NcmecTab />}

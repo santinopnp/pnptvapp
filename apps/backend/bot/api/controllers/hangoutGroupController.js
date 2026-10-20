@@ -1,6 +1,7 @@
 'use strict';
 
 const { query, getClient } = require('../../../config/postgres');
+const { checkOutgoingText } = require('../../../services/antiLeakageGuard');
 const logger = require('../../../utils/logger');
 const { getRedis } = require('../../../config/redis');
 const socketSingleton = require('../../../services/socketSingleton');
@@ -1405,6 +1406,12 @@ const sendMessage = async (req, res) => {
   const parsedReplyToId = replyToId ? parseInt(replyToId, 10) : null;
 
   if (!content?.trim()) return res.status(400).json({ error: 'Content required' });
+
+  const guard = await checkOutgoingText({
+    userId: user.id, text: content, sourceType: 'hangout_chat', sourceRef: groupId,
+    isAdmin: user.role === 'admin' || user.role === 'superadmin',
+  });
+  if (!guard.ok) return res.status(guard.status).json(guard.body);
 
   try {
     // Auto-join main group if not already a member

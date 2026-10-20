@@ -2,6 +2,7 @@
 
 const complianceService = require('../../../services/complianceService');
 const contentReviewService = require('../../../services/contentReviewService');
+const policyScanService = require('../../../services/policyScanService');
 const logger = require('../../../utils/logger');
 
 function _clientIp(req) {
@@ -92,7 +93,43 @@ const rejectContentReview = async (req, res) => {
   }
 };
 
+const listPolicyFlags = async (req, res) => {
+  try {
+    return res.json({ users: await policyScanService.listOpenByUser(req.query) });
+  } catch (err) {
+    return _fail(res, err, 'listPolicyFlags');
+  }
+};
+
+const dismissPolicyFlag = async (req, res) => {
+  try {
+    return res.json({ flag: await policyScanService.dismissFlag(req.params.id, _adminId(req)) });
+  } catch (err) {
+    return _fail(res, err, 'dismissPolicyFlag');
+  }
+};
+
+const confirmPolicyFlag = async (req, res) => {
+  try {
+    return res.json(await policyScanService.confirmFlag(req.params.id, _adminId(req)));
+  } catch (err) {
+    return _fail(res, err, 'confirmPolicyFlag');
+  }
+};
+
+const dismissUserPolicyFlags = async (req, res) => {
+  try {
+    return res.json({ dismissed: await policyScanService.dismissAllForUser(req.params.userId, _adminId(req)) });
+  } catch (err) {
+    return _fail(res, err, 'dismissUserPolicyFlags');
+  }
+};
+
 module.exports = {
+  listPolicyFlags,
+  dismissPolicyFlag,
+  confirmPolicyFlag,
+  dismissUserPolicyFlags,
   createRemovalRequest,
   listRemovalRequests,
   resolveRemovalRequest,

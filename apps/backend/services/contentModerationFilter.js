@@ -184,9 +184,120 @@ const FORBIDDEN_PATTERNS = [
       String.raw`\bbc1[a-z0-9]{25,}\b`,
       String.raw`\b(?:btc|bitcoin|eth|ethereum|usdt|usdc|sol|solana|trc20|erc20|bep20)[\W_]+(?:addr(?:ess)?|wallet)[\W_]*[:=]`,
       String.raw`(?:send|tip|pay|drop|transfer)[\W_]+(?:me[\W_]+)?(?:some[\W_]+)?(?:usdc|usdt|eth|btc|bitcoin|sol|solana)[\W_]+(?:to|at|directly)\b`,
+      // More rails seen in creator DMs (2026-10-20)
+      String.raw`\bapple[\W_]?pay\b`,
+      String.raw`\bgoogle[\W_]?pay\b|\bg[\W_]?pay\b`,
+      String.raw`\brevolut\b`,
+      String.raw`\bwise\.com\b|\btransferwise\b`,
+      String.raw`\bskrill\b`,
+      String.raw`\bchime\b[\W_]+(?:tag|\$|account|me)`,
+      String.raw`\bpayoneer\b`,
+      String.raw`\bbinance[\W_]?pay\b`,
+      String.raw`\bremitly\b`,
+      String.raw`\bbizum\b`,
+      String.raw`\byape\b|\bplin\b`,
+      String.raw`\b(?:bancolombia|banco[\W_]+de[\W_]+bogot[aá]|davivienda|bbva)\b[\W_]+(?:cuenta|account|ahorros|n[uú]mero|#|\d)`,
+      String.raw`\b(?:cuenta|n[uú]mero[\W_]+de[\W_]+cuenta)[\W_]+(?:de[\W_]+)?(?:ahorros|corriente)\b`,
+      String.raw`\b(?:consignaci[oó]n|consigna(?:me|rme)|transferencia[\W_]+bancaria)\b`,
+      // Cashtags: "$name" (letters, not prices)
+      String.raw`(?:^|[\s(])\$[a-z][a-z0-9_]{2,19}\b`,
+      // Tron (USDT TRC20) and Lightning invoices
+      String.raw`\bT[1-9A-HJ-NP-Za-km-z]{33}\b`,
+      String.raw`\blnbc[0-9a-z]{20,}\b`,
+    ].join('|'), 'i'),
+  },
+  // ── Charging outside the app ────────────────────────────────────────
+  // Explicit steering of a sale off PNPtv: "pay me directly", "outside the
+  // app", "skip the fees". Selling inside the app (tips, PPV, subscriptions)
+  // is fine, so only the off-platform signal is matched.
+  {
+    category: 'off_platform_services',
+    pattern: new RegExp([
+      String.raw`\bpay(?:[\W_]+me)?[\W_]+(?:directly|direct|privately|off[\W_]?(?:the[\W_]+)?(?:app|platform|site)|outside)\b`,
+      String.raw`\b(?:outside|off)[\W_]+(?:of[\W_]+)?(?:the|this)[\W_]+(?:app|platform|site)\b`,
+      String.raw`\b(?:skip|avoid|no)[\W_]+(?:the[\W_]+)?(?:app|platform|site)?[\W_]*fees?\b`,
+      String.raw`\bcheaper[\W_]+(?:outside|off|on[\W_]+my|via|through|if[\W_]+you[\W_]+pay)`,
+      String.raw`\bfuera[\W_]+de[\W_]+(?:la[\W_]+)?(?:app|aplicaci[oó]n|plataforma|p[aá]gina)\b`,
+      String.raw`\bp[aá]ga(?:me|rme)[\W_]+(?:directo|directamente|por[\W_]+fuera|aparte)\b`,
+      String.raw`\bpor[\W_]+fuera[\W_]+(?:de[\W_]+)?(?:la[\W_]+)?(?:app|plataforma)?\b[\W_]*(?:m[aá]s[\W_]+barato|sin[\W_]+comisi[oó]n)?`,
+      String.raw`\bsin[\W_]+(?:comisi[oó]n|comisiones)\b`,
+    ].join('|'), 'i'),
+  },
+  // ── Paid in-person meetups (escort ads; FOSTA-SESTA risk) ───────────
+  {
+    category: 'paid_meetup',
+    pattern: new RegExp([
+      String.raw`\b(?:in[\W_]?call|out[\W_]?call)s?\b`,
+      String.raw`\b\d{2,4}[\W_]*(?:roses|rosas)\b|\b(?:roses|rosas)[\W_]*[:=]?[\W_]*\$?\d{2,4}\b`,
+      String.raw`(?:\$|usd[\W_]*|cop[\W_]*)\d{2,6}[\W_]*(?:\/|per|por|a|la)[\W_]*(?:hr|hour|hora|night|noche)\b`,
+      String.raw`\b(?:hourly|overnight)[\W_]+rates?\b|\brates?[\W_]*[:=][\W_]*\$?\d`,
+      String.raw`\bdonations?[\W_]+(?:for|por)[\W_]+(?:my|mi)[\W_]+(?:time|tiempo)\b`,
+      String.raw`\b(?:escort|prepago|scort)s?\b`,
+      String.raw`\b(?:generous|generosos?)[\W_]+(?:gents?|gentlemen|men|daddies|caballeros)\b`,
+    ].join('|'), 'i'),
+  },
+  // ── Scams and account takeover ──────────────────────────────────────
+  {
+    category: 'scam',
+    pattern: new RegExp([
+      String.raw`\b(?:steam|apple|itunes|google[\W_]?play|amazon|razer|vanilla|ebay|sephora|xbox|playstation|psn)[\W_]+(?:gift[\W_]?)?cards?\b`,
+      String.raw`\bgift[\W_]?cards?\b[\W_]+(?:code|codes|number|pic|photo|scratch)`,
+      String.raw`\btarjetas?[\W_]+(?:de[\W_]+)?regalo\b`,
+      String.raw`\b(?:verification|verify|unlock|activation|release|clearance|processing)[\W_]+fee\b`,
+      String.raw`\b(?:send|give|tell|share)[\W_]+(?:me[\W_]+)?(?:your[\W_]+)?(?:login|verification|2fa|otp|sms|security|one[\W_]?time)[\W_]+(?:code|pin)\b`,
+      String.raw`\b(?:seed|recovery|secret)[\W_]+phrase\b|\bprivate[\W_]+key\b`,
+      String.raw`\b(?:p[aá]same|d[aá]me|env[ií]ame)[\W_]+(?:el|tu)[\W_]+c[oó]digo\b`,
+      String.raw`\b(?:double|triple|10x|duplica|duplicar)[\W_]+(?:your|tu)[\W_]+(?:money|crypto|btc|bitcoin|usdt|dinero|inversi[oó]n)\b`,
+      String.raw`\bguaranteed[\W_]+(?:profit|returns?|income)\b|\bganancias?[\W_]+garantizadas?\b`,
+      String.raw`\bsugar[\W_]?(?:daddy|mommy|momma)\b.{0,60}\b(?:allowance|weekly|per[\W_]+week|send|first)\b`,
+      // Look-alike PNPtv domains (the real ones are pnptv.app and its subdomains)
+      String.raw`\bpnp[\W_]?tv[a-z0-9-]*\.(?!app\b)[a-z]{2,}\b`,
+      String.raw`\b[a-z0-9-]+-pnp[\W_]?tv\.[a-z]{2,}\b`,
     ].join('|'), 'i'),
   },
 ];
+
+// ── Flag-only signals ─────────────────────────────────────────────────
+// Not blocked (members legitimately swap numbers or share links), but
+// recorded by the background policy scanner for a human to review, and
+// weighted higher when they come from a creator or alongside a block-tier
+// match. See services/policyScanService.js.
+const FLAG_PATTERNS = [
+  {
+    category: 'contact_sharing',
+    pattern: new RegExp([
+      // Phone numbers: 10+ digits allowing separators / +country code
+      String.raw`(?:\+|\b00)?\d(?:[\s.\-()]*\d){9,14}\b`,
+      // Emails
+      String.raw`\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b`,
+      String.raw`\b(?:snap(?:chat)?|sc|kik|signal|session|wickr|threema|line[\W_]+id|wechat|grindr|sniffies|scruff|jack'?d|recon|squirt|bbrt|hornet|romeo)[\W_]*[:=@]`,
+      String.raw`\b(?:add|find|text|message|msg|dm|hit)[\W_]+me[\W_]+(?:on|at|in|via)[\W_]+(?:snap(?:chat)?|kik|signal|session|wickr|threema|line|wechat|grindr|sniffies|scruff|recon|hornet|telegram|whatsapp)\b`,
+      String.raw`\b(?:agr[eé]game|escr[ií]beme|b[uú]scame)[\W_]+(?:en|al|por)[\W_]+(?:snap|kik|signal|grindr|sniffies|telegram|whatsapp|wsp|insta)`,
+    ].join('|'), 'i'),
+  },
+  {
+    category: 'external_link',
+    // Any link that isn't PNPtv's own; allied socials (IG, X, TikTok) are
+    // excluded below in scanText().
+    pattern: /\bhttps?:\/\/[^\s<>"')]+|\b(?:www\.)[^\s<>"')]+|\b(?:bit\.ly|tinyurl\.com|t\.co|cutt\.ly|rb\.gy|is\.gd|goo\.gl|ow\.ly|shorturl\.at|tiny\.cc|rebrand\.ly)\/[^\s<>"')]+/i,
+  },
+  {
+    category: 'content_sales',
+    pattern: new RegExp([
+      String.raw`\b(?:selling|sell|vendo|venta[\W_]+de)[\W_]+(?:my[\W_]+|mis[\W_]+)?(?:packs?|content|contenido|nudes|vids|videos|pics|fotos)\b`,
+      String.raw`\b(?:packs?|nudes)[\W_]+(?:for[\W_]+sale|disponibles?|available|en[\W_]+venta)\b`,
+      String.raw`\b(?:custom|personalizados?)[\W_]+(?:videos?|vids|content|contenido)[\W_]+(?:dm|inbox|hmu|escr[ií]beme)\b`,
+    ].join('|'), 'i'),
+  },
+  {
+    category: 'staff_impersonation',
+    pattern: /\b(?:pnp[\W_]?tv|pnptv!?)[\W_]+(?:support|soporte|admin|security|seguridad|team|equipo|moderat(?:or|ion))\b/i,
+  },
+];
+
+// Link hosts that are allowed without a flag: PNPtv itself and the allied
+// discovery socials named in the off_platform_competitor note above.
+const ALLOWED_LINK_HOSTS = /^(?:[a-z0-9-]+\.)*(?:pnptv\.app|instagram\.com|x\.com|twitter\.com|tiktok\.com)$/i;
 
 // Human-readable labels for each category. Surfaced directly to the user in
 // the error message so they know WHY the save was rejected without needing
@@ -201,6 +312,9 @@ const CATEGORY_LABELS = {
   drug_sales: 'drug sales / dealing',
   off_platform_competitor: 'promotion of competing adult platforms (OnlyFans, Fansly, cam sites, link farms) — you may keep external accounts, but you may not promote them on PNPtv',
   off_platform_payment: 'off-platform payment methods (Cash App, Venmo, Zelle, PayPal, personal crypto wallets) — all PNPtv monetization must go through the in-app Wallet',
+  off_platform_services: 'charging for content or services outside PNPtv — all sales must go through the in-app Wallet',
+  paid_meetup: 'paid in-person meetups (rates, "roses", incall/outcall)',
+  scam: 'scam or account-takeover language (gift cards, fees to unlock, login codes, fake PNPtv sites)',
 };
 
 // Categories that specifically indicate an anti-leakage violation. Callers
@@ -209,16 +323,105 @@ const CATEGORY_LABELS = {
 const ANTI_LEAKAGE_CATEGORIES = new Set([
   'off_platform_competitor',
   'off_platform_payment',
+  'off_platform_services',
+  'paid_meetup',
+  'scam',
 ]);
 
-function findForbiddenTerms(text) {
-  if (!text || typeof text !== 'string') return [];
+// Categories whose keywords are checked again after undoing obfuscation
+// (look-alike letters, leetspeak, spaced-out letters). Not used for
+// categories whose patterns depend on exact symbols (addresses, prices).
+const NORMALIZED_CATEGORIES = new Set([
+  'off_platform_competitor',
+  'off_platform_payment',
+  'off_platform_services',
+  'scam',
+]);
+
+const ZERO_WIDTH = /[\u00AD\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]/g;
+const HOMOGLYPHS = {
+  'а': 'a', 'е': 'e', 'о': 'o', 'р': 'p', 'с': 'c', 'х': 'x', 'у': 'y', 'і': 'i', 'ј': 'j', 'ѕ': 's',
+  'ԁ': 'd', 'ո': 'n', 'ν': 'v', 'ο': 'o', 'α': 'a', 'ε': 'e', 'ι': 'i', 'κ': 'k', 'ρ': 'p', 'τ': 't',
+  'υ': 'u', 'χ': 'x', 'ѵ': 'v', 'ɑ': 'a', 'ɡ': 'g', 'ⅼ': 'l',
+};
+const LEET = { '0': 'o', '1': 'l', '3': 'e', '4': 'a', '5': 's', '7': 't', '@': 'a', '$': 's', '|': 'l', '!': 'i' };
+
+/**
+ * Undo common evasion: Unicode compatibility forms (fullwidth, math letters),
+ * zero-width characters, look-alike Cyrillic/Greek letters and leetspeak.
+ */
+function normalizeForScan(text) {
+  return String(text)
+    .normalize('NFKC')
+    .replace(ZERO_WIDTH, '')
+    .toLowerCase()
+    .replace(/[^\x00-\x7f]/g, (ch) => HOMOGLYPHS[ch] || ch)
+    .replace(/[0134578@$|!]/g, (ch) => LEET[ch]);
+}
+
+/**
+ * Joins runs of single characters split by separators ("v e n m o",
+ * "c.a.s.h a.p.p") so keyword patterns can see them.
+ */
+function collapseSpacedLetters(text) {
+  return text.replace(/\b(?:[a-z0-9][\s._\-*·•|/\\]+){3,}[a-z0-9]\b/g, (run) => run.replace(/[^a-z0-9]/g, ''));
+}
+
+function _matchAll(defs, text, normalizedVariants) {
   const matches = [];
-  for (const { category, pattern } of FORBIDDEN_PATTERNS) {
-    const m = text.match(pattern);
+  for (const { category, pattern } of defs) {
+    let m = text.match(pattern);
+    if (!m && NORMALIZED_CATEGORIES.has(category)) {
+      for (const variant of normalizedVariants) {
+        m = variant.match(pattern);
+        if (m) break;
+      }
+    }
     if (m) matches.push({ category, term: m[0] });
   }
   return matches;
+}
+
+function _variants(text) {
+  const normalized = normalizeForScan(text);
+  const collapsed = collapseSpacedLetters(normalized);
+  return collapsed === normalized ? [normalized] : [normalized, collapsed];
+}
+
+/** Block-tier matches (what assertCleanText rejects). */
+function findForbiddenTerms(text) {
+  if (!text || typeof text !== 'string') return [];
+  return _matchAll(FORBIDDEN_PATTERNS, text, _variants(text));
+}
+
+/**
+ * Every signal in the text, block-tier and flag-only, for the background
+ * policy scanner. Never throws.
+ *
+ * @returns {Array<{category:string, term:string, tier:'block'|'flag'}>}
+ */
+function scanText(text) {
+  if (!text || typeof text !== 'string') return [];
+  const variants = _variants(text);
+  const hits = _matchAll(FORBIDDEN_PATTERNS, text, variants).map((h) => ({ ...h, tier: 'block' }));
+  for (const h of _matchAll(FLAG_PATTERNS, text, variants)) {
+    if (h.category === 'external_link') {
+      const links = text.match(new RegExp(FLAG_PATTERNS.find((f) => f.category === 'external_link').pattern.source, 'gi')) || [];
+      const external = links.find((l) => {
+        try {
+          const host = new URL(/^https?:/i.test(l) ? l : `https://${l}`).hostname;
+          return !ALLOWED_LINK_HOSTS.test(host);
+        } catch {
+          return true;
+        }
+      });
+      if (!external) continue;
+      hits.push({ category: h.category, term: external, tier: 'flag' });
+      continue;
+    }
+    hits.push({ ...h, tier: 'flag' });
+  }
+  return hits;
 }
 
 /**
@@ -257,8 +460,11 @@ function assertCleanText(text, field = 'text') {
 
 module.exports = {
   FORBIDDEN_PATTERNS,
+  FLAG_PATTERNS,
   CATEGORY_LABELS,
   ANTI_LEAKAGE_CATEGORIES,
+  normalizeForScan,
   findForbiddenTerms,
+  scanText,
   assertCleanText,
 };
