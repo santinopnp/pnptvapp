@@ -305,6 +305,7 @@ const Join = lazy(() => import("@/pages/Join"));
 const BecomeModel = lazy(() => import("@/pages/BecomeModel"));
 const CmsPage = lazy(() => import("@/pages/CmsPage"));
 const BlockedJurisdictionPage = lazy(() => import("@/pages/BlockedJurisdictionPage"));
+const TakedownRequestPage = lazy(() => import("@/pages/TakedownRequestPage"));
 const LandingPage = lazy(() => import("@/pages/LandingPage"));
 const BlogPage = lazy(() => import("@/pages/BlogPage"));
 const AboutPage = lazy(() => import("@/pages/AboutPage"));
@@ -368,6 +369,7 @@ const SelfCareCenter = lazy(() => import("@/pages/SelfCareCenter"));
 const CristinaPage = lazy(() => import("@/components/CristinaWidget").then((m) => ({ default: m.CristinaWidget })));
 const PrimeChannel = lazy(() => import("@/pages/admin/PrimeChannel"));
 const Compliance2257 = lazy(() => import("@/pages/admin/Compliance2257"));
+const ComplianceQueue = lazy(() => import("@/pages/admin/ComplianceQueue"));
 const AdminInviteLinks = lazy(() => import("@/pages/admin/InviteLinks"));
 const AdminManualActivations = lazy(() => import("@/pages/admin/ManualActivations"));
 const ReferralAdmin = lazy(() => import("@/pages/admin/ReferralAdmin"));
@@ -1175,6 +1177,14 @@ export const router = createBrowserRouter([
         ),
       },
       {
+        path: "compliance-queue",
+        element: (
+          <ModuleLoader>
+            <ComplianceQueue />
+          </ModuleLoader>
+        ),
+      },
+      {
         path: "invite-links",
         element: (
           <ModuleLoader>
@@ -1338,6 +1348,16 @@ export const router = createBrowserRouter([
     element: (
       <ModuleLoader>
         <BlockedJurisdictionPage />
+      </ModuleLoader>
+    ),
+  },
+  {
+    // Public removal request form (TAKE IT DOWN Act / depicted-person
+    // complaints). Standalone like /blocked-jurisdiction: no login, no Layout.
+    path: "/takedown",
+    element: (
+      <ModuleLoader>
+        <TakedownRequestPage />
       </ModuleLoader>
     ),
   },

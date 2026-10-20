@@ -452,7 +452,11 @@ const banUser = async (req, res) => {
         );
         await query(
           `UPDATE social_posts SET is_deleted = false, updated_at = NOW()
-            WHERE user_id = $1 AND is_deleted = true`,
+            WHERE user_id = $1 AND is_deleted = true
+              -- Never publish posts held for or rejected in pre-publication review.
+              AND NOT EXISTS (SELECT 1 FROM content_reviews cr
+                               WHERE cr.content_type = 'social_post' AND cr.content_id = social_posts.id::text
+                                 AND cr.status <> 'approved')`,
           [userId]
         );
         await query(
@@ -836,7 +840,11 @@ const bulkUpdateUsers = async (req, res) => {
             );
             await query(
               `UPDATE social_posts SET is_deleted = false, updated_at = NOW()
-                WHERE user_id = $1 AND is_deleted = true`,
+                WHERE user_id = $1 AND is_deleted = true
+                  -- Never publish posts held for or rejected in pre-publication review.
+                  AND NOT EXISTS (SELECT 1 FROM content_reviews cr
+                                   WHERE cr.content_type = 'social_post' AND cr.content_id = social_posts.id::text
+                                     AND cr.status <> 'approved')`,
               [userId]
             );
             await query(

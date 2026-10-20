@@ -437,20 +437,30 @@ app.use(ipTracker); // Log every authenticated request IP for security
 // TN (Protect Tennessee Minors Act — hourly re-verify + 7yr data retention),
 // FL (HB 3). UK (Online Safety Act 2023 / Ofcom HEAA).
 //
-// Soft bypass: users who are misidentified by mobile-carrier exit nodes
-// (T-Mobile/AT&T/Verizon route via TX regardless of actual location) can
-// self-certify via POST /api/public/geo-bypass, which sets a session flag
-// allowing them through. This is legally defensible — the platform made a
-// good-faith block; the user self-certified a location error.
+// 2026-10-20 — age-verification blocks are HARD blocks. Free Speech Coalition
+// v. Paxton (2025) upheld these laws; a self-declared birth date does not
+// satisfy them, and neither does a self-certified "I'm not really there".
+// The soft bypasses below (POST /api/public/geo-bypass, geo invite tokens,
+// CO creator whitelist, paying-member grandfathering) apply ONLY to plain
+// country blocks, never to AGE_VERIFICATION_* blocks. Admins still bypass
+// for debugging. Re-check this list with counsel whenever a state law
+// changes; unblock a state only once real ID-based age verification exists.
 //
 // Returns 451 (Unavailable For Legal Reasons) on API; redirects to a static
 // /blocked-jurisdiction page on browser navigation. Admins bypass for debug.
 // Cached per-IP in Redis 1h to avoid the geoip lookup on every request.
 // (geoip module is already required at the top of the file — reuse it.)
-const BLOCKED_US_REGIONS = new Set();
+// US states with adult-site age-verification laws in force (Oct 2026).
+const BLOCKED_US_REGIONS = new Set([
+  'AL', 'AR', 'AZ', 'FL', 'GA', 'ID', 'IN', 'KS', 'KY', 'LA', 'MO', 'MS', 'MT',
+  'NC', 'ND', 'NE', 'OH', 'OK', 'SC', 'SD', 'TN', 'TX', 'UT', 'VA', 'WY',
+]);
+// Countries whose age-verification regimes require more than self-declaration.
+const AGE_VERIFICATION_COUNTRIES = new Set(['GB']);
 // CO + VE geo-blocks lifted 2026-06-18 — full open access.
 // CO re-blocked 2026-07-21 per operator instruction, then lifted again
 // 2026-07-23 per operator instruction — full open access restored.
+// Plain country blocks (soft bypasses allowed) go here.
 const BLOCKED_COUNTRIES = new Set();
 // Per-user geo-block whitelist — bypasses the hard country block for specific user IDs.
 const GEO_BLOCK_USER_WHITELIST = new Set(['8599671840']); // SantinoFurioso
@@ -505,6 +515,9 @@ const GEO_BLOCK_BYPASS_PATHS = [
   /^\/api\/public\/geo-bypass$/,
   // Geo invite token redemption must be reachable before the block fires
   /^\/api\/public\/geo-invite\//,
+  // Removal requests (TAKE IT DOWN Act / complaints) must be reachable by
+  // anyone depicted, wherever they are.
+  /^\/api\/public\/removal-requests$/,
   // lifetime100 purchase flow is exempt by operator policy
   /^\/api\/public\/lifetime100\b/,
   // yearly50 purchase flow is exempt by operator policy
@@ -523,11 +536,14 @@ function classifyGeo(ip) {
   if (!lookup) return null;
   const country = lookup.country;
   const region = lookup.region || '';
-  if (BLOCKED_COUNTRIES.has(country)) {
-    return { blocked: true, country, region, reason: `${country}_JURISDICTION_BLOCK` };
+  if (AGE_VERIFICATION_COUNTRIES.has(country)) {
+    return { blocked: true, ageVerification: true, country, region, reason: `${country}_AGE_VERIFICATION` };
   }
   if (country === 'US' && BLOCKED_US_REGIONS.has(region)) {
-    return { blocked: true, country, region, reason: `US_${region}_AGE_VERIFICATION` };
+    return { blocked: true, ageVerification: true, country, region, reason: `US_${region}_AGE_VERIFICATION` };
+  }
+  if (BLOCKED_COUNTRIES.has(country)) {
+    return { blocked: true, country, region, reason: `${country}_JURISDICTION_BLOCK` };
   }
   return { blocked: false, country, region };
 }
@@ -756,34 +772,10 @@ app.use(async (req, res, next) => {
   // Admin bypass — once authenticated, admins can travel into blocked regions
   // to debug. Pre-auth requests fall through to the geo check.
   if (EntitlementAccessService.isEffectivelyAdmin(req.session?.user)) return next();
-  if (req.session?.user?.id && GEO_BLOCK_USER_WHITELIST.has(String(req.session.user.id))) return next();
-
-  // User-acknowledged bypass — session flag set via POST /api/public/geo-bypass.
-  // Honour it for up to 24h so carrier-misidentified users are not repeatedly
-  // blocked throughout the same session.
-  if (req.session?.geoBypass === true) {
-    const bypassAge = Date.now() - (req.session.geoBypassAt || 0);
-    if (bypassAge < 24 * 60 * 60 * 1000) return next();
-    // Expired — clear and fall through to re-evaluate
-    delete req.session.geoBypass;
-    delete req.session.geoBypassAt;
-  }
-
-  // Admin-issued geo invite bypass — set by GET /api/public/geo-invite/:token.
-  // Valid for the lifetime of the session (no expiry — user redeemed a real invite).
-  if (req.session?.geoInviteBypass === true) return next();
-
-  // Grandfather clause: authenticated users who ALREADY paid for an active
-  // membership (prime, pnp-member, pnp-col) keep access even from a blocked
-  // region. Refunding 25+ existing CO members every time the operator toggles
-  // a country would generate more support work than the block itself saves.
-  // 5-minute Redis cache keeps per-request cost negligible.
-  // Also honours the auto-refreshed CO_CREATOR_WHITELIST so active Colombian
-  // creators can keep posting/streaming/receiving tips.
-
   try {
     const ip = req.ip;
-    const cacheKey = `geoblock:${ip}`;
+    // v2: cached results now carry the ageVerification flag.
+    const cacheKey = `geoblock:v2:${ip}`;
     let cached = await geoCache.get(cacheKey);
     let result;
     if (cached) {
@@ -793,10 +785,33 @@ app.use(async (req, res, next) => {
       if (result) await geoCache.set(cacheKey, JSON.stringify(result), 3600);
     }
     if (result?.blocked) {
-      // Paying-member + creator exemptions only run when the IP would
-      // otherwise block, keeping the fast path on unblocked traffic clean.
+      // Soft bypasses apply to plain country blocks only — never to
+      // age-verification blocks (see the comment above BLOCKED_US_REGIONS).
       const userId = req.session?.user?.id ? String(req.session.user.id) : null;
-      if (userId) {
+      if (!result.ageVerification) {
+        if (userId && GEO_BLOCK_USER_WHITELIST.has(userId)) return next();
+
+        // User-acknowledged bypass — session flag set via POST /api/public/geo-bypass.
+        // Honour it for up to 24h so carrier-misidentified users are not repeatedly
+        // blocked throughout the same session.
+        if (req.session?.geoBypass === true) {
+          const bypassAge = Date.now() - (req.session.geoBypassAt || 0);
+          if (bypassAge < 24 * 60 * 60 * 1000) return next();
+          delete req.session.geoBypass;
+          delete req.session.geoBypassAt;
+        }
+
+        // Admin-issued geo invite bypass — set by GET /api/public/geo-invite/:token.
+        if (req.session?.geoInviteBypass === true) return next();
+      }
+
+      // Grandfather clause: authenticated users who ALREADY paid for an active
+      // membership (prime, pnp-member, pnp-col) keep access even from a blocked
+      // country. Refunding 25+ existing CO members every time the operator toggles
+      // a country would generate more support work than the block itself saves.
+      // Also honours the auto-refreshed CO_CREATOR_WHITELIST so active Colombian
+      // creators can keep posting/streaming/receiving tips.
+      if (userId && !result.ageVerification) {
         if (CO_CREATOR_WHITELIST.has(userId)) {
           logger.info('Geo-block bypassed (CO creator)', { ip, userId, country: result.country });
           return next();
@@ -830,7 +845,11 @@ app.use(async (req, res, next) => {
       const jParam = encodeURIComponent(result.region || result.country);
       // Colombia socios flow needs the Spanish invite-card variant of the
       // blocked page (branches on reason=colombia in blocked-jurisdiction.html).
-      const reasonParam = result.country === 'CO' ? '&reason=colombia' : '';
+      // Age-verification blocks hide the self-certify bypass, which the
+      // middleware no longer honours for them.
+      const reasonParam = result.ageVerification
+        ? '&reason=age_verification'
+        : (result.country === 'CO' ? '&reason=colombia' : '');
       return res.redirect(302, `/blocked-jurisdiction?j=${jParam}${reasonParam}`);
     }
   } catch (err) {
@@ -1479,7 +1498,7 @@ app.use(async (req, res, next) => {
         const { getPool } = require('../../config/postgres');
         const { rows } = await getPool().query(
           `SELECT 1 FROM creator_media
-            WHERE (url = $1 OR thumb_url = $1) AND is_premium = FALSE
+            WHERE (url = $1 OR thumb_url = $1) AND is_premium = FALSE AND review_status = 'approved'
             LIMIT 1`,
           [req.path]
         );
@@ -13045,6 +13064,19 @@ app.delete('/api/webapp/me/face-match-consent', requireSessionAuthNoConsent, soc
 // Existing members re-accept the updated Terms + Privacy Policy (safety scanning).
 app.get('/api/webapp/me/policy-update', requireSessionAuth, asyncHandler(safetyConsentController.getPolicyUpdate));
 app.post('/api/webapp/me/policy-update/accept', requireSessionAuth, socialActionLimiter, asyncHandler(safetyConsentController.acceptPolicyUpdate));
+
+// ── Compliance: removal requests, NCMEC cases, pre-publication review ──────
+const complianceController = require('./controllers/complianceController');
+const removalRequestLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false });
+// Public: TAKE IT DOWN Act (48h) and depicted-person complaints (7 business days).
+app.post('/api/public/removal-requests', removalRequestLimiter, asyncHandler(complianceController.createRemovalRequest));
+app.get('/api/webapp/admin/removal-requests', adminGuard, asyncHandler(complianceController.listRemovalRequests));
+app.post('/api/webapp/admin/removal-requests/:id/resolve', adminGuard, asyncHandler(complianceController.resolveRemovalRequest));
+app.get('/api/webapp/admin/ncmec-cases', adminGuard, asyncHandler(complianceController.listNcmecCases));
+app.post('/api/webapp/admin/ncmec-cases/:id', adminGuard, asyncHandler(complianceController.updateNcmecCase));
+app.get('/api/webapp/admin/content-reviews', adminGuard, asyncHandler(complianceController.listContentReviews));
+app.post('/api/webapp/admin/content-reviews/:id/approve', adminGuard, asyncHandler(complianceController.approveContentReview));
+app.post('/api/webapp/admin/content-reviews/:id/reject', adminGuard, asyncHandler(complianceController.rejectContentReview));
 
 // GET /api/proxy/live/performers — List performers from Directus for tip picker
 app.get('/api/proxy/live/performers', requireSessionAuth, livePerformersLimiter, asyncHandler(async (req, res) => {
@@ -24684,13 +24716,19 @@ app.delete('/api/webapp/creators/media/:id',
         }
 
         try {
+          const ContentReviewService = require('../../services/contentReviewService');
+          const heldForReview = await ContentReviewService.requiresReviewForUser(meta.userId);
           const { rows: mediaRows } = await getPool().query(
-            `INSERT INTO creator_media (creator_id, media_type, url, thumb_url, caption, is_premium, sort_order, duration_seconds)
+            `INSERT INTO creator_media (creator_id, media_type, url, thumb_url, caption, is_premium, sort_order, duration_seconds, review_status)
              VALUES ($1, $2, $3, $4, $5, $6,
-               COALESCE((SELECT COALESCE(MAX(sort_order), -1) + 1 FROM creator_media WHERE creator_id = $1), 0), $7)
+               COALESCE((SELECT COALESCE(MAX(sort_order), -1) + 1 FROM creator_media WHERE creator_id = $1), 0), $7, $8)
              RETURNING id`,
-            [meta.userId, meta.mediaType, url, thumbUrl, meta.caption || null, meta.isPremium || false, durationSeconds]
+            [meta.userId, meta.mediaType, url, thumbUrl, meta.caption || null, meta.isPremium || false, durationSeconds,
+             heldForReview ? 'pending' : 'approved']
           );
+          if (heldForReview && mediaRows[0]?.id) {
+            await ContentReviewService.holdCreatorMedia(mediaRows[0].id, meta.userId);
+          }
 
           if (meta.mediaType === 'video' && meta.isPremium) {
             const ContentComplianceService = require('../../services/contentComplianceService');
@@ -24781,7 +24819,7 @@ app.delete('/api/webapp/creators/media/:id',
       const userId = String(req.session.user.id);
       const limit = Math.min(parseInt(req.query.limit, 10) || 100, 500);
       const { rows } = await getPool().query(
-        `SELECT id, media_type, url, thumb_url, caption, is_premium, sort_order, created_at
+        `SELECT id, media_type, url, thumb_url, caption, is_premium, sort_order, created_at, review_status
          FROM creator_media
          WHERE creator_id = $1
          ORDER BY sort_order ASC, created_at DESC
@@ -24799,6 +24837,7 @@ app.delete('/api/webapp/creators/media/:id',
           isPremium: r.is_premium,
           sortOrder: r.sort_order,
           createdAt: r.created_at,
+          reviewStatus: r.review_status,
         })),
       });
     })
@@ -24875,14 +24914,18 @@ app.delete('/api/webapp/creators/media/:id',
       }
 
       // Insert row — sort_order defaults to MAX+1 if not supplied
+      const ContentReviewService = require('../../services/contentReviewService');
+      const heldForReview = await ContentReviewService.requiresReviewForUser(userId);
       const { rows: inserted } = await getPool().query(
-        `INSERT INTO creator_media (creator_id, media_type, url, thumb_url, caption, is_premium, sort_order, duration_seconds)
+        `INSERT INTO creator_media (creator_id, media_type, url, thumb_url, caption, is_premium, sort_order, duration_seconds, review_status)
          VALUES ($1, $2, $3, $4, $5, $6,
-           COALESCE($7, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM creator_media WHERE creator_id = $1)), $8)
-         RETURNING id, media_type, url, thumb_url, caption, is_premium, sort_order, created_at`,
-        [userId, mediaType, assetUrl, thumbUrl, caption, isPremium, sortOrder !== undefined ? sortOrder : null, durationSeconds]
+           COALESCE($7, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM creator_media WHERE creator_id = $1)), $8, $9)
+         RETURNING id, media_type, url, thumb_url, caption, is_premium, sort_order, created_at, review_status`,
+        [userId, mediaType, assetUrl, thumbUrl, caption, isPremium, sortOrder !== undefined ? sortOrder : null, durationSeconds,
+         heldForReview ? 'pending' : 'approved']
       );
       const row = inserted[0];
+      if (heldForReview) await ContentReviewService.holdCreatorMedia(row.id, userId);
 
       if (isVideo && isPremium) {
         const ContentComplianceService = require('../../services/contentComplianceService');
@@ -24902,6 +24945,7 @@ app.delete('/api/webapp/creators/media/:id',
           isPremium: row.is_premium,
           sortOrder: row.sort_order,
           createdAt: row.created_at,
+          reviewStatus: row.review_status,
         },
       });
     })
@@ -25122,7 +25166,7 @@ app.get('/api/public/creator/:username',
     const { rows: mediaRows } = await pool.query(
       `SELECT id, media_type, url, thumb_url, caption, is_premium, sort_order, created_at
        FROM creator_media
-       WHERE creator_id = $1
+       WHERE creator_id = $1 AND review_status = 'approved'
        ORDER BY sort_order ASC, created_at DESC`,
       [creatorId]
     );
@@ -25298,7 +25342,7 @@ app.get('/api/public/creator/:username',
            COUNT(*) FILTER (WHERE media_type IN ('image', 'photo')) AS photos,
            COUNT(*) FILTER (WHERE media_type = 'video') AS videos
          FROM creator_media
-         WHERE creator_id = $1 AND is_premium = true`,
+         WHERE creator_id = $1 AND is_premium = true AND review_status = 'approved'`,
         [creatorId]
       );
       photoCount = Number(mcRows[0]?.photos ?? 0);

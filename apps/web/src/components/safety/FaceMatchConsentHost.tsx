@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useI18n } from "@/lib/i18n";
 import { grantFaceMatchConsent } from "@/lib/api";
-import { installFaceMatchConsentInterceptor, onFaceMatchConsentRequired } from "@/lib/faceMatchConsentEvents";
+import { installApiResponseEvents, onFaceMatchConsentRequired } from "@/lib/apiResponseEvents";
 
 /**
  * Shows the optional face matching prompt whenever the backend blocks a
@@ -16,7 +16,7 @@ export function FaceMatchConsentHost() {
   const [allowed, setAllowed] = useState(false);
 
   useEffect(() => {
-    installFaceMatchConsentInterceptor();
+    installApiResponseEvents();
     return onFaceMatchConsentRequired(() => {
       setAllowed(false);
       setError(null);

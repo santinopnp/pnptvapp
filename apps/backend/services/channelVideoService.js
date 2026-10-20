@@ -800,6 +800,16 @@ async function publishVideo({ videoId, userId, isAdmin }) {
     throw e;
   }
 
+  // Pre-publication review (card-network rules): creators' videos publish only
+  // after a moderator approves. Approval calls back here with isAdmin = true.
+  if (!isAdmin) {
+    const contentReviewService = require('./contentReviewService');
+    const review = await contentReviewService.submitChannelVideo(videoId, v.uploader_id);
+    if (review.status !== 'approved') {
+      return { ...shapeForApi(v), review_status: review.status };
+    }
+  }
+
   const ch = (await query(
     `SELECT cc.*, u.username AS creator_username, u.first_name AS creator_first_name
        FROM creator_channels cc
