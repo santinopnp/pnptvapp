@@ -2907,6 +2907,19 @@ export interface MessageReaction {
   reacted_by_me: boolean;
 }
 
+export interface PollOption { id: string; text: string; }
+export interface PollResult { optionId: string; count: number; }
+export interface PollData {
+  id: string;
+  question: string;
+  options: PollOption[];
+  allow_multiple: boolean;
+  closes_at?: string | null;
+  results: PollResult[];
+  totalVotes: number;
+  userVote: string[] | null;
+}
+
 export interface GroupMessage {
   id: number;
   room: string;
@@ -2930,8 +2943,9 @@ export interface GroupMessage {
   is_deleted?: boolean;
   is_pinned?: boolean;
   reactions?: MessageReaction[];
-  message_type?: "text" | "post_card" | string;
+  message_type?: "text" | "post_card" | "poll" | string;
   meta?: MessageMeta | null;
+  poll?: PollData | null;
 }
 
 export interface ForwardSource {

@@ -88,6 +88,9 @@ import {
   type MessageReaction,
   type ForwardTarget,
   type ForwardSource,
+  type PollOption,
+  type PollResult,
+  type PollData,
 } from "@/lib/api";
 import SocialPostCard from "@/components/social/SocialPostCard";
 import { PostComposer } from "@/components/PostComposer";
@@ -151,21 +154,6 @@ const UX_STYLES = `
   animation: slideUpSheet 0.22s cubic-bezier(0.32, 0.72, 0, 1);
 }
 `;
-
-// ─── Poll types ──────────────────────────────────────────────────────────────
-
-interface PollOption { id: string; text: string; }
-interface PollResult { optionId: string; count: number; }
-interface PollData {
-  id: string;
-  question: string;
-  options: PollOption[];
-  allow_multiple: boolean;
-  closes_at?: string | null;
-  results: PollResult[];
-  totalVotes: number;
-  userVote: string[] | null;
-}
 
 // ─── PollMessage ─────────────────────────────────────────────────────────────
 
@@ -391,7 +379,7 @@ function PollComposer({
         onChange={(e) => setQuestion(e.target.value.slice(0, 200))}
         placeholder="Ask a question…"
         className="w-full text-sm text-white placeholder-white/30 rounded-xl px-3 py-2 mb-2 outline-none focus:ring-1"
-        style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.10)", focusRingColor: "#7B61FF" }}
+        style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.10)" }}
         maxLength={200}
         autoFocus
       />
