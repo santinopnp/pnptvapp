@@ -595,6 +595,7 @@ services:
     ports:
       - "127.0.0.1:3001:3001"  # Bind to localhost only — no direct external access
     volumes:
+      - ./apps/public:/app/apps/public:ro
       - ./public/uploads:/app/public/uploads
       - /var/www/pnptvbot-sandbox/public/media:/media
       - ./logs:/app/logs

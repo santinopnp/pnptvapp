@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>PNPtv - Políticas</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #120d14;
+            --text-main: #FFFFFF;
+            --text-muted: #8E8E93;
+            --neon-pink: #D4007A;
+            --neon-amber: #E69138;
+            --glass-bg: rgba(44, 44, 46, 0.7);
+            --glass-border: rgba(255, 255, 255, 0.08);
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            line-height: 1.7;
+            padding: 24px 16px 48px;
+        }
+        .container {
+            max-width: 720px;
+            margin: 0 auto;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 32px;
+            padding-bottom: 24px;
+            border-bottom: 1px solid var(--glass-border);
+        }
+        .header h1 {
+            font-size: 24px;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--neon-pink), var(--neon-amber));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 8px;
+        }
+        .header .updated {
+            font-size: 13px;
+            color: var(--text-muted);
+        }
+        .tab-nav {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 32px;
+            border-bottom: 1px solid var(--glass-border);
+            padding-bottom: 0;
+        }
+        .tab-btn {
+            padding: 10px 20px;
+            background: none;
+            border: none;
+            border-bottom: 2px solid transparent;
+            color: var(--text-muted);
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            font-family: inherit;
+            transition: color 0.2s, border-color 0.2s;
+            margin-bottom: -1px;
+        }
+        .tab-btn.active {
+            color: var(--neon-amber);
+            border-bottom-color: var(--neon-amber);
+        }
+        .tab-btn:hover { color: var(--text-main); }
+        .tab-panel { display: none; }
+        .tab-panel.active { display: block; }
+        .intro {
+            font-size: 14px;
+            color: var(--text-muted);
+            margin-bottom: 32px;
+        }
+        h2 {
+            font-size: 17px;
+            font-weight: 600;
+            color: var(--text-main);
+            margin: 28px 0 12px;
+            padding-left: 12px;
+            border-left: 3px solid var(--neon-amber);
+        }
+        .terms-section h2 {
+            border-left-color: var(--neon-pink);
+        }
+        h3 {
+            font-size: 15px;
+            font-weight: 600;
+            color: rgba(255,255,255,0.9);
+            margin: 16px 0 8px;
+        }
+        p, li {
+            font-size: 14px;
+            color: rgba(255,255,255,0.8);
+            margin-bottom: 10px;
+        }
+        ul {
+            padding-left: 20px;
+            margin-bottom: 16px;
+        }
+        li { margin-bottom: 6px; }
+        strong { color: var(--text-main); font-weight: 600; }
+        a {
+            color: var(--neon-amber);
+            text-decoration: none;
+        }
+        a:hover { text-decoration: underline; }
+        .terms-section a { color: var(--neon-pink); }
+        .jurisdiction-box {
+            background: var(--glass-bg);
+            border: 1px solid var(--glass-border);
+            border-radius: 12px;
+            padding: 16px;
+            margin: 16px 0;
+        }
+        .jurisdiction-box h3 {
+            margin-top: 0;
+        }
+        .back-link {
+            display: inline-block;
+            margin-top: 32px;
+            padding: 10px 24px;
+            background: linear-gradient(135deg, var(--neon-pink), var(--neon-amber));
+            color: white;
+            border-radius: 12px;
+            font-size: 14px;
+            font-weight: 600;
+            text-decoration: none;
+        }
+        .footer {
+            text-align: center;
+            margin-top: 40px;
+            padding-top: 24px;
+            border-top: 1px solid var(--glass-border);
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Políticas de PNPtv</h1>
+            <p class="updated">Última actualización: 20 de octubre de 2026</p>
+        </div>
+
+        <nav class="tab-nav">
+            <button class="tab-btn active" onclick="showTab('privacy', this)">Política de Privacidad</button>
+            <button class="tab-btn" onclick="showTab('terms', this)">Términos y Condiciones</button>
+        </nav>
+
+        <!-- ── POLÍTICA DE PRIVACIDAD ───────────────────────────────── -->
+        <div id="privacy" class="tab-panel active">
+            <p class="intro">
+                PNPtv respeta tu privacidad y se compromete a proteger tus datos personales en estricto cumplimiento del <strong>RGPD</strong> (Europa), la <strong>CCPA/CPRA</strong> (EE.&nbsp;UU.) y la <strong>Ley Estatutaria 1581 de 2012</strong> (Colombia &mdash; Hábeas Data).
+            </p>
+
+            <h2>1. Información que recopilamos</h2>
+            <ul>
+                <li><strong>Información de cuenta:</strong> nombre de usuario, datos de perfil, correo electrónico y datos de autenticación de proveedores de inicio de sesión de terceros.</li>
+                <li><strong>Datos de uso:</strong> dirección IP, información del dispositivo, tipo de navegador y registros de interacción.</li>
+                <li><strong>Contenido de mensajes:</strong> los mensajes directos son analizados automáticamente con fines de seguridad (ver Sección 7).</li>
+                <li><strong>Huellas digitales de imágenes:</strong> huellas digitales (hashes) generadas a partir de fotos y videos subidos para detectar contenido de miembros bloqueados. Las huellas no analizan rostros (ver Sección 7).</li>
+                <li><strong>Datos faciales (opcionales):</strong> se recopilan únicamente si consientes el reconocimiento facial, que es necesario para subir fotos y videos o transmitir en vivo (ver Sección 7).</li>
+                <li><strong>Datos de pago:</strong> procesados de forma segura por proveedores de terceros. No almacenamos información completa de tarjetas de crédito.</li>
+                <li><strong>Datos de verificación:</strong> identificación oficial o datos biométricos solicitados para cumplimiento de edad y la normativa 2257 (almacenados de forma segura y temporal conforme a la ley).</li>
+            </ul>
+
+            <h2>2. Base legal y finalidad del tratamiento</h2>
+            <p>Tratamos tus datos con base en:</p>
+            <ul>
+                <li><strong>Necesidad contractual:</strong> para prestar la Plataforma y procesar transacciones.</li>
+                <li><strong>Interés legítimo:</strong> para prevenir fraudes, mejorar servicios y mantener la seguridad de la plataforma.</li>
+                <li><strong>Obligación legal:</strong> para cumplir con legislación fiscal, de verificación de edad y de prevención de delitos.</li>
+                <li><strong>Consentimiento:</strong> para comunicaciones de marketing, cookies opcionales y reconocimiento facial (datos biométricos).</li>
+            </ul>
+
+            <h2>3. Compartición de datos y transferencias internacionales</h2>
+            <p>Podemos compartir datos con procesadores de pago, proveedores de alojamiento y autoridades legales cuando la ley lo exija. <strong>No vendemos datos personales.</strong></p>
+            <p>Tus datos pueden ser procesados en países distintos al tuyo (incluyendo Colombia y EE.&nbsp;UU.). Garantizamos las medidas de protección adecuadas (p.&nbsp;ej., Cláusulas Contractuales Tipo) para las transferencias internacionales.</p>
+
+            <h2>4. Retención de datos</h2>
+            <p>Conservamos los datos personales mientras tu cuenta esté activa o según lo exija la ley (p.&nbsp;ej., registros financieros, datos de cumplimiento 2257 y registros de prevención de fraude).</p>
+            <p>Si una cuenta es bloqueada permanentemente, su perfil y contenido son eliminados; sin embargo, conservamos un registro mínimo de los identificadores necesarios para impedir el regreso del miembro bloqueado (ver Sección 7).</p>
+
+            <h2>5. Tus derechos de privacidad</h2>
+            <p>Dependiendo de tu jurisdicción, tienes los siguientes derechos:</p>
+
+            <div class="jurisdiction-box">
+                <h3>Europa (RGPD)</h3>
+                <ul>
+                    <li>Derecho de acceso, rectificación y supresión (derecho al olvido)</li>
+                    <li>Derecho a limitar y oponerse al tratamiento</li>
+                    <li>Derecho a la portabilidad de los datos</li>
+                </ul>
+            </div>
+
+            <div class="jurisdiction-box">
+                <h3>Colombia (Ley 1581 de 2012 &mdash; Hábeas Data)</h3>
+                <ul>
+                    <li>Derecho a conocer, actualizar y rectificar tus datos personales</li>
+                    <li>Derecho a solicitar prueba de la autorización otorgada</li>
+                    <li>Derecho a revocar la autorización</li>
+                </ul>
+            </div>
+
+            <div class="jurisdiction-box">
+                <h3>EE.&nbsp;UU. (CCPA/CPRA)</h3>
+                <ul>
+                    <li>Los residentes de California tienen derecho a saber qué datos se recopilan</li>
+                    <li>Derecho a solicitar la eliminación de datos personales</li>
+                    <li>Derecho a optar por no participar en la «venta» o «compartición» de datos personales</li>
+                </ul>
+                <p style="margin-bottom: 0;"><em>Nota: PNPtv no vende tus datos.</em></p>
+            </div>
+
+            <p>Las solicitudes para ejercer estos derechos deben enviarse a: <a href="mailto:legal@pnptv.app">legal@pnptv.app</a></p>
+
+            <h2>6. Seguridad y cookies</h2>
+            <p>Implementamos medidas técnicas y organizativas de alto nivel para proteger los datos, aunque ningún sistema es 100&nbsp;% seguro.</p>
+            <p>Usamos cookies para mantener sesiones y analizar el uso. Puedes desactivar las cookies no esenciales desde tu navegador o mediante nuestro banner de consentimiento.</p>
+
+            <h2>7. Análisis automatizado de seguridad</h2>
+            <p>Para mantener nuestra comunidad segura, PNPtv utiliza herramientas de inteligencia artificial para analizar contenido en la Plataforma. Esto incluye publicaciones, fotos, videos, transmisiones en vivo y <strong>mensajes directos</strong>. El análisis de contenido y mensajes forma parte de nuestros <a href="/terms?lang=es">Términos y Condiciones</a> y aplica a todos los miembros.</p>
+
+            <h3>Cómo funciona el análisis de mensajes directos</h3>
+            <ul>
+                <li>Los mensajes son analizados automáticamente por software. <strong>Ninguna persona lee tus mensajes como parte de este proceso.</strong></li>
+                <li>Un mensaje se envía a nuestro equipo de seguridad únicamente si el sistema lo marca como potencialmente peligroso o ilegal, como material de abuso sexual infantil, tráfico de personas, amenazas de violencia o venta de sustancias ilegales. En ese caso, un miembro del equipo capacitado revisa únicamente el contenido marcado.</li>
+                <li>Los mensajes también se revisan si un miembro los reporta.</li>
+                <li>No usamos tus mensajes para publicidad ni los vendemos.</li>
+            </ul>
+
+            <h3>Huellas digitales de imágenes (todos los miembros)</h3>
+            <ul>
+                <li>Cuando se elimina contenido de un miembro bloqueado, creamos huellas digitales (hashes) de ese contenido. Cada nueva foto y video subido a PNPtv se compara con estas huellas; el contenido coincidente es bloqueado.</li>
+                <li>Las huellas comparan archivos, no rostros. No analizan rasgos faciales ni recopilan datos biométricos.</li>
+            </ul>
+
+            <h3>Reconocimiento facial (opcional, con tu consentimiento)</h3>
+            <ul>
+                <li>El reconocimiento facial ayuda a detectar miembros bloqueados que intenten regresar con nuevas cuentas. Compara los rostros en tus fotos y videos con imágenes de miembros bloqueados y con imágenes disponibles públicamente en internet.</li>
+                <li>El reconocimiento facial analiza rasgos faciales, que la ley clasifica como <strong>datos biométricos sensibles</strong>. Lo usamos exclusivamente para seguridad y aplicación de bloqueos, nunca para marketing ni ningún otro fin.</li>
+                <li><strong>El reconocimiento facial es opcional.</strong> No estás obligado a dar tu consentimiento. Si no lo haces, puedes seguir navegando, chatear y usar la comunidad, pero no podrás subir fotos ni videos ni transmitir en vivo.</li>
+                <li>Puedes otorgar o retirar tu consentimiento en cualquier momento desde la configuración de privacidad. Si lo retiras, eliminamos tus datos faciales y las funciones de subida de contenido se pausan.</li>
+                <li>Cuando el sistema detecta una coincidencia probable (puntaje de confianza de 80&nbsp;% o superior), la cuenta puede ser bloqueada. Si crees que fuiste bloqueado por error, puedes apelar en <a href="mailto:legal@pnptv.app">legal@pnptv.app</a>.</li>
+            </ul>
+
+            <h3>Aplicación de bloqueos y cuentas vinculadas</h3>
+            <ul>
+                <li>Cuando un miembro es bloqueado permanentemente por contenido ilegal, su perfil y contenido son eliminados.</li>
+                <li>Para evitar su regreso, conservamos un registro mínimo de los identificadores necesarios para bloquearlo: direcciones IP, información del dispositivo, correos electrónicos, cuentas vinculadas y huellas digitales de imágenes. Lo conservamos solo el tiempo necesario para fines de seguridad y legales.</li>
+                <li>Podemos usar herramientas automatizadas para identificar otras cuentas o correos electrónicos del miembro bloqueado y bloquearlos también.</li>
+            </ul>
+
+            <h3>Reporte a las autoridades</h3>
+            <p>El contenido que involucre abuso sexual infantil se reporta al NCMEC y a las autoridades competentes, según lo exige la ley. También podemos compartir contenido marcado con las fuerzas del orden cuando existe una amenaza grave para la seguridad de alguien.</p>
+
+            <h3>Base legal</h3>
+            <p>Realizamos el análisis de contenido, mensajes y huellas digitales de imágenes con base en nuestro interés legítimo en mantener la Plataforma segura y nuestras obligaciones legales de prevención de delitos. El reconocimiento facial solo se realiza con tu consentimiento explícito, previo e informado, que puedes retirar en cualquier momento.</p>
+
+            <h2>8. Modificaciones</h2>
+            <p>Podemos actualizar esta Política de Privacidad en cualquier momento. El uso continuado de la Plataforma implica la aceptación de la versión actualizada.</p>
+
+            <div class="footer">
+                <a href="https://pnptv.app" class="back-link">Volver a PNPtv</a>
+                <p style="margin-top: 16px;">&copy; 2026 PNPtv. Todos los derechos reservados.</p>
+            </div>
+        </div>
+
+        <!-- ── TÉRMINOS Y CONDICIONES ──────────────────────────────────── -->
+        <div id="terms" class="tab-panel terms-section">
+            <p class="intro">
+                Bienvenido a PNPtv.app («PNPtv», «Plataforma», «nosotros» o «nuestro»).
+                Al acceder o utilizar PNPtv.app, aceptas quedar vinculado por estos Términos y Condiciones («Términos»). Si no estás de acuerdo, no debes utilizar la Plataforma.
+            </p>
+
+            <h2>0. Naturaleza de la Plataforma y disponibilidad geográfica</h2>
+            <p>PNPtv es una <strong>plataforma privada solo para miembros</strong> de la comunidad queer PNP, incorporada y operada bajo las leyes de la <strong>República de Colombia</strong>. La membresía se otorga mediante registro de adultos autoafirmado, combinado con validación comunitaria para los niveles de pago. PNPtv <strong>no</strong> es un sitio de contenido adulto de acceso público y no busca tráfico masivo.</p>
+            <p>PNPtv puede restringir el acceso desde jurisdicciones cuyas leyes entren en conflicto con su postura de privacidad para miembros; cuando esto ocurra, los usuarios que intenten acceder desde esas ubicaciones serán redirigidos a una página de aviso. La disponibilidad geográfica puede cambiar conforme evolucionen las leyes.</p>
+            <p>Aceptas que no utilizarás VPN, proxies ni otros medios técnicos para eludir las restricciones geográficas. Hacerlo constituye un incumplimiento material de estos Términos y es motivo de cancelación de la cuenta.</p>
+
+            <h2>1. Elegibilidad y verificación de edad</h2>
+            <p>Debes tener al menos <strong>18 años</strong> (o la mayoría de edad legal en tu jurisdicción) para usar PNPtv.</p>
+            <p>Al crear una cuenta, declaras y garantizas que:</p>
+            <ul>
+                <li>Tienes al menos 18 años.</li>
+                <li>Tienes capacidad legal para celebrar un acuerdo vinculante.</li>
+                <li>Toda la información que proporcionas es exacta y veraz.</li>
+            </ul>
+            <p>Nos reservamos el derecho de solicitar verificación estricta de edad (p.&nbsp;ej., identificación oficial) en cualquier momento para cumplir con la normativa internacional de contenido para adultos.</p>
+
+            <h2>2. Registro de cuenta</h2>
+            <p>Los usuarios pueden autenticarse a través de proveedores de inicio de sesión de terceros compatibles (p.&nbsp;ej., Telegram). Eres responsable de mantener la confidencialidad de tu cuenta, todas las actividades realizadas bajo ella y de no compartir tus credenciales de acceso. Podemos suspender o cancelar cuentas que incumplan estos Términos.</p>
+
+            <h2>3. Membresía, acceso y monetización</h2>
+            <p>PNPtv puede ofrecer niveles de acceso gratuito, acceso de por vida promocional (aplicable únicamente al nivel básico), suscripciones de pago y cuentas de creador. Las funciones de monetización pueden incluir suscripciones, contenido de pago, salas en vivo y propinas.</p>
+            <p>Los pagos son procesados por proveedores de terceros (p.&nbsp;ej., Daimo, ePayco, Meru). PNPtv no es responsable de errores del procesador de pagos, contracargos iniciados por el usuario ni las obligaciones fiscales de los creadores. Los creadores son los únicos responsables de declarar y pagar sus impuestos y de cumplir con la normativa financiera local.</p>
+            <p>Nos reservamos el derecho de modificar funciones, cambiar precios y retener o revertir pagos en casos de fraude, abuso o violaciones de política.</p>
+
+            <h2>4. Contenido generado por el usuario y cumplimiento del 18 U.S.C. § 2257</h2>
+            <p>Los usuarios pueden publicar, subir o compartir contenido («Contenido de usuario»). Al publicar contenido, declaras y garantizas que eres propietario o tienes los derechos necesarios sobre él, y que no infringe ninguna ley ni derechos de propiedad intelectual.</p>
+            <ul>
+                <li><strong>Cumplimiento del 18 U.S.C. § 2257:</strong> si subes contenido sexualmente explícito, certificas que todas las personas representadas son mayores de 18 años. Aceptas mantener y proporcionar cuando se solicite todos los registros exigidos por el 18 U.S.C. § 2257.</li>
+                <li><strong>Licencia:</strong> otorgas a PNPtv una licencia no exclusiva, mundial y libre de regalías para alojar, mostrar y distribuir tu contenido dentro de la Plataforma con fines operativos.</li>
+                <li><strong>Material de abuso sexual infantil (MASI):</strong> la representación de menores en cualquier contexto explícito o ilegal está estrictamente prohibida y será reportada de inmediato al National Center for Missing &amp; Exploited Children (NCMEC) y a las autoridades colombianas/europeas competentes.</li>
+            </ul>
+
+            <h2>5. Conducta prohibida</h2>
+            <p>Los usuarios no podrán incurrir en:</p>
+            <ul>
+                <li>Cualquier actividad ilegal</li>
+                <li><strong>Conducta relacionada con sustancias:</strong> los usuarios NO pueden (a) vender, distribuir ni facilitar la venta de drogas ilegales o sustancias controladas; (b) preguntar a otros usuarios dónde o cómo obtener sustancias ilegales; (c) instruir a otros usuarios sobre cómo obtener, fabricar o sintetizar sustancias ilegales. Las conversaciones sobre uso personal en el contexto de reducción de daños están permitidas. Consulta las <a href="/community-guidelines.html">Pautas de la comunidad</a> §5 y §11 para conocer las reglas completas y los recursos de bienestar.</li>
+                <li><strong>Consumo real de drogas o intoxicación en cámara:</strong> los usuarios NO pueden subir ni transmitir contenido que muestre el consumo real de drogas ilegales o sustancias controladas, ni a personas que estén realmente intoxicadas durante actividad sexual. Los accesorios teatrales están permitidos, y los usuarios deben declarar, cuando se les solicite, que cualquier sustancia mostrada es un accesorio. El contenido que muestre consumo real, o que no se declare como accesorio cuando se solicite, será eliminado.</li>
+                <li>Publicar contenido sin consentimiento</li>
+                <li>Acoso, amenazas o intimidación a otros usuarios</li>
+                <li>Compartir información personal sin consentimiento (doxxing)</li>
+                <li>Fraude, suplantación de identidad o prácticas engañosas</li>
+                <li>Crear nuevas cuentas o usar las de otras personas para regresar tras un bloqueo</li>
+            </ul>
+            <p>La infracción resulta en <strong>cancelación inmediata sin reembolso</strong>.</p>
+            <p>Los miembros bloqueados permanentemente por contenido ilegal tendrán su perfil y contenido eliminados, y sus direcciones IP, dispositivos y cualquier cuenta o correo electrónico vinculado que identifiquemos también serán bloqueados.</p>
+
+            <h2>6. Análisis de seguridad y subida de contenido</h2>
+            <p>Al usar PNPtv, aceptas que utilizamos herramientas automatizadas para analizar el contenido de la Plataforma, incluyendo publicaciones, fotos, videos, transmisiones en vivo y <strong>mensajes directos</strong>, para detectar actividad o contenido ilegal o peligroso, y contenido de miembros bloqueados.</p>
+            <ul>
+                <li>El análisis lo realiza software. Ninguna persona lee tus mensajes a menos que el sistema los marque como potencialmente peligrosos o ilegales, o que otro miembro los reporte.</li>
+                <li>Las fotos y videos subidos se comparan con huellas digitales de contenido de miembros bloqueados.</li>
+                <li><strong>El reconocimiento facial es opcional.</strong> Para subir fotos o videos o transmitir en vivo, debes dar tu consentimiento al reconocimiento facial. Si no consientes, puedes seguir navegando, chatear y usar la comunidad. Puedes otorgar o retirar tu consentimiento en cualquier momento desde la configuración de privacidad.</li>
+            </ul>
+            <p>Para conocer todos los detalles sobre cómo funciona el análisis y cómo se tratan tus datos, consulta la Sección 7 de nuestra <a href="/privacy?lang=es">Política de Privacidad</a>.</p>
+
+            <h2>7. Política DMCA y derechos de autor (EE.&nbsp;UU.)</h2>
+            <p>PNPtv cumple con la Ley de Derechos de Autor del Milenio Digital (DMCA). Si crees que se han infringido tus derechos de autor, debes enviar una notificación escrita a nuestro Agente de Derechos de Autor designado en <a href="mailto:legal@pnptv.app">legal@pnptv.app</a> incluyendo tu firma, identificación de la obra infringida y una declaración de buena fe.</p>
+
+            <h2>8. Exención de garantías y limitación de responsabilidad</h2>
+            <p>La Plataforma se proporciona <strong>«tal cual»</strong> y <strong>«según disponibilidad»</strong>. No garantizamos acceso ininterrumpido ni funcionamiento sin errores.</p>
+            <p>En la máxima medida permitida por la ley, PNPtv no será responsable por daños indirectos, consecuentes o punitivos, pérdida de beneficios, disputas entre usuarios o interrupciones de servicios de terceros.</p>
+
+            <h2>9. Ley aplicable y resolución de disputas</h2>
+            <p>Estos Términos, y cualquier disputa derivada de o relacionada con tu uso de PNPtv, se regirán e interpretarán estrictamente de conformidad con las <strong>leyes de la República de Colombia</strong>, sin consideración a principios de conflicto de leyes.</p>
+            <p>Cualquier litigio, disputa, controversia o reclamación deberá resolverse exclusivamente ante los tribunales competentes ubicados en <strong>Bogotá, D.C., Colombia</strong>. Al usar la Plataforma, consientes expresamente esta jurisdicción personal y exclusiva.</p>
+
+            <div class="footer">
+                <a href="https://pnptv.app" class="back-link">Volver a PNPtv</a>
+                <p style="margin-top: 16px;">&copy; 2026 PNPtv. Todos los derechos reservados.</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function showTab(id, btn) {
+            document.querySelectorAll('.tab-panel').forEach(function(p) { p.classList.remove('active'); });
+            document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
+            document.getElementById(id).classList.add('active');
+            btn.classList.add('active');
+        }
+    </script>
+</body>
+</html>
