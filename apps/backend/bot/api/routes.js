@@ -10865,21 +10865,6 @@ app.post('/api/webapp/social/posts/:postId/bookmark', requireSessionAuth, social
   return res.json({ success: true, bookmarked: result.bookmarked, bookmarks_count: result.bookmarks_count });
 }));
 
-// GET /api/webapp/social/posts/bookmarks — my bookmarked posts (cursor-paginated)
-// NOTE: must be registered BEFORE /:postId routes to avoid 'bookmarks' being
-// treated as a postId param.
-app.get('/api/webapp/social/posts/bookmarks', requireSessionAuth, asyncHandler(async (req, res) => {
-  const userId = req.session.user.id;
-  const cursor = req.query.cursor || null;
-  const limit = Math.min(parseInt(req.query.limit, 10) || 20, 50);
-  const tier = req.session.user.tier || 'free';
-  const isAdmin = ['admin', 'superadmin'].includes(req.session.user.role);
-
-  const SocialPostService = require('../../services/socialPostService');
-  const { posts, nextCursor } = await SocialPostService.getBookmarksFeed(userId, cursor, limit, tier, isAdmin);
-  return res.json({ success: true, posts, nextCursor });
-}));
-
 // POST /api/webapp/social/posts/:postId/pin — set pinned post (owner only)
 app.post('/api/webapp/social/posts/:postId/pin', requireSessionAuth, asyncHandler(async (req, res) => {
   const userId = req.session.user.id;
@@ -10897,15 +10882,6 @@ app.post('/api/webapp/social/posts/:postId/pin', requireSessionAuth, asyncHandle
     }
     throw err;
   }
-}));
-
-// DELETE /api/webapp/social/posts/pin — unset pinned post
-// NOTE: must be registered BEFORE /:postId routes
-app.delete('/api/webapp/social/posts/pin', requireSessionAuth, asyncHandler(async (req, res) => {
-  const userId = req.session.user.id;
-  const SocialPostService = require('../../services/socialPostService');
-  const result = await SocialPostService.unsetPinnedPost(userId);
-  return res.json({ success: true, ...result });
 }));
 
 // GET /api/webapp/social/hashtag/:tag/feed — posts for a hashtag (cursor-paginated)
@@ -26696,33 +26672,6 @@ app.get('/api/og-prerender', (req, res, next) => {
     <meta name="twitter:card" content="summary_large_image" />
   </head><body></body></html>`);
 });
-
-// ── Bull Board queue dashboard — /admin/queues ─────────────────────────────
-// Mounts the BullMQ web UI under /admin/queues, protected by adminGuard.
-// Safe to require — if BullMQ init failed the queues map is empty and
-// Bull Board mounts an empty dashboard rather than crashing.
-try {
-  const { createBullBoard } = require('@bull-board/api');
-  const { BullMQAdapter } = require('@bull-board/api/bullMQAdapter');
-  const { ExpressAdapter } = require('@bull-board/express');
-  const { getAllQueues, initializeQueues } = require('../../services/queueService');
-
-  // Ensure all queues are created before Bull Board tries to register them
-  initializeQueues().catch(() => {});
-
-  const serverAdapter = new ExpressAdapter();
-  serverAdapter.setBasePath('/admin/queues');
-
-  createBullBoard({
-    queues: getAllQueues().map((q) => new BullMQAdapter(q)),
-    serverAdapter,
-  });
-
-  app.use('/admin/queues', adminGuard, serverAdapter.getRouter());
-  logger.info('[BullBoard] Dashboard mounted at /admin/queues');
-} catch (bullBoardErr) {
-  logger.warn('[BullBoard] Failed to mount dashboard: ' + bullBoardErr.message);
-}
 
 // ── PNP Partners Network ─────────────────────────────────────────────────────
 

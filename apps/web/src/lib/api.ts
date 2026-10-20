@@ -1173,21 +1173,6 @@ export function getPresaleStatus(): Promise<{
   return request("/api/wallet/presale-status");
 }
 
-export function getMeruTokenLink(
-  product: "tokens_250" | "tokens_500",
-  email: string
-): Promise<{ success: boolean; meruUrl: string; code: string; product: string; tokens: number; error?: string }> {
-  return request("/api/wallet/meru-token-link", { method: "POST", body: { product, email } });
-}
-
-export function activateMeruTokens(
-  code: string,
-  email: string,
-  product: "tokens_250" | "tokens_500"
-): Promise<{ success: boolean; tokens: number; newBalance: number; error?: string }> {
-  return request("/api/wallet/activate-meru-tokens", { method: "POST", body: { code, email, product } });
-}
-
 // ── Token Activation Code flow (Meru card/bank) ───────────────────────────────
 
 export interface TokenActivationReserveResult {
@@ -9113,49 +9098,6 @@ export function getOnlineUsers(region?: string, limit = 100): Promise<{ success:
   if (region) params.append("region", region);
   params.append("limit", String(limit));
   return request(`/api/webapp/nearby/online-users?${params}`);
-}
-
-// ─── MeruLink admin ───────────────────────────────────────────────────────────
-
-export interface MeruLinkStat {
-  product: string;
-  total: number;
-  used: number;
-  available: number;
-}
-
-export interface MeruLink {
-  id: string;
-  product: string;
-  url: string;
-  is_used: boolean;
-  status: string;
-  used_by: string | null;
-  used_by_username: string | null;
-  used_at: string | null;
-  created_at: string | null;
-}
-
-export function getMeruLinkStats(): Promise<{ success: boolean; stats: MeruLinkStat[] }> {
-  return request("/api/webapp/admin/meru-links/stats");
-}
-
-export function listMeruLinks(): Promise<{ success: boolean; links: MeruLink[] }> {
-  return request("/api/webapp/admin/meru-links");
-}
-
-export function addMeruLinks(
-  product: string,
-  links: string[]
-): Promise<{ success: boolean; added: number }> {
-  return request("/api/webapp/admin/meru-links", {
-    method: "POST",
-    body: { product, links },
-  });
-}
-
-export function deleteMeruLink(id: string): Promise<{ success: boolean; message: string }> {
-  return request(`/api/webapp/admin/meru-links/${id}`, { method: "DELETE" });
 }
 
 // ─── Nequi Negocios ───────────────────────────────────────────────────────────
