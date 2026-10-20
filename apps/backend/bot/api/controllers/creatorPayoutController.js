@@ -1,6 +1,5 @@
 'use strict';
 
-const { getCreatorPayoutBalance, requestPayout, getPayoutHistory } = require('../../../services/nowpaymentsPayoutService');
 const { query } = require('../../../config/postgres');
 const logger = require('../../../utils/logger');
 const CreatorPayoutService = require('../../../services/creatorPayoutService');
@@ -8,6 +7,47 @@ const objectStorage = require('../../../services/objectStorageService');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+
+// Crypto payout API retired — balance is now derived directly from the earnings ledger.
+async function getCreatorPayoutBalance(userId) {
+  const { rows } = await query(
+    `SELECT
+       COALESCE(SUM(CASE WHEN status IN ('available','approved') THEN amount_usd ELSE 0 END), 0)::numeric AS available_usd,
+       COALESCE(SUM(CASE WHEN status = 'paid' THEN amount_usd ELSE 0 END), 0)::numeric AS total_paid_usd,
+       COALESCE(SUM(amount_usd), 0)::numeric AS total_earned_usd
+     FROM creator_earnings
+     WHERE creator_id = $1`,
+    [userId]
+  );
+  const r = rows[0] || {};
+  return {
+    availableUsd: parseFloat(r.available_usd || 0),
+    totalPaidUsd: parseFloat(r.total_paid_usd || 0),
+    totalEarnedUsd: parseFloat(r.total_earned_usd || 0),
+  };
+}
+
+// Automatic payouts retired — payouts are now processed manually via the
+// weekly approval workflow. Return a clear error so the UI can surface this.
+async function requestPayout() {
+  const err = new Error('Automatic crypto payouts are no longer available. Request your payout through the weekly approval workflow or contact support.');
+  err.code = 'SERVICE_UNAVAILABLE';
+  throw err;
+}
+
+// Crypto payout history retired — history is served from creator_weekly_payout_approvals.
+async function getPayoutHistory(userId, limit, offset) {
+  const { rows } = await query(
+    `SELECT id, week_start, balance_usd, status, approved_at, processed_at,
+            tx_reference, receipt_url, is_manual, admin_note, created_at
+     FROM creator_weekly_payout_approvals
+     WHERE creator_id = $1
+     ORDER BY created_at DESC
+     LIMIT $2 OFFSET $3`,
+    [userId, limit, offset]
+  );
+  return rows;
+}
 
 exports.getPayoutBalance = async (req, res) => {
   try {
@@ -34,7 +74,7 @@ exports.requestPayout = async (req, res) => {
     }
 
     // Read the creator's chosen payout token from the latest approved
-    // enrollment. Post-migration 326 this is a NowPayments currency code
+    // enrollment. Post-migration 326 this stores a currency code
     // (btc, usdttrc20, dash, …). Falls back to usdttrc20 for legacy rows.
     const { rows: enrRows } = await query(
       `SELECT payment_method FROM creator_enrollments
@@ -53,13 +93,12 @@ exports.requestPayout = async (req, res) => {
         amount_usd: payout.amount_usd,
         currency: payout.currency,
         status: payout.status,
-        nowpayments_payout_id: payout.nowpayments_payout_id,
         requested_at: payout.requested_at,
       },
     });
   } catch (err) {
     logger.error('[creatorPayoutController.requestPayout]', { error: err.message, code: err.code });
-    // FIX 4: Only expose known safe error messages — never leak NowPayments internals
+    // FIX 4: Only expose known safe error messages — never leak payment provider internals
     const knownCodes = ['PAYOUT_IN_PROGRESS', 'INSUFFICIENT_BALANCE', 'BELOW_MINIMUM', 'INVALID_PAYOUT_METHOD', 'INVALID_ADDRESS', 'SERVICE_UNAVAILABLE'];
     const safeMessage = knownCodes.includes(err.code)
       ? err.message

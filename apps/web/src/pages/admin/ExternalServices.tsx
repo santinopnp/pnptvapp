@@ -48,9 +48,7 @@ function KpiCard({ label, value, sub, accent }: { label: string; value: string; 
 }
 
 // Public URLs for "Open" buttons — never derived from server response
-// btcpay removed 2026-07-31 (provider retired)
 const PUBLIC_URLS: Record<string, string> = {
-  nowpayments: "https://nowpayments.io/merchant-dashboard",
   restreamer:  "https://live.pnptv.app",
   livekit:     "https://livekit.pnptv.app",
   authentik:   "https://auth.pnptv.app",
@@ -477,14 +475,12 @@ export default function ExternalServices() {
       {/* Payment Providers */}
       <SectionTitle>Payment Providers</SectionTitle>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        {/* BTCPay Server removed 2026-07-31 — provider retired */}
         <ServiceCard
-          title="NowPayments"
-          desc="Crypto processing — active provider (BTC, DASH, USDT)"
-          pingKey="nowpayments"
-          statLine={pay ? `7d: ${n(pay.np_completed_7d)} completed · ${n(pay.np_pending_24h)} pending today · ${n(pay.partial_all)} partially paid` : undefined}
+          title="Privy (Wallet)"
+          desc="USDC on Base — active provider (Privy embedded wallets)"
           pings={pings}
         />
-        {/* BTCPay Server removed 2026-07-31 — provider retired */}
         <ServiceCard
           title="Meru (Card)"
           desc="Credit card checkout links for Lifetime100"

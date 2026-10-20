@@ -178,31 +178,6 @@ router.post(
       } catch (_) {}
     }
 
-    if (action === 'probe_np_auth') {
-      (async () => {
-        try {
-          const NP_API = process.env.NOWPAYMENTS_API_URL || 'https://api.nowpayments.io';
-          const NP_EMAIL = process.env.NOWPAYMENTS_EMAIL || '';
-          const NP_PASS = process.env.NOWPAYMENTS_PASSWORD || '';
-          const res2 = await fetch(`${NP_API}/v1/auth`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: NP_EMAIL, password: NP_PASS }),
-          });
-          const data = await res2.json().catch(() => ({}));
-          const ok = res2.ok && data.token;
-          await _respondToAction(
-            responseUrl,
-            ok
-              ? `✅ NP Auth OK — JWT obtained (triggered by @${triggeredBy})`
-              : `❌ NP Auth FAILED: ${data.message || res2.status} (triggered by @${triggeredBy})`
-          );
-        } catch (e) {
-          await _respondToAction(responseUrl, `❌ Probe error: ${e.message} (triggered by @${triggeredBy})`);
-        }
-      })();
-    }
-
     if (action === 'check_redis') {
       (async () => {
         try {

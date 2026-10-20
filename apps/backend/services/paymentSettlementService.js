@@ -636,7 +636,7 @@ class PaymentSettlementService {
           currency: 'USD',
           plan: plan?.display_name || plan?.name || order.plan_id || 'unknown',
           txId: invoiceId,
-          provider: order.provider || 'nowpayments',
+          provider: order.provider || 'wallet_usdc',
         }).catch(() => {});
       } catch (_) {}
     } catch (alertErr) {

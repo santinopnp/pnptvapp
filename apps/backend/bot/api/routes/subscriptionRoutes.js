@@ -48,17 +48,16 @@ router.get('/creators/:creatorId/channel-pass', async (req, res) => {
 });
 
 // POST /api/subscriptions/creators/:creatorId/channel-pass/checkout
-// Body: { provider: 'rush'|'wallet_usdc'|'nowpayments', payCurrency?: string }
+// Body: { provider: 'rush'|'wallet_usdc', payCurrency?: string }
 //
 // Response shapes by provider:
 //   rush         → { success, data: { expires_at, new_balance, subscription_id } }
 //   wallet_usdc  → { success, data: { payment_id, receiving_address, amount_native,
 //                                     amount_usdc, chain, token, contract_address, expires_at } }
-//   nowpayments  → { success, data: { payment_url, order_id, nowpayments_invoice_id, pay_currency } }
 router.post('/creators/:creatorId/channel-pass/checkout', authGuard, async (req, res) => {
   const userId = req.session?.user?.id;
   const { creatorId } = req.params;
-  const { provider, payCurrency } = req.body || {};
+  const { provider } = req.body || {};
 
   // stripe/moonpay are client-side Privy on-ramp — not a backend provider
   if (provider === 'stripe' || provider === 'moonpay') {
@@ -68,7 +67,7 @@ router.post('/creators/:creatorId/channel-pass/checkout', authGuard, async (req,
     });
   }
 
-  const VALID_PROVIDERS = ['rush', 'wallet_usdc', 'nowpayments'];
+  const VALID_PROVIDERS = ['rush', 'wallet_usdc'];
   if (!provider || !VALID_PROVIDERS.includes(provider)) {
     return res.status(400).json({
       success: false,
@@ -86,16 +85,6 @@ router.post('/creators/:creatorId/channel-pass/checkout', authGuard, async (req,
       const result = await channelPassService.purchaseWithFiat({ userId, creatorId, provider: 'wallet_usdc' });
       return res.json({ success: true, data: result });
     }
-
-    if (provider === 'nowpayments') {
-      const result = await channelPassService.purchaseWithFiat({
-        userId,
-        creatorId,
-        provider: 'nowpayments',
-        payCurrency: payCurrency || null,
-      });
-      return res.json({ success: true, data: result });
-    }
   } catch (err) {
     if (err && err.code === 'SELF_SUBSCRIBE') {
       return res.status(403).json({ success: false, error: { code: 'SELF_SUBSCRIBE', message: err.message } });
@@ -108,12 +97,6 @@ router.post('/creators/:creatorId/channel-pass/checkout', authGuard, async (req,
     }
     if (err && err.code === 'CRYPTO_INIT_FAILED') {
       return res.status(502).json({ success: false, error: { code: 'CRYPTO_INIT_FAILED', message: err.message } });
-    }
-    if (err && err.code === 'NOWPAYMENTS_ERROR') {
-      return res.status(502).json({ success: false, error: { code: 'NOWPAYMENTS_ERROR', message: err.message } });
-    }
-    if (err && err.code === 'NOWPAYMENTS_NOT_CONFIGURED') {
-      return res.status(503).json({ success: false, error: { code: 'NOWPAYMENTS_NOT_CONFIGURED', message: err.message } });
     }
     logger.error('[channelPassRoute] checkout error', { userId, creatorId, provider, error: err.message });
     return res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Purchase failed. Please try again.' } });

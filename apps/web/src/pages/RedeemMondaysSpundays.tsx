@@ -1,9 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Helmet } from "react-helmet-async";
-import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useI18n } from "@/lib/i18n";
-import { WalletPayCard } from "@/components/payments/PayInWalletChips";
 import CountdownTimer from "@/components/CountdownTimer";
 
 const CAMPAIGN_ID = "mondays_spundays";
@@ -18,14 +16,10 @@ const PRICE_USD = 20;
 const EXPIRES_AT = "2026-09-30T04:00:00Z";
 
 export default function RedeemMondaysSpundays() {
-  const { user, refreshUser } = useAuth();
-  const navigate = useNavigate();
+  const { user } = useAuth();
   const t = useI18n();
   const es = t.lang === "es";
-  const [paid, setPaid] = useState(false);
   const [expired, setExpired] = useState(() => Date.now() >= new Date(EXPIRES_AT).getTime());
-  const [walletOpen, setWalletOpen] = useState(false);
-  const [payError, setPayError] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/webapp/mondays-spundays/track-visit", {
@@ -33,13 +27,6 @@ export default function RedeemMondaysSpundays() {
       credentials: "include",
     }).catch(() => {});
   }, []);
-
-  useEffect(() => {
-    if (!paid) return;
-    refreshUser?.().catch(() => {});
-    const to = setTimeout(() => navigate("/home"), 3200);
-    return () => clearTimeout(to);
-  }, [paid, navigate, refreshUser]);
 
   const title = es
     ? "Mondays Spundays · 2 meses PRIME + PRIME Channel por $20"
@@ -52,9 +39,6 @@ export default function RedeemMondaysSpundays() {
   const perks = es
     ? ["2 meses de PRIME completo", "Acceso al PRIME Channel incluido", "Shows, hangouts, streams y comunidad", "Oferta única — no se repite"]
     : ["2 months of full PRIME", "PRIME Channel access included", "Shows, hangouts, streams & community", "One-time offer — never repeats"];
-  const successMsg = es ? "¡Estás dentro! Redirigiendo a Home…" : "You're in! Redirecting to Home…";
-  const planLabel = es ? `Mondays Spundays · $${PRICE_USD} · 2 meses PRIME` : `Mondays Spundays · $${PRICE_USD} · 2 months PRIME`;
-
   return (
     <div className="min-h-screen bg-black text-white">
       <Helmet>
@@ -94,66 +78,29 @@ export default function RedeemMondaysSpundays() {
             <span className="text-sm text-white/70">{es ? "· 2 meses PRIME + PRIME Channel" : "· 2 months PRIME + PRIME Channel"}</span>
           </div>
 
-          {!paid && (
-            <CountdownTimer
-              expiresAt={EXPIRES_AT}
-              onExpire={() => setExpired(true)}
-              lang={es ? "es" : "en"}
-              className="mt-5"
-            />
-          )}
+          <CountdownTimer
+            expiresAt={EXPIRES_AT}
+            onExpire={() => setExpired(true)}
+            lang={es ? "es" : "en"}
+            className="mt-5"
+          />
         </div>
 
         <div className="mt-5">
-          {paid ? (
-            <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-4 text-center">
-              <p className="text-lg font-bold text-emerald-300">✓ {successMsg}</p>
-            </div>
-          ) : expired ? (
+          {expired ? (
             <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-center">
               <p className="text-sm text-white/60">
                 {es ? "Esta oferta única ya terminó y no se repite." : "This one-time offer has ended and will not repeat."}
               </p>
             </div>
           ) : (
-            <>
-              <button
-                type="button"
-                onClick={() => setWalletOpen((v) => !v)}
-                className={`w-full py-3 rounded-lg font-bold text-xs text-white transition-all leading-tight ${walletOpen ? "bg-gradient-to-r from-emerald-400 to-emerald-500 ring-2 ring-emerald-300" : "bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500"}`}
-              >
-                {es ? "💳 Tarjeta · Apple Pay · Wallet" : "💳 Card · Apple Pay · Wallet"}
-              </button>
-
-              {walletOpen && (
-                <div className="mt-3">
-                  <WalletPayCard
-                    surface="prime"
-                    amountUsd={PRICE_USD}
-                    entitlementSpec={{ planId: PLAN_ID }}
-                    metadata={{
-                      campaign_id: CAMPAIGN_ID,
-                      source: "redeem_mondays",
-                      landed_at: new Date().toISOString(),
-                    }}
-                    label={es ? `Pagá $${PRICE_USD} · 2 meses PRIME` : `Pay $${PRICE_USD} · 2 months PRIME`}
-                    lang={es ? "es" : "en"}
-                    onSuccess={() => {
-                      setPayError(null);
-                      setPaid(true);
-                    }}
-                    onError={(err) => {
-                      const msg = err instanceof Error ? err.message : String(err);
-                      setPayError(msg);
-                    }}
-                    compact
-                  />
-                </div>
-              )}
-              {payError && (
-                <p className="mt-2 text-xs text-red-300">{payError}</p>
-              )}
-            </>
+            <button
+              type="button"
+              onClick={() => { window.location.href = `/checkout?plan=${PLAN_ID}`; }}
+              className="w-full py-3 rounded-lg font-bold text-xs text-white bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 transition-all leading-tight"
+            >
+              {es ? "💳 Tarjeta · Apple Pay · Wallet" : "💳 Card · Apple Pay · Wallet"}
+            </button>
           )}
         </div>
 

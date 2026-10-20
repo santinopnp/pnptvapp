@@ -7,7 +7,6 @@
  * Primary purchase rail: Ru$h wallet (debit via tokenLedgerService).
  * Fiat/crypto rails:
  *   wallet_usdc  — on-chain USDC/Base via CryptoPaymentService (Alchemy webhook fulfills)
- *   nowpayments  — hosted invoice via NowPayments IPN webhook
  *
  * Reuses:
  *   creator_subscriptions  (migration 088) — one row per creator+subscriber pair (UNIQUE)
@@ -18,7 +17,6 @@
  *   slackCreatorNotifyService — fire-and-forget Slack ping to #ext-<handle>
  */
 
-const axios = require('axios');
 const { getClient, query } = require('../config/postgres');
 const { cache } = require('../config/redis');
 const logger = require('../utils/logger');
@@ -27,22 +25,7 @@ const zohoBooks = require('./zohoBooksService');
 const slackCreatorNotify = require('./slackCreatorNotifyService');
 const { CREATOR_REVENUE_RATE, PLATFORM_COMMISSION_RATE, EARNINGS_HOLD_HOURS } = require('../config/monetizationConfig');
 
-// NowPayments configuration (mirrors tokenCheckoutService pattern).
-const NOWPAYMENTS_URL = process.env.NOWPAYMENTS_ENVIRONMENT === 'sandbox'
-  ? 'https://api-sandbox.nowpayments.io/v1'
-  : 'https://api.nowpayments.io/v1';
-const NOWPAYMENTS_API_KEY = process.env.NOWPAYMENTS_API_KEY || '';
 const WEB_APP_URL = process.env.WEB_APP_URL || 'https://pnptv.app';
-
-function nowpaymentsWidgetUrl(invoiceId) {
-  return `https://nowpayments.io/embeds/payment-widget?iid=${encodeURIComponent(String(invoiceId))}`;
-}
-
-// 14-coin allowlist (mirrors tokenCheckoutService line 560 post-fix).
-const ALLOWED_NP_CURRENCIES = new Set([
-  'btc', 'eth', 'ltc', 'doge', 'xmr', 'sol', 'trx', 'bnbbsc', 'matic',
-  'usdcsol', 'usdttrc20', 'usdtbsc', 'usdterc20',
-]);
 
 // 1 USD = 6 Ru$h (platform rate)
 const RUSH_PER_USD = 6;
@@ -297,12 +280,12 @@ async function purchaseWithRush({ userId, creatorId }) {
 
 /**
  * Fulfill a Channel Pass purchase after payment is confirmed externally
- * (Alchemy webhook for wallet_usdc, NowPayments IPN for nowpayments).
+ * (Alchemy webhook for wallet_usdc).
  * Does NOT debit Ru$h — payment is already captured.
  *
  * Idempotent: if a creator_earnings row already exists with the same sourceRef
  * in metadata->>'source_ref', returns the existing subscription without error.
- * This handles webhook retries from both Alchemy and NowPayments.
+ * This handles webhook retries from Alchemy.
  *
  * @param {{
  *   userId: string,
@@ -502,12 +485,7 @@ async function fulfillChannelPassFromPayment({ userId, creatorId, priceUsd, sour
  *   on-chain USDC transfer and calls fulfillChannelPassFromPayment().
  *   Returns the intent fields the frontend needs to drive the wallet-connect send.
  *
- * provider='nowpayments': creates a NowPayments hosted invoice.
- *   Fulfillment happens asynchronously when the NowPayments IPN webhook fires
- *   and calls fulfillChannelPassFromPayment().
- *   Returns the hosted invoice URL to open in a popup (never iframe — NP blocks it).
- *
- * @param {{ userId: string, creatorId: string, provider: string, payCurrency?: string }} opts
+ * @param {{ userId: string, creatorId: string, provider: string }} opts
  */
 async function purchaseWithFiat({ userId, creatorId, provider, payCurrency }) {
   userId    = String(userId);
@@ -562,124 +540,9 @@ async function purchaseWithFiat({ userId, creatorId, provider, payCurrency }) {
     }
   }
 
-  // ── nowpayments (hosted invoice) ─────────────────────────────────────────
-  if (provider === 'nowpayments') {
-    if (!NOWPAYMENTS_API_KEY) {
-      throw { code: 'NOWPAYMENTS_NOT_CONFIGURED', message: 'Crypto payments are not configured.' };
-    }
-
-    const requestedCurrency = payCurrency ? String(payCurrency).toLowerCase() : null;
-    const validPayCurrency = (requestedCurrency && ALLOWED_NP_CURRENCIES.has(requestedCurrency))
-      ? requestedCurrency
-      : 'usdcsol';
-
-    if (requestedCurrency && requestedCurrency !== validPayCurrency) {
-      logger.warn('[channelPassService] purchaseWithFiat nowpayments: unsupported pay_currency — using fallback', {
-        userId, creatorId, requested: requestedCurrency, fallback: validPayCurrency,
-      });
-    }
-
-    const orderId = `channel-pass-${creatorId}-${userId}-${Date.now()}`;
-
-    const invoiceBody = {
-      price_amount:      priceUsd,
-      price_currency:    'usd',
-      pay_currency:      validPayCurrency,
-      order_id:          orderId,
-      order_description: `Channel Pass @${creator.username || creatorId}`,
-      ipn_callback_url:  `${WEB_APP_URL}/api/webhooks/nowpayments`,
-    };
-    const invoiceHeaders = {
-      'x-api-key':    NOWPAYMENTS_API_KEY,
-      'Content-Type': 'application/json',
-    };
-
-    let invoiceUrl;
-    let nowpaymentsInvoiceId;
-
-    try {
-      let paymentResp;
-      try {
-        paymentResp = await axios.post(
-          `${NOWPAYMENTS_URL}/invoice`,
-          invoiceBody,
-          { headers: invoiceHeaders, timeout: 10000 }
-        );
-      } catch (firstErr) {
-        const status = firstErr.response?.status;
-        const isTransient = !status || (status >= 500 && status < 600);
-        if (!isTransient) throw firstErr;
-        logger.warn('[channelPassService] purchaseWithFiat nowpayments: transient error — retrying once', {
-          status, orderId,
-        });
-        await new Promise((r) => setTimeout(r, 1000));
-        paymentResp = await axios.post(
-          `${NOWPAYMENTS_URL}/invoice`,
-          invoiceBody,
-          { headers: invoiceHeaders, timeout: 10000 }
-        );
-      }
-
-      const { id: npId, invoice_url: npInvoiceUrl } = paymentResp.data;
-      if (!npId) throw new Error('No invoice id returned by NowPayments');
-
-      nowpaymentsInvoiceId = String(npId);
-      invoiceUrl = npInvoiceUrl || nowpaymentsWidgetUrl(nowpaymentsInvoiceId);
-    } catch (invoiceErr) {
-      logger.error('[channelPassService] purchaseWithFiat nowpayments: invoice creation failed', {
-        userId, creatorId, orderId,
-        error: invoiceErr.response?.data || invoiceErr.message,
-      });
-      throw {
-        code:    'NOWPAYMENTS_ERROR',
-        message: 'Could not reach NowPayments. Please try again.',
-      };
-    }
-
-    // Record in dash_subscription_orders so the IPN webhook can find and fulfill this order.
-    // ON CONFLICT DO NOTHING — idempotent on orderId which is unique enough (timestamp suffix).
-    await query(
-      `INSERT INTO dash_subscription_orders
-         (user_id, plan_id, email, usd_amount, btcpay_invoice_id, status, creator_id, metadata)
-       VALUES ($1, 'channel_pass', NULL, $2, $3, 'pending', $4::text, $5::jsonb)
-       ON CONFLICT (btcpay_invoice_id) DO NOTHING`,
-      [
-        userId,
-        priceUsd,
-        orderId,
-        creatorId,
-        JSON.stringify({
-          provider:            'nowpayments',
-          flow:                'channel_pass',
-          creatorId,
-          subscriberId:        userId,
-          priceUsd,
-          invoiceUrl,
-          nowpaymentsInvoiceId,
-          payCurrency:         validPayCurrency,
-        }),
-      ]
-    );
-
-    logger.info('[channelPassService] purchaseWithFiat nowpayments: invoice created', {
-      userId, creatorId, orderId, priceUsd, validPayCurrency,
-    });
-
-    return {
-      success:                 true,
-      payment_url:             invoiceUrl,
-      order_id:                orderId,
-      nowpayments_invoice_id:  nowpaymentsInvoiceId,
-      pay_currency:            validPayCurrency,
-    };
-  }
-
-  // ── stripe / moonpay (not yet implemented) ───────────────────────────────
-  logger.warn('[channelPassService] purchaseWithFiat: provider not implemented', { userId, creatorId, provider });
-  return {
-    code:   'NOT_IMPLEMENTED_YET',
-    detail: `${provider} checkout for Channel Pass is not yet available.`,
-  };
+  // Only wallet_usdc is supported.
+  logger.warn('[channelPassService] purchaseWithFiat: unsupported provider', { userId, creatorId, provider });
+  throw { code: 'PROVIDER_DISABLED', message: `${provider} checkout for Channel Pass is not available. Please use the USDC payment option.` };
 }
 
 /**

@@ -28,20 +28,13 @@ const GIFTED_ELIGIBLE_PERFORMER_USER_IDS = new Set([
 ]);
 
 const TOKENS_PER_USD = 6;
-const GIFTED_CALL_MIN_CHARGE_USD = 0.50; // NowPayments minimum; never create a $0 invoice
+const GIFTED_CALL_MIN_CHARGE_USD = 0.50; // minimum charge for gifted-Ru$h partial payment
 function getCallNotificationService() {
   return require('./callNotificationService');
 }
 
 const CHECKOUT_DOMAIN = process.env.CHECKOUT_DOMAIN || 'https://pnptv.app';
 const WEB_APP_URL = process.env.WEB_APP_URL || 'https://pnptv.app';
-const NOWPAYMENTS_URL = process.env.NOWPAYMENTS_ENVIRONMENT === 'sandbox'
-  ? 'https://api-sandbox.nowpayments.io/v1'
-  : 'https://api.nowpayments.io/v1';
-
-function nowpaymentsWidgetUrl(invoiceId) {
-  return `https://nowpayments.io/embeds/payment-widget?iid=${encodeURIComponent(String(invoiceId))}`;
-}
 
 /**
  * Escape user-supplied values before interpolation into HTML templates.
@@ -80,9 +73,9 @@ async function createCallCheckout(memberId, packageId, provider, email, slotTime
     throw err;
   }
 
-  // Only nowpayments (crypto) is supported for call checkouts.
-  if (provider !== 'nowpayments') {
-    const err = new Error(`Invalid payment provider: ${provider}. Supported: nowpayments.`);
+  // Only wallet_usdc is supported for call checkouts.
+  if (provider !== 'wallet_usdc') {
+    const err = new Error(`Invalid payment provider: ${provider}. Supported: wallet_usdc.`);
     err.code = 'INVALID_PROVIDER';
     throw err;
   }
@@ -166,8 +159,6 @@ async function createCallCheckout(memberId, packageId, provider, email, slotTime
     }
   }
 
-  // NowPayments checkout URL is returned by the invoice API; set a placeholder here.
-  // The calling route handler replaces this with the actual invoice_url from NowPayments.
   let checkoutUrl = null;
 
   logger.info('[callCheckoutService] checkout created', {
@@ -316,7 +307,7 @@ async function onCallPaymentSuccess(paymentId) {
         }
       }
     } else {
-      // NowPayments path: confirm the pre-created booking row and link the credit.
+      // Confirm the pre-created booking row and link the credit.
       // Also stamp gifted fields from payment metadata onto the booking row.
       const giftedMeta = meta.giftedTokensApplied > 0 ? {
         gifted_tokens_applied: Number(meta.giftedTokensApplied),
@@ -719,9 +710,8 @@ async function _getPerformerId(client, creatorUserId) {
 
 // ---------------------------------------------------------------------------
 // _acquireCheckoutMutex — Redis SETNX lock (10s) to prevent parallel duplicate
-// checkouts. Race: `_findReusableCallDso` runs BEFORE the DSO row is inserted
-// (which happens ~800ms later after the NowPayments API call). Without the lock,
-// two rapid clicks both pass dedup, creating two invoices for the same intent.
+// checkouts. Without the lock, two rapid clicks both pass dedup, creating two
+// checkouts for the same intent.
 // ---------------------------------------------------------------------------
 
 async function _acquireCheckoutMutex(userId, packageId) {
@@ -772,323 +762,11 @@ async function _findReusableCallDso(userId, creatorId, packageId) {
 }
 
 // ---------------------------------------------------------------------------
-// createCallCheckoutNowPayments — NowPayments (crypto) checkout for a call package
-// ---------------------------------------------------------------------------
-
-/**
- * Create a NowPayments hosted invoice for a call package purchase.
- * Locks the slot atomically and creates an awaiting_payment booking row before the invoice.
- *
- * @param {object} opts
- * @param {string} opts.userId        - users.id of the buyer
- * @param {number} opts.packageId     - call_packages.id
- * @param {string} [opts.startTimeUtc] - ISO 8601
- * @param {string} [opts.endTimeUtc]   - ISO 8601
- * @param {string} [opts.payCurrency]  - Optional NowPayments pay_currency (e.g. 'btc', 'btcln')
- * @param {string} [opts.email]        - Optional buyer email; stored in payment metadata so onCallPaymentSuccess can email the receipt
- * @returns {{ invoiceUrl, paymentId, bookingId, amountUsd, expiresAt, orderId }}
- */
-async function createCallCheckoutNowPayments({ userId, packageId, startTimeUtc, endTimeUtc, payCurrency = null, clientNotes = null, email = null }) {
-  const axios = require('axios');
-  const NOWPAYMENTS_API_KEY = process.env.NOWPAYMENTS_API_KEY || '';
-  if (!NOWPAYMENTS_API_KEY) {
-    const err = new Error('Crypto payments are not configured');
-    err.code = 'NOWPAYMENTS_NOT_CONFIGURED';
-    err.status = 503;
-    throw err;
-  }
-
-  // 1. Load package
-  const pkgResult = await query(
-    'SELECT * FROM call_packages WHERE id = $1 AND is_active = true',
-    [packageId]
-  );
-  const pkg = pkgResult.rows[0];
-  if (!pkg) {
-    const err = new Error(`Call package ${packageId} not found or inactive`);
-    err.code = 'PACKAGE_NOT_FOUND';
-    throw err;
-  }
-
-  // D5: acquire per-user+package mutex so parallel clicks don't race past dedup
-  const gotMutexNp = await _acquireCheckoutMutex(userId, packageId);
-  if (!gotMutexNp) {
-    // Another checkout in flight → try to return whatever DSO gets created; if
-    // still nothing, ask the client to retry shortly.
-    await new Promise((r) => setTimeout(r, 1200));
-  }
-
-  // 1b. Dedup: if a pending checkout for the same user+creator+package exists and
-  //     the invoice hasn't expired yet, return it instead of creating a new one.
-  const reusableDso = await _findReusableCallDso(userId, pkg.creator_id, packageId);
-  if (reusableDso) {
-    const rMeta = typeof reusableDso.metadata === 'object' ? reusableDso.metadata : JSON.parse(reusableDso.metadata || '{}');
-    const existingInvoiceId = rMeta.nowpaymentsInvoiceId;
-    const existingUrl = rMeta.checkoutUrl || (existingInvoiceId ? nowpaymentsWidgetUrl(existingInvoiceId) : null);
-    if (existingUrl) {
-      logger.info('[callCheckoutService] Reusing pending NowPayments call DSO', { userId, packageId, dsoOrderId: reusableDso.btcpay_invoice_id });
-      return {
-        invoiceUrl: existingUrl,
-        paymentId: rMeta.paymentId || null,
-        bookingId: rMeta.bookingId || null,
-        amountUsd: parseFloat(reusableDso.usd_amount),
-        expiresAt: new Date(new Date(reusableDso.created_at).getTime() + 30 * 60 * 1000).toISOString(),
-        orderId: reusableDso.btcpay_invoice_id,
-        nowpaymentsInvoiceId: existingInvoiceId || null,
-        payCurrency: rMeta.payCurrency || null,
-        reused: true,
-      };
-    }
-  }
-
-  // 2. Compute gifted Ru$h discount (Santino + Lex only)
-  const fullAmountUsd = parseFloat(pkg.price_usd);
-  let giftedTokensApplied = 0;
-  let giftedDiscountUsd = 0;
-  const isGiftedEligible = GIFTED_ELIGIBLE_PERFORMER_USER_IDS.has(String(pkg.creator_id));
-
-  if (isGiftedEligible) {
-    try {
-      const walletRow = await query(
-        `SELECT gifted_balance FROM user_token_wallets WHERE user_id = $1`,
-        [String(userId)]
-      );
-      const rawGifted = walletRow.rows[0] ? Number(walletRow.rows[0].gifted_balance) : 0;
-      if (rawGifted > 0) {
-        // Floor to cent: discount = floor(gifted / 6 * 100) / 100
-        const rawDiscount = Math.floor(rawGifted / TOKENS_PER_USD * 100) / 100;
-        // Cap so minimum $0.50 goes through NowPayments
-        const cappedDiscount = Math.min(rawDiscount, fullAmountUsd - GIFTED_CALL_MIN_CHARGE_USD);
-        if (cappedDiscount > 0) {
-          giftedDiscountUsd = Math.round(cappedDiscount * 100) / 100;
-          giftedTokensApplied = Math.round(giftedDiscountUsd * TOKENS_PER_USD);
-        }
-      }
-    } catch (walletReadErr) {
-      // Non-fatal: proceed without discount if wallet read fails
-      logger.warn('[callCheckoutService] gifted wallet read failed, skipping discount', {
-        userId, creatorId: pkg.creator_id, error: walletReadErr.message,
-      });
-      giftedTokensApplied = 0;
-      giftedDiscountUsd = 0;
-    }
-  }
-
-  const amountUsd = Math.round((fullAmountUsd - giftedDiscountUsd) * 100) / 100;
-
-  // 3. Create pending payment record
-  const payment = await PaymentModel.create({
-    userId,
-    planId: null,
-    provider: 'nowpayments',
-    sku: pkg.sku,
-    amount: amountUsd,
-    currency: 'USD',
-    status: 'pending',
-    metadata: {
-      type: 'call_package',
-      packageId: pkg.id,
-      packageSku: pkg.sku,
-      creatorId: pkg.creator_id,
-      startTimeUtc: startTimeUtc || null,
-      endTimeUtc: endTimeUtc || null,
-      provider: 'nowpayments',
-      email: email && typeof email === 'string' ? email.trim().slice(0, 254) : null,
-      ...(giftedTokensApplied > 0 ? { giftedTokensApplied, giftedDiscountUsd } : {}),
-    },
-  });
-
-  // 4. Slot-lock + insert booking row + debit gifted tokens — all in one transaction
-  const pool = getPool();
-  const client = await pool.connect();
-  let booking;
-  try {
-    await client.query('BEGIN');
-    const performerId = await _getPerformerId(client, pkg.creator_id);
-    if (!performerId) {
-      throw Object.assign(new Error(`Creator ${pkg.creator_id} has no performer profile`), {
-        code: 'PERFORMER_NOT_FOUND', status: 404,
-      });
-    }
-    if (startTimeUtc && endTimeUtc) {
-      booking = await _lockSlotAndInsertBooking(client, {
-        performerId,
-        memberId: userId,
-        startTimeUtc,
-        endTimeUtc,
-        paymentId: payment.id,
-        packageId: pkg.id,
-        durationMinutes: pkg.duration_minutes,
-        priceUsd: pkg.price_usd,
-        clientNotes,
-      });
-    }
-
-    // Debit gifted tokens inside the booking transaction. COMMIT runs at line ~920;
-    // if NowPayments invoice creation fails after that, the explicit credit() call
-    // in the catch block below acts as the compensating transaction.
-    if (giftedTokensApplied > 0) {
-      const tokenLedger = require('./tokenLedgerService');
-      await tokenLedger.debit({
-        userId,
-        amount: giftedTokensApplied,
-        reason: 'call_book',
-        sourceType: 'booking',
-        sourceId: payment.id,
-        actorId: userId,
-        metadata: {
-          giftedDiscountUsd,
-          creatorId: pkg.creator_id,
-          packageId: pkg.id,
-        },
-        allowGifted: true,
-        externalClient: client,
-      });
-      // Stamp gifted fields on booking row (if slot booking was created)
-      if (booking?.id) {
-        await client.query(
-          `UPDATE bookings SET gifted_tokens_applied = $2, gifted_discount_usd = $3, updated_at = NOW() WHERE id = $1`,
-          [booking.id, giftedTokensApplied, giftedDiscountUsd]
-        );
-      }
-    }
-
-    await client.query('COMMIT');
-  } catch (txErr) {
-    await client.query('ROLLBACK');
-    await query(`UPDATE payments SET status = 'failed', updated_at = NOW() WHERE id = $1`, [payment.id]).catch(() => {});
-    throw txErr;
-  } finally {
-    client.release();
-  }
-
-  // 5. Create NowPayments invoice — outside the booking transaction
-  const orderId = `call-${payment.id}`;
-  const successUrl = booking?.id
-    ? `${WEB_APP_URL}/booking/${booking.id}/confirm?nowpayments=success`
-    : `${WEB_APP_URL}/subscribe?nowpayments=success`;
-
-  let invoiceUrl;
-  let npPayInfo = {};
-  try {
-    const ALLOWED_CALL_PAY_CURRENCIES = new Set(['btc', 'eth', 'usdcsol', 'usdttrc20', 'ltc', 'bnbbsc']);
-    const validCallPayCurrency = (payCurrency && ALLOWED_CALL_PAY_CURRENCIES.has(String(payCurrency).toLowerCase()))
-      ? String(payCurrency).toLowerCase() : 'btc';
-
-    const paymentResp = await axios.post(
-      `${NOWPAYMENTS_URL}/invoice`,
-      {
-        price_amount: amountUsd,
-        price_currency: 'usd',
-        pay_currency: validCallPayCurrency,
-        order_id: orderId,
-        order_description: `${pkg.duration_minutes}-min call — PNPtv`,
-        ipn_callback_url: `${WEB_APP_URL}/api/webhooks/nowpayments`,
-      },
-      { headers: { 'x-api-key': NOWPAYMENTS_API_KEY, 'Content-Type': 'application/json' }, timeout: 15000 }
-    );
-    const { id: nowpaymentsInvoiceId, invoice_url: npInvoiceUrl } = paymentResp.data;
-    if (!nowpaymentsInvoiceId) throw new Error('NowPayments returned no invoice id');
-    invoiceUrl = npInvoiceUrl || nowpaymentsWidgetUrl(nowpaymentsInvoiceId);
-    npPayInfo = { nowpaymentsInvoiceId: String(nowpaymentsInvoiceId), payCurrency: validCallPayCurrency };
-  } catch (invoiceErr) {
-    if (booking?.id) {
-      await query(`UPDATE bookings SET status = 'expired', updated_at = NOW() WHERE id = $1`, [booking.id]).catch((e) => {
-        logger.error('callCheckout: failed to expire booking after NP failure', { bookingId: booking.id, error: e.message });
-      });
-    }
-    await query(`UPDATE payments SET status = 'failed', updated_at = NOW() WHERE id = $1`, [payment.id]).catch(() => {});
-    // Refund any gifted tokens that were debited before the invoice call — the DB
-    // transaction already committed so we must credit them back explicitly.
-    if (giftedTokensApplied > 0) {
-      try {
-        const tokenLedger = require('./tokenLedgerService');
-        await tokenLedger.credit({
-          userId,
-          giftedDelta: giftedTokensApplied,
-          reason: 'call_refund',
-          sourceType: 'booking',
-          sourceId: payment.id,
-          actorId: 'system',
-          metadata: { refundReason: 'nowpayments_invoice_failed', giftedDiscountUsd },
-        });
-        logger.info('[callCheckoutService] gifted tokens refunded after NP invoice failure', {
-          userId, giftedTokensApplied, paymentId: payment.id,
-        });
-      } catch (refundErr) {
-        logger.error('[callCheckoutService] CRITICAL: gifted token refund failed after NP invoice failure', {
-          userId, giftedTokensApplied, paymentId: payment.id, error: refundErr.message,
-        });
-      }
-    }
-    logger.error('[callCheckoutService] NowPayments invoice creation failed', {
-      paymentId: payment.id, bookingId: booking?.id ?? null,
-      error: invoiceErr.response?.data?.message || invoiceErr.message,
-    });
-    throw Object.assign(new Error('Could not reach NowPayments. Please try again.'), {
-      code: 'NOWPAYMENTS_ERROR', status: 502,
-    });
-  }
-
-  // 6. Register in dash_subscription_orders so the webhook handler can route
-  await query(
-    `INSERT INTO dash_subscription_orders
-       (user_id, plan_id, email, usd_amount, btcpay_invoice_id, status, creator_id, metadata)
-     VALUES ($1, 'call_package', NULL, $2, $3, 'pending', $4, $5::jsonb)
-     ON CONFLICT (btcpay_invoice_id) DO NOTHING`,
-    [
-      userId, amountUsd, orderId, pkg.creator_id,
-      JSON.stringify({
-        resource: 'call_package',
-        packageId: pkg.id,
-        paymentId: payment.id,
-        bookingId: booking?.id ?? null,
-        startTimeUtc: startTimeUtc || null,
-        endTimeUtc: endTimeUtc || null,
-        nowpaymentsInvoiceId: String(npPayInfo.nowpaymentsInvoiceId || ''),
-        payCurrency: npPayInfo.payCurrency || null,
-        checkoutUrl: invoiceUrl,
-      }),
-    ]
-  );
-
-  // 7. Stamp orderId + bookingId back onto payment metadata for getBookingPaymentStatus polling
-  // FIX HIGH-05/HIGH-06: stamp BOTH booking_id (snake_case) AND bookingId (camelCase) so
-  // onCallPaymentSuccess (reads camelCase) and getBookingPaymentStatus (reads snake_case) both work.
-  await query(
-    `UPDATE payments SET metadata = metadata || $2::jsonb, updated_at = NOW() WHERE id = $1`,
-    [payment.id, JSON.stringify({ btcpay_invoice_id: orderId, booking_id: booking?.id ?? null, bookingId: booking?.id ?? null })]
-  );
-
-  // NowPayments invoices expire after 30 minutes by default
-  const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
-
-  logger.info('[callCheckoutService] NowPayments call checkout created', {
-    paymentId: payment.id, bookingId: booking?.id ?? null, orderId, packageId: pkg.id,
-    amountUsd, giftedTokensApplied, giftedDiscountUsd,
-  });
-
-  return {
-    invoiceUrl,
-    paymentId: payment.id,
-    bookingId: booking?.id ?? null,
-    amountUsd,
-    fullAmountUsd,
-    giftedTokensApplied,
-    giftedDiscountUsd,
-    expiresAt,
-    orderId,
-    ...npPayInfo,
-  };
-}
-
-// ---------------------------------------------------------------------------
 // createCallCheckoutBtc — BTC+Lightning (BTCPay) checkout for a call package
 // ---------------------------------------------------------------------------
 
 /**
  * Create a BTCPay BTC+Lightning invoice for a call package purchase.
- * Mirrors createCallCheckoutNowPayments but routes through BTCPay instead.
  * The same dash_subscription_orders webhook handler processes both.
  *
  * @param {object} opts
@@ -1554,7 +1232,6 @@ async function expireAbandonedBookings() {
 
 module.exports = {
   createCallCheckout,
-  createCallCheckoutNowPayments,
   createCallCheckoutBtc,
   createCallCheckoutTokens,
   onCallPaymentSuccess,

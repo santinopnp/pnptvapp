@@ -4,8 +4,8 @@
  * walletCheckoutService.js
  *
  * Unified purchase handler that replaces the scattered per-provider payment
- * services (nowPaymentsService, meruService, dashTokenService, and the
- * per-surface debit code paths in routes.js). Every purchase across every
+ * services (meruService, dashTokenService, and the per-surface debit code
+ * paths in routes.js). Every purchase across every
  * surface — memberships, PRIME, creator subs, calls, Ru$h, channel/hangout
  * access — resolves to one of two rails:
  *
@@ -1197,7 +1197,7 @@ async function _fulfillCrystalPass(client, { userId, entitlementSpec, provider, 
       creatorId: String(targetCreatorId),
       months: Number(months) || 1,
       grantType: isGift ? 'gift' : 'purchase',
-      source: provider.startsWith('wallet') ? 'wallet' : 'nowpayments',
+      source: provider.startsWith('wallet') ? 'wallet' : 'crypto',
       // Quien paga, que no siempre es quien recibe: en un regalo es el cliente.
       grantedBy: String(giftedBy || targetCreatorId),
       amountUsd: priceCents != null ? Number(priceCents) / 100 : null,
@@ -1347,6 +1347,55 @@ async function _fulfillCallBooking(client, { userId, entitlementSpec, provider, 
           durationMinutes: pkg.duration_minutes || null,
         }).catch(() => {});
       } catch { /* la espera es un extra, nunca un requisito del pago */ }
+    });
+  }
+
+  // Creator revenue split — 70% of the call package price goes to the creator.
+  // Uses the same hold-window as entitlement purchases (EARNINGS_HOLD_HOURS).
+  // Wrapped in try/catch so a failed DB write never rolls back the booking.
+  let earningsId = null;
+  try {
+    const {
+      CREATOR_REVENUE_RATE, EARNINGS_HOLD_HOURS,
+    } = require('../config/monetizationConfig');
+    const gross = Number(amountUsd);
+    const amountCreator = Math.round(gross * CREATOR_REVENUE_RATE * 100) / 100;
+    const amountPlatform = Math.round((gross - amountCreator) * 100) / 100;
+    const earningsRes = await client.query(
+      `INSERT INTO creator_earnings
+         (creator_id, amount_gross, amount_creator, amount_platform, status,
+          available_at, source_payment_id, period_month)
+       VALUES ($1, $2, $3, $4, 'holding', NOW() + ($5 || ' hours')::interval, $6,
+               date_trunc('month', CURRENT_DATE))
+       ON CONFLICT (source_payment_id, creator_id) WHERE source_payment_id IS NOT NULL
+         DO NOTHING
+       RETURNING id`,
+      [String(pkg.creator_id), gross, amountCreator, amountPlatform,
+       String(EARNINGS_HOLD_HOURS), `call_booking:${paymentId}`]
+    );
+    earningsId = earningsRes.rows[0]?.id || null;
+  } catch (e) {
+    logger.warn('[walletCheckout] creator_earnings insert failed for call_booking', {
+      creatorId: pkg.creator_id, paymentId, amountUsd, err: e.message,
+    });
+  }
+
+  // Fire-and-forget push to the creator — deliberately outside the transaction
+  // so a failed push never rolls back the booking credit.
+  if (earningsId) {
+    setImmediate(() => {
+      try {
+        const { CREATOR_REVENUE_RATE } = require('../config/monetizationConfig');
+        const net = Math.round(Number(amountUsd) * CREATOR_REVENUE_RATE * 100) / 100;
+        const push = require('./pushNotificationService');
+        push.sendToUser(String(pkg.creator_id), {
+          title: `📞 Call booked: $${net.toFixed(2)} earned`,
+          body: 'A member just purchased a call package with you — tap to view.',
+          url: '/creator/payouts',
+          icon: '/app-icon-192.png',
+          tag: `call-booking-${paymentId}`,
+        }, { notifType: 'call_booking_earned' }).catch(() => {});
+      } catch { /* push service optional */ }
     });
   }
 
@@ -1521,7 +1570,7 @@ async function _fulfillEntitlement(client, { userId, entitlementSpec, surface, p
   // Creator revenue split — every wallet_usdc purchase of a creator_sub (or any
   // entitlement scoped to a specific creator) must credit creator_earnings at
   // the canonical rate. Legacy paymentService.js has the same insert for
-  // NowPayments/Meru/BTCPay paths; the new wallet rail was missing it and
+  // Meru/BTCPay paths; the new wallet rail was missing it and
   // silently dropped ~3 payments to DUKEOFDENSITY on 2026-08-31 before we
   // caught it. Held for EARNINGS_HOLD_HOURS to cover chargeback window.
   if (creator_id && surface === 'creator_sub' && Number(amountUsd) > 0) {
@@ -1592,7 +1641,7 @@ async function _invalidateCaches(userId) {
 
 /**
  * Post-sale notifications for wallet-checkout grants. Matches parity with the
- * legacy providers (NowPayments/Banxa) which fire the same two channels
+ * legacy providers (Banxa/BTCPay) which fire the same two channels
  * from paymentSettlementService. Fire-and-forget — never rejects. Never call
  * this before the grant is committed; callers must invoke after their COMMIT.
  *

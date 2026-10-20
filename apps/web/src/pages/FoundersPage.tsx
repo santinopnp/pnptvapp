@@ -1,6 +1,5 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect } from "react";
 import { Helmet } from "react-helmet-async";
-import { WalletLoginGate, WalletPayCard } from "@/components/payments/PayInWalletChips";
 // ── Constants ──────────────────────────────────────────────────────────────────
 
 const PLANS = {
@@ -86,7 +85,6 @@ const T = {
 
 export default function FoundersPage() {
   const [lang, setLang]             = useState(getInitialLang);
-  const [success, setSuccess]       = useState(false);
   const [selectedPlan, setSelectedPlan] = useState<PlanKey>("annual");
 
   const es      = lang.toLowerCase().startsWith("es");
@@ -103,25 +101,7 @@ export default function FoundersPage() {
     try { localStorage.setItem(LANG_KEY, lang); } catch { /* ignore */ }
   }, [lang]);
 
-  const handleSuccess = useCallback(() => setSuccess(true), []);
-
   // ── Success screen ──────────────────────────────────────────────────────────
-  if (success) {
-    return (
-      <div style={styles.root}>
-        <Helmet>
-          <title>PNPtv! Founders</title>
-        </Helmet>
-        <div style={styles.successWrap}>
-          <div style={styles.successIcon}>🖤</div>
-          <h1 style={styles.successTitle}>{t.successTitle}</h1>
-          <p style={styles.successBody}>{isAnnual ? t.successBodyAnnual : t.successBodyLifetime}</p>
-          <a href="/" style={styles.successBtn}>{t.successCta}</a>
-        </div>
-      </div>
-    );
-  }
-
   // ── Main page ───────────────────────────────────────────────────────────────
   return (
     <div style={styles.root}>
@@ -235,17 +215,20 @@ export default function FoundersPage() {
             </span>
           </div>
 
-          <WalletLoginGate lang={es ? "es" : "en"}>
-            {/* Wallet / card */}
-            <WalletPayCard
-              surface="prime"
-              amountUsd={plan.price}
-              entitlementSpec={{ planId: plan.id }}
-              lang={es ? "es" : "en"}
-              label={t.payWallet}
-              onSuccess={handleSuccess}
-            />
-          </WalletLoginGate>
+          <button
+            type="button"
+            onClick={() => { window.location.href = `/checkout?plan=${plan.id}`; }}
+            style={{
+              display: "flex", alignItems: "center", justifyContent: "center",
+              gap: 8, width: "100%", padding: "18px 24px", borderRadius: 14,
+              border: "none", background: "linear-gradient(90deg, #10b981, #059669)",
+              color: "#fff", fontSize: 15, fontWeight: 800, cursor: "pointer",
+              minHeight: 56, boxShadow: "0 8px 32px rgba(16,185,129,0.45)",
+              transition: "opacity 0.15s, transform 0.1s",
+            }}
+          >
+            {t.payWallet}
+          </button>
 
           <p style={styles.legalNote}>{t.legalNote}</p>
         </div>

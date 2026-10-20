@@ -1,7 +1,7 @@
 import React from "react";
 
-// Wallet icon SVGs live here so both the NowPaymentsWaitingPanel and
-// BookCallModal chip strip can share them without a circular import.
+// Wallet icon SVGs live here so BookCallModal chip strip and other components
+// can share them without a circular import.
 
 export const MetaMaskIcon = ({ size = 28 }: { size?: number }) => (
   <svg viewBox="0 0 40 40" width={size} height={size} fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -70,15 +70,11 @@ const EVM_CURRENCIES = new Set([
 
 export function trustWalletDeepLink(invoiceUrl: string, payCurrency?: string | null): string {
   const coinId = TW_COIN_ID[(payCurrency || "").toLowerCase()] ?? 60;
-  const match = invoiceUrl.match(/[?&]iid=([a-zA-Z0-9_-]+)/);
-  const targetUrl = match ? `https://nowpayments.io/embeds/payment-widget?iid=${match[1]}` : invoiceUrl;
-  return `https://link.trustwallet.com/open_url?coin_id=${coinId}&url=${encodeURIComponent(targetUrl)}`;
+  return `https://link.trustwallet.com/open_url?coin_id=${coinId}&url=${encodeURIComponent(invoiceUrl)}`;
 }
 
 export function metaMaskDeepLink(invoiceUrl: string): string {
-  const match = invoiceUrl.match(/[?&]iid=([a-zA-Z0-9_-]+)/);
-  const targetUrl = match ? `https://nowpayments.io/embeds/payment-widget?iid=${match[1]}` : invoiceUrl;
-  return `https://metamask.app.link/dapp/${targetUrl.replace(/^https?:\/\//, "")}`;
+  return `https://metamask.app.link/dapp/${invoiceUrl.replace(/^https?:\/\//, "")}`;
 }
 
 export function blueWalletDeepLink(invoiceUrl: string): string {
@@ -502,8 +498,8 @@ export interface WalletPayCardProps {
   /** When defined, called INSTEAD of showing the generic "card glitched" error
    *  when Privy's Stripe fiat onramp fails (addFunds returns
    *  "Unable to open payment window" / "Something went wrong setting up checkout").
-   *  Callers wire this to opening their NowPayments picker so a dead onramp
-   *  turns into a one-tap crypto fallback instead of a dead-end error. */
+   *  Callers wire this to open a crypto fallback so a dead onramp
+   *  turns into a one-tap alternative instead of a dead-end error. */
   onCryptoFallback?: () => void;
   lang?: "es" | "en";
   compact?: boolean;
@@ -947,7 +943,7 @@ export function WalletPayCard({
       const isCreatorLocked = /creator locked/i.test(msg);
 
       if (isRateLimited) {
-        // Too many retries — route to NowPayments if available, otherwise surface a clear message.
+        // Too many retries — route to crypto fallback if available, otherwise surface a clear message.
         if (onCryptoFallback) {
           setPaying(false);
           onCryptoFallback();
@@ -1015,8 +1011,8 @@ export function WalletPayCard({
     // In SMS-verification-hostile environments (Android Telegram WebApp, iOS
     // in-app browsers) Stripe's phone-verify step is blocked by the webview.
     // If MoonPay is available we route straight through useFundWallet — no banner.
-    // Otherwise (e.g. iOS PWA where MoonPay also can't open), bias toward
-    // NowPayments when available; otherwise show a banner with an "Open in
+    // Otherwise (e.g. iOS PWA where MoonPay also can't open), route to
+    // crypto fallback when available; otherwise show a banner with an "Open in
     // browser" escape. Never call addFunds or fundWallet in the banner path.
     //
     // forceMoonPay=true comes from the Stripe "Too many attempts" auto-switch
@@ -1125,7 +1121,7 @@ export function WalletPayCard({
         setError(onrampErrorMessage(kind, es, msg));
         return;
       }
-      // Stripe rate-limited → try MoonPay first (one-shot), then NowPayments.
+      // Stripe rate-limited → try MoonPay first (one-shot), then crypto fallback.
       if (kind === "rate_limited" && _MOONPAY_ENABLED && !useMoonPay && !autoSwitchedMoonPayRef.current) {
         autoSwitchedMoonPayRef.current = true;
         markStripeRateLimited();
@@ -1139,7 +1135,7 @@ export function WalletPayCard({
         return;
       }
       // Card onramp unrecoverable (Stripe SMS lockout after MoonPay hop, Stripe
-      // KYC-SDK, MoonPay status timeout). Route to NowPayments crypto if wired.
+      // KYC-SDK, MoonPay status timeout). Route to crypto fallback if wired.
       if (onCryptoFallback && (kind === "rate_limited" || kind === "stripe_failed" || kind === "status_timeout")) {
         if (kind === "rate_limited") markStripeRateLimited();
         reportWalletClientError("fundWallet_fallback_to_crypto", err, {
@@ -1572,9 +1568,9 @@ export function WalletPayCard({
                           : `This purchase: $${amountUsd.toFixed(2)} (minimum charge)`)}
                 </span>
               </button>
-              {/* Crypto peer — always visible when the caller wires a NowPayments
-                  escape. Not a fallback; a sibling option. Styled smaller than
-                  the card CTA so card remains the default visual. */}
+              {/* Crypto peer — always visible when the caller wires a crypto
+                  escape via onCryptoFallback. Not a fallback; a sibling option.
+                  Styled smaller than the card CTA so card remains the default visual. */}
               {onCryptoFallback && (
                 <button
                   type="button"

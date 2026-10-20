@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 // Note: joining state removed — call now opens Telegram directly
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
-import { getCallBooking, getBookingPaymentStatus, getBookingOptions, bookCallWithCredit } from "@/lib/api";
+import { getCallBooking, getBookingOptions, bookCallWithCredit } from "@/lib/api";
 import type { BookingSlot, BookingOptionsResponse } from "@/lib/api";
 import { PostCallSurveyModal } from "@/components/creators/PostCallSurveyModal";
 import { useI18n } from "@/lib/i18n";
@@ -88,8 +88,6 @@ export default function BookingConfirmation() {
   const [error, setError] = useState<string | null>(null);
   // Open survey if coming from the post-call notification deep-link (?survey=1)
   const [showSurvey, setShowSurvey] = useState(() => searchParams.get("survey") === "1");
-  const [pollingPayment, setPollingPayment] = useState(false);
-
   // ── Scheduling state (used when booking has no start_at — token-purchased credits) ──
   const [scheduleOptions, setScheduleOptions] = useState<BookingOptionsResponse | null>(null);
   const [scheduleLoading, setScheduleLoading] = useState(false);
@@ -97,50 +95,6 @@ export default function BookingConfirmation() {
   const [scheduleError, setScheduleError] = useState<string | null>(null);
   const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
   const [scheduling, setScheduling] = useState(false);
-
-  // Poll payment status after NowPayments or ePayco redirect until booking is confirmed
-  useEffect(() => {
-    const isPaymentReturn =
-      searchParams.get("nowpayments") === "success";
-    if (!isPaymentReturn || !bookingId) return;
-    if (!(/^\d+$/.test(bookingId) || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(bookingId))) return;
-
-    let stopped = false;
-    const POLL_INTERVAL_MS = 4_000;
-    const POLL_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes
-    const pollStart = Date.now();
-
-    setPollingPayment(true);
-
-    const intervalId = setInterval(async () => {
-      if (stopped) return;
-      if (Date.now() - pollStart >= POLL_TIMEOUT_MS) {
-        clearInterval(intervalId);
-        setPollingPayment(false);
-        return;
-      }
-      try {
-        const statusRes = await getBookingPaymentStatus(bookingId);
-        if (statusRes.status === "paid" || statusRes.status === "completed" as string) {
-          clearInterval(intervalId);
-          stopped = true;
-          setPollingPayment(false);
-          // Reload booking to get confirmed state
-          getCallBooking(bookingId)
-            .then((res) => setBooking(res.booking))
-            .catch(() => {});
-        }
-      } catch {
-        // Network hiccup — keep polling
-      }
-    }, POLL_INTERVAL_MS);
-
-    return () => {
-      stopped = true;
-      clearInterval(intervalId);
-      setPollingPayment(false);
-    };
-  }, [bookingId, searchParams]);
 
   useEffect(() => {
     if (!bookingId) return;
@@ -281,30 +235,6 @@ export default function BookingConfirmation() {
   return (
     <div className="min-h-dvh py-8 px-4" style={{ background: "var(--pnp-background, #121212)" }}>
       <div className="max-w-md mx-auto space-y-5">
-        {/* NowPayments polling banner */}
-        {pollingPayment && (
-          <div
-            className="flex items-center gap-3 px-4 py-3 rounded-xl"
-            style={{ background: "rgba(255,204,0,0.10)", border: "1px solid rgba(255,204,0,0.25)" }}
-            role="status"
-            aria-live="polite"
-          >
-            <svg
-              className="animate-spin flex-shrink-0"
-              style={{ width: 16, height: 16, color: "#FFCC00" }}
-              fill="none"
-              viewBox="0 0 24 24"
-              aria-hidden="true"
-            >
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-            </svg>
-            <span className="text-sm font-medium" style={{ color: "#FFCC00" }}>
-              Confirming your payment…
-            </span>
-          </div>
-        )}
-
         {/* Header */}
         <div className="flex flex-col items-center gap-3 pt-4 pb-2">
           <div

@@ -1199,7 +1199,7 @@ const buySlotTicket = async (req, res) => {
     // ── Dash / BTCPay crypto purchase path ───────────────────────────────────
     if (currency === 'dash') {
       // Dash retired 2026-07-31 — BTCPay account closed. Live-show tickets are
-      // token-only until a NowPayments/Meru path is wired.
+      // token-only; wallet_usdc path not yet wired for live-show tickets.
       return res.status(410).json({
         success: false,
         error: 'Dash ticket purchases retired. Use tokens.',

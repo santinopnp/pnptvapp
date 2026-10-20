@@ -1,6 +1,6 @@
 /**
  * Dash Token Service
- * Manages Tokens wallets — funded via BTCPay Server / NowPayments
+ * Manages Tokens wallets — funded via BTCPay Server / Privy USDC
  * 6 Tokens = $1 USD
  */
 
@@ -365,9 +365,8 @@ class DashTokenService {
    */
   static async getPurchaseHistory(userId, limit = 10) {
     // Union the two token-purchase tables:
-    //   token_purchases      — BTCPay Dash/BTC flows (native)
-    //   dash_subscription_orders — NowPayments flows (plan_id='token_purchase')
-    // Without the union the NowPayments purchases are invisible in wallet history.
+    //   token_purchases          — BTCPay Dash/BTC flows (native)
+    //   dash_subscription_orders — legacy crypto flows (plan_id='token_purchase')
     const result = await query(
       `(
          SELECT id::text AS id,
@@ -394,7 +393,7 @@ class DashTokenService {
                   WHEN status = 'failed' THEN 'invalid'
                   ELSE status
                 END AS status,
-                'nowpayments' AS payment_method,
+                COALESCE(metadata->>'provider', 'legacy') AS payment_method,
                 created_at,
                 completed_at AS settled_at
          FROM dash_subscription_orders

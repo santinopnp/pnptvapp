@@ -473,7 +473,7 @@ export default function DashBankPage() {
                 },
                 {
                   q: "Can I pay with other cryptocurrencies?",
-                  a: "We support Dash via BTCPay and 100+ cryptocurrencies via NowPayments (USDC, BTC, ETH, and more). Dash offers the strongest privacy.",
+                  a: "We support USDC on Base via your Privy embedded wallet.",
                 },
                 {
                   q: "Do I need to give my email?",

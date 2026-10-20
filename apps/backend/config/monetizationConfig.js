@@ -208,16 +208,16 @@ module.exports = {
   // PAYMENT SETTINGS
   // ==========================================
   payment: {
-    // Supported providers — NowPayments only (ETH + USDC-ERC20).
-    // ePayco retired 2026-06-27, BTCPay/Dash retired 2026-07-31.
-    providers: ['nowpayments'],
+    // Supported providers — wallet_usdc only (Privy USDC on Base).
+    // ePayco retired 2026-06-27, BTCPay/Dash retired 2026-07-31, crypto IPN retired 2026-10-20.
+    providers: ['wallet_usdc'],
 
     // Default provider
-    defaultProvider: 'nowpayments',
+    defaultProvider: 'wallet_usdc',
 
     // Payment methods
     methods: {
-      nowpayments: ['eth', 'usdcerc20'],
+      wallet_usdc: ['usdc'],
     },
 
     // Minimum amounts

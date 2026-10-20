@@ -1532,7 +1532,6 @@ export function CristinaWidget({ mode = "widget", compact = false }: CristinaWid
                   className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white focus:outline-none focus:border-cyan-500/50"
                 >
                   <option value="wallet_usdc">Wallet USDC (Base · Alchemy)</option>
-                  <option value="nowpayments">Any crypto</option>
                   <option value="efipay">Email payment</option>
                   <option value="nequi_wompi">Local bank transfer (COP · Lifetime100)</option>
                   <option value="rush_tokens">Ru$h tokens (in-app)</option>

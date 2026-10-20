@@ -164,7 +164,6 @@ Your job: analyze payment evidence provided by an admin and determine whether it
 
 PAYMENT PROVIDER RULES:
 - wallet_usdc (Privy card/USDC — PRIMARY): status "completed" = valid; "pending" = pending; "failed"/"refunded" = rejected. Check amount matches plan price (allow ±$0.50).
-- NowPayments (any-crypto fallback): payment_status "finished" or "confirmed" = valid; "waiting", "confirming", "sending", "partially_paid" = pending; "failed", "expired", "refunded" = rejected. Prefer records with actually_paid ≥ pay_amount.
 - rush_tokens: internal Ru$h token purchase, not a membership payment — never grants PRIME.
 
 VALIDATION CHECKS (apply ALL):

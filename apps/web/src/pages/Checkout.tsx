@@ -19,6 +19,7 @@ import {
   ChevronDown,
   ChevronUp,
   RefreshCw,
+  Zap,
 } from "lucide-react";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -41,6 +42,32 @@ const HIDDEN_PLAN_IDS = new Set([
   "mondays_spundays_promo_20",
 ]);
 const MEMBER_PLAN_IDS = new Set(["member_monthly"]);
+
+const TOKEN_PACKAGES = [
+  { id: "pkg_5",    tokens: 30,    usd: 5,    label: "30 Ru$h" },
+  { id: "pkg_10",   tokens: 62,    usd: 10,   label: "62 Ru$h (+3%)" },
+  { id: "pkg_25",   tokens: 155,   usd: 25,   label: "155 Ru$h (+3%)" },
+  { id: "pkg_50",   tokens: 315,   usd: 50,   label: "315 Ru$h (+5%)" },
+  { id: "pkg_100",  tokens: 636,   usd: 100,  label: "636 Ru$h (+6%)" },
+  { id: "pkg_250",  tokens: 1620,  usd: 250,  label: "1,620 Ru$h (+8%)" },
+  { id: "pkg_500",  tokens: 3270,  usd: 500,  label: "3,270 Ru$h (+9%)" },
+  { id: "pkg_1000", tokens: 6600,  usd: 1000, label: "6,600 Ru$h (+10%)" },
+  { id: "pkg_5000", tokens: 33000, usd: 5000, label: "33,000 Ru$h (+10%)" },
+] as const;
+
+type TokenPackage = typeof TOKEN_PACKAGES[number];
+
+interface CallIntent {
+  creatorId: string;
+  packageId: string;
+  packageLabel: string;
+  priceUsd: number;
+  creatorName: string;
+  startAt?: string | null;
+  endAt?: string | null;
+  clientNotes?: string | null;
+  creatorHandle?: string;
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -85,28 +112,98 @@ async function verifyCheckout(
   return res.json();
 }
 
+async function verifyTokenCheckout(
+  payload: { packageId: string; privyUserId: string; email?: string },
+  token?: string | null,
+): Promise<unknown> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch("/api/checkout/tokens/verify", {
+    method: "POST",
+    credentials: "include",
+    headers,
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body?.error || `Verification failed (${res.status})`);
+  }
+  return res.json();
+}
+
+async function verifyCallCheckout(
+  payload: {
+    packageId: string;
+    creatorId: string;
+    startAt?: string | null;
+    endAt?: string | null;
+    clientNotes?: string | null;
+    privyUserId: string;
+    email?: string;
+  },
+  token?: string | null,
+): Promise<unknown> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch("/api/checkout/calls/verify", {
+    method: "POST",
+    credentials: "include",
+    headers,
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body?.error || `Verification failed (${res.status})`);
+  }
+  return res.json();
+}
+
 // ── Step indicator ────────────────────────────────────────────────────────────
 
 type CheckoutStep = "plan" | "account" | "pay" | "success";
+type CheckoutType = "" | "tokens" | "call";
 
-const STEPS: { key: CheckoutStep; label: string }[] = [
-  { key: "plan", label: "Plan" },
-  { key: "account", label: "Account" },
-  { key: "pay", label: "Payment" },
-  { key: "success", label: "Done" },
-];
-const STEP_INDEX: Record<CheckoutStep, number> = { plan: 0, account: 1, pay: 2, success: 3 };
+function getSteps(type: CheckoutType): { key: CheckoutStep; label: string }[] {
+  if (type === "tokens") {
+    return [
+      { key: "plan", label: "Tokens" },
+      { key: "account", label: "Account" },
+      { key: "pay", label: "Payment" },
+      { key: "success", label: "Done" },
+    ];
+  }
+  if (type === "call") {
+    return [
+      { key: "account", label: "Account" },
+      { key: "pay", label: "Payment" },
+      { key: "success", label: "Done" },
+    ];
+  }
+  return [
+    { key: "plan", label: "Plan" },
+    { key: "account", label: "Account" },
+    { key: "pay", label: "Payment" },
+    { key: "success", label: "Done" },
+  ];
+}
 
-function StepIndicator({ current }: { current: CheckoutStep }) {
-  const currentIdx = STEP_INDEX[current];
+function getStepIndex(type: CheckoutType, step: CheckoutStep): number {
+  const steps = getSteps(type);
+  return steps.findIndex((s) => s.key === step);
+}
+
+function StepIndicator({ current, type }: { current: CheckoutStep; type: CheckoutType }) {
+  const steps = getSteps(type);
+  const currentIdx = getStepIndex(type, current);
+
   return (
     <div className="flex items-center justify-center gap-0 mb-8" role="list" aria-label="Checkout steps">
-      {STEPS.map((step, idx) => {
+      {steps.map((step, idx) => {
         const isDone = idx < currentIdx;
         const isActive = idx === currentIdx;
-        const isLast = idx === STEPS.length - 1;
+        const isLast = idx === steps.length - 1;
         return (
-          <React.Fragment key={step.key}>
+          <React.Fragment key={step.key + String(idx)}>
             <div className="flex flex-col items-center gap-1.5" role="listitem">
               <div
                 className={[
@@ -172,7 +269,7 @@ function PlanStep({ initialPlanId, onSelect }: PlanStepProps) {
       .then((r) => r.json())
       .then((data) => {
         if (!data.ok || !data.plans?.length) throw new Error("No plans available");
-        const visible = (data.plans as SubscriptionPlan[]).filter((p) => !HIDDEN_PLAN_IDS.has(p.id));
+        const visible = (data.plans as SubscriptionPlan[]).filter((p) => !HIDDEN_PLAN_IDS.has(p.id) || p.id === initialPlanId);
         if (data.recommendedPlanId) setRecommendedId(data.recommendedPlanId as string);
         setPlans(visible);
         const preselect = initialPlanId
@@ -188,6 +285,12 @@ function PlanStep({ initialPlanId, onSelect }: PlanStepProps) {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    if (!initialPlanId || loading || plans.length === 0) return;
+    const plan = plans.find((p) => p.id === selectedId);
+    if (plan) onSelect(plan);
+  }, [plans.length, loading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading) {
     return (
@@ -223,6 +326,7 @@ function PlanStep({ initialPlanId, onSelect }: PlanStepProps) {
   }
 
   const selected = plans.find((p) => p.id === selectedId);
+  void selected; // used for type narrowing below
 
   return (
     <div className="space-y-2">
@@ -339,6 +443,74 @@ function PlanStep({ initialPlanId, onSelect }: PlanStepProps) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// ── Step 1 (tokens): Token Package ────────────────────────────────────────────
+
+interface TokenPackageStepProps {
+  initialPkgId: string | null;
+  onSelect: (pkg: TokenPackage) => void;
+}
+
+function TokenPackageStep({ initialPkgId, onSelect }: TokenPackageStepProps) {
+  const [selectedId, setSelectedId] = useState<string>(
+    initialPkgId && TOKEN_PACKAGES.find((p) => p.id === initialPkgId)
+      ? initialPkgId
+      : TOKEN_PACKAGES[0].id,
+  );
+
+  const selectedPkg = TOKEN_PACKAGES.find((p) => p.id === selectedId) ?? TOKEN_PACKAGES[0];
+
+  return (
+    <div className="space-y-2">
+      <h2 className="text-base font-bold text-pnp-textPrimary">Choose a token package</h2>
+      <p className="text-xs text-pnp-textSecondary mb-2">
+        Ru$h tokens — spend them on tips, calls, and more.
+      </p>
+
+      {TOKEN_PACKAGES.map((pkg) => {
+        const isSelected = pkg.id === selectedId;
+        return (
+          <button
+            key={pkg.id}
+            type="button"
+            onClick={() => setSelectedId(pkg.id)}
+            className={[
+              "w-full text-left px-3 py-3 sm:p-4 rounded-xl border-2 transition-all duration-200 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-pnp-background focus-visible:ring-pnp-accent",
+              isSelected
+                ? "border-pnp-accent bg-pnp-accent/10"
+                : "border-white/10 bg-pnp-surface hover:border-white/20",
+            ].join(" ")}
+            style={{ touchAction: "manipulation", WebkitTapHighlightColor: "transparent" }}
+            aria-pressed={isSelected}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Zap className="w-4 h-4 flex-shrink-0 text-amber-400" aria-hidden="true" />
+                <span className="font-semibold text-pnp-textPrimary text-sm">{pkg.label}</span>
+              </div>
+              <div className="flex-shrink-0 text-right">
+                <div className="text-xl font-black text-pnp-textPrimary">{fmt(pkg.usd)}</div>
+                <p className="text-[10px] text-pnp-textSecondary">USD</p>
+              </div>
+            </div>
+          </button>
+        );
+      })}
+
+      <button
+        type="button"
+        onClick={() => onSelect(selectedPkg)}
+        className="w-full min-h-[52px] mt-2 rounded-2xl font-bold text-sm text-white transition-all duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-pnp-background focus-visible:ring-pnp-accent"
+        style={{
+          background: "linear-gradient(135deg, #D4007A, #9B00B0)",
+          boxShadow: "0 4px 24px rgba(212,0,122,0.35)",
+        }}
+      >
+        Continue — {fmt(selectedPkg.usd)}
+      </button>
     </div>
   );
 }
@@ -545,21 +717,24 @@ function AccountStep({ onDone, onEmailCapture }: AccountStepProps) {
 // ── Step 3: Pay ────────────────────────────────────────────────────────────────
 
 interface PayStepProps {
-  plan: SubscriptionPlan;
+  label: string;
+  sublabel: string;
+  amountUsd: number;
   email: string;
   receiverAddress: string;
   onBack: () => void;
   onSuccess: () => void;
+  verifyFn: (args: { privyUserId: string; email?: string }, token?: string | null) => Promise<unknown>;
 }
 
-function PayStep({ plan, email, receiverAddress, onBack, onSuccess }: PayStepProps) {
+function PayStep({ label, sublabel, amountUsd, email, receiverAddress, onBack, onSuccess, verifyFn }: PayStepProps) {
   const { user, getAccessToken } = usePrivy();
   const { depositFunds } = useDepositFunds();
   const [paying, setPaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const gross = grossPrice(plan.price);
-  const fee = +(gross - plan.price).toFixed(2);
+  const gross = grossPrice(amountUsd);
+  const fee = +(gross - amountUsd).toFixed(2);
 
   const handlePay = async () => {
     if (paying) return;
@@ -584,13 +759,10 @@ function PayStep({ plan, email, receiverAddress, onBack, onSuccess }: PayStepPro
         },
       });
 
-      if (result.method === "fiat" && (result.status === "submitted" || result.status === "confirmed")) {
+      if (result.method === "fiat" && result.status === "confirmed") {
         // Get a fresh JWT token after on-ramp completes to authenticate the verify call.
         const token = await getAccessToken();
-        await verifyCheckout(
-          { planId: plan.id, privyUserId: user!.id, email: email || undefined },
-          token,
-        );
+        await verifyFn({ privyUserId: user!.id, email: email || undefined }, token);
         onSuccess();
       }
     } catch (err: unknown) {
@@ -614,8 +786,6 @@ function PayStep({ plan, email, receiverAddress, onBack, onSuccess }: PayStepPro
     }
   };
 
-  const tier = getPlanTier(plan);
-
   return (
     <div className="space-y-5">
       <h2 className="text-lg font-bold text-pnp-textPrimary mb-1">Review your order</h2>
@@ -628,31 +798,17 @@ function PayStep({ plan, email, receiverAddress, onBack, onSuccess }: PayStepPro
         <div className="p-4" style={{ background: "rgba(212,0,122,0.05)" }}>
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="font-semibold text-pnp-textPrimary text-sm">
-                {plan.display_name || plan.name}
-              </p>
-              <p className="text-xs text-pnp-textSecondary mt-0.5">
-                {durationLabel(plan.duration_days || plan.duration || 30)} of PRIME access
-              </p>
+              <p className="font-semibold text-pnp-textPrimary text-sm">{label}</p>
+              <p className="text-xs text-pnp-textSecondary mt-0.5">{sublabel}</p>
             </div>
-            <span
-              className={[
-                "text-[10px] font-bold px-2 py-1 rounded-full border flex-shrink-0",
-                tier === "PRIME"
-                  ? "border-amber-500/40 bg-amber-500/10 text-amber-400"
-                  : "border-blue-400/40 bg-blue-400/10 text-blue-400",
-              ].join(" ")}
-            >
-              {tier}
-            </span>
           </div>
         </div>
         <div
           className="px-4 pt-3 pb-1 flex items-center justify-between border-t"
           style={{ borderColor: "rgba(255,255,255,0.06)" }}
         >
-          <span className="text-xs text-pnp-textSecondary">Subscription</span>
-          <span className="text-xs text-pnp-textPrimary">{fmt(plan.price)}</span>
+          <span className="text-xs text-pnp-textSecondary">Amount</span>
+          <span className="text-xs text-pnp-textPrimary">{fmt(amountUsd)}</span>
         </div>
         <div className="px-4 pb-3 flex items-center justify-between">
           <span className="text-xs text-pnp-textSecondary">Processing fee (3.9%)</span>
@@ -709,10 +865,10 @@ function PayStep({ plan, email, receiverAddress, onBack, onSuccess }: PayStepPro
           onClick={onBack}
           disabled={paying}
           className="w-full min-h-[44px] flex items-center justify-center gap-2 rounded-xl text-sm font-medium text-pnp-textSecondary hover:text-pnp-textPrimary transition-colors disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pnp-accent/50"
-          aria-label="Go back to plan selection"
+          aria-label="Go back"
         >
           <ArrowLeft className="w-4 h-4" aria-hidden="true" />
-          Change plan
+          Go back
         </button>
       </div>
 
@@ -726,7 +882,19 @@ function PayStep({ plan, email, receiverAddress, onBack, onSuccess }: PayStepPro
 
 // ── Step 4: Success ────────────────────────────────────────────────────────────
 
-function SuccessStep({ plan }: { plan: SubscriptionPlan }) {
+interface SuccessStepProps {
+  title?: string;
+  subtitle?: string;
+  ctaLabel?: string;
+  returnUrl?: string;
+}
+
+function SuccessStep({
+  title = "You're in!",
+  subtitle = "Your PRIME access is now active.",
+  ctaLabel = "Start watching →",
+  returnUrl = "/",
+}: SuccessStepProps) {
   return (
     <div className="text-center space-y-6 py-4">
       <div
@@ -739,22 +907,64 @@ function SuccessStep({ plan }: { plan: SubscriptionPlan }) {
         <CheckCircle className="w-9 h-9 text-emerald-400" aria-hidden="true" />
       </div>
       <div>
-        <h2 className="text-2xl font-black text-pnp-textPrimary mb-1">You're in!</h2>
-        <p className="text-sm text-pnp-textSecondary">
-          {plan.display_name || plan.name} is now active on your account.
-        </p>
+        <h2 className="text-2xl font-black text-pnp-textPrimary mb-1">{title}</h2>
+        <p className="text-sm text-pnp-textSecondary">{subtitle}</p>
       </div>
       <a
-        href="/"
+        href={returnUrl}
         className="w-full min-h-[52px] rounded-2xl font-bold text-sm text-white flex items-center justify-center transition-all duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-pnp-background focus-visible:ring-pnp-accent"
         style={{
           background: "linear-gradient(135deg, #D4007A, #9B00B0)",
           boxShadow: "0 4px 24px rgba(212,0,122,0.35)",
         }}
-        aria-label="Go to PNPtv home"
+        aria-label={ctaLabel}
       >
-        Start watching →
+        {ctaLabel}
       </a>
+    </div>
+  );
+}
+
+// ── Call summary banner ───────────────────────────────────────────────────────
+
+function CallSummaryBanner({ intent }: { intent: CallIntent }) {
+  const slotLabel = intent.startAt
+    ? new Date(intent.startAt).toLocaleString(undefined, {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      })
+    : "ASAP";
+
+  return (
+    <div
+      className="px-4 py-3 border-b"
+      style={{
+        background: "rgba(212,0,122,0.06)",
+        borderColor: "rgba(212,0,122,0.15)",
+      }}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold text-pnp-textSecondary uppercase tracking-wider mb-0.5">
+            Private Call
+          </p>
+          <p className="text-sm font-bold text-pnp-textPrimary truncate">
+            {intent.creatorName}
+            {intent.creatorHandle ? (
+              <span className="font-normal text-pnp-textSecondary"> @{intent.creatorHandle}</span>
+            ) : null}
+          </p>
+          <p className="text-xs text-pnp-textSecondary mt-0.5">{intent.packageLabel}</p>
+          <p className="text-xs text-pnp-textSecondary">{slotLabel}</p>
+        </div>
+        <div className="flex-shrink-0 text-right">
+          <p className="text-lg font-black text-pnp-textPrimary">{fmt(intent.priceUsd)}</p>
+          <p className="text-[10px] text-pnp-textSecondary">USD</p>
+        </div>
+      </div>
     </div>
   );
 }
@@ -766,9 +976,22 @@ function CheckoutInner() {
     typeof window !== "undefined" ? window.location.search : "",
   );
   const initialPlanId = params.get("plan");
+  const rawReturn = params.get("return") || "";
+  const returnUrl = rawReturn.startsWith("/") && !rawReturn.startsWith("//") ? rawReturn : "/";
+  const checkoutType = (params.get("type") || "") as CheckoutType;
+  const initialPkgId = params.get("pkg");
 
-  const [step, setStep] = useState<CheckoutStep>("plan");
+  // Determine initial step
+  const getInitialStep = (): CheckoutStep => {
+    if (checkoutType === "call") return "account";
+    return "plan";
+  };
+
+  const [step, setStep] = useState<CheckoutStep>(getInitialStep());
   const [selectedPlan, setSelectedPlan] = useState<SubscriptionPlan | null>(null);
+  const [selectedTokenPkg, setSelectedTokenPkg] = useState<TokenPackage | null>(null);
+  const [callIntent, setCallIntent] = useState<CallIntent | null>(null);
+  const [callIntentError, setCallIntentError] = useState(false);
   const [email, setEmail] = useState("");
   const [receiverAddress, setReceiverAddress] = useState<string>(DEFAULT_RECEIVER);
 
@@ -782,10 +1005,132 @@ function CheckoutInner() {
       .catch(() => {/* keep default */});
   }, []);
 
+  // For call type: read intent from sessionStorage
+  useEffect(() => {
+    if (checkoutType !== "call") return;
+    try {
+      const raw = sessionStorage.getItem("pnptv:call_intent");
+      if (!raw) { setCallIntentError(true); return; }
+      const parsed = JSON.parse(raw) as CallIntent;
+      setCallIntent(parsed);
+    } catch {
+      setCallIntentError(true);
+    }
+  }, [checkoutType]);
+
   const handlePlanSelect = useCallback((plan: SubscriptionPlan) => {
     setSelectedPlan(plan);
     setStep("account");
   }, []);
+
+  const handleTokenPkgSelect = useCallback((pkg: TokenPackage) => {
+    setSelectedTokenPkg(pkg);
+    setStep("account");
+  }, []);
+
+  // Compute display properties for PayStep
+  const getPayStepProps = (): { label: string; sublabel: string; amountUsd: number } => {
+    if (checkoutType === "tokens" && selectedTokenPkg) {
+      return {
+        label: `${selectedTokenPkg.label} Tokens`,
+        sublabel: "Ru$h tokens",
+        amountUsd: selectedTokenPkg.usd,
+      };
+    }
+    if (checkoutType === "call" && callIntent) {
+      return {
+        label: `Private Call with ${callIntent.creatorHandle ? `@${callIntent.creatorHandle}` : callIntent.creatorName}`,
+        sublabel: `Private call · ${callIntent.packageLabel}`,
+        amountUsd: callIntent.priceUsd,
+      };
+    }
+    if (selectedPlan) {
+      const tier = getPlanTier(selectedPlan);
+      const days = selectedPlan.duration_days || selectedPlan.duration || 30;
+      return {
+        label: selectedPlan.display_name || selectedPlan.name,
+        sublabel: `${durationLabel(days)} of ${tier} access`,
+        amountUsd: selectedPlan.price,
+      };
+    }
+    return { label: "", sublabel: "", amountUsd: 0 };
+  };
+
+  // Build verifyFn based on type
+  const buildVerifyFn = (): ((args: { privyUserId: string; email?: string }, token?: string | null) => Promise<unknown>) | null => {
+    if (checkoutType === "tokens" && selectedTokenPkg) {
+      return (args, token) => verifyTokenCheckout({ ...args, packageId: selectedTokenPkg.id }, token);
+    }
+    if (checkoutType === "call" && callIntent) {
+      return (args, token) =>
+        verifyCallCheckout({
+          ...args,
+          packageId: callIntent.packageId,
+          creatorId: callIntent.creatorId,
+          startAt: callIntent.startAt,
+          endAt: callIntent.endAt,
+          clientNotes: callIntent.clientNotes,
+        }, token);
+    }
+    if (selectedPlan) {
+      return (args, token) => verifyCheckout({ ...args, planId: selectedPlan.id }, token);
+    }
+    return null;
+  };
+
+  // Success step props
+  const getSuccessProps = (): SuccessStepProps => {
+    if (checkoutType === "tokens") {
+      return {
+        title: "Tokens credited! ⚡",
+        subtitle: "Your Ru$h tokens have been added to your wallet.",
+        ctaLabel: "Go to wallet →",
+        returnUrl: "/settings/payments",
+      };
+    }
+    if (checkoutType === "call") {
+      return {
+        title: "Call booked!",
+        subtitle: "Your call has been confirmed.",
+        ctaLabel: "Go home →",
+        returnUrl: "/",
+      };
+    }
+    return {
+      title: "You're in!",
+      subtitle: "Your PRIME access is now active.",
+      ctaLabel: "Start watching →",
+      returnUrl,
+    };
+  };
+
+  const payStepProps = getPayStepProps();
+  const verifyFn = buildVerifyFn();
+  const successProps = getSuccessProps();
+
+  // Call type: no intent found
+  if (checkoutType === "call" && callIntentError) {
+    return (
+      <div
+        className="min-h-dvh w-full flex flex-col items-center justify-center py-6 px-4"
+        style={{ background: "#0A0A0F" }}
+      >
+        <div className="w-full max-w-md text-center space-y-4">
+          <AlertTriangle className="w-8 h-8 text-pnp-error mx-auto" aria-hidden="true" />
+          <p className="text-sm text-pnp-textSecondary">
+            No call booking found. Please go back and select a package.
+          </p>
+          <a
+            href="/"
+            className="inline-block text-sm font-semibold"
+            style={{ color: "#D4007A" }}
+          >
+            ← Go back
+          </a>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -826,6 +1171,11 @@ function CheckoutInner() {
           boxShadow: "0 24px 80px rgba(0,0,0,0.6), 0 0 0 1px rgba(212,0,122,0.06)",
         }}
       >
+        {/* Call summary banner — outside steps, always visible for call type */}
+        {checkoutType === "call" && callIntent && step !== "success" && (
+          <CallSummaryBanner intent={callIntent} />
+        )}
+
         {/* Card header */}
         <div
           className="px-4 pt-4 pb-3 sm:px-6 sm:pt-6 sm:pb-4"
@@ -834,27 +1184,55 @@ function CheckoutInner() {
             borderBottom: "1px solid rgba(255,255,255,0.06)",
           }}
         >
-          <StepIndicator current={step} />
+          <StepIndicator current={step} type={checkoutType} />
         </div>
 
         {/* Card body */}
         <div className="p-4 sm:p-6">
-          {step === "plan" && (
+          {/* Plan selection step */}
+          {step === "plan" && checkoutType === "" && (
             <PlanStep initialPlanId={initialPlanId} onSelect={handlePlanSelect} />
           )}
-          {step === "account" && (
-            <AccountStep onDone={() => setStep("pay")} onEmailCapture={setEmail} />
+
+          {/* Token package selection step */}
+          {step === "plan" && checkoutType === "tokens" && (
+            <TokenPackageStep initialPkgId={initialPkgId} onSelect={handleTokenPkgSelect} />
           )}
-          {step === "pay" && selectedPlan && (
-            <PayStep
-              plan={selectedPlan}
-              email={email}
-              receiverAddress={receiverAddress}
-              onBack={() => setStep("plan")}
-              onSuccess={() => setStep("success")}
+
+          {/* Account step */}
+          {step === "account" && (
+            <AccountStep
+              onDone={() => setStep("pay")}
+              onEmailCapture={setEmail}
             />
           )}
-          {step === "success" && selectedPlan && <SuccessStep plan={selectedPlan} />}
+
+          {/* Pay step */}
+          {step === "pay" && verifyFn && (
+            <PayStep
+              label={payStepProps.label}
+              sublabel={payStepProps.sublabel}
+              amountUsd={payStepProps.amountUsd}
+              email={email}
+              receiverAddress={receiverAddress}
+              onBack={() => {
+                if (checkoutType === "call") {
+                  // For call, going back means going back to the booking modal
+                  // We just go to account step (can't go back to plan)
+                  setStep("account");
+                } else {
+                  setStep("plan");
+                }
+              }}
+              onSuccess={() => setStep("success")}
+              verifyFn={verifyFn}
+            />
+          )}
+
+          {/* Success step */}
+          {step === "success" && (
+            <SuccessStep {...successProps} />
+          )}
         </div>
       </div>
 

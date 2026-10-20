@@ -94,7 +94,7 @@ class InvoiceService {
       dash: 'Dash (BTCPay)',
       btcpay: 'Dash (BTCPay)',
       epayco: 'ePayco',
-      nowpayments: 'USDC (NowPayments)',
+      wallet_usdc: 'USDC on Base',
       daimo: 'Daimo Pay (legacy)',
     };
     const providerLabel = PROVIDER_LABELS[provider] || provider || 'Unknown';

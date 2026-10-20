@@ -14,7 +14,7 @@ class PaymentHistoryService {
    * @param {Object} paymentData - Payment details
    * @param {string} paymentData.userId - User ID (required)
    * @param {string} paymentData.paymentMethod - Payment method (required)
-   *   Values: 'epayco', 'meru', 'lifetime100', 'bold', 'paypal', 'btcpay', 'nowpayments'
+   *   Values: 'epayco', 'meru', 'lifetime100', 'bold', 'paypal', 'btcpay', 'wallet_usdc'
    * @param {number} paymentData.amount - Payment amount (required)
    * @param {string} paymentData.currency - Currency code (default: 'USD')
    * @param {string} paymentData.planId - Plan ID

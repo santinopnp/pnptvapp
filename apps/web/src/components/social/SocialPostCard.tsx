@@ -56,7 +56,6 @@ import { SocialMediaLightbox } from "@/components/social/MediaLightbox";
 // NP inline checkout retired 2026-08-09; PRIME CTAs deep-link to /subscribe.
 import { CryptoOnboardingWizard } from "@/components/payments/CryptoOnboardingWizard";
 import CreatorSubscribeWizard from "@/components/creators/CreatorSubscribeWizard";
-import { WalletPayCard } from "@/components/payments/PayInWalletChips";
 import { BookCallModal } from "@/components/creators/BookCallModal";
 import {
   getReplies,
@@ -77,7 +76,6 @@ import {
   followUser,
   unfollowUser,
   getFollowStatus,
-  NP_COINS_SUBSCRIBE,
   prepareUsdcSubscription,
   assertPaymentUrl,
   ApiError,
@@ -317,7 +315,7 @@ function resolveChannelPromoCta(
         ? { label: watchNow, href: `/channels?channel=${slug}`, canPlayInline: true, videoUrl }
         : {
             label: isEs ? "Suscríbete a PRIME →" : "Subscribe to PRIME →",
-            href: `/subscribe?plan=prime&return=${encodeURIComponent(`/channels?channel=${slug}`)}`,
+            href: `/checkout?plan=prime-diamond-pass-365d&return=${encodeURIComponent(`/channels?channel=${slug}`)}`,
             // Non-PRIME viewers cannot play inline — redirect them to subscribe.
             canPlayInline: false,
             videoUrl,
@@ -633,7 +631,7 @@ export default function SocialPostCard({
     error: null as string | null,
     showGuide: false,
     start: ({ planId }: { planId: string; isSubscription?: boolean; storageKey?: string; payCurrency?: string; creatorId?: string }) => {
-      navigate(`/subscribe?plan=${encodeURIComponent(planId)}`);
+      window.location.href = `/checkout?plan=${encodeURIComponent(planId)}`;
     },
     dismissGuide: () => {},
     confirmGuideAndStart: () => {},
@@ -2922,14 +2920,14 @@ export default function SocialPostCard({
                       <p className="text-lg font-black text-[#5ED1C4]">${selectedPlan.price}</p>
                     </div>
 
-                    {/* Privy / USDC checkout (primary) */}
-                    <WalletPayCard
-                      surface="prime"
-                      amountUsd={selectedPlan.price}
-                      entitlementSpec={{ planId: selectedPlan.id }}
-                      lang={lang === "es" ? "es" : "en"}
-                      onSuccess={() => { setShowPromoModal(false); }}
-                    />
+                    <button
+                      type="button"
+                      onClick={() => { window.location.href = `/checkout?plan=${selectedPlan.id}`; }}
+                      className="w-full py-3.5 rounded-xl font-bold text-sm text-white transition-all active:scale-[0.98]"
+                      style={{ background: "linear-gradient(135deg, #D4007A, #9B00B0)", minHeight: 52, boxShadow: "0 4px 20px rgba(212,0,122,0.4)" }}
+                    >
+                      {`Pay $${selectedPlan.price} · ${selectedPlan.label}`}
+                    </button>
 
                   </>
                 ) : (

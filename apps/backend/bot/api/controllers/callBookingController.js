@@ -119,9 +119,9 @@ async function resolveBooking(rawId, callerUserId) {
 
 /**
  * Create a payment intent for a call package.
- * Body: { packageId: number, provider: 'nowpayments', email: string,
+ * Body: { packageId: number, provider: 'wallet_usdc', email: string,
  *         startTimeUtc?: string, endTimeUtc?: string }
- * Only nowpayments (crypto) is accepted. Dash uses /book-call/checkout/dash.
+ * Only wallet_usdc (USDC on Base) is accepted.
  */
 async function createCheckout(req, res) {
   try {
@@ -136,8 +136,8 @@ async function createCheckout(req, res) {
     if (!packageId || !Number.isInteger(Number(packageId)) || Number(packageId) < 1) {
       return res.status(400).json({ success: false, error: 'packageId must be a positive integer' });
     }
-    if (!provider || provider !== 'nowpayments') {
-      return res.status(400).json({ success: false, error: 'provider must be nowpayments. For Dash use /book-call/checkout/dash.' });
+    if (!provider || provider !== 'wallet_usdc') {
+      return res.status(400).json({ success: false, error: 'provider must be wallet_usdc.' });
     }
     if (email != null && (typeof email !== 'string' || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) {
       return res.status(400).json({ success: false, error: 'Invalid email address' });

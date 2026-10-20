@@ -2919,7 +2919,7 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
     groupName?: string;
     videoCount?: number;
   } | null>(null);
-  const [pgProvider, setPgProvider] = useState<'nowpayments'>('nowpayments');
+  const [pgProvider, setPgProvider] = useState<'wallet_usdc'>('wallet_usdc');
   const [pgLoading, setPgLoading] = useState(false);
   const [pgPolling, setPgPolling] = useState(false);
   const [pgError, setPgError] = useState<string | null>(null);
@@ -3683,7 +3683,7 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
   // Unified purchase handler: picks channel-access or hangout-access based on
   // whether the gated resource is a channel-linked hangout (channelId present)
   // or a standalone paid hangout.
-  const handlePurchaseChannel = async (provider: 'nowpayments' = pgProvider) => {
+  const handlePurchaseChannel = async (provider: 'wallet_usdc' = pgProvider) => {
     if (!paymentGateInfo) return;
     const { channelId, groupId } = paymentGateInfo;
     if (!channelId && !groupId) return;
@@ -7458,7 +7458,7 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                   <div className="space-y-2">
                     <p className="text-[10px] text-pnp-textSecondary text-center uppercase tracking-wider font-semibold">Choose payment method</p>
                     <button
-                      onClick={() => handlePurchaseChannel('nowpayments')}
+                      onClick={() => handlePurchaseChannel('wallet_usdc')}
                       disabled={pgLoading}
                       className="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-bold text-white transition-all active:scale-[0.98] disabled:opacity-50"
                       style={{ background: "linear-gradient(135deg, #6366F1, #8B5CF6)" }}

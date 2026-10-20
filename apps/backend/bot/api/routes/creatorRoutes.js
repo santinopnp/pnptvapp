@@ -69,8 +69,7 @@ const toggleSubLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// FIX 6: Payout request — 3 per hour per user. Prevents accidental double-submission
-// and limits abuse of the NowPayments payout API quota.
+// FIX 6: Payout request — 3 per hour per user. Prevents accidental double-submission.
 const payoutRequestLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   max: 3,

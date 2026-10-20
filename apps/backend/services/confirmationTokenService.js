@@ -25,8 +25,8 @@ class ConfirmationTokenService {
       const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
 
       // confirmation_tokens.payment_id is a UUID column. Synthetic IDs from
-      // NowPayments ("pnptv-nowp-…") and Privy wallet ("wallet:sub:…") are not
-      // UUIDs — pass NULL for those to avoid a 22P02 cast error.
+      // Privy wallet ("wallet:sub:…") are not UUIDs — pass NULL for those
+      // to avoid a 22P02 cast error.
       const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
       const safePaymentId = paymentId && UUID_RE.test(String(paymentId)) ? paymentId : null;
 

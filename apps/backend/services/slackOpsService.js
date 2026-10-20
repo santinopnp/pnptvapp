@@ -75,7 +75,7 @@ async function _post(channel, text, blocks) {
 /**
  * Posts a payment success alert to #ops-payments.
  * @param {object} opts
- * @param {string} [opts.orderId]   order reference (NowPayments order_id)
+ * @param {string} [opts.orderId]   order reference
  * @param {string} [opts.userId]
  * @param {string} [opts.username]
  * @param {number} [opts.amount]
@@ -91,7 +91,7 @@ async function notifyPaymentSuccess(opts) {
     const {
       orderId, userId, username, amount = 0,
       currency = 'USD', plan = 'unknown',
-      txId, provider = 'NowPayments',
+      txId, provider = 'USDC',
     } = opts || {};
     const orderRef = orderId || txId || 'N/A';
     const userLabel = username ? `@${username}` : (userId || 'N/A');
@@ -141,7 +141,7 @@ async function notifyPaymentFailed(opts) {
     const {
       orderId, userId, username, amount = 0,
       currency = 'USD', txId,
-      provider = 'NowPayments', reason = 'unknown',
+      provider = 'USDC', reason = 'unknown',
     } = opts || {};
     const orderRef = orderId || txId || 'N/A';
     const userLabel = username ? `@${username}` : (userId || 'N/A');
@@ -400,95 +400,6 @@ async function notifyTipPayout(opts) {
     await _post(channel, text, blocks);
   } catch (e) {
     logger.warn('[slackOps] notifyTipPayout error', { error: e.message });
-  }
-}
-
-/**
- * Alert #ops-incidents AND admin DM when NowPayments JWT auth returns 403.
- * This means the NP account password was rotated and the API key is stale.
- * @param {object} opts
- * @param {string} [opts.route]
- * @param {string} [opts.timestamp]
- */
-async function notifyNpJwt403(opts) {
-  if (!_tok()) return;
-  try {
-    const {
-      route = 'unknown',
-      timestamp = _nowTs(),
-    } = opts || {};
-    const text = '🔑 NowPayments JWT 403 — password rotation needed';
-    const blocks = [
-      {
-        type: 'header',
-        text: { type: 'plain_text', text: ':key: NowPayments JWT 403 — Password Rotation Needed', emoji: true },
-      },
-      {
-        type: 'section',
-        fields: [
-          { type: 'mrkdwn', text: `*Route:*\n\`${route}\`` },
-          { type: 'mrkdwn', text: `*Detected At:*\n${timestamp}` },
-        ],
-      },
-      {
-        type: 'section',
-        text: {
-          type: 'mrkdwn',
-          text: 'NowPayments returned HTTP 403 on a JWT auth request. The NP account password has likely been rotated. Update `NOWPAYMENTS_EMAIL_PASSWORD` env var and redeploy.',
-        },
-      },
-      {
-        type: 'actions',
-        elements: [
-          {
-            type: 'button',
-            text: { type: 'plain_text', text: '🔑 Probe NP Auth', emoji: true },
-            action_id: 'probe_np_auth',
-            value: 'probe_np_auth',
-            style: 'primary',
-          },
-          {
-            type: 'button',
-            text: { type: 'plain_text', text: 'Probe Auth Docs', emoji: true },
-            url: 'https://documenter.getpostman.com/view/7907941/2s93JqTRWT#2c8b97ab-ba57-4efd-80e2-1a09c26f3d5f',
-            action_id: 'np_probe_auth_docs',
-            style: 'danger',
-          },
-        ],
-      },
-    ];
-
-    const incidentChannel = _incidentsChannel();
-    const adminUserId = process.env.SLACK_ADMIN_DM_USER_ID || null;
-
-    // Post to incidents channel
-    if (_tok() && incidentChannel) {
-      await _post(incidentChannel, text, blocks);
-    }
-
-    // DM admin directly via conversations.open
-    if (_tok() && adminUserId) {
-      try {
-        const openRes = await fetch(`${SLACK_API}/conversations.open`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${_tok()}`,
-          },
-          body: JSON.stringify({ users: adminUserId }),
-        });
-        const openData = await openRes.json().catch(() => ({}));
-        if (openData.ok && openData.channel?.id) {
-          await _post(openData.channel.id, text, blocks);
-        } else {
-          logger.warn('[slackOps] notifyNpJwt403: conversations.open failed', { error: openData.error });
-        }
-      } catch (dmErr) {
-        logger.warn('[slackOps] notifyNpJwt403: DM failed', { error: dmErr.message });
-      }
-    }
-  } catch (e) {
-    logger.warn('[slackOps] notifyNpJwt403 error', { error: e.message });
   }
 }
 
@@ -1087,7 +998,6 @@ module.exports = {
   notifyTipPayout: _wrap('notifyTipPayout', notifyTipPayout),
   notifyUnhandledError: _wrap('notifyUnhandledError', notifyUnhandledError),
   notifyCreatorApplication: _wrap('notifyCreatorApplication', notifyCreatorApplication),
-  notifyNpJwt403: _wrap('notifyNpJwt403', notifyNpJwt403),
   notifyNequiPendingActivation: _wrap('notifyNequiPendingActivation', notifyNequiPendingActivation),
   notifyMercadoPagoPendingActivation: _wrap('notifyMercadoPagoPendingActivation', notifyMercadoPagoPendingActivation),
   notifyRushConversion: _wrap('notifyRushConversion', notifyRushConversion),
@@ -1105,7 +1015,6 @@ module.exports = {
   _direct_notifyTipPayout: notifyTipPayout,
   _direct_notifyUnhandledError: notifyUnhandledError,
   _direct_notifyCreatorApplication: notifyCreatorApplication,
-  _direct_notifyNpJwt403: notifyNpJwt403,
   _direct_notifyNequiPendingActivation: notifyNequiPendingActivation,
   _direct_notifyMercadoPagoPendingActivation: notifyMercadoPagoPendingActivation,
   _direct_notifyRushConversion: notifyRushConversion,

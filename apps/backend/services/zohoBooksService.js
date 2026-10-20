@@ -4,8 +4,8 @@
  * zohoBooksService.js
  *
  * Log revenue from Crystal Creator pass activations (self-purchase $100, gift
- * $150) as invoices in Zoho Books. Called from the NowPayments IPN handler
- * and walletCheckoutService fulfillment path once the pass is confirmed.
+ * $150) as invoices in Zoho Books. Called from walletCheckoutService
+ * fulfillment path once the pass is confirmed.
  *
  * Fire-and-forget: failures are logged, never thrown — a Books outage must
  * NEVER block pass activation or drop the user's receipt.
@@ -140,7 +140,7 @@ async function _ensureContact({ userId, email, firstName, lastName, username }) 
 /**
  * Log a Crystal Creator pass activation as a paid invoice in Zoho Books.
  * Marks the invoice as paid immediately (money already collected via
- * NowPayments / wallet USDC) so it lands in P&L without manual matching.
+ * wallet USDC) so it lands in P&L without manual matching.
  *
  * @param {object} opts
  * @param {string} opts.userId          — pnptv user (the one billed / the gifter)
@@ -149,7 +149,7 @@ async function _ensureContact({ userId, email, firstName, lastName, username }) 
  * @param {string|null} opts.username
  * @param {boolean} opts.isGift
  * @param {number} opts.priceCents
- * @param {string} opts.paymentProvider  — 'nowpayments' | 'wallet_usdc' | 'stripe'
+ * @param {string} opts.paymentProvider  — 'wallet_usdc' | 'stripe'
  * @param {string} opts.paymentRef
  * @param {string} opts.targetCreatorId  — for gifts: who received the pass
  */
@@ -281,8 +281,8 @@ async function _ensureItemByName(itemName, defaultRate) {
  *                                          (e.g. "PRIME monthly", "Ru$h pack 100",
  *                                          "Creator sub — @foo", "Tip → @bar")
  * @param {number} opts.priceCents       — amount charged
- * @param {string} opts.provider         — nowpayments | wallet_usdc | wallet_rush |
- *                                          stripe | moonpay | efipay | dash
+ * @param {string} opts.provider         — wallet_usdc | wallet_rush |
+ *                                          stripe | efipay | dash
  * @param {string} opts.reference        — natural key for idempotency
  *                                          (payment_ref, tx hash, intent id, etc.)
  * @param {string|null} opts.notes       — free-form note (recipient, buyer note, ...)

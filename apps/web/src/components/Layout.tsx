@@ -3387,24 +3387,14 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
                           {selectedHomePlan.display_name || selectedHomePlan.name}
                         </span>
                       </div>
-                      <Suspense fallback={<div className="h-24 rounded-xl bg-white/[0.05] animate-pulse" />}>
-                        <LazyWalletPayCard
-                          surface={
-                            (selectedHomePlan.tier?.toLowerCase() === "prime" || !selectedHomePlan.id.startsWith("member"))
-                              ? "prime"
-                              : "membership"
-                          }
-                          amountUsd={selectedHomePlan.priceUSD ?? selectedHomePlan.price ?? 0}
-                          entitlementSpec={{ planId: selectedHomePlan.id }}
-                          label={`${lang === "es" ? "Pagar" : "Pay"} $${(selectedHomePlan.priceUSD ?? selectedHomePlan.price ?? 0).toFixed(2)} +fees · ${selectedHomePlan.display_name || selectedHomePlan.name}`}
-                          lang={lang === "es" ? "es" : "en"}
-                          compact
-                          onSuccess={() => {
-                            setSelectedHomePlan(null);
-                            setHomePanelOpen(false);
-                          }}
-                        />
-                      </Suspense>
+                      <button
+                        type="button"
+                        onClick={() => { window.location.href = `/checkout?plan=${selectedHomePlan.id}`; }}
+                        className="w-full py-3 rounded-xl font-bold text-sm text-white transition-all active:scale-[0.98]"
+                        style={{ background: "linear-gradient(135deg, #D4007A, #9B00B0)", minHeight: 48 }}
+                      >
+                        {`${lang === "es" ? "Pagar" : "Pay"} $${(selectedHomePlan.priceUSD ?? selectedHomePlan.price ?? 0).toFixed(2)} · ${selectedHomePlan.display_name || selectedHomePlan.name}`}
+                      </button>
                     </>
                   ) : (
                     <>
@@ -3432,17 +3422,14 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
                             <p className="text-sm font-black text-white leading-tight">PNPtv! Founders</p>
                             <p className="text-[10px] text-white/50 mb-2">Lifetime · all features + PRIME</p>
                             {/* Pay with card */}
-                            <Suspense fallback={<div className="h-10 rounded-xl bg-white/[0.05] animate-pulse mb-1.5" />}>
-                              <LazyWalletPayCard
-                                surface="prime"
-                                amountUsd={99.99}
-                                entitlementSpec={{ planId: "lifetime-pass" }}
-                                label="💳 Pay $99.99 · Founders"
-                                lang={lang === "es" ? "es" : "en"}
-                                compact
-                                onSuccess={() => setHomePanelOpen(false)}
-                              />
-                            </Suspense>
+                            <button
+                              type="button"
+                              onClick={() => { window.location.href = "/checkout?plan=lifetime-pass"; }}
+                              className="w-full py-3 rounded-xl font-bold text-sm text-white transition-all active:scale-[0.98]"
+                              style={{ background: "linear-gradient(135deg, #D4007A, #9B00B0)", minHeight: 44 }}
+                            >
+                              {lang === "es" ? "💳 Pagar $99.99 · Founders" : "💳 Pay $99.99 · Founders"}
+                            </button>
                           </div>
                         </div>
                       )}
@@ -4005,12 +3992,6 @@ const LazyTipRushRail = lazy(async () => {
     return <mod.TipRushRail {...rest} />;
   };
   return { default: Wrapped };
-});
-
-// Lazy-load WalletPayCard for the QuickTipSheet USDC rail.
-const LazyWalletPayCard = lazy(async () => {
-  const mod = await import("@/components/payments/PayInWalletChips");
-  return { default: mod.WalletPayCard };
 });
 
 // ─── Local-currency price hook ────────────────────────────────────────────────

@@ -7,6 +7,7 @@ import {
   getWalletHistory,
   getPaymentHistory,
   linkDPNS,
+  getPaymentMethodConfig,
   type TokenPurchase,
   type PaymentRecord,
 } from "@/lib/api";
@@ -16,9 +17,17 @@ import { BuyTokensModal } from "@/components/BuyTokensModal";
 
 export default function PaymentsSettings() {
   const navigate = useNavigate();
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user } = useAuth();
   const t = useI18n();
   const p = t.profile;
+
+  const isCreator = user?.creator_status === "active" || user?.role === "creator";
+
+  const [payoutWalletAddress, setPayoutWalletAddress] = useState<string | null>(null);
+  const [payoutWalletLoading, setPayoutWalletLoading] = useState(false);
+  const [payoutWalletError, setPayoutWalletError] = useState<string | null>(null);
+  const [payoutWalletCopied, setPayoutWalletCopied] = useState(false);
+  const [payoutWalletConfiguring, setPayoutWalletConfiguring] = useState(false);
 
   const [dpnsHandle, setDpnsHandle] = useState<string | null>(null);
   const [dpnsInput, setDpnsInput] = useState("");
@@ -52,6 +61,22 @@ export default function PaymentsSettings() {
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !isCreator) return;
+    let cancelled = false;
+    setPayoutWalletLoading(true);
+    getPaymentMethodConfig()
+      .then((res) => {
+        if (cancelled) return;
+        setPayoutWalletAddress(res.walletAddress ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setPayoutWalletError("Could not load payout wallet info.");
+      })
+      .finally(() => { if (!cancelled) setPayoutWalletLoading(false); });
+    return () => { cancelled = true; };
+  }, [isAuthenticated, isCreator]);
 
   const handleSaveDpns = useCallback(async () => {
     const handle = dpnsInput.trim();
@@ -114,8 +139,93 @@ export default function PaymentsSettings() {
     );
   }
 
+  const handleConfigurePayoutWallet = async () => {
+    setPayoutWalletConfiguring(true);
+    setPayoutWalletError(null);
+    try {
+      const res = await fetch("/api/privy/payment-method", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ method: "pnptv_treasury" }),
+      });
+      if (!res.ok) throw new Error("Failed to configure wallet");
+      const data = await res.json() as { walletAddress?: string };
+      if (data.walletAddress) setPayoutWalletAddress(data.walletAddress);
+    } catch {
+      setPayoutWalletError("Could not configure payout wallet. Please try again.");
+    } finally {
+      setPayoutWalletConfiguring(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
+      {/* ── Creator Payout Wallet ── */}
+      {isCreator && (
+        <div className="glass-card-sm p-5">
+          <h2 className="text-xs font-semibold text-white/50 uppercase tracking-wider mb-4">
+            Payout Wallet
+          </h2>
+
+          {payoutWalletLoading ? (
+            <div className="h-12 rounded-lg animate-pulse" style={{ background: "rgba(255,255,255,0.05)" }} />
+          ) : payoutWalletError ? (
+            <p className="text-xs" style={{ color: "#FF6B6B" }}>{payoutWalletError}</p>
+          ) : payoutWalletAddress ? (
+            <div
+              className="rounded-lg px-3 py-3 space-y-2"
+              style={{ background: "rgba(212,0,122,0.06)", border: "1px solid rgba(212,0,122,0.2)" }}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-mono text-white/80">
+                  {payoutWalletAddress.slice(0, 6)}…{payoutWalletAddress.slice(-4)}
+                </span>
+                <button
+                  onClick={() => {
+                    void navigator.clipboard.writeText(payoutWalletAddress).then(() => {
+                      setPayoutWalletCopied(true);
+                      setTimeout(() => setPayoutWalletCopied(false), 2000);
+                    });
+                  }}
+                  className="text-xs font-semibold px-2.5 py-1 rounded-full transition-colors"
+                  style={{ background: "rgba(212,0,122,0.2)", color: "#FF69B4" }}
+                >
+                  {payoutWalletCopied ? "Copied!" : "Copy"}
+                </button>
+              </div>
+              <button
+                onClick={() => navigate("/creators/payouts")}
+                className="w-full py-2 rounded-lg text-sm font-semibold transition-colors"
+                style={{ background: "rgba(212,0,122,0.15)", color: "#FF69B4", border: "1px solid rgba(212,0,122,0.3)" }}
+              >
+                Withdraw earnings
+              </button>
+              <p className="text-[11px]" style={{ color: "var(--pnp-text-secondary)" }}>
+                Earnings are automatically sent to this wallet after a holding period.
+              </p>
+            </div>
+          ) : (
+            <div
+              className="rounded-lg px-3 py-3 space-y-2"
+              style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)" }}
+            >
+              <p className="text-sm" style={{ color: "var(--pnp-text-secondary)" }}>
+                No payout wallet configured. Log in again to auto-create your wallet.
+              </p>
+              <button
+                onClick={() => void handleConfigurePayoutWallet()}
+                disabled={payoutWalletConfiguring}
+                className="w-full py-2 rounded-lg text-sm font-semibold transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{ background: "rgba(212,0,122,0.2)", color: "#FF69B4", border: "1px solid rgba(212,0,122,0.3)" }}
+              >
+                {payoutWalletConfiguring ? "Configuring…" : "Set up payout wallet"}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="glass-card-sm p-5">
         <h2 className="text-xs font-semibold text-white/50 uppercase tracking-wider mb-4">
           {p.walletDashSection}
@@ -359,7 +469,7 @@ export default function PaymentsSettings() {
                 const providerRaw = (pay.provider ?? pay.payment_method ?? "").toLowerCase();
                 const providerLabel =
                   providerRaw === "dash" || providerRaw === "btcpay" ? p.txMethodDash :
-                  providerRaw === "nowpayments" ? p.txMethodNowpayments :
+                  providerRaw === "nowpayments" || providerRaw === "np" ? "Crypto (legacy)" :
                   providerRaw === "epayco" || providerRaw === "card" || providerRaw === "tokenized_card" ? p.txMethodCard :
                   providerRaw === "usdc" ? p.txMethodUsdc :
                   providerRaw === "usdt" ? p.txMethodUsdt :
@@ -369,7 +479,7 @@ export default function PaymentsSettings() {
 
                 const providerColor =
                   providerRaw === "dash" || providerRaw === "btcpay" ? { bg: "rgba(0,141,228,0.15)", fg: "#008DE4" } :
-                  providerRaw === "nowpayments" || providerRaw === "btc" ? { bg: "rgba(247,147,26,0.15)", fg: "#F7931A" } :
+                  providerRaw === "nowpayments" || providerRaw === "np" || providerRaw === "btc" ? { bg: "rgba(247,147,26,0.15)", fg: "#F7931A" } :
                   providerRaw === "epayco" || providerRaw === "card" ? { bg: "rgba(52,199,89,0.15)", fg: "#34C759" } :
                   providerRaw === "usdc" ? { bg: "rgba(39,117,202,0.15)", fg: "#2775CA" } :
                   providerRaw === "usdt" ? { bg: "rgba(38,161,123,0.15)", fg: "#26A17B" } :

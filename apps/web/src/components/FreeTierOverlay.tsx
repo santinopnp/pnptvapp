@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { WalletPayCard, WalletLoginGate } from '@/components/payments/PayInWalletChips';
 import { useI18n } from '@/lib/i18n';
 
 interface FreeTierOverlayProps {
@@ -20,7 +19,6 @@ export default function FreeTierOverlay({ label, requiredTier = 'member', childr
   const es = lang === 'es';
 
   const [sheetOpen, setSheetOpen] = useState(false);
-  const [walletPlanId, setWalletPlanId] = useState<string | null>(null);
 
   if (requiredTier === 'member') {
     return (
@@ -68,7 +66,7 @@ export default function FreeTierOverlay({ label, requiredTier = 'member', childr
 
       {/* Bottom sheet */}
       {sheetOpen && (
-        <div className="fixed inset-0 z-50 flex items-end" onClick={() => { setSheetOpen(false); setWalletPlanId(null); }}>
+        <div className="fixed inset-0 z-50 flex items-end" onClick={() => { setSheetOpen(false); }}>
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
           <div
             className="relative w-full rounded-t-2xl p-5 space-y-4"
@@ -86,7 +84,6 @@ export default function FreeTierOverlay({ label, requiredTier = 'member', childr
             <div className="grid grid-cols-2 gap-2.5">
               {PROMO_PLANS.map(plan => {
                 const isLifetime = plan.id === 'lifetime-pass';
-                const isWalletOpen = walletPlanId === plan.id;
                 const cardStyle = isLifetime
                   ? { background: 'linear-gradient(145deg,rgba(20,20,20,0.95),rgba(30,25,20,0.95))', border: '1px solid rgba(230,145,56,0.40)' }
                   : { background: 'linear-gradient(145deg,rgba(212,0,122,0.14),rgba(255,107,176,0.07))', border: '1px solid rgba(212,0,122,0.40)' };
@@ -110,31 +107,15 @@ export default function FreeTierOverlay({ label, requiredTier = 'member', childr
                       <p className="text-[10px] text-white/50 leading-snug">{es ? plan.subEs : plan.subEn}</p>
                     </div>
                     <div className="px-3 pb-3 space-y-1.5">
-                      <WalletLoginGate lang={lang as 'es' | 'en'}>
-                        <button
-                          type="button"
-                          onClick={() => setWalletPlanId(isWalletOpen ? null : plan.id)}
-                          className="w-full py-2.5 rounded-xl text-[11px] font-black text-white transition-all active:scale-[0.97]"
-                          style={{ background: isWalletOpen ? 'linear-gradient(135deg,#34d399,#10b981)' : 'linear-gradient(135deg,#10b981,#059669)' }}
-                        >
-                          {es ? '💳 Tarjeta · Apple Pay · Wallet' : '💳 Card · Apple Pay · Wallet'}
-                        </button>
-                      </WalletLoginGate>
+                      <button
+                        type="button"
+                        onClick={() => { window.location.href = `/checkout?plan=${plan.id}&return=${encodeURIComponent(window.location.pathname)}`; }}
+                        className="w-full py-3.5 rounded-xl font-bold text-sm text-white transition-all active:scale-[0.98]"
+                        style={{ background: "linear-gradient(135deg, #D4007A, #9B00B0)", boxShadow: "0 4px 20px rgba(212,0,122,0.4)" }}
+                      >
+                        {`Pay $${plan.price.toFixed(2)} · ${es ? plan.labelEs : plan.labelEn}`}
+                      </button>
                     </div>
-                    {isWalletOpen && (
-                      <div className="px-3 pb-3">
-                        <WalletPayCard
-                          surface="prime"
-                          amountUsd={plan.price}
-                          entitlementSpec={{ planId: plan.id }}
-                          metadata={{ source: 'paywall_overlay', planId: plan.id }}
-                          label={es ? `Pagar $${plan.price} · ${plan.labelEs}` : `Pay $${plan.price} · ${plan.labelEn}`}
-                          lang={lang as 'es' | 'en'}
-                          onSuccess={() => { setSheetOpen(false); setWalletPlanId(null); setTimeout(() => { window.location.href = '/'; }, 1200); }}
-                          compact
-                        />
-                      </div>
-                    )}
                   </div>
                 );
               })}

@@ -4,7 +4,6 @@ const { query, getPool } = require('../config/postgres');
 const { getRedis } = require('../config/redis');
 const { v4: uuidv4 } = require('uuid');
 const logger = require('../utils/logger');
-const axios = require('axios');
 const PaymentModel = require('../models/paymentModel');
 const PaymentSecurityService = require('./paymentSecurityService');
 const livekitService = require('./livekitService');
@@ -680,14 +679,9 @@ async function deactivatePackage(packageId, creatorId) {
 
 // ── Booking ───────────────────────────────────────────────────────────────────
 
-async function createBooking(parcheId, packageId, buyerId, { scheduledAt, buyerNote, provider = 'nowpayments' } = {}) {
-  if (provider !== 'nowpayments') {
-    throw Object.assign(new Error('Unsupported payment provider — only nowpayments is supported'), { code: 'INVALID_PROVIDER', status: 400 });
-  }
-
-  const npApiKey = process.env.NOWPAYMENTS_API_KEY || '';
-  if (!npApiKey) {
-    throw Object.assign(new Error('Crypto payments are not available yet'), { code: 'NOWPAYMENTS_NOT_CONFIGURED', status: 503 });
+async function createBooking(parcheId, packageId, buyerId, { scheduledAt, buyerNote, provider = 'wallet_usdc' } = {}) {
+  if (provider !== 'wallet_usdc') {
+    throw Object.assign(new Error('Unsupported payment provider — only wallet_usdc is supported'), { code: 'INVALID_PROVIDER', status: 400 });
   }
 
   // Validate parche is open
@@ -734,7 +728,7 @@ async function createBooking(parcheId, packageId, buyerId, { scheduledAt, buyerN
   const payment = await PaymentModel.create({
     userId: buyerId,
     planId: null,
-    provider: 'nowpayments',
+    provider: 'wallet_usdc',
     sku: pkg.sku,
     amount: priceUsd,
     currency: 'USD',
@@ -767,61 +761,13 @@ async function createBooking(parcheId, packageId, buyerId, { scheduledAt, buyerN
     [payment.id, JSON.stringify({ bookingId: booking.id })]
   );
 
-  // Create NowPayments invoice
-  const npUrl = process.env.NOWPAYMENTS_ENVIRONMENT === 'sandbox'
-    ? 'https://api-sandbox.nowpayments.io/v1'
-    : 'https://api.nowpayments.io/v1';
+  // Parche payments use the Privy/WalletPayCard USDC-on-Base rail.
+  // The wallet checkout route creates the intent and returns the address.
+  // checkoutUrl is null — the caller must use the wallet flow.
   const webappUrl = process.env.WEBAPP_URL || 'https://pnptv.app';
-  const orderId = `pnptv-nowp-parche-${buyerId.slice(0, 8)}-${booking.id.replace(/-/g, '').slice(0, 8)}-${Date.now()}`;
-
-  let checkoutUrl;
-  try {
-    const invoiceResp = await axios.post(`${npUrl}/invoice`, {
-      price_amount: priceUsd,
-      price_currency: 'usd',
-      pay_currency: 'usdcsol',
-      order_id: orderId,
-      order_description: `Parche group call: ${parche.name} — ${pkg.duration_minutes}min`,
-      ipn_callback_url: `${webappUrl}/api/webhooks/nowpayments`,
-      success_url: `${webappUrl}/book/parche/${(await query('SELECT slug FROM parches WHERE id = $1', [parcheId])).rows[0]?.slug}?payment=success`,
-    }, {
-      headers: { 'x-api-key': npApiKey, 'Content-Type': 'application/json' },
-      timeout: 10000,
-    });
-    const { id: npInvoiceId, invoice_url: npInvoiceUrl } = invoiceResp.data;
-    if (!npInvoiceId) throw new Error('No invoice id in NowPayments response');
-    checkoutUrl = npInvoiceUrl || `https://nowpayments.io/payment/?iid=${npInvoiceId}`;
-
-    // Create DSO row so IPN webhook can dispatch to confirmBooking
-    await query(
-      `INSERT INTO dash_subscription_orders
-         (user_id, plan_id, email, usd_amount, btcpay_invoice_id, status, metadata)
-       VALUES ($1, 'parche_booking', NULL, $2, $3, 'pending', $4)
-       ON CONFLICT (btcpay_invoice_id) DO UPDATE
-         SET status = dash_subscription_orders.status`,
-      [
-        buyerId,
-        priceUsd,
-        orderId,
-        JSON.stringify({
-          type: 'parche_booking',
-          bookingId: booking.id,
-          parcheId,
-          packageId: pkg.id,
-          paymentId: payment.id,
-          provider: 'nowpayments',
-          nowpaymentsInvoiceId: String(npInvoiceId),
-          invoiceUrl: checkoutUrl,
-        }),
-      ]
-    );
-  } catch (npErr) {
-    // Clean up the pending payment + booking so user can retry cleanly
-    await query(`UPDATE payments SET status = 'failed' WHERE id = $1`, [payment.id]).catch(() => {});
-    await query(`DELETE FROM parche_bookings WHERE id = $1`, [booking.id]).catch(() => {});
-    logger.error('[parcheService] NowPayments invoice creation failed', { paymentId: payment.id, error: npErr.message });
-    throw Object.assign(new Error('Could not reach payment provider. Please try again.'), { code: 'NOWPAYMENTS_ERROR', status: 502 });
-  }
+  const orderId = `parche-${buyerId.slice(0, 8)}-${booking.id.replace(/-/g, '').slice(0, 8)}-${Date.now()}`;
+  const checkoutUrl = null;
+  logger.info('[parcheService] Parche booking created (wallet_usdc path — no invoice URL)', { bookingId: booking.id, orderId });
 
   logger.info('[parcheService] Parche booking created', { bookingId: booking.id, parcheId, packageId, buyerId, orderId });
 
