@@ -293,7 +293,12 @@ async function deleteAndNotify(ctx, reason) {
 
     logger.info('Message auto-moderated', { userId: ctx.from.id, reason });
   } catch (error) {
-    logger.error('Error deleting message:', error);
+    // 400 means the message is too old, already deleted, or bot lacks permission — not actionable
+    if (error.response?.error_code === 400) {
+      logger.warn('Could not delete message (unrecoverable):', error.message);
+    } else {
+      logger.error('Error deleting message:', error);
+    }
   }
 }
 
