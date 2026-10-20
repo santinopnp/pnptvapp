@@ -35,13 +35,6 @@ const PlanConfigContext = React.createContext<PlanPageConfig>(PLAN_CONFIGS.lifet
 function usePlanConfig(): PlanPageConfig { return React.useContext(PlanConfigContext); }
 
 // Crypto currencies accepted — mirrors the backend allow-list.
-const CRYPTO_CURRENCIES = [
-  { code: "usdcbase", labelKey: "cryptoUsdcLabel" as const, chain: "Base" },
-  { code: "usdterc20", labelKey: "cryptoUsdtLabel" as const, chain: "ERC-20" },
-  { code: "eth", labelKey: "cryptoEthLabel" as const, chain: "Ethereum" },
-  { code: "btc", labelKey: "cryptoBtcLabel" as const, chain: "Bitcoin" },
-];
-
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 function getInitialLang(): string {
@@ -213,6 +206,7 @@ function ModalOverlay({
     </div>
   );
 }
+
 
 // ── Activate view ──────────────────────────────────────────────────────────────
 
@@ -1000,7 +994,7 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
           ))}
         </div>
 
-        {/* CTA — Privy checkout (card, Apple Pay, wallet) */}
+        {/* CTA buttons */}
         <div style={{ padding: "4px 20px 0", display: "flex", flexDirection: "column", gap: 10, maxWidth: 500, margin: "0 auto" }}>
 
           {/* ── PRIMARY: Privy / USDC on Base ── */}
@@ -1086,7 +1080,6 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
             </button>
           )}
 
-
         </div>
 
         {/* Secondary option — annual plan upsell, only shown on the lifetime page */}
@@ -1108,7 +1101,6 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
         )}
       </div>
 
-
       {/* Wallet payment modal — USDC on Base via Privy (card / connect wallet) */}
       {walletModalOpen && (
         <WalletPaymentModal
@@ -1117,7 +1109,6 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
           onClose={() => setWalletModalOpen(false)}
         />
       )}
-
 
       {/* Inline signup panel — shown to unauth users who tap "Pay with card".
           Telegram runs entirely on this page (no navigation). X uses OAuth

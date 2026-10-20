@@ -532,6 +532,10 @@ const sendMessage = async (req, res) => {
     if (err.statusCode) {
       return res.status(err.statusCode).json({ error: err.message, code: err.code });
     }
+    // FK violation: recipient was deleted
+    if (err.code === '23503' && err.constraint === 'direct_messages_recipient_id_fkey') {
+      return res.status(404).json({ error: 'Recipient not found' });
+    }
     logger.error('sendMessage DM error', err);
     return res.status(500).json({ error: 'Failed to send message' });
   }

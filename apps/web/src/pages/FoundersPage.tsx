@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { Helmet } from "react-helmet-async";
 import { WalletLoginGate, WalletPayCard } from "@/components/payments/PayInWalletChips";
-
 // ── Constants ──────────────────────────────────────────────────────────────────
 
 const PLANS = {
@@ -247,9 +246,6 @@ export default function FoundersPage() {
               onSuccess={handleSuccess}
             />
           </WalletLoginGate>
-
-
-          {/* Crypto — no wallet login required */}
 
           <p style={styles.legalNote}>{t.legalNote}</p>
         </div>

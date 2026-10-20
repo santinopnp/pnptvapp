@@ -36,8 +36,12 @@ done
 echo "Building web frontend (apps/web/dist, served directly by pnptv-web nginx)..."
 (cd apps/web && npm install && npm run build)
 
-echo "Building studio frontend (apps/studio/dist, served directly by pnptv-studio nginx)..."
-(cd apps/studio && npm install && npm run build)
+if [ -f apps/studio/package.json ]; then
+  echo "Building studio frontend (apps/studio/dist, served directly by pnptv-studio nginx)..."
+  (cd apps/studio && npm install && npm run build)
+else
+  echo "Skipping studio build (no package.json — using existing dist)."
+fi
 
 echo ""
 echo "Deployment complete."

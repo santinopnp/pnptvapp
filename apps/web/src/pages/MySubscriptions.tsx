@@ -12,7 +12,6 @@ import { Helmet } from "react-helmet-async";
 import { Ticket, RefreshCw, X, ChevronLeft, Loader2, Users } from "lucide-react";
 import {
   getUserChannelPasses,
-  checkoutChannelPass,
   cancelChannelPass,
   getWalletBalance,
   type UserChannelPass,
@@ -20,6 +19,7 @@ import {
 import { useAuth } from "@/hooks/useAuth";
 import { UserAvatar } from "@/components/UserAvatar";
 import { BuyTokensModal } from "@/components/BuyTokensModal";
+import { WalletPayCard } from "@/components/payments/PayInWalletChips";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -50,36 +50,7 @@ function SubCard({ sub, walletBalance, onRenewed, onCancelled, onNeedTopUp }: Su
   const isCancelled = sub.status === "cancelled";
   const isExpired = sub.status === "expired";
   const daysUrgent = sub.days_left < 7;
-  const rushPrice = Math.round(sub.price_usd * 6);
-
-  const handleRenew = async () => {
-    setError(null);
-    if (walletBalance !== null && walletBalance < rushPrice) {
-      onNeedTopUp();
-      return;
-    }
-    setRenewLoading(true);
-    try {
-      const res = await checkoutChannelPass(sub.creator_id, "rush");
-      if (res.success && res.expires_at) {
-        onRenewed({
-          ...sub,
-          expires_at: res.expires_at,
-          days_left: Math.ceil((new Date(res.expires_at).getTime() - Date.now()) / 86400000),
-          status: "active",
-        });
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Renewal failed";
-      if (msg.includes("INSUFFICIENT_FUNDS") || msg.includes("balance")) {
-        onNeedTopUp();
-      } else {
-        setError(msg);
-      }
-    } finally {
-      setRenewLoading(false);
-    }
-  };
+  const [showRenewPay, setShowRenewPay] = useState(false);
 
   const handleCancel = async () => {
     setError(null);
@@ -170,6 +141,25 @@ function SubCard({ sub, walletBalance, onRenewed, onCancelled, onNeedTopUp }: Su
         </div>
       )}
 
+      {showRenewPay && daysUrgent && !isCancelled && !isExpired && (
+        <div className="px-4 pb-3">
+          <WalletPayCard
+            surface="channel_pass"
+            amountUsd={Number(sub.price_usd) || 0}
+            entitlementSpec={{ creatorId: sub.creator_id, type: "channel_pass" }}
+            metadata={{ source: "my_subscriptions_renew", creatorId: sub.creator_id }}
+            label={`Renew · $${Number(sub.price_usd).toFixed(2)}`}
+            onSuccess={() => {
+              setShowRenewPay(false);
+              const base = Math.max(Date.now(), new Date(sub.expires_at).getTime());
+              const expires = new Date(base + 30 * 86400000).toISOString();
+              onRenewed({ ...sub, expires_at: expires, days_left: Math.ceil((new Date(expires).getTime() - Date.now()) / 86400000), status: "active" });
+            }}
+            compact
+          />
+        </div>
+      )}
+
       {/* Actions */}
       {!isExpired && (
         <div className="px-4 pb-4 flex items-center gap-2 flex-wrap">
@@ -177,16 +167,11 @@ function SubCard({ sub, walletBalance, onRenewed, onCancelled, onNeedTopUp }: Su
           {daysUrgent && !isCancelled && (
             <button
               type="button"
-              onClick={handleRenew}
-              disabled={renewLoading}
-              className="flex items-center gap-1.5 min-h-[44px] px-4 rounded-xl text-sm font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-60"
-              style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+              onClick={() => { setError(null); setShowRenewPay((v) => !v); }}
+              className="flex items-center gap-1.5 min-h-[44px] px-4 rounded-xl text-sm font-bold text-white transition-opacity hover:opacity-90"
+              style={{ background: "#D4007A" }}
             >
-              {renewLoading ? (
-                <><Loader2 size={14} className="animate-spin" /> Renewing…</>
-              ) : (
-                <><RefreshCw size={13} /> Renew now · {rushPrice} 💎</>
-              )}
+              <RefreshCw size={13} /> Renew now · ${Number(sub.price_usd).toFixed(2)}
             </button>
           )}
 

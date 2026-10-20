@@ -22,6 +22,9 @@ import { UserAvatar } from "@/components/UserAvatar";
 import { AdSlot, MenPageBanner } from "@/components/AdSlot";
 import { FeaturedModelInterstitial, PnpFamWelcomeGate } from "@/components/badges/PnpFamWelcomeGate";
 import { Toast } from "@/components/Toast";
+import { FaceMatchConsentHost } from "@/components/safety/FaceMatchConsentHost";
+import { PolicyUpdateModal } from "@/components/safety/PolicyUpdateModal";
+import { ContentReviewNotice } from "@/components/safety/ContentReviewNotice";
 import { useNearbyToggle } from "@/components/NearbyBadge";
 import { getMessageThreads, getHangoutGroups, markThreadAsRead, getProfile, getForYouRecommendations, followUser, getCryptoGuideStatus, getPublicCreatorProfile, toggleSuperGod, getWalletUsdcBalance, getSubscriptionPlans, getWalletBalance, getTokenPackages, updateProfile, getExchangeRates, type MessageThread, type HangoutGroup, type ForYouRecommendations, type ForYouSuggestedCreator, type ForYouSuggestedFollow, type ForYouContextHint, type CryptoGuideStatus, type CreatorPublicProfile, type SubscriptionPlan, type TokenPackage } from "@/lib/api";
 import { useTier } from "@/hooks/useTier";
@@ -1798,7 +1801,7 @@ export function Layout() {
                 src={user.photoUrl}
                 alt={user.displayName || "Profile"}
                 className="w-9 h-9 rounded-full object-cover"
-                style={{ border: "1px solid var(--border)" }}
+                style={{ boxShadow: "0 0 0 2px #121212, 0 0 0 4px #D4007A" }}
                 onError={(e) => {
                   (e.currentTarget as HTMLImageElement).style.display = "none";
                   (e.currentTarget.nextElementSibling as HTMLElement | null)?.style.removeProperty("display");
@@ -1806,11 +1809,11 @@ export function Layout() {
               />
             ) : null}
             <div
-              className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-semibold"
+              className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold"
               style={{
-                background: "var(--surface-raised)",
-                color: "var(--text-primary)",
-                border: "1px solid var(--border)",
+                background: "linear-gradient(135deg, #D4007A, #E69138)",
+                color: "#fff",
+                boxShadow: "0 0 0 2px #121212, 0 0 0 4px #D4007A",
                 display: user?.photoUrl && (user.photoUrl.startsWith("/") || user.photoUrl.startsWith("http")) ? "none" : undefined,
               }}
             >
@@ -2128,6 +2131,17 @@ export function Layout() {
 
       {/* Wallet login tip — one-time popup explaining how to access PNP Wallet */}
       <WalletLoginTip />
+
+      {/* Safety scanning: re-acceptance of updated Terms/Privacy for existing
+          members, and the optional face matching prompt shown when the backend
+          blocks a photo/video upload or go-live (FACE_MATCH_CONSENT_REQUIRED). */}
+      {isAuthenticated && user?.ageVerified && user?.termsAccepted && (
+        <>
+          <PolicyUpdateModal />
+          <FaceMatchConsentHost />
+          <ContentReviewNotice />
+        </>
+      )}
 
       {/* Global announcement strip — only after verification */}
       {isAuthenticated && user?.ageVerified && user?.termsAccepted && !/^\/call\//.test(location.pathname) && (
@@ -3604,7 +3618,6 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
           </WalletBoundary>
         )}
 
-
         {/* Book a call with Santino — triggered from the home panel */}
         {homeCallOpen && (
           <Suspense fallback={null}>
@@ -4053,7 +4066,6 @@ function useLocalPrice() {
 
   return format;
 }
-
 
 // Lazy-load BookCallModal for the "Book a call with Santino" entry in the home panel.
 const LazyBookCallModal = lazy(() =>

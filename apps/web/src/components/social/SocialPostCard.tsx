@@ -2072,7 +2072,7 @@ export default function SocialPostCard({
 
 
               {/* PRIME creator action pills — Buy Ru$h / Subscribe to PRIME / Book a Call */}
-              {isPrimeCreator && !isOwn && (
+              {isPrimeCreator && !isOwn && (isPnptvOfficial || showPrimeUpsell || (showBookCallCta && hasCallPackages)) && (
                 <div className="mt-2.5 flex gap-2" onClick={(e) => e.stopPropagation()}>
                   {isPnptvOfficial && (
                     <button
@@ -2983,7 +2983,6 @@ export default function SocialPostCard({
         );
       })()}
 
-
       {showBookCallModal && (
         <BookCallModal
           open={showBookCallModal}
@@ -2991,7 +2990,7 @@ export default function SocialPostCard({
           creator={{
             id: String(post.author_id),
             username: post.author_username || "",
-            photo_url: null,
+            photo_url: isValidPhotoUrl(effectiveAuthorPhoto) ? effectiveAuthorPhoto : null,
             creator_type: "full_time",
             creator_price_usd: 0,
           }}

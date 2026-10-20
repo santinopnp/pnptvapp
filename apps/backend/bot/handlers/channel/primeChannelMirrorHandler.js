@@ -570,9 +570,12 @@ function registerPrimeChannelMirrorHandler(bot) {
           break;
         }
         case 'pub': {
-          await publishVideo({ videoId: Number(videoId), userId: user.id, isAdmin: false });
+          const published = await publishVideo({ videoId: Number(videoId), userId: user.id, isAdmin: false });
+          const enRevision = published?.review_status && published.review_status !== 'approved';
           await ctx.editMessageText(
-            `✅ *¡Video publicado en PNPtv!*\n\nTus seguidores han sido notificados.`,
+            enRevision
+              ? `🕒 *Video enviado a revisión*\n\nNuestro equipo lo revisará antes de publicarlo. Te avisaremos cuando esté en PNPtv.`
+              : `✅ *¡Video publicado en PNPtv!*\n\nTus seguidores han sido notificados.`,
             { parse_mode: 'Markdown' }
           ).catch(() => {});
           break;

@@ -29,7 +29,6 @@ import {
   bookCallWithCredit,
   trackEvent,
   getWalletBalance,
-  payCallWithTokens,
   GIFTED_ELIGIBLE_PERFORMER_USER_IDS,
   type CallPackage,
   type BookingSlot,
@@ -38,12 +37,11 @@ import {
 } from "@/lib/api";
 import type { CreatorCardCreator } from "./CreatorCard";
 import { WalletPayCard } from "@/components/payments/PayInWalletChips";
-import { BuyTokensModal } from "@/components/BuyTokensModal";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type Step = "SELECT_MODEL" | "SELECT_PACKAGE" | "SELECT_SLOT" | "CHECKOUT" | "SUCCESS";
-type Provider = "wallet" | "tokens";
+type Provider = "wallet";
 
 
 export interface BookCallModalProps {
@@ -539,65 +537,6 @@ export function BookCallModal({
     }
   }, [existingCredit, selectedSlot, creator.id]);
 
-  const handleCheckout = useCallback(async () => {
-    if (checkoutInFlight.current || !activePackage) return;
-    checkoutInFlight.current = true;
-    setCheckoutLoading(true);
-    setIsProcessing(true);
-    setCheckoutError(null);
-    try {
-      // Tokens — instant payment from wallet (no popup, no polling)
-      if (provider === "tokens") {
-        const tokenCost = Math.round(Number(activePackage.price_usd ?? 0) * 6);
-        // Client-side pre-check: if we know the balance and it's short, open
-        // the Buy Ru$h modal instead of throwing an insufficient error.
-        if (tokenBalance !== null && tokenBalance < tokenCost) {
-          setShowBuyRush(true);
-          return;
-        }
-        const tokenRes = await payCallWithTokens(activePackage.id, {
-          startTimeUtc: selectedSlot?.startUtc ?? undefined,
-          endTimeUtc: selectedSlot?.endUtc ?? undefined,
-          clientNotes: clientNotes.trim() || undefined,
-        });
-        if (!tokenRes.success) {
-          if (tokenRes.code === "INSUFFICIENT_TOKENS") {
-            // Server said short — open Buy Ru$h modal (bilingual toast in state)
-            setShowBuyRush(true);
-          } else {
-            setCheckoutError(
-              tokenRes.error ||
-              (t.lang === "es" ? "No se pudieron aplicar los Ru$h." : "Could not apply Ru$h.")
-            );
-          }
-          return;
-        }
-        if (tokenRes.newBalance !== undefined) setTokenBalance(tokenRes.newBalance);
-        if (selectedSlot?.startUtc) setConfirmedStartAt(selectedSlot.startUtc);
-        if (tokenRes.bookingId) setConfirmedBookingId(tokenRes.bookingId);
-        setStep("SUCCESS");
-        return;
-      }
-
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : t.creator.checkoutFailed;
-      setCheckoutError(msg);
-      // Store payload so user can retry with same data
-      if (activePackage) {
-        setRetryPayload({
-          packageId: activePackage.id,
-          provider,
-          email,
-          quantity: 1,
-          selectedSlot: selectedSlot?.startUtc ?? null,
-        });
-      }
-    } finally {
-      setCheckoutLoading(false);
-      setIsProcessing(false);
-      checkoutInFlight.current = false;
-    }
-  }, [activePackage, provider, email, selectedSlot]);
 
 
   if (!open) return null;
@@ -1220,7 +1159,7 @@ export function BookCallModal({
         </div>
       </div>
 
-      {/* Payment method selector — Privy wallet (card, Apple Pay, USDC on Base) or Ru$h tokens. */}
+      {/* Payment method — Privy wallet (card, Apple Pay, USDC on Base). Ru$h is tips-only. */}
       <div>
         <p className="text-xs font-semibold uppercase tracking-wider mb-2.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>{t.creator.paymentMethodLabel}</p>
         <div className="flex gap-2 flex-wrap">
@@ -1234,54 +1173,7 @@ export function BookCallModal({
           >
             💳 Card / Wallet
           </button>
-          {/* Ru$h pill: always render so users with 0 balance can still choose it
-              and get routed to Buy Ru$h. Hiding this option was the #1 reason
-              zero-balance users bailed at checkout (audit 2026-08-09). */}
-          <button
-            type="button"
-            onClick={() => setProvider("tokens")}
-            className="flex-1 min-w-[80px] min-h-[44px] rounded-xl text-sm font-semibold transition-colors"
-            style={provider === "tokens"
-              ? { background: "rgba(212,0,122,0.18)", border: "1.5px solid #D4007A", color: "#FF69B4" }
-              : { background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "var(--pnp-text-secondary, #8E8E93)" }}
-          >
-            🎫 Ru$h 💎
-          </button>
         </div>
-        {provider === "tokens" && activePackage && (() => {
-          const tokenCost = Math.round(Number(activePackage.price_usd ?? 0) * 6);
-          // While the wallet balance is still fetching, avoid the flash of a
-          // "Buy Ru$h" CTA (coercing null → 0 would falsely indicate short).
-          if (tokenBalance === null) {
-            return (
-              <p className="text-[11px] text-pnp-textSecondary mt-1.5 flex items-center gap-1.5">
-                <span className="inline-block w-3 h-3 rounded-full border-2 border-pnp-textSecondary/40 border-t-pnp-textSecondary/80 animate-spin" />
-                {t.lang === "es" ? "Consultando tu saldo Ru$h…" : "Checking your Ru$h balance…"}
-              </p>
-            );
-          }
-          const short = tokenBalance < tokenCost;
-          return (
-            <div className="mt-1.5 space-y-2">
-              <p className={`text-[11px] ${short ? "text-amber-300" : "text-[#FF69B4]"}`}>
-                {t.lang === "es"
-                  ? `Costo: ${tokenCost.toLocaleString()} Ru$h · Saldo: ${tokenBalance.toLocaleString()} Ru$h`
-                  : `Cost: ${tokenCost.toLocaleString()} Ru$h · Balance: ${tokenBalance.toLocaleString()} Ru$h`}
-              </p>
-              {short && (
-                <button
-                  type="button"
-                  onClick={() => setShowBuyRush(true)}
-                  className="w-full py-2.5 rounded-xl text-sm font-bold transition active:scale-[0.98] bg-amber-500/15 text-amber-200 border border-amber-500/40 hover:bg-amber-500/25"
-                >
-                  {t.lang === "es"
-                    ? `💎 Comprar ${(tokenCost - tokenBalance).toLocaleString()} Ru$h primero`
-                    : `💎 Buy ${(tokenCost - tokenBalance).toLocaleString()} Ru$h first`}
-                </button>
-              )}
-            </div>
-          );
-        })()}
         {provider === "wallet" && activePackage && (
           <div className="mt-3">
             <WalletPayCard
@@ -1394,45 +1286,9 @@ export function BookCallModal({
             </svg>
             <span>{checkoutError}</span>
           </div>
-          {retryPayload && (
-            <button
-              type="button"
-              onClick={() => { setCheckoutError(null); setRetryPayload(null); handleCheckout(); }}
-              className="min-h-[40px] px-4 rounded-xl text-sm font-semibold text-white transition-opacity hover:opacity-80"
-              style={{ background: "#D4007A" }}
-            >
-              {t.creator.retryPayment}
-            </button>
-          )}
         </div>
       )}
 
-      {/* Submit — hidden for wallet (WalletPayCard has its own pay button).
-          Also hidden entirely when no matching package exists — the amber
-          notice above already tells the user why. */}
-      {provider === "tokens" && activePackage && (
-        <button
-          type="button"
-          disabled={checkoutLoading || !activePackage}
-          onClick={handleCheckout}
-          className={clsx(
-            "w-full min-h-[48px] rounded-2xl text-base font-bold text-white",
-            "flex items-center justify-center gap-2",
-            "transition-opacity disabled:opacity-50 disabled:cursor-not-allowed",
-            "active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
-          )}
-          style={{ background: "linear-gradient(90deg, #D4007A, #E69138)" }}
-        >
-          {checkoutLoading ? (
-            <>
-              <Spinner size={18} />
-              <span>{t.creator.processing}</span>
-            </>
-          ) : (
-            t.creator.proceedToCheckout
-          )}
-        </button>
-      )}
     </div>
   );
 
@@ -1831,20 +1687,6 @@ export function BookCallModal({
         }
       `}</style>
 
-      {/* Buy Ru$h modal — opens when user picks Ru$h with insufficient balance,
-          or the server returns INSUFFICIENT_TOKENS. Refetches wallet on close
-          so the checkout can proceed immediately if the purchase succeeded. */}
-      <BuyTokensModal
-        isOpen={showBuyRush}
-        onClose={() => {
-          setShowBuyRush(false);
-          refreshWalletBalance();
-        }}
-        onSuccess={() => {
-          setShowBuyRush(false);
-          refreshWalletBalance();
-        }}
-      />
     </div>,
     document.body
   );

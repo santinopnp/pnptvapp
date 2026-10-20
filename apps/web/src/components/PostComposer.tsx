@@ -35,7 +35,6 @@ import {
   getOwnChannels,
   getSocialMuxUploadUrl,
   finalizeSocialMuxPost,
-  generateCreatorPost,
   type SocialPostItem,
   type CreatorChannel,
   type MentionUser,
@@ -558,10 +557,7 @@ export function PostComposer({
   const [category, setCategory] = useState<PostCategory | null>(null);
   const [taggedPerformers] = useState<MentionUser[]>(() => initialTaggedPerformers ?? []);
   const [creatorTemplate, setCreatorTemplate] = useState<"promote" | "calls" | "free" | null>(null);
-  const [showAiInput, setShowAiInput] = useState(false);
-  const [aiPrompt, setAiPrompt] = useState("");
-  const [isGeneratingAi, setIsGeneratingAi] = useState(false);
-  const [aiError, setAiError] = useState<string | null>(null);
+
   const [replyControl, setReplyControl] = useState<ReplyControl>("everyone");
   const [showCopyCoach, setShowCopyCoach] = useState(false);
   const [hashtagSuggestions, setHashtagSuggestions] = useState<string[]>([]);
@@ -781,27 +777,12 @@ export function PostComposer({
     setSelectedChannelId(null);
     setCategory(null);
     setCreatorTemplate(null);
-    setShowAiInput(false);
-    setAiPrompt("");
-    setAiError(null);
     setReplyControl("everyone");
     setHashtagQuery(null);
     setHashtagSuggestions([]);
     if (compact) setIsExpanded(false);
   }, [compact, clearUploads]);
 
-  // ── Legacy AI writer (existing feature) ───────────────────────────────
-  const handleGeneratePost = useCallback(async () => {
-    const promptText = aiPrompt.trim();
-    if (!promptText || isGeneratingAi || !creatorTemplate || creatorTemplate === "free") return;
-    setIsGeneratingAi(true); setAiError(null);
-    try {
-      const res = await generateCreatorPost(creatorTemplate, promptText);
-      if (res.success && res.post) { setText(res.post); setAiPrompt(""); setShowAiInput(false); }
-      else setAiError("Could not generate post");
-    } catch { setAiError("Could not generate post — please try again in a moment"); }
-    finally { setIsGeneratingAi(false); }
-  }, [aiPrompt, isGeneratingAi, creatorTemplate]);
 
   // ── Submit ─────────────────────────────────────────────────────────────
   const handleSubmit = useCallback(async () => {
@@ -970,10 +951,7 @@ export function PostComposer({
     calls: "Set the vibe — what kind of energy are you bringing to the call?",
     free: resolvedPlaceholder,
   };
-  const AI_PROMPT_PLACEHOLDERS: Record<"promote" | "calls", string> = {
-    promote: "e.g. new exclusive video with Lex, wild pool session...",
-    calls: "e.g. feeling spicy tonight, open for 1-on-1 video calls...",
-  };
+
   const activePlaceholder = isActiveCreator && creatorTemplate && creatorTemplate !== "free"
     ? TEMPLATE_PLACEHOLDERS[creatorTemplate]
     : resolvedPlaceholder;
@@ -1055,7 +1033,7 @@ export function PostComposer({
                   const active = creatorTemplate === t;
                   return (
                     <button key={t} type="button"
-                      onClick={() => { setCreatorTemplate(active ? null : t); setShowAiInput(false); setAiPrompt(""); setAiError(null); }}
+                      onClick={() => { setCreatorTemplate(active ? null : t); }}
                       disabled={isPosting}
                       className="px-3 py-1 rounded-full text-xs font-semibold border transition-all disabled:opacity-40"
                       style={{ background: active ? "rgba(212,0,122,0.15)" : "transparent", borderColor: active ? "rgba(212,0,122,0.5)" : "rgba(255,255,255,0.12)", color: active ? "#D4007A" : "#8E8E93" }}
@@ -1129,40 +1107,6 @@ export function PostComposer({
               </span>
             </div>
 
-            {/* Legacy AI writer (existing) */}
-            {isActiveCreator && creatorTemplate && creatorTemplate !== "free" && (
-              <div className="mb-3">
-                {!showAiInput ? (
-                  <button type="button" onClick={() => setShowAiInput(true)} disabled={isPosting}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white transition-all disabled:opacity-40"
-                    style={{ background: "linear-gradient(135deg, rgba(212,0,122,0.25), rgba(230,145,56,0.2))", border: "1px solid rgba(212,0,122,0.3)" }}>
-                    ✨ Write post for me
-                  </button>
-                ) : (
-                  <div className="rounded-xl p-3 space-y-2" style={{ background: "rgba(212,0,122,0.06)", border: "1px solid rgba(212,0,122,0.2)" }}>
-                    <div className="flex gap-2">
-                      <input
-                        id="pnp-postcomposer-ai"
-                        type="text" value={aiPrompt}
-                        onChange={(e) => setAiPrompt(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleGeneratePost(); } if (e.key === "Escape") { setShowAiInput(false); setAiPrompt(""); } }}
-                        placeholder={AI_PROMPT_PLACEHOLDERS[creatorTemplate as "promote" | "calls"]}
-                        autoFocus disabled={isGeneratingAi}
-                        className="flex-1 bg-black/40 text-white text-xs rounded-lg px-3 py-2 border border-white/15 outline-none placeholder:text-white/30 disabled:opacity-60"
-                        style={{ fontSize: "14px" }}
-                      />
-                      <button type="button" onClick={handleGeneratePost} disabled={isGeneratingAi || !aiPrompt.trim()}
-                        className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white btn-gradient disabled:opacity-40 transition-all whitespace-nowrap">
-                        {isGeneratingAi ? "Writing…" : "✨ Write"}
-                      </button>
-                      <button type="button" onClick={() => { setShowAiInput(false); setAiPrompt(""); setAiError(null); }}
-                        className="px-2 py-1.5 rounded-lg text-xs text-white/40 hover:text-white transition-colors">✕</button>
-                    </div>
-                    {aiError && <p className="text-[11px]" style={{ color: "#FF453A" }}>{aiError}</p>}
-                  </div>
-                )}
-              </div>
-            )}
 
             {/* Media progress strip (tus uploads + reorder) */}
             {orderedUploadItems.length > 0 && (

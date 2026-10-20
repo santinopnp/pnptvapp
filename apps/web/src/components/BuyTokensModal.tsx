@@ -107,6 +107,10 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
   const fundInFlightRef = useRef(false);
   // State mirror of fundInFlightRef so buttons can react to in-flight guard.
   const [fundingInFlight, setFundingInFlight] = useState(false);
+  // Declared here (not near handleFundForPackage) because the isOpen useEffect
+  // below resets it on close — must exist before that effect or React TDZ fires
+  // in concurrent-mode renders where effects run before the full hook list.
+  const autoSwitchedMoonPayRef = useRef(false);
   // Set to true when a Stripe-specific error is caught so the button label
   // changes to signal a different action ("Try another method") on re-tap.
   const [stripeHasFailed, setStripeHasFailed] = useState(false);
@@ -370,10 +374,6 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
       }
     } finally { setPayingCustom(false); }
   };
-
-  // Latch: one-shot auto-switch Stripe "Too many attempts" → MoonPay per modal
-  // open. Resets on modal close via the existing useEffect that clears state.
-  const autoSwitchedMoonPayRef = useRef(false);
 
   const handleFundForPackage = async (pkg: TokenPackage, opts?: { forceMoonPay?: boolean }) => {
     if (!activeWallet) return;

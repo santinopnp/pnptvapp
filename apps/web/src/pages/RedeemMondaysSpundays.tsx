@@ -117,16 +117,13 @@ export default function RedeemMondaysSpundays() {
             </div>
           ) : (
             <>
-              {/* Pay with Privy — opens inline WalletPayCard (card, Apple Pay, wallet). */}
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setWalletOpen((v) => !v)}
-                  className={`flex-1 py-3 rounded-lg font-bold text-xs text-white transition-all leading-tight ${walletOpen ? "bg-gradient-to-r from-emerald-400 to-emerald-500 ring-2 ring-emerald-300" : "bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500"}`}
-                >
-                  {es ? "💳 Tarjeta · Apple Pay · Wallet" : "💳 Card · Apple Pay · Wallet"}
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={() => setWalletOpen((v) => !v)}
+                className={`w-full py-3 rounded-lg font-bold text-xs text-white transition-all leading-tight ${walletOpen ? "bg-gradient-to-r from-emerald-400 to-emerald-500 ring-2 ring-emerald-300" : "bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500"}`}
+              >
+                {es ? "💳 Tarjeta · Apple Pay · Wallet" : "💳 Card · Apple Pay · Wallet"}
+              </button>
 
               {walletOpen && (
                 <div className="mt-3">

@@ -516,6 +516,136 @@ export function acceptTerms(): Promise<{ success: boolean }> {
   return request("/api/accept-terms", { method: "POST" });
 }
 
+// ── Safety scanning consent ──────────────────────────────────────────────────
+
+export interface FaceMatchConsentStatus {
+  consented: boolean;
+  consentedAt: string | null;
+  version: string | null;
+  currentVersion: string;
+}
+
+/** Error code the backend returns when a photo/video upload or go-live needs face matching consent. */
+export const FACE_MATCH_CONSENT_REQUIRED = "FACE_MATCH_CONSENT_REQUIRED";
+
+export function getFaceMatchConsent(): Promise<FaceMatchConsentStatus> {
+  return request("/api/webapp/me/face-match-consent");
+}
+
+export function grantFaceMatchConsent(): Promise<FaceMatchConsentStatus> {
+  return request("/api/webapp/me/face-match-consent", { method: "POST", body: { consent: true } });
+}
+
+export function withdrawFaceMatchConsent(): Promise<FaceMatchConsentStatus> {
+  return request("/api/webapp/me/face-match-consent", { method: "DELETE" });
+}
+
+export function getPolicyUpdateStatus(): Promise<{ needsUpdate: boolean; effectiveAt: string }> {
+  return request("/api/webapp/me/policy-update");
+}
+
+export function acceptPolicyUpdate(): Promise<{ ok: boolean }> {
+  return request("/api/webapp/me/policy-update/accept", { method: "POST" });
+}
+
+// ── Compliance: removal requests, NCMEC cases, pre-publication review ───────
+
+export type RemovalRequestKind = "ncii" | "complaint";
+
+export interface RemovalRequestInput {
+  kind: RemovalRequestKind;
+  name: string;
+  email: string;
+  contentUrls: string[];
+  description?: string;
+  isDepictedPerson: boolean;
+  goodFaith: boolean;
+  signature: string;
+}
+
+export function submitRemovalRequest(input: RemovalRequestInput): Promise<{ ok: true; id: string; dueAt: string }> {
+  return request("/api/public/removal-requests", { method: "POST", body: input });
+}
+
+export interface AdminRemovalRequest {
+  id: string;
+  kind: RemovalRequestKind;
+  requester_name: string;
+  requester_email: string;
+  is_depicted_person: boolean;
+  content_urls: string[];
+  description: string | null;
+  status: "open" | "removed" | "rejected";
+  due_at: string;
+  overdue: boolean;
+  resolution_note: string | null;
+  created_at: string;
+}
+
+export function adminListRemovalRequests(status = "open"): Promise<{ requests: AdminRemovalRequest[] }> {
+  return request(`/api/webapp/admin/removal-requests?status=${encodeURIComponent(status)}`);
+}
+
+export function adminResolveRemovalRequest(id: string, action: "removed" | "rejected", note?: string): Promise<{ request: AdminRemovalRequest }> {
+  return request(`/api/webapp/admin/removal-requests/${id}/resolve`, { method: "POST", body: { action, note } });
+}
+
+export interface AdminNcmecCase {
+  id: string;
+  user_report_id: string | null;
+  reported_user_id: string;
+  evidence_type: string | null;
+  evidence_id: string | null;
+  status: "pending_review" | "reported" | "not_csam";
+  cybertip_report_id: string | null;
+  preserve_until: string | null;
+  notes: string | null;
+  created_at: string;
+}
+
+export function adminListNcmecCases(status = "pending_review"): Promise<{ cases: AdminNcmecCase[] }> {
+  return request(`/api/webapp/admin/ncmec-cases?status=${encodeURIComponent(status)}`);
+}
+
+export function adminUpdateNcmecCase(
+  id: string,
+  body: { status: "reported" | "not_csam"; cybertipReportId?: string; notes?: string },
+): Promise<{ case: AdminNcmecCase }> {
+  return request(`/api/webapp/admin/ncmec-cases/${id}`, { method: "POST", body });
+}
+
+export interface AdminContentReview {
+  id: string;
+  content_type: "social_post" | "creator_media" | "channel_video";
+  content_id: string;
+  creator_id: string;
+  creator_username: string | null;
+  submitted_at: string;
+  post_content: string | null;
+  post_media_url: string | null;
+  post_media_type: string | null;
+  post_media_urls: { url: string; type: string }[] | null;
+  post_is_exclusive: boolean | null;
+  media_url: string | null;
+  media_media_type: string | null;
+  media_caption: string | null;
+  media_is_premium: boolean | null;
+  video_title: string | null;
+  video_thumbnail_url: string | null;
+}
+
+export function adminListContentReviews(): Promise<{ reviews: AdminContentReview[] }> {
+  return request("/api/webapp/admin/content-reviews");
+}
+
+export function adminApproveContentReview(id: string): Promise<unknown> {
+  return request(`/api/webapp/admin/content-reviews/${id}/approve`, { method: "POST" });
+}
+
+export function adminRejectContentReview(id: string, reason?: string): Promise<unknown> {
+  return request(`/api/webapp/admin/content-reviews/${id}/reject`, { method: "POST", body: { reason } });
+}
+
 export function apiLogout(): Promise<{ success: boolean }> {
   return request("/api/logout", { method: "POST" });
 }
@@ -2889,6 +3019,19 @@ export interface MessageReaction {
   reacted_by_me: boolean;
 }
 
+export interface PollOption { id: string; text: string; }
+export interface PollResult { optionId: string; count: number; }
+export interface PollData {
+  id: string;
+  question: string;
+  options: PollOption[];
+  allow_multiple: boolean;
+  closes_at?: string | null;
+  results: PollResult[];
+  totalVotes: number;
+  userVote: string[] | null;
+}
+
 export interface GroupMessage {
   id: number;
   room: string;
@@ -2912,8 +3055,9 @@ export interface GroupMessage {
   is_deleted?: boolean;
   is_pinned?: boolean;
   reactions?: MessageReaction[];
-  message_type?: "text" | "post_card" | string;
+  message_type?: "text" | "post_card" | "poll" | string;
   meta?: MessageMeta | null;
+  poll?: PollData | null;
 }
 
 export interface ForwardSource {

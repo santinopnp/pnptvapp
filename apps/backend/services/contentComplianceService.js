@@ -20,7 +20,7 @@ class ContentComplianceService {
     const { rows } = await query(
       `SELECT COALESCE(SUM(duration_seconds), 0)::int AS seconds
        FROM creator_media
-       WHERE creator_id = $1 AND is_premium = true AND media_type = 'video'`,
+       WHERE creator_id = $1 AND is_premium = true AND media_type = 'video' AND review_status = 'approved'`,
       [creatorId]
     );
     return rows[0]?.seconds || 0;

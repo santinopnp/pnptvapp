@@ -1957,6 +1957,126 @@ function initSocketIO(io) {
 
     // ── Hangout Call socket handlers removed — calls now use Telegram native ─────
 
+    // ── Hangout Polls ────────────────────────────────────────────────────────
+
+    socket.on('hangout:poll:create', async ({ hangoutId, question, options, allowMultiple, closesAt } = {}) => {
+      if (!user || !user.id) {
+        socket.emit('hangout:error', { message: 'Authentication required', code: 'UNAUTHORIZED' });
+        return;
+      }
+      if (!hangoutId) return;
+      const gid = parseInt(hangoutId, 10);
+      if (!Number.isFinite(gid)) return;
+
+      try {
+        // Membership + ban check
+        const { rows: memberRows } = await query(
+          'SELECT 1 FROM hangout_group_members WHERE group_id=$1 AND user_id=$2 AND (is_banned=false OR is_banned IS NULL)',
+          [gid, user.id]
+        );
+        if (memberRows.length === 0) {
+          socket.emit('hangout:error', { message: 'Not a member of this group', code: 'NOT_MEMBER' });
+          return;
+        }
+
+        const HangoutPollService = require('../../services/hangoutPollService');
+        const { poll, message } = await HangoutPollService.createPoll(gid, user.id, {
+          question,
+          options,
+          allowMultiple: !!allowMultiple,
+          closesAt: closesAt || null,
+        });
+
+        // Build the broadcast payload: embed poll data so the frontend gets everything
+        // in one event, matching the shape of a regular hangout chat:message.
+        const broadcastMsg = {
+          id:           message.id,
+          room:         message.room,
+          user_id:      user.id,
+          username:     user.username || null,
+          first_name:   user.firstName || user.first_name || null,
+          photo_url:    null,
+          content:      '',
+          message_type: 'poll',
+          poll_id:      poll.id,
+          created_at:   message.created_at,
+          // Embed full poll definition so clients can render without a second request
+          poll: {
+            id:             poll.id,
+            question:       poll.question,
+            options:        poll.options,
+            allow_multiple: poll.allow_multiple,
+            closes_at:      poll.closes_at || null,
+            results:        poll.options.map(o => ({ option_id: o.id, count: 0 })),
+            total_votes:    0,
+            user_vote:      null,
+          },
+        };
+
+        io.to(`hangout:${gid}`).emit('chat:message', broadcastMsg);
+
+        // Touch activity timestamp
+        await query('UPDATE hangout_groups SET last_activity_at = NOW() WHERE id = $1', [gid]);
+      } catch (err) {
+        if (err.code === 'VALIDATION_ERROR') {
+          socket.emit('hangout:error', { message: err.message, code: 'POLL_VALIDATION_ERROR' });
+          return;
+        }
+        logger.error('hangout:poll:create error', { userId: user.id, hangoutId: gid, error: err.message });
+        socket.emit('hangout:error', { message: 'Failed to create poll' });
+      }
+    });
+
+    socket.on('hangout:poll:vote', async ({ pollId, hangoutId, optionIds } = {}) => {
+      if (!user || !user.id) {
+        socket.emit('hangout:error', { message: 'Authentication required', code: 'UNAUTHORIZED' });
+        return;
+      }
+      if (!pollId || !hangoutId) return;
+      const gid = parseInt(hangoutId, 10);
+      if (!Number.isFinite(gid)) return;
+
+      try {
+        // Membership + ban check
+        const { rows: memberRows } = await query(
+          'SELECT 1 FROM hangout_group_members WHERE group_id=$1 AND user_id=$2 AND (is_banned=false OR is_banned IS NULL)',
+          [gid, user.id]
+        );
+        if (memberRows.length === 0) {
+          socket.emit('hangout:error', { message: 'Not a member of this group', code: 'NOT_MEMBER' });
+          return;
+        }
+
+        const HangoutPollService = require('../../services/hangoutPollService');
+        const voteResult = await HangoutPollService.votePoll(pollId, user.id, optionIds);
+
+        // Look up the chat_messages row for this poll so the frontend can update by messageId
+        const { rows: msgRows } = await query(
+          `SELECT id FROM chat_messages WHERE poll_id = $1 LIMIT 1`,
+          [pollId]
+        );
+        const messageId = msgRows[0]?.id || null;
+
+        io.to(`hangout:${gid}`).emit('hangout:poll:update', {
+          messageId,
+          pollId:      voteResult.poll_id,
+          results:     voteResult.results,
+          totalVotes:  voteResult.total_votes,
+          // Only reveal the voting user's own selection — broadcast to room
+          // so the voter's own client gets confirmation, others don't see it
+          votedBy:     user.id,
+          userVote:    voteResult.user_vote,
+        });
+      } catch (err) {
+        if (err.code === 'VALIDATION_ERROR' || err.code === 'POLL_CLOSED' || err.code === 'NOT_FOUND') {
+          socket.emit('hangout:error', { message: err.message, code: err.code });
+          return;
+        }
+        logger.error('hangout:poll:vote error', { userId: user.id, hangoutId: gid, pollId, error: err.message });
+        socket.emit('hangout:error', { message: 'Failed to record vote' });
+      }
+    });
+
     // ── Hangout Music Sync ───────────────────────────────────────────────────
 
     // WS-HIGH-04: Only admins and hangout owners/moderators may control music.

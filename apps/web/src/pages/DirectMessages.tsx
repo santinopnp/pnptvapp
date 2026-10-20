@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import Picker from "@emoji-mart/react";
+import data from "@emoji-mart/data";
 import { Helmet } from "react-helmet-async";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
@@ -323,6 +325,10 @@ function DmChatView({ userId, myDbId, myUserId, isAdmin, onBack, panelMode }: { 
   const [partnerReadAt, setPartnerReadAt] = useState<string | null>(null);
   const [highlightId, setHighlightId] = useState<number | null>(null);
 
+  // Composer emoji picker
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const emojiPickerRef = useRef<HTMLDivElement>(null);
+
   // On-demand AI translation state, keyed by message id.
   // translationView: which text the user currently wants to see for a given message.
   // translationBusy: shows a spinner on the chip while Grok is working.
@@ -604,6 +610,68 @@ function DmChatView({ userId, myDbId, myUserId, isAdmin, onBack, panelMode }: { 
     lastTypingEmit.current = now;
     connectSocket().emit("dm:typing", { recipientId: userId });
   };
+
+  // Insert emoji at cursor position in the composer textarea
+  const insertEmoji = useCallback((native: string) => {
+    const el = messageInputRef.current;
+    if (!el) {
+      setMessageInput((prev) => prev + native);
+      return;
+    }
+    const start = el.selectionStart ?? messageInput.length;
+    const end = el.selectionEnd ?? messageInput.length;
+    const next = messageInput.slice(0, start) + native + messageInput.slice(end);
+    setMessageInput(next);
+    // Restore cursor after the inserted emoji on next tick
+    requestAnimationFrame(() => {
+      el.focus();
+      const pos = start + native.length;
+      el.setSelectionRange(pos, pos);
+    });
+  }, [messageInput]);
+
+  // Wrap selected text (or insert markers + position cursor between them)
+  const applyFormat = useCallback((marker: string, closeMarker?: string) => {
+    const el = messageInputRef.current;
+    const close = closeMarker ?? marker;
+    if (!el) {
+      setMessageInput((prev) => prev + marker + close);
+      return;
+    }
+    el.focus();
+    const start = el.selectionStart ?? 0;
+    const end = el.selectionEnd ?? 0;
+    const selected = messageInput.slice(start, end);
+    let next: string;
+    let cursorStart: number;
+    let cursorEnd: number;
+    if (selected.length > 0) {
+      next = messageInput.slice(0, start) + marker + selected + close + messageInput.slice(end);
+      cursorStart = start + marker.length;
+      cursorEnd = start + marker.length + selected.length;
+    } else {
+      next = messageInput.slice(0, start) + marker + close + messageInput.slice(end);
+      cursorStart = start + marker.length;
+      cursorEnd = cursorStart;
+    }
+    setMessageInput(next);
+    requestAnimationFrame(() => {
+      el.focus();
+      el.setSelectionRange(cursorStart, cursorEnd);
+    });
+  }, [messageInput]);
+
+  // Close emoji picker on outside click
+  useEffect(() => {
+    if (!showEmojiPicker) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (emojiPickerRef.current && !emojiPickerRef.current.contains(e.target as Node)) {
+        setShowEmojiPicker(false);
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown, { capture: true });
+    return () => document.removeEventListener("pointerdown", onPointerDown, { capture: true });
+  }, [showEmojiPicker]);
 
   // Auto-grow the message textarea so multi-line drafts expand naturally
   // (matches WhatsApp/Telegram/iMessage). Capped at ~4 lines via max-height
@@ -2156,65 +2224,139 @@ function DmChatView({ userId, myDbId, myUserId, isAdmin, onBack, panelMode }: { 
         </div>
       ) : (
       /* Input bar */
-      <div className={`flex items-end gap-2 px-3 py-2 border-t border-pnp-border flex-shrink-0 bg-pnp-background${panelMode ? "" : " pb-safe"}`}>
+      <div className={`border-t border-pnp-border flex-shrink-0 bg-pnp-background${panelMode ? "" : " pb-safe"}`}>
         <input id="pnp-directmessages-2" ref={mediaInputRef} type="file" accept="image/*,video/*,audio/*" className="hidden" onChange={handleMediaSelect} multiple />
         <input id="pnp-directmessages-3" ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleMediaSelect} multiple />
         <input id="pnp-directmessages-4" ref={cameraInputRef} type="file" accept="image/*,video/*" capture="environment" className="hidden" onChange={handleMediaSelect} />
-        <button type="button" onClick={() => imageInputRef.current?.click()} className="p-2.5 rounded-full text-pnp-textSecondary hover:text-white hover:bg-white/10 active:scale-90 transition-all flex-shrink-0" aria-label="Send picture" title="Send picture">
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" />
-          </svg>
-        </button>
-        <button type="button" onClick={() => mediaInputRef.current?.click()} className="p-2.5 rounded-full text-pnp-textSecondary hover:text-white hover:bg-white/10 active:scale-90 transition-all flex-shrink-0" aria-label="Attach video or file" title="Attach video or file">
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13" />
-          </svg>
-        </button>
-        <textarea id="pnp-directmessages-5"
-          ref={messageInputRef}
-          value={messageInput}
-          onChange={(e) => { setMessageInput(e.target.value); emitTyping(); }}
-          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSendMessage(); } }}
-          onPaste={handlePasteImage}
-          onFocus={panelMode ? () => { setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 300); } : undefined}
-          placeholder="Type a message..."
-          className="flex-1 bg-white/5 text-white placeholder-pnp-textSecondary rounded-2xl px-4 py-2 resize-none outline-none focus:ring-1 focus:ring-pnp-accent/50 max-h-32 leading-6 disabled:opacity-40 disabled:cursor-not-allowed"
-          rows={1}
-          style={{ fontSize: "16px" }}
-        />
-        {/* Mic button — shown only when input is empty and no media attached */}
-        {!messageInput.trim() && mediaFiles.length === 0 && (
+
+        {/* Formatting toolbar — only shown when textarea has focus or content */}
+        <div className="flex items-center gap-1 px-3 pt-1.5 pb-0.5">
+          {/* Bold */}
           <button
             type="button"
-            onClick={startRecording}
-            className="p-2.5 rounded-full text-white active:scale-90 transition-all flex-shrink-0"
-            style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
-            aria-label="Record voice note"
-            title="Record voice note"
+            onMouseDown={(e) => { e.preventDefault(); applyFormat("**"); }}
+            onTouchEnd={(e) => { e.preventDefault(); applyFormat("**"); }}
+            className="w-7 h-7 flex items-center justify-center rounded-lg text-xs font-bold transition-all active:scale-90 hover:bg-white/10"
+            style={{ color: "#8E8E93" }}
+            aria-label="Bold"
+            title="Bold (**text**)"
           >
+            B
+          </button>
+          {/* Italic */}
+          <button
+            type="button"
+            onMouseDown={(e) => { e.preventDefault(); applyFormat("_"); }}
+            onTouchEnd={(e) => { e.preventDefault(); applyFormat("_"); }}
+            className="w-7 h-7 flex items-center justify-center rounded-lg text-xs italic font-semibold transition-all active:scale-90 hover:bg-white/10"
+            style={{ color: "#8E8E93" }}
+            aria-label="Italic"
+            title="Italic (_text_)"
+          >
+            I
+          </button>
+          {/* Code */}
+          <button
+            type="button"
+            onMouseDown={(e) => { e.preventDefault(); applyFormat("`"); }}
+            onTouchEnd={(e) => { e.preventDefault(); applyFormat("`"); }}
+            className="w-7 h-7 flex items-center justify-center rounded-lg text-[11px] font-mono font-semibold transition-all active:scale-90 hover:bg-white/10"
+            style={{ color: "#8E8E93" }}
+            aria-label="Code"
+            title="Code (`text`)"
+          >
+            {"</>"}
+          </button>
+          <div className="w-px h-4 mx-0.5" style={{ background: "rgba(255,255,255,0.08)" }} />
+          {/* Emoji picker button */}
+          <div className="relative" ref={emojiPickerRef}>
+            <button
+              type="button"
+              onClick={() => setShowEmojiPicker((v) => !v)}
+              className={`w-7 h-7 flex items-center justify-center rounded-lg text-base transition-all active:scale-90 hover:bg-white/10 ${showEmojiPicker ? "bg-white/10" : ""}`}
+              aria-label="Emoji picker"
+              title="Emoji"
+            >
+              😊
+            </button>
+            {showEmojiPicker && (
+              <div
+                className="absolute z-[60]"
+                style={{ bottom: "calc(100% + 8px)", left: 0 }}
+              >
+                <Picker
+                  data={data}
+                  onEmojiSelect={(emoji: any) => {
+                    insertEmoji(emoji.native);
+                    setShowEmojiPicker(false);
+                  }}
+                  theme="dark"
+                  previewPosition="none"
+                  skinTonePosition="none"
+                />
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Main input row */}
+        <div className="flex items-end gap-2 px-3 py-2">
+          <button type="button" onClick={() => imageInputRef.current?.click()} className="p-2.5 rounded-full text-pnp-textSecondary hover:text-white hover:bg-white/10 active:scale-90 transition-all flex-shrink-0" aria-label="Send picture" title="Send picture">
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" />
             </svg>
           </button>
-        )}
-        {(messageInput.trim() || mediaFiles.length > 0) && (
-          <button
-            type="button"
-            onClick={handleSendMessage}
-            disabled={sendingMessage}
-            className="p-2.5 rounded-full text-white active:scale-90 transition-all flex-shrink-0 disabled:opacity-30"
-            style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
-            aria-label={editingMsg ? "Save edit" : "Send message"}
-          >
-            {sendingMessage ? (
-              <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
-            ) : editingMsg ? (
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
-            ) : (
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" /></svg>
-            )}
+          <button type="button" onClick={() => mediaInputRef.current?.click()} className="p-2.5 rounded-full text-pnp-textSecondary hover:text-white hover:bg-white/10 active:scale-90 transition-all flex-shrink-0" aria-label="Attach video or file" title="Attach video or file">
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13" />
+            </svg>
           </button>
-        )}
+          <textarea id="pnp-directmessages-5"
+            ref={messageInputRef}
+            value={messageInput}
+            onChange={(e) => { setMessageInput(e.target.value); emitTyping(); }}
+            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSendMessage(); } }}
+            onPaste={handlePasteImage}
+            onFocus={panelMode ? () => { setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 300); } : undefined}
+            placeholder="Type a message..."
+            className="flex-1 bg-white/5 text-white placeholder-pnp-textSecondary rounded-2xl px-4 py-2 resize-none outline-none focus:ring-1 focus:ring-pnp-accent/50 max-h-32 leading-6 disabled:opacity-40 disabled:cursor-not-allowed"
+            rows={1}
+            style={{ fontSize: "16px" }}
+          />
+          {/* Mic button — shown only when input is empty and no media attached */}
+          {!messageInput.trim() && mediaFiles.length === 0 && (
+            <button
+              type="button"
+              onClick={startRecording}
+              className="p-2.5 rounded-full text-white active:scale-90 transition-all flex-shrink-0"
+              style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+              aria-label="Record voice note"
+              title="Record voice note"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" />
+              </svg>
+            </button>
+          )}
+          {(messageInput.trim() || mediaFiles.length > 0) && (
+            <button
+              type="button"
+              onClick={handleSendMessage}
+              disabled={sendingMessage}
+              className="p-2.5 rounded-full text-white active:scale-90 transition-all flex-shrink-0 disabled:opacity-30"
+              style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+              aria-label={editingMsg ? "Save edit" : "Send message"}
+            >
+              {sendingMessage ? (
+                <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+              ) : editingMsg ? (
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+              ) : (
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" /></svg>
+              )}
+            </button>
+          )}
+        </div>
       </div>
       )}
 

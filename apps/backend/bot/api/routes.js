@@ -41,6 +41,7 @@ const roleGuard = require('./middleware/roleGuard');
 const { asyncHandler } = require('./middleware/errorHandler');
 const { normalizeImageUrl, isWhitelistedCdn } = require('../../services/imageUrlHelper');
 const { authenticateUser } = require('./middleware/auth');
+const { requireFaceMatchConsent, requireFaceMatchConsentForVisualMedia } = require('./middleware/requireFaceMatchConsent');
 const ipTracker = require('./middleware/ipTracker');
 const PermissionService = require('../../services/permissionService');
 const referralService = require('../../services/referralService');
@@ -436,20 +437,30 @@ app.use(ipTracker); // Log every authenticated request IP for security
 // TN (Protect Tennessee Minors Act — hourly re-verify + 7yr data retention),
 // FL (HB 3). UK (Online Safety Act 2023 / Ofcom HEAA).
 //
-// Soft bypass: users who are misidentified by mobile-carrier exit nodes
-// (T-Mobile/AT&T/Verizon route via TX regardless of actual location) can
-// self-certify via POST /api/public/geo-bypass, which sets a session flag
-// allowing them through. This is legally defensible — the platform made a
-// good-faith block; the user self-certified a location error.
+// 2026-10-20 — age-verification blocks are HARD blocks. Free Speech Coalition
+// v. Paxton (2025) upheld these laws; a self-declared birth date does not
+// satisfy them, and neither does a self-certified "I'm not really there".
+// The soft bypasses below (POST /api/public/geo-bypass, geo invite tokens,
+// CO creator whitelist, paying-member grandfathering) apply ONLY to plain
+// country blocks, never to AGE_VERIFICATION_* blocks. Admins still bypass
+// for debugging. Re-check this list with counsel whenever a state law
+// changes; unblock a state only once real ID-based age verification exists.
 //
 // Returns 451 (Unavailable For Legal Reasons) on API; redirects to a static
 // /blocked-jurisdiction page on browser navigation. Admins bypass for debug.
 // Cached per-IP in Redis 1h to avoid the geoip lookup on every request.
 // (geoip module is already required at the top of the file — reuse it.)
+// US states (ISO subdivision codes, e.g. 'TX') to hard-block for
+// age-verification laws. Empty by operator decision (2026-10-20): no
+// jurisdictions are blocked. Adding a code here enables the hard block.
 const BLOCKED_US_REGIONS = new Set();
+// Countries to hard-block for age-verification laws (e.g. 'GB'). Empty by
+// operator decision (2026-10-20).
+const AGE_VERIFICATION_COUNTRIES = new Set();
 // CO + VE geo-blocks lifted 2026-06-18 — full open access.
 // CO re-blocked 2026-07-21 per operator instruction, then lifted again
 // 2026-07-23 per operator instruction — full open access restored.
+// Plain country blocks (soft bypasses allowed) go here.
 const BLOCKED_COUNTRIES = new Set();
 // Per-user geo-block whitelist — bypasses the hard country block for specific user IDs.
 const GEO_BLOCK_USER_WHITELIST = new Set(['8599671840']); // SantinoFurioso
@@ -504,6 +515,9 @@ const GEO_BLOCK_BYPASS_PATHS = [
   /^\/api\/public\/geo-bypass$/,
   // Geo invite token redemption must be reachable before the block fires
   /^\/api\/public\/geo-invite\//,
+  // Removal requests (TAKE IT DOWN Act / complaints) must be reachable by
+  // anyone depicted, wherever they are.
+  /^\/api\/public\/removal-requests$/,
   // lifetime100 purchase flow is exempt by operator policy
   /^\/api\/public\/lifetime100\b/,
   // yearly50 purchase flow is exempt by operator policy
@@ -522,11 +536,14 @@ function classifyGeo(ip) {
   if (!lookup) return null;
   const country = lookup.country;
   const region = lookup.region || '';
-  if (BLOCKED_COUNTRIES.has(country)) {
-    return { blocked: true, country, region, reason: `${country}_JURISDICTION_BLOCK` };
+  if (AGE_VERIFICATION_COUNTRIES.has(country)) {
+    return { blocked: true, ageVerification: true, country, region, reason: `${country}_AGE_VERIFICATION` };
   }
   if (country === 'US' && BLOCKED_US_REGIONS.has(region)) {
-    return { blocked: true, country, region, reason: `US_${region}_AGE_VERIFICATION` };
+    return { blocked: true, ageVerification: true, country, region, reason: `US_${region}_AGE_VERIFICATION` };
+  }
+  if (BLOCKED_COUNTRIES.has(country)) {
+    return { blocked: true, country, region, reason: `${country}_JURISDICTION_BLOCK` };
   }
   return { blocked: false, country, region };
 }
@@ -755,34 +772,10 @@ app.use(async (req, res, next) => {
   // Admin bypass — once authenticated, admins can travel into blocked regions
   // to debug. Pre-auth requests fall through to the geo check.
   if (EntitlementAccessService.isEffectivelyAdmin(req.session?.user)) return next();
-  if (req.session?.user?.id && GEO_BLOCK_USER_WHITELIST.has(String(req.session.user.id))) return next();
-
-  // User-acknowledged bypass — session flag set via POST /api/public/geo-bypass.
-  // Honour it for up to 24h so carrier-misidentified users are not repeatedly
-  // blocked throughout the same session.
-  if (req.session?.geoBypass === true) {
-    const bypassAge = Date.now() - (req.session.geoBypassAt || 0);
-    if (bypassAge < 24 * 60 * 60 * 1000) return next();
-    // Expired — clear and fall through to re-evaluate
-    delete req.session.geoBypass;
-    delete req.session.geoBypassAt;
-  }
-
-  // Admin-issued geo invite bypass — set by GET /api/public/geo-invite/:token.
-  // Valid for the lifetime of the session (no expiry — user redeemed a real invite).
-  if (req.session?.geoInviteBypass === true) return next();
-
-  // Grandfather clause: authenticated users who ALREADY paid for an active
-  // membership (prime, pnp-member, pnp-col) keep access even from a blocked
-  // region. Refunding 25+ existing CO members every time the operator toggles
-  // a country would generate more support work than the block itself saves.
-  // 5-minute Redis cache keeps per-request cost negligible.
-  // Also honours the auto-refreshed CO_CREATOR_WHITELIST so active Colombian
-  // creators can keep posting/streaming/receiving tips.
-
   try {
     const ip = req.ip;
-    const cacheKey = `geoblock:${ip}`;
+    // v2: cached results now carry the ageVerification flag.
+    const cacheKey = `geoblock:v2:${ip}`;
     let cached = await geoCache.get(cacheKey);
     let result;
     if (cached) {
@@ -792,10 +785,33 @@ app.use(async (req, res, next) => {
       if (result) await geoCache.set(cacheKey, JSON.stringify(result), 3600);
     }
     if (result?.blocked) {
-      // Paying-member + creator exemptions only run when the IP would
-      // otherwise block, keeping the fast path on unblocked traffic clean.
+      // Soft bypasses apply to plain country blocks only — never to
+      // age-verification blocks (see the comment above BLOCKED_US_REGIONS).
       const userId = req.session?.user?.id ? String(req.session.user.id) : null;
-      if (userId) {
+      if (!result.ageVerification) {
+        if (userId && GEO_BLOCK_USER_WHITELIST.has(userId)) return next();
+
+        // User-acknowledged bypass — session flag set via POST /api/public/geo-bypass.
+        // Honour it for up to 24h so carrier-misidentified users are not repeatedly
+        // blocked throughout the same session.
+        if (req.session?.geoBypass === true) {
+          const bypassAge = Date.now() - (req.session.geoBypassAt || 0);
+          if (bypassAge < 24 * 60 * 60 * 1000) return next();
+          delete req.session.geoBypass;
+          delete req.session.geoBypassAt;
+        }
+
+        // Admin-issued geo invite bypass — set by GET /api/public/geo-invite/:token.
+        if (req.session?.geoInviteBypass === true) return next();
+      }
+
+      // Grandfather clause: authenticated users who ALREADY paid for an active
+      // membership (prime, pnp-member, pnp-col) keep access even from a blocked
+      // country. Refunding 25+ existing CO members every time the operator toggles
+      // a country would generate more support work than the block itself saves.
+      // Also honours the auto-refreshed CO_CREATOR_WHITELIST so active Colombian
+      // creators can keep posting/streaming/receiving tips.
+      if (userId && !result.ageVerification) {
         if (CO_CREATOR_WHITELIST.has(userId)) {
           logger.info('Geo-block bypassed (CO creator)', { ip, userId, country: result.country });
           return next();
@@ -829,7 +845,11 @@ app.use(async (req, res, next) => {
       const jParam = encodeURIComponent(result.region || result.country);
       // Colombia socios flow needs the Spanish invite-card variant of the
       // blocked page (branches on reason=colombia in blocked-jurisdiction.html).
-      const reasonParam = result.country === 'CO' ? '&reason=colombia' : '';
+      // Age-verification blocks hide the self-certify bypass, which the
+      // middleware no longer honours for them.
+      const reasonParam = result.ageVerification
+        ? '&reason=age_verification'
+        : (result.country === 'CO' ? '&reason=colombia' : '');
       return res.redirect(302, `/blocked-jurisdiction?j=${jParam}${reasonParam}`);
     }
   } catch (err) {
@@ -1478,7 +1498,7 @@ app.use(async (req, res, next) => {
         const { getPool } = require('../../config/postgres');
         const { rows } = await getPool().query(
           `SELECT 1 FROM creator_media
-            WHERE (url = $1 OR thumb_url = $1) AND is_premium = FALSE
+            WHERE (url = $1 OR thumb_url = $1) AND is_premium = FALSE AND review_status = 'approved'
             LIMIT 1`,
           [req.path]
         );
@@ -4821,13 +4841,13 @@ app.post('/api/webapp/settings/change-email', requireSessionAuth, changeEmailLim
 // Web App Profile
 app.get('/api/webapp/profile', requireSessionAuth, asyncHandler(webAppController.getProfile));
 app.put('/api/webapp/profile', requireSessionAuth, asyncHandler(webAppController.updateProfile));
-app.post('/api/webapp/profile/avatar', requireSessionAuth, uploadLimiter, avatarUpload.single('avatar'), verifyMagicBytes(IMAGE_MIMES), asyncHandler(webAppController.uploadAvatar));
-app.post('/api/webapp/profile/cover', requireSessionAuth, uploadLimiter, coverUpload.single('cover'), verifyMagicBytes(IMAGE_MIMES), asyncHandler(webAppController.uploadCover));
+app.post('/api/webapp/profile/avatar', requireSessionAuth, requireFaceMatchConsent, uploadLimiter, avatarUpload.single('avatar'), verifyMagicBytes(IMAGE_MIMES), asyncHandler(webAppController.uploadAvatar));
+app.post('/api/webapp/profile/cover', requireSessionAuth, requireFaceMatchConsent, uploadLimiter, coverUpload.single('cover'), verifyMagicBytes(IMAGE_MIMES), asyncHandler(webAppController.uploadCover));
 app.delete('/api/webapp/profile/avatar', requireSessionAuth, asyncHandler(webAppController.deleteAvatar));
 app.delete('/api/webapp/profile/cover', requireSessionAuth, asyncHandler(webAppController.deleteCover));
 app.post('/api/webapp/profile/telegram/link', telegramWidgetLimiter, requireSessionAuth, asyncHandler(webAppController.linkTelegram));
 app.post('/api/webapp/profile/telegram/unlink', requireSessionAuth, asyncHandler(webAppController.unlinkTelegram));
-app.post('/api/webapp/upload/event-cover', requireSessionAuth, uploadLimiter, eventCoverUpload.single('media'), verifyMagicBytes(IMAGE_MIMES), asyncHandler(webAppController.uploadEventCover));
+app.post('/api/webapp/upload/event-cover', requireSessionAuth, requireFaceMatchConsent, uploadLimiter, eventCoverUpload.single('media'), verifyMagicBytes(IMAGE_MIMES), asyncHandler(webAppController.uploadEventCover));
 
 // Web App Privacy Settings
 app.patch('/api/webapp/privacy', asyncHandler(async (req, res) => {
@@ -4874,7 +4894,7 @@ app.patch('/api/webapp/privacy', asyncHandler(async (req, res) => {
 
 // Model Application File Uploads
 const applyController = require('./controllers/applyController');
-app.post('/api/apply/profile-photo', authenticateUser, uploadLimiter, uploadModelProfilePhoto, asyncHandler(applyController.uploadProfilePhoto));
+app.post('/api/apply/profile-photo', authenticateUser, requireFaceMatchConsent, uploadLimiter, uploadModelProfilePhoto, asyncHandler(applyController.uploadProfilePhoto));
 app.post('/api/apply/id-documents', authenticateUser, uploadLimiter, uploadModelIdDocuments, asyncHandler(applyController.uploadIdDocuments));
 
 // Web App User Location
@@ -5545,10 +5565,10 @@ const tipMenuLimiter = rateLimit({ windowMs: 10 * 1000, max: 5, keyGenerator: (r
 // Web App Live Streaming Routes
 const webappLiveController = require('./controllers/webappLiveController');
 app.get('/api/webapp/live/streams', requireSessionAuth, asyncHandler(webappLiveController.listStreams));
-app.get('/api/webapp/live/rtmp-key', requireSessionAuth, credentialLimiter, asyncHandler(webappLiveController.getRtmpKey));
+app.get('/api/webapp/live/rtmp-key', requireSessionAuth, requireFaceMatchConsent, credentialLimiter, asyncHandler(webappLiveController.getRtmpKey));
 app.get('/api/webapp/me/creator-eligibility', requireSessionAuth, asyncHandler(webappLiveController.getCreatorEligibility));
 // Self-serve channel provisioning: creator gets a Restreamer channel on first "Go Live"
-app.post('/api/webapp/live/provision-channel', requireSessionAuth, credentialLimiter, asyncHandler(webappLiveController.provisionChannel));
+app.post('/api/webapp/live/provision-channel', requireSessionAuth, requireFaceMatchConsent, credentialLimiter, asyncHandler(webappLiveController.provisionChannel));
 
 // ── Cal.com: creator availability slots ──
 const calcomSlotsLimiter = rateLimit({
@@ -6024,7 +6044,7 @@ const broadcastLiveLimiter = rateLimit({
 });
 
 // Manual going-live broadcast to followers
-app.post('/api/webapp/live/broadcast-live-now', requireSessionAuth, roleGuard('model', 'creator', 'admin', 'superadmin'), broadcastLiveLimiter, asyncHandler(webappLiveController.broadcastLiveNow));
+app.post('/api/webapp/live/broadcast-live-now', requireSessionAuth, roleGuard('model', 'creator', 'admin', 'superadmin'), requireFaceMatchConsent, broadcastLiveLimiter, asyncHandler(webappLiveController.broadcastLiveNow));
 
 // VOD replay recordings
 app.get('/api/webapp/creators/:creatorId/recordings', softAuth, asyncHandler(webappLiveController.listCreatorRecordings));
@@ -6055,13 +6075,13 @@ app.put('/api/webapp/live/settings', requireSessionAuth, asyncHandler(streamerSe
 // Gap 2: Persistent thumbnail upload
 app.post('/api/webapp/live/thumbnail', requireSessionAuth, roleGuard('model', 'creator', 'admin', 'superadmin'), express.json({ limit: '4mb' }), asyncHandler(streamerSettingsController.uploadThumbnail));
 // MED-02: 6 MB body limit for snapshot uploads (base64-encoded frame); role guard restricts to creators only
-app.post('/api/webapp/live/snapshot', requireSessionAuth, roleGuard('model', 'creator', 'admin', 'superadmin'), express.json({ limit: '6mb' }), asyncHandler(webappLiveController.uploadSnapshot));
+app.post('/api/webapp/live/snapshot', requireSessionAuth, roleGuard('model', 'creator', 'admin', 'superadmin'), requireFaceMatchConsent, express.json({ limit: '6mb' }), asyncHandler(webappLiveController.uploadSnapshot));
 
 // Gap 1: Past-session earnings history for studio panel
 app.get('/api/webapp/live/earnings', requireSessionAuth, roleGuard('model', 'creator', 'admin', 'superadmin'), asyncHandler(webappLiveController.getEarningsHistory));
 
 // Gap 4: User-uploaded local recording blob (CR-02: roleGuard prevents non-creator 3 GB uploads)
-app.post('/api/webapp/live/recording', requireSessionAuth, roleGuard('model', 'creator', 'admin', 'superadmin'), webappLiveController.uploadLocalRecording);
+app.post('/api/webapp/live/recording', requireSessionAuth, roleGuard('model', 'creator', 'admin', 'superadmin'), requireFaceMatchConsent, webappLiveController.uploadLocalRecording);
 
 // Gap 5: Scene presets
 app.get('/api/webapp/live/scene-presets', requireSessionAuth, asyncHandler(webappLiveController.getScenePresets));
@@ -9089,6 +9109,7 @@ app.post(
   requireSessionAuth,
   uploadLimiter,
   uploadChatMedia,
+  requireFaceMatchConsentForVisualMedia,
   asyncHandler(chatController.sendMediaMessage)
 );
 
@@ -9199,7 +9220,7 @@ app.post('/api/webapp/hangouts/groups/:id/join', requireSessionAuth, requireHang
 app.post('/api/webapp/hangouts/groups/:id/leave', requireSessionAuth, asyncHandler(hangoutGroupController.leaveGroup));
 app.delete('/api/webapp/hangouts/groups/:id', requireSessionAuth, asyncHandler(hangoutGroupController.deleteGroup));
 app.patch('/api/webapp/hangouts/groups/:id', requireSessionAuth, asyncHandler(hangoutGroupController.updateGroup));
-app.post('/api/webapp/hangouts/groups/:id/avatar', requireSessionAuth, uploadLimiter, hangoutAvatarUpload.single('avatar'), verifyMagicBytes(IMAGE_MIMES), asyncHandler(hangoutGroupController.updateGroupAvatar));
+app.post('/api/webapp/hangouts/groups/:id/avatar', requireSessionAuth, requireFaceMatchConsent, uploadLimiter, hangoutAvatarUpload.single('avatar'), verifyMagicBytes(IMAGE_MIMES), asyncHandler(hangoutGroupController.updateGroupAvatar));
 app.post('/api/webapp/hangouts/groups/:id/kick', requireSessionAuth, requireHangoutAccess, asyncHandler(hangoutGroupController.kickMember));
 app.post('/api/webapp/hangouts/groups/:id/members/:userId/role', requireSessionAuth, requireHangoutAccess, asyncHandler(hangoutGroupController.updateMemberRole));
 // Join requests for private groups
@@ -9231,6 +9252,7 @@ app.post(
   requireHangoutAccess,
   uploadLimiter,
   uploadHangoutMedia,
+  requireFaceMatchConsentForVisualMedia,
   verifyMagicBytes(HANGOUT_MEDIA_MIMES),
   asyncHandler(hangoutMediaController.uploadHangoutMedia)
 );
@@ -9290,6 +9312,7 @@ app.post(
   requireSessionAuth,
   uploadLimiter,
   uploadChatMedia,
+  requireFaceMatchConsentForVisualMedia,
   asyncHandler(chatMediaController.sendDmMediaMessage)
 );
 
@@ -10016,8 +10039,8 @@ app.post('/api/webapp/creator/posts/x-embed', requireSessionAuth, roleGuard('mod
   return res.json({ success: true, post: rows[0] });
 }));
 
-app.post('/api/webapp/social/posts/with-media', requireSessionAuth, uploadLimiter, attachCreatorStatus, postMediaUploadMiddleware, verifyDiskFileType, require2257ForCreators, asyncHandler(socialController.createPostWithMedia));
-app.post('/api/webapp/social/posts/with-multi-media', requireSessionAuth, uploadLimiter, attachCreatorStatus, postMultiMediaUploadMiddleware, verifyDiskFileType, require2257ForCreators, asyncHandler(socialController.createPostWithMultiMedia));
+app.post('/api/webapp/social/posts/with-media', requireSessionAuth, requireFaceMatchConsent, uploadLimiter, attachCreatorStatus, postMediaUploadMiddleware, verifyDiskFileType, require2257ForCreators, asyncHandler(socialController.createPostWithMedia));
+app.post('/api/webapp/social/posts/with-multi-media', requireSessionAuth, requireFaceMatchConsent, uploadLimiter, attachCreatorStatus, postMultiMediaUploadMiddleware, verifyDiskFileType, require2257ForCreators, asyncHandler(socialController.createPostWithMultiMedia));
 
 // ── TUS resumable upload server for social post media ────────────────────────
 // Frontend composer uploads directly via tus protocol; on completion the file
@@ -10377,7 +10400,7 @@ app.post('/api/webapp/social/posts/bulk-videos', requireSessionAuth, bulkVideoLi
 // ── Creator Mux upload path for social feed videos ──────────────────────────
 // Direct browser→Mux upload — offloads storage/transcoding/CDN from the VPS
 // and lets creators post video posts up to 50 GB. Active creators only.
-app.post('/api/webapp/social/mux-upload-url', requireSessionAuth, muxUrlLimiter, require2257ForCreators, asyncHandler(async (req, res) => {
+app.post('/api/webapp/social/mux-upload-url', requireSessionAuth, requireFaceMatchConsent, muxUrlLimiter, require2257ForCreators, asyncHandler(async (req, res) => {
   const socialPostMuxService = require('../../services/socialPostMuxService');
   const userId = req.session?.user?.id;
   if (!userId) return res.status(401).json({ success: false, error: 'unauthorized' });
@@ -13005,6 +13028,31 @@ const onboardingController = require('./controllers/onboardingController');
 app.get('/api/webapp/onboarding/status', requireSessionAuthNoConsent, asyncHandler(onboardingController.getStatus));
 app.post('/api/webapp/onboarding/step', requireSessionAuthNoConsent, asyncHandler(onboardingController.markStep));
 app.post('/api/webapp/onboarding/complete', requireSessionAuthNoConsent, asyncHandler(onboardingController.completeOnboarding));
+
+// ── Safety scanning consent ────────────────────────────────────────────────
+// Face matching consent is optional (biometric data, Ley 1581 / GDPR) and only
+// gates photo/video uploads and going live. Consent routes skip the age/terms
+// gate so the onboarding wizard can offer the opt-in on its privacy step.
+const safetyConsentController = require('./controllers/safetyConsentController');
+app.get('/api/webapp/me/face-match-consent', requireSessionAuthNoConsent, asyncHandler(safetyConsentController.getFaceMatchConsent));
+app.post('/api/webapp/me/face-match-consent', requireSessionAuthNoConsent, socialActionLimiter, asyncHandler(safetyConsentController.grantFaceMatchConsent));
+app.delete('/api/webapp/me/face-match-consent', requireSessionAuthNoConsent, socialActionLimiter, asyncHandler(safetyConsentController.withdrawFaceMatchConsent));
+// Existing members re-accept the updated Terms + Privacy Policy (safety scanning).
+app.get('/api/webapp/me/policy-update', requireSessionAuth, asyncHandler(safetyConsentController.getPolicyUpdate));
+app.post('/api/webapp/me/policy-update/accept', requireSessionAuth, socialActionLimiter, asyncHandler(safetyConsentController.acceptPolicyUpdate));
+
+// ── Compliance: removal requests, NCMEC cases, pre-publication review ──────
+const complianceController = require('./controllers/complianceController');
+const removalRequestLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false });
+// Public: TAKE IT DOWN Act (48h) and depicted-person complaints (7 business days).
+app.post('/api/public/removal-requests', removalRequestLimiter, asyncHandler(complianceController.createRemovalRequest));
+app.get('/api/webapp/admin/removal-requests', adminGuard, asyncHandler(complianceController.listRemovalRequests));
+app.post('/api/webapp/admin/removal-requests/:id/resolve', adminGuard, asyncHandler(complianceController.resolveRemovalRequest));
+app.get('/api/webapp/admin/ncmec-cases', adminGuard, asyncHandler(complianceController.listNcmecCases));
+app.post('/api/webapp/admin/ncmec-cases/:id', adminGuard, asyncHandler(complianceController.updateNcmecCase));
+app.get('/api/webapp/admin/content-reviews', adminGuard, asyncHandler(complianceController.listContentReviews));
+app.post('/api/webapp/admin/content-reviews/:id/approve', adminGuard, asyncHandler(complianceController.approveContentReview));
+app.post('/api/webapp/admin/content-reviews/:id/reject', adminGuard, asyncHandler(complianceController.rejectContentReview));
 
 // GET /api/proxy/live/performers — List performers from Directus for tip picker
 app.get('/api/proxy/live/performers', requireSessionAuth, livePerformersLimiter, asyncHandler(async (req, res) => {
@@ -21200,7 +21248,7 @@ app.post('/api/creators/:id/crystal/gift/checkout', crystalGiftCheckoutLimiter, 
 }));
 
 // Channel cover image upload — separate from creatorRoutes because it needs its own multer middleware
-app.post('/api/webapp/creator/channels/:id/cover', requireSessionAuth, uploadLimiter, channelCoverUpload.single('cover'), verifyMagicBytes(IMAGE_MIMES), asyncHandler(async (req, res) => {
+app.post('/api/webapp/creator/channels/:id/cover', requireSessionAuth, requireFaceMatchConsent, uploadLimiter, channelCoverUpload.single('cover'), verifyMagicBytes(IMAGE_MIMES), asyncHandler(async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   const channelId = parseInt(req.params.id, 10);
   if (!Number.isFinite(channelId)) return res.status(400).json({ error: 'Invalid channel ID' });
@@ -22070,6 +22118,7 @@ app.post('/api/creators/:id/services/:serviceId/book',
   // POST /api/webapp/channels/:channelId/videos/init
   app.post('/api/webapp/channels/:channelId/videos/init',
     requireSessionAuth,
+    requireFaceMatchConsent,
     channelVideoLimiter,
     asyncHandler(async (req, res) => {
       const channelId = parseInt(req.params.channelId, 10);
@@ -22269,6 +22318,7 @@ app.post('/api/creators/:id/services/:serviceId/book',
   app.post(
     '/api/webapp/channels/:channelId/videos',
     requireSessionAuth,
+    requireFaceMatchConsent,
     channelVideoLimiter,
     channelVideoUpload.single('file'),
     asyncHandler(async (req, res) => {
@@ -24197,7 +24247,7 @@ app.get('/api/webapp/creators/:creatorId/media',
 // Creator-only: file upload for album photos — registered before /reorder and plain POST
 // to avoid Express matching /upload as a /:id param on PATCH/DELETE routes.
 app.post('/api/webapp/creators/media/upload',
-  requireSessionAuth, creatorGuard,
+  requireSessionAuth, creatorGuard, requireFaceMatchConsent,
   uploadLimiter,
   creatorMediaUploadSingle,
   verifyMagicBytes(IMAGE_MIMES),
@@ -24234,7 +24284,7 @@ app.post('/api/webapp/creators/media/upload',
   }));
 
 app.post('/api/webapp/creators/media/upload-video/init',
-  requireSessionAuth, creatorGuard,
+  requireSessionAuth, creatorGuard, requireFaceMatchConsent,
   asyncHandler(async (req, res) => {
     const { fileName, fileSize, totalChunks } = req.body;
     if (!fileName || !fileSize || !totalChunks) {
@@ -24379,7 +24429,7 @@ app.post('/api/webapp/creators/media/upload-video/complete',
   }));
 
 app.post('/api/webapp/creators/media/upload-video',
-  requireSessionAuth, creatorGuard,
+  requireSessionAuth, creatorGuard, requireFaceMatchConsent,
   uploadLimiter,
   creatorVideoUpload.single('file'),
   verifyDiskFileType,
@@ -24716,13 +24766,19 @@ app.delete('/api/webapp/creators/media/:id',
         }
 
         try {
+          const ContentReviewService = require('../../services/contentReviewService');
+          const heldForReview = await ContentReviewService.requiresReviewForUser(meta.userId);
           const { rows: mediaRows } = await getPool().query(
-            `INSERT INTO creator_media (creator_id, media_type, url, thumb_url, caption, is_premium, sort_order, duration_seconds)
+            `INSERT INTO creator_media (creator_id, media_type, url, thumb_url, caption, is_premium, sort_order, duration_seconds, review_status)
              VALUES ($1, $2, $3, $4, $5, $6,
-               COALESCE((SELECT COALESCE(MAX(sort_order), -1) + 1 FROM creator_media WHERE creator_id = $1), 0), $7)
+               COALESCE((SELECT COALESCE(MAX(sort_order), -1) + 1 FROM creator_media WHERE creator_id = $1), 0), $7, $8)
              RETURNING id`,
-            [meta.userId, meta.mediaType, url, thumbUrl, meta.caption || null, meta.isPremium || false, durationSeconds]
+            [meta.userId, meta.mediaType, url, thumbUrl, meta.caption || null, meta.isPremium || false, durationSeconds,
+             heldForReview ? 'pending' : 'approved']
           );
+          if (heldForReview && mediaRows[0]?.id) {
+            await ContentReviewService.holdCreatorMedia(mediaRows[0].id, meta.userId);
+          }
 
           if (meta.mediaType === 'video' && meta.isPremium) {
             const ContentComplianceService = require('../../services/contentComplianceService');
@@ -24813,7 +24869,7 @@ app.delete('/api/webapp/creators/media/:id',
       const userId = String(req.session.user.id);
       const limit = Math.min(parseInt(req.query.limit, 10) || 100, 500);
       const { rows } = await getPool().query(
-        `SELECT id, media_type, url, thumb_url, caption, is_premium, sort_order, created_at
+        `SELECT id, media_type, url, thumb_url, caption, is_premium, sort_order, created_at, review_status
          FROM creator_media
          WHERE creator_id = $1
          ORDER BY sort_order ASC, created_at DESC
@@ -24831,6 +24887,7 @@ app.delete('/api/webapp/creators/media/:id',
           isPremium: r.is_premium,
           sortOrder: r.sort_order,
           createdAt: r.created_at,
+          reviewStatus: r.review_status,
         })),
       });
     })
@@ -24838,7 +24895,7 @@ app.delete('/api/webapp/creators/media/:id',
 
   // POST /api/webapp/creator/media — upload file to Directus + insert row
   app.post('/api/webapp/creator/media',
-    requireSessionAuth, creatorGuard,
+    requireSessionAuth, creatorGuard, requireFaceMatchConsent,
     creatorProfileMediaLimiter,
     creatorProfileMediaUpload.single('file'),
     asyncHandler(async (req, res) => {
@@ -24907,14 +24964,18 @@ app.delete('/api/webapp/creators/media/:id',
       }
 
       // Insert row — sort_order defaults to MAX+1 if not supplied
+      const ContentReviewService = require('../../services/contentReviewService');
+      const heldForReview = await ContentReviewService.requiresReviewForUser(userId);
       const { rows: inserted } = await getPool().query(
-        `INSERT INTO creator_media (creator_id, media_type, url, thumb_url, caption, is_premium, sort_order, duration_seconds)
+        `INSERT INTO creator_media (creator_id, media_type, url, thumb_url, caption, is_premium, sort_order, duration_seconds, review_status)
          VALUES ($1, $2, $3, $4, $5, $6,
-           COALESCE($7, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM creator_media WHERE creator_id = $1)), $8)
-         RETURNING id, media_type, url, thumb_url, caption, is_premium, sort_order, created_at`,
-        [userId, mediaType, assetUrl, thumbUrl, caption, isPremium, sortOrder !== undefined ? sortOrder : null, durationSeconds]
+           COALESCE($7, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM creator_media WHERE creator_id = $1)), $8, $9)
+         RETURNING id, media_type, url, thumb_url, caption, is_premium, sort_order, created_at, review_status`,
+        [userId, mediaType, assetUrl, thumbUrl, caption, isPremium, sortOrder !== undefined ? sortOrder : null, durationSeconds,
+         heldForReview ? 'pending' : 'approved']
       );
       const row = inserted[0];
+      if (heldForReview) await ContentReviewService.holdCreatorMedia(row.id, userId);
 
       if (isVideo && isPremium) {
         const ContentComplianceService = require('../../services/contentComplianceService');
@@ -24934,6 +24995,7 @@ app.delete('/api/webapp/creators/media/:id',
           isPremium: row.is_premium,
           sortOrder: row.sort_order,
           createdAt: row.created_at,
+          reviewStatus: row.review_status,
         },
       });
     })
@@ -25154,7 +25216,7 @@ app.get('/api/public/creator/:username',
     const { rows: mediaRows } = await pool.query(
       `SELECT id, media_type, url, thumb_url, caption, is_premium, sort_order, created_at
        FROM creator_media
-       WHERE creator_id = $1
+       WHERE creator_id = $1 AND review_status = 'approved'
        ORDER BY sort_order ASC, created_at DESC`,
       [creatorId]
     );
@@ -25330,7 +25392,7 @@ app.get('/api/public/creator/:username',
            COUNT(*) FILTER (WHERE media_type IN ('image', 'photo')) AS photos,
            COUNT(*) FILTER (WHERE media_type = 'video') AS videos
          FROM creator_media
-         WHERE creator_id = $1 AND is_premium = true`,
+         WHERE creator_id = $1 AND is_premium = true AND review_status = 'approved'`,
         [creatorId]
       );
       photoCount = Number(mcRows[0]?.photos ?? 0);
@@ -26909,6 +26971,7 @@ app.post('/api/webapp/creators/me/replay/bunny-upload', authenticateUser, asyncH
 
 app.post('/api/webapp/creators/me/replay/upload-chunk',
   authenticateUser,
+  requireFaceMatchConsent,
   replayChunkUpload.single('chunk'),
   asyncHandler(async (req, res) => {
     const creatorId = getActorId(req);
@@ -27285,6 +27348,237 @@ app.get('/api/public/banner-promotions/active', asyncHandler(async (_req, res) =
   res.setHeader('Cache-Control', 'public, max-age=60');
   return res.json({ banner: rows[0] || null });
 }));
+
+// ── Checkout Experiment — Privy standalone app ────────────────────────────────
+//
+// These routes serve the /checkout page which runs a SEPARATE Privy app
+// (VITE_PRIVY_CHECKOUT_APP_ID). JWTs here are issued by that app and must be
+// verified with getCheckoutClient(), not the main PrivyClient.
+//
+// Auth flow for POST /api/checkout/verify:
+//   1. Frontend calls getAccessToken() on the CHECKOUT Privy provider
+//   2. Sends token in Authorization: Bearer <token>
+//   3. This middleware calls getCheckoutClient().verifyAuthToken(token)
+//   4. On success, req.checkoutPrivy = { userId } is set
+
+const checkoutVerifyLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max: 8,
+  keyGenerator: (req) => req.session?.user?.id || req.ip,
+  handler: (_req, res) => res.status(429).json({ ok: false, error: 'Too many checkout verify requests. Wait a few minutes.', code: 'RATE_LIMITED' }),
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const checkoutConfigLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  keyGenerator: (req) => req.ip,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+/**
+ * Middleware: verify a Privy JWT from the CHECKOUT app (not the main app).
+ * Sets req.checkoutPrivy = { userId: string } on success.
+ * Returns 401 on missing/invalid token.
+ */
+const requireCheckoutPrivyAuth = asyncHandler(async (req, res, next) => {
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+  if (!token) {
+    return res.status(401).json({ ok: false, error: 'checkout_privy_token_required' });
+  }
+  try {
+    const { getCheckoutClient } = require('../../services/privyCheckoutService');
+    const claims = await getCheckoutClient().verifyAuthToken(token);
+    req.checkoutPrivy = { userId: claims.userId };
+    return next();
+  } catch (err) {
+    logger.warn('[checkout/verify] privy token verification failed', { err: err.message });
+    return res.status(401).json({ ok: false, error: 'checkout_privy_token_invalid' });
+  }
+});
+
+/**
+ * GET /api/checkout/config
+ *
+ * Public. Returns the checkout Privy app config + the public plan catalog.
+ * The frontend uses this to initialize the Privy provider and render plan
+ * selection without a separate /api/subscription/plans fetch.
+ */
+app.get('/api/checkout/config', checkoutConfigLimiter, asyncHandler(async (_req, res) => {
+  const appId      = process.env.VITE_PRIVY_CHECKOUT_APP_ID || process.env.PRIVY_CHECKOUT_APP_ID;
+  const clientId   = process.env.PRIVY_CHECKOUT_CLIENT_DESKTOP;
+  const policyId   = process.env.PRIVY_CHECKOUT_POLICY_ID;
+
+  if (!appId) {
+    return res.status(503).json({ ok: false, error: 'checkout_not_configured' });
+  }
+
+  // Expose split wallet addresses so the frontend can display "where your
+  // payment goes" and pre-fill the Privy policy destination. Only Carlos's
+  // address is the primary receiving address for the MVP (35% wallet). We
+  // expose all four so the UI can show the full split breakdown.
+  const splitAddresses = {
+    carlos:     process.env.PRIVY_SPLIT_CARLOS_ADDRESS || null,
+    moises:     process.env.PRIVY_SPLIT_MOISES_ADDRESS || null,
+    treasury:   process.env.PRIVY_SPLIT_TREASURY_ADDRESS || null,
+    reinversion: process.env.PRIVY_SPLIT_REINVERSION_ADDRESS || null,
+  };
+
+  // Plan catalog — same public list as /api/subscription/plans but we fetch
+  // it inline so this is a single-round-trip endpoint for the checkout page.
+  let plans = [];
+  try {
+    const PlanModel = require('../../models/planModel');
+    plans = await PlanModel.getPublicPlans();
+  } catch (err) {
+    logger.warn('[checkout/config] plan fetch failed', { err: err.message });
+    // Return config without plans rather than 500 — the UI can fall back to
+    // /api/subscription/plans.
+  }
+
+  // receiverAddress is the primary on-ramp destination: the Carlos (35%) server wallet.
+  // This is the same as splitAddresses.carlos — exposed here as a first-class field
+  // so the frontend can pass it as destination.wallet to useDepositFunds.
+  const receiverAddress = splitAddresses.carlos || null;
+
+  res.setHeader('Cache-Control', 'public, max-age=30');
+  return res.json({
+    ok: true,
+    appId,
+    clientId: clientId || null,
+    policyId: policyId || null,
+    splitAddresses,
+    receiverAddress,
+    plans,
+  });
+}));
+
+/**
+ * POST /api/checkout/verify
+ *
+ * Called by the frontend after Privy's useDepositFunds resolves. Two modes:
+ *
+ *  • On-ramp (preferred, Stripe-like fiat checkout):
+ *      Body: { planId, privyUserId, email }
+ *      The on-ramp provider deposited USDC directly to our server wallet;
+ *      we trust Privy's completion signal, record the payment with a
+ *      synthetic reference, and grant entitlements.
+ *
+ *  • On-chain (legacy BYOUSDC):
+ *      Header: Authorization: Bearer <privy-checkout-access-token>
+ *      Body: { txHash, planId }
+ *      Server verifies the Base USDC transfer log on-chain.
+ *
+ * The route auto-detects the mode by presence of txHash. No Privy JWT is
+ * required for on-ramp since useDepositFunds does not surface the user's
+ * access token directly; we instead trust the privyUserId echo plus the
+ * on-chain settlement guarantee from the on-ramp provider.
+ *
+ * pnptvUserId: resolved by (1) email lookup in users, else (2) session.
+ */
+app.post('/api/checkout/verify', checkoutVerifyLimiter, asyncHandler(async (req, res) => {
+  const rawTxHash = req.body?.txHash;
+  const rawPlanId = req.body?.planId;
+  const rawPrivyUserId = req.body?.privyUserId;
+  const rawEmail = req.body?.email;
+
+  const txHash = typeof rawTxHash === 'string' ? rawTxHash.trim() : '';
+  const planId = typeof rawPlanId === 'string' ? rawPlanId.trim() : '';
+  const bodyPrivyUserId = typeof rawPrivyUserId === 'string' ? rawPrivyUserId.trim() : '';
+  const email = typeof rawEmail === 'string' ? rawEmail.trim().toLowerCase() : '';
+
+  if (!planId) {
+    return res.status(400).json({ ok: false, error: 'plan_id_required' });
+  }
+
+  const isOnramp = !txHash;
+
+  // Resolve privyUserId: always verify the Privy JWT (both on-ramp and
+  // on-chain). Without JWT verification an attacker could supply any
+  // privyUserId from the body and claim entitlements without payment.
+  let privyUserId = null;
+  {
+    const authHeader = req.headers.authorization || '';
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+    if (!token) {
+      return res.status(401).json({ ok: false, error: 'checkout_privy_token_required' });
+    }
+    try {
+      const { getCheckoutClient } = require('../../services/privyCheckoutService');
+      const claims = await getCheckoutClient().verifyAuthToken(token);
+      privyUserId = claims.userId;
+    } catch (err) {
+      logger.warn('[checkout/verify] privy token verification failed', { err: err.message });
+      return res.status(401).json({ ok: false, error: 'checkout_privy_token_invalid' });
+    }
+  }
+  if (!isOnramp) {
+    if (!/^0x[a-fA-F0-9]{64}$/.test(txHash)) {
+      return res.status(400).json({ ok: false, error: 'invalid_tx_hash' });
+    }
+  }
+
+  // Resolve pnptvUserId: (1) email lookup, (2) session fallback. If neither
+  // produces a row, the payment is recorded without a pnptv user and the
+  // frontend can tell them to log in to claim.
+  let pnptvUserId = req.session?.user?.id || null;
+  if (!pnptvUserId && email && /.+@.+\..+/.test(email)) {
+    try {
+      const { rows } = await query(
+        'SELECT id FROM users WHERE lower(email) = $1 LIMIT 1',
+        [email]
+      );
+      if (rows[0]?.id) pnptvUserId = String(rows[0].id);
+    } catch (err) {
+      logger.warn('[checkout/verify] email lookup failed', { err: err.message });
+    }
+  }
+
+  const { verifyCheckoutPayment } = require('../../services/privyCheckoutService');
+  const result = await verifyCheckoutPayment({
+    txHash: isOnramp ? undefined : txHash,
+    planId,
+    privyUserId,
+    pnptvUserId,
+  });
+
+  if (!result.ok && !result.alreadyConfirmed) {
+    logger.warn('[checkout/verify] payment verification failed', {
+      planId, pnptvUserId, privyUserId, mode: isOnramp ? 'onramp' : 'onchain', reason: result.reason,
+    });
+    const statusMap = {
+      invalid_tx_hash:             400,
+      invalid_plan_id:             400,
+      invalid_privy_user_id:       400,
+      plan_not_found:              404,
+      plan_inactive:               410,
+      plan_price_invalid:          500,
+      receiver_not_configured:     503,
+      alchemy_not_configured:      503,
+      rpc_failed:                  503,
+      tx_not_found_or_unconfirmed: 422,
+      tx_reverted:                 422,
+      no_usdc_transfer_log:        422,
+      recipient_not_whitelisted:   403,
+      amount_mismatch:             422,
+    };
+    const status = statusMap[result.reason] || 500;
+    return res.status(status).json({ ok: false, error: result.reason, details: result });
+  }
+
+  return res.json({
+    ok: true,
+    alreadyConfirmed:  result.alreadyConfirmed || false,
+    checkoutPaymentId: result.checkoutPaymentId || null,
+    entitlementIds:    result.entitlementIds || [],
+    pnptvUserId:       pnptvUserId || null,
+  });
+}));
+
+// ── End Checkout Experiment ───────────────────────────────────────────────────
 
 // Export app WITHOUT 404/error handlers
 // These will be added in bot.js AFTER the webhook callback

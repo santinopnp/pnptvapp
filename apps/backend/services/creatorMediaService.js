@@ -125,17 +125,18 @@ async function probeVideoDurationSeconds(url) {
  * @returns {Promise<Array>}
  */
 async function listByCreator(creatorId, { viewerUserId = null, limit = 50 } = {}) {
-  const { rows } = await query(
-    `SELECT id, media_type AS type, url, thumb_url, caption, is_premium, sort_order, created_at
-     FROM creator_media
-     WHERE creator_id = $1
-     ORDER BY sort_order ASC, created_at DESC
-     LIMIT $2`,
-    [creatorId, Math.min(limit, 200)]
-  );
-
   // Determine if viewer is the creator themselves
   const isSelf = viewerUserId && String(viewerUserId) === String(creatorId);
+
+  // Items awaiting pre-publication review are visible only to their creator.
+  const { rows } = await query(
+    `SELECT id, media_type AS type, url, thumb_url, caption, is_premium, sort_order, created_at, review_status
+     FROM creator_media
+     WHERE creator_id = $1 AND (review_status = 'approved' OR $3::boolean)
+     ORDER BY sort_order ASC, created_at DESC
+     LIMIT $2`,
+    [creatorId, Math.min(limit, 200), !!isSelf]
+  );
 
   // For premium items we need to check entitlements once (lazy require to avoid
   // circular deps — same pattern as hangoutGroupController).
@@ -166,6 +167,7 @@ async function listByCreator(creatorId, { viewerUserId = null, limit = 50 } = {}
       canView,
       sortOrder: row.sort_order,
       createdAt: row.created_at,
+      reviewStatus: row.review_status,
       drmContentId: null,
     };
   });
@@ -188,13 +190,17 @@ async function addMedia(creatorId, { type, url, thumbUrl = null, caption = null,
     }
   }
 
+  // Lazy require: contentReviewService lazily requires channelVideoService.
+  const contentReviewService = require('./contentReviewService');
+  const heldForReview = await contentReviewService.requiresReviewForUser(creatorId);
   const { rows } = await query(
-    `INSERT INTO creator_media (creator_id, media_type, url, thumb_url, caption, is_premium, sort_order, duration_seconds)
+    `INSERT INTO creator_media (creator_id, media_type, url, thumb_url, caption, is_premium, sort_order, duration_seconds, review_status)
      VALUES ($1::text, $2, $3, $4, $5, $6,
-       COALESCE((SELECT MAX(sort_order) + 1 FROM creator_media WHERE creator_id = $1::text), 0), $7)
-     RETURNING id, media_type AS type, url, thumb_url, caption, is_premium, sort_order, created_at`,
-    [creatorId, type, url, thumbUrl, caption, isPremium, durationSeconds]
+       COALESCE((SELECT MAX(sort_order) + 1 FROM creator_media WHERE creator_id = $1::text), 0), $7, $8)
+     RETURNING id, media_type AS type, url, thumb_url, caption, is_premium, sort_order, created_at, review_status`,
+    [creatorId, type, url, thumbUrl, caption, isPremium, durationSeconds, heldForReview ? 'pending' : 'approved']
   );
+  if (heldForReview) await contentReviewService.holdCreatorMedia(rows[0].id, creatorId);
 
   if (type === 'video' && isPremium) {
     ContentComplianceService.markCompliantIfNewlyQualified(creatorId).catch((complianceErr) => {
@@ -216,6 +222,7 @@ async function addMedia(creatorId, { type, url, thumbUrl = null, caption = null,
     sortOrder: row.sort_order,
     canView: true,
     createdAt: row.created_at,
+    reviewStatus: row.review_status,
     drmContentId: null,
   };
 }

@@ -4,7 +4,7 @@
  *
  * Used from: creator profile pill, feed post CTA banner, channel-detail
  * paywall, DM upsell. All these entry points use the same Privy checkout
- * (WalletPayCard) plus Ru$h, so the UX is identical everywhere.
+ * (WalletPayCard), so the UX is identical everywhere. Ru$h is tips-only.
  *
  * A creator subscription unlocks: creator profile paid posts, canonical paid
  * channel, private hangout, and unlimited DMs with that creator.
@@ -14,8 +14,6 @@ import { useI18n } from "@/lib/i18n";
 import {
   getCreatorSubscriptionPreview,
   getCreatorSubscriptionStatus,
-  getWalletBalance,
-  payCreatorSubWithTokens,
 } from "@/lib/api";
 import { WalletPayCard } from "@/components/payments/PayInWalletChips";
 
@@ -79,7 +77,6 @@ export default function CreatorSubscribeWizard({
 
   const [loading, setLoading] = useState<"tokens" | "verify" | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [tokenBalance, setTokenBalance] = useState<number | null>(null);
   // Compliance hold: creator hasn't uploaded 4-min exclusive minimum yet.
   const [complianceHeld, setComplianceHeld] = useState(false);
   const inFlight = useRef(false);
@@ -99,60 +96,11 @@ export default function CreatorSubscribeWizard({
     return () => { cancelled = true; };
   }, [creatorId]);
 
-  // Fetch token balance once for the tokens button.
-  useEffect(() => {
-    let cancelled = false;
-    getWalletBalance().then((r) => {
-      if (!cancelled && r.success) setTokenBalance(r.balance);
-    }).catch(() => {});
-    return () => { cancelled = true; };
-  }, []);
 
-  const tokenCost = Math.round(priceUsd * 6);
   const displayName = creatorName || (username ? `@${username}` : "creator");
 
   const combinedError = error;
 
-  const handleTokens = useCallback(async () => {
-    if (inFlight.current) return;
-    // Remove the client-side pre-check — the backend is the source of truth
-    // on what's spendable (gifted is allowed for santinofurioso first-month
-    // subs only, but the frontend can't know that reliably). Let the server
-    // decide and surface a precise error message with the gifted breakdown.
-    inFlight.current = true;
-    setLoading("tokens");
-    setError(null);
-    try {
-      const result = await payCreatorSubWithTokens(creatorId);
-      if (!result.success) {
-        if (result.code === "MEMBER_REQUIRED") {
-          setError(lang === "es"
-            ? "Necesitas una membresía Basic para suscribirte a un creador."
-            : "You need a Basic membership to subscribe to a creator.");
-        } else if (result.code === "INSUFFICIENT_TOKENS") {
-          if (result.giftedLocked && (result.gifted ?? 0) > 0) {
-            setError(lang === "es"
-              ? `Tienes ${(result.gifted ?? 0).toLocaleString()} Ru$h de regalo, pero solo se puede usar en propinas a Santino o tu primer mes con @santinofurioso. Compra más Ru$h para suscribirte aquí.`
-              : `You have ${(result.gifted ?? 0).toLocaleString()} gifted Ru$h, but it's only spendable on Santino live tips or your first month with @santinofurioso. Buy more Ru$h to subscribe here.`);
-          } else {
-            setError(lang === "es"
-              ? `Ru$h insuficiente. Necesitas ${result.required?.toLocaleString()} — tienes ${(result.current ?? 0).toLocaleString()}.`
-              : `Not enough Ru$h. Need ${result.required?.toLocaleString()} — you have ${(result.current ?? 0).toLocaleString()}.`);
-          }
-        } else {
-          setError(result.error || (lang === "es" ? "No se pudo activar la suscripción." : "Could not activate subscription."));
-        }
-        return;
-      }
-      if (result.newBalance !== undefined) setTokenBalance(result.newBalance);
-      onSuccess();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : (lang === "es" ? "Error al pagar con Ru$h." : "Ru$h payment failed."));
-    } finally {
-      setLoading(null);
-      inFlight.current = false;
-    }
-  }, [creatorId, onSuccess, lang]);
 
   // handleVerify + paymentSuccess side-effect retired 2026-08-09 — wallet
   // checkout is synchronous so the WalletPayCard onSuccess callback is
@@ -304,24 +252,6 @@ export default function CreatorSubscribeWizard({
         </div>
       )}
 
-      {tokenBalance !== null && tokenBalance > 0 && (
-        <button
-          onClick={handleTokens}
-          disabled={loading !== null}
-          className="w-full py-2.5 rounded-xl text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-2"
-          style={{ background: "linear-gradient(135deg, #D4007A, #a0005e)" }}
-        >
-          {loading === "tokens"
-            ? "…"
-            : (
-              <>
-                <span>🎫</span>
-                <span>{lang === "es" ? "Pagar con Ru$h 💎" : "Pay with Ru$h 💎"} · {tokenCost.toLocaleString()} Ru$h</span>
-                <span className="text-[10px] opacity-70">({tokenBalance.toLocaleString()} Ru$h)</span>
-              </>
-            )}
-        </button>
-      )}
 
       {/* Wallet USDC rail — only renders when the user has a Privy wallet.
           Fires the creator_sub surface with the creator_id + 30-day duration

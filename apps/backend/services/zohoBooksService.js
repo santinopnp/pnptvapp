@@ -189,7 +189,7 @@ async function logCrystalPassPayment(opts) {
       notes: isGift
         ? `Crystal Creator gift → target ${targetCreatorId}. Paid via ${paymentProvider}. Ref ${paymentRef}.`
         : `Crystal Creator self-purchase. Paid via ${paymentProvider}. Ref ${paymentRef}.`,
-    }, { headers: _headers(token), params: { organization_id: orgId, send: false }, timeout: 20000 });
+    }, { headers: _headers(token), params: { organization_id: orgId, send: true }, timeout: 20000 });
 
     const invoiceId = invoice.data?.invoice?.invoice_id;
     if (!invoiceId) {
@@ -321,7 +321,7 @@ async function logRevenue(opts) {
         line_items: [{ item_id: itemId, quantity: 1, rate: usd }],
         notes: notes ? `${notes} · via ${provider} · ref ${reference}`.slice(0, 500)
                      : `Paid via ${provider}. Ref ${reference}.`,
-      }, { headers: _headers(token), params: { organization_id: orgId, send: false }, timeout: 20000 });
+      }, { headers: _headers(token), params: { organization_id: orgId, send: true }, timeout: 20000 });
       invoiceId = invoice.data?.invoice?.invoice_id;
     } catch (invErr) {
       const code = invErr.response?.data?.code;

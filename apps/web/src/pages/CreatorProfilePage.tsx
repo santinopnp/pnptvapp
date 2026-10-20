@@ -59,7 +59,6 @@ import {
   bookIntroCall,
   getIntroCallStatus,
   getCreatorChannelPass,
-  checkoutChannelPass,
   getUserChannelPasses,
   followUser,
   unfollowUser,
@@ -1550,101 +1549,7 @@ export default function CreatorProfilePage() {
                             One month of full access to @{creator.username}'s videos, exclusive posts, and DMs.
                           </p>
 
-                          {/* Payment tab strip — 2 tabs only */}
-                          <div className="flex gap-1 mb-4 p-1 rounded-lg" style={{ background: "rgba(255,255,255,0.05)" }}>
-                            {(["crypto", "rush"] as const).map((tab) => (
-                              <button
-                                key={tab}
-                                type="button"
-                                onClick={() => {
-                                  setChannelPassTab(tab);
-                                  setChannelPassError(null);
-                                }}
-                                className="flex-1 py-1.5 rounded-md text-xs font-semibold transition-all"
-                                style={{
-                                  background: channelPassTab === tab ? "rgba(212,0,122,0.3)" : "transparent",
-                                  color: channelPassTab === tab ? "#fff" : "rgba(255,255,255,0.5)",
-                                  border: channelPassTab === tab ? "1px solid rgba(212,0,122,0.4)" : "1px solid transparent",
-                                }}
-                              >
-                                {tab === "rush" ? "Ru$h Wallet" : "Apps & Wallets"}
-                              </button>
-                            ))}
-                          </div>
 
-                          {/* Ru$h Wallet tab */}
-                          {channelPassTab === "rush" && (
-                            <div className="space-y-3">
-                              <div className="flex items-center justify-between px-3 py-2 rounded-lg"
-                                style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" }}>
-                                <span className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Price</span>
-                                <span className="text-sm font-bold text-white">{channelPass.price_rush} 💎</span>
-                              </div>
-                              {walletBalance !== null && (
-                                <div className="flex items-center justify-between px-3 py-2 rounded-lg"
-                                  style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" }}>
-                                  <span className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Your Ru$h balance</span>
-                                  <span className={`text-sm font-bold ${walletBalance >= channelPass.price_rush ? "text-white" : "text-red-400"}`}>
-                                    {walletBalance} 💎
-                                  </span>
-                                </div>
-                              )}
-                              {channelPassError && (
-                                <p className="text-xs text-red-400 px-1">{channelPassError}</p>
-                              )}
-                              {walletBalance !== null && walletBalance < channelPass.price_rush ? (
-                                <div className="space-y-2">
-                                  <p className="text-xs px-1" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-                                    You need {channelPass.price_rush - walletBalance} more Ru$h 💎.
-                                  </p>
-                                  <button
-                                    type="button"
-                                    onClick={() => setShowTopUpModal(true)}
-                                    className="w-full py-2.5 rounded-lg text-sm font-bold text-white transition-opacity hover:opacity-90"
-                                    style={{ background: "linear-gradient(135deg, #7B61FF, #D4007A)" }}
-                                  >
-                                    Get more Ru$h 💎
-                                  </button>
-                                </div>
-                              ) : (
-                                <button
-                                  type="button"
-                                  disabled={channelPassBuying}
-                                  onClick={async () => {
-                                    if (!isAuthenticated) { navigate("/login"); return; }
-                                    setChannelPassBuying(true);
-                                    setChannelPassError(null);
-                                    try {
-                                      const res = await checkoutChannelPass(creator.id, "rush");
-                                      if (res.success && res.expires_at) {
-                                        const expiresAt = res.expires_at as string;
-                                        setChannelPassResult({ expires_at: expiresAt });
-                                        setChannelPass((prev) => prev ? { ...prev, is_active: true, expires_at: expiresAt } : prev);
-                                        setWalletBalance((prev) => prev !== null && res.new_balance != null ? res.new_balance : prev);
-                                      }
-                                    } catch (err) {
-                                      const msg = err instanceof Error ? err.message : "Purchase failed";
-                                      if (msg.includes("INSUFFICIENT_FUNDS") || msg.includes("balance")) {
-                                        setChannelPassError("Insufficient Ru$h 💎. Top up your wallet and try again.");
-                                      } else {
-                                        setChannelPassError(msg);
-                                      }
-                                    } finally {
-                                      setChannelPassBuying(false);
-                                    }
-                                  }}
-                                  className="w-full py-2.5 rounded-lg text-sm font-bold text-white flex items-center justify-center gap-2 transition-opacity hover:opacity-90 disabled:opacity-60"
-                                  style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
-                                >
-                                  {channelPassBuying ? (
-                                    <><Loader2 size={14} className="animate-spin" /> Processing…</>
-                                  ) : (
-                                    <>Subscribe for {channelPass.price_rush} 💎</>
-                                  )}
-                                </button>
-                              )}
-                            </div>
-                          )}
 
                           {/* Crypto tab */}
                           {channelPassTab === "crypto" && (

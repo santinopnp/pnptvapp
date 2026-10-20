@@ -26,6 +26,7 @@ function isChunkLoadError(err: unknown): boolean {
 }
 
 const RELOAD_FLAG = "pnptv_chunk_reload";
+const RELOAD_COOLDOWN_MS = 30_000;
 
 interface BoundaryState { crashed: boolean; }
 
@@ -38,9 +39,12 @@ class ChunkErrorBoundary extends Component<{ children: ReactNode }, BoundaryStat
 
   componentDidCatch(err: Error, _info: ErrorInfo) {
     if (isChunkLoadError(err)) {
-      // Reload once; if we already tried a reload this session, don't loop.
-      if (!sessionStorage.getItem(RELOAD_FLAG)) {
-        sessionStorage.setItem(RELOAD_FLAG, "1");
+      // Reload once per 30s; timestamp-based so stale flags from a previous
+      // error don't block a legitimate retry after a new deploy.
+      const last = sessionStorage.getItem(RELOAD_FLAG);
+      const now = Date.now();
+      if (!last || now - Number(last) > RELOAD_COOLDOWN_MS) {
+        sessionStorage.setItem(RELOAD_FLAG, String(now));
         window.location.reload();
       }
     }

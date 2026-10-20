@@ -1,4 +1,6 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { lazy, Suspense, useEffect, useRef, useState } from "react";
+
+const LazyCheckout = lazy(() => import("@/pages/Checkout"));
 import { RouterProvider } from "react-router-dom";
 import { HelmetProvider } from "react-helmet-async";
 import { PrivyProvider, usePrivy, useWallets } from "@privy-io/react-auth";
@@ -728,6 +730,24 @@ function AppOverlays() {
 
 export default function App() {
   useNavigationDiagnostics();
+
+  // /checkout has its own PrivyProvider (different app ID + spending policy)
+  // and must NOT be nested inside the main app's PrivyProvider — Privy throws
+  // on nested instances. Render it standalone before any other providers mount.
+  // Use window.location.pathname (not a hook) because we're outside the Router.
+  // In-app navigation to /checkout must use a full-page nav (window.location.href)
+  // so this check fires correctly on each load.
+  if (window.location.pathname === "/checkout" || window.location.pathname === "/subscribe") {
+    return (
+      <ErrorBoundary>
+        <HelmetProvider>
+          <Suspense fallback={null}>
+            <LazyCheckout />
+          </Suspense>
+        </HelmetProvider>
+      </ErrorBoundary>
+    );
+  }
 
   // Fire a single geo-country probe at bootstrap so payment flows can read
   // sessionStorage['pnptv_geo_latam'] synchronously when deciding onramp

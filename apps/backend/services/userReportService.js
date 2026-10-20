@@ -142,6 +142,8 @@ class UserReportService {
       } catch (err) {
         logger.error('CSAM auto-suspend failed', err);
       }
+      // 18 U.S.C. § 2258A: track CyberTipline reporting + evidence preservation.
+      await require('./complianceService').openNcmecCase(report);
     }
 
     logger.info('User report created', {
