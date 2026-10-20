@@ -16,7 +16,6 @@ const USDC_BASE_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 import {
   getSubscriptionPlans,
   getWalletBalance,
-  paySubscriptionWithTokens,
   getLabelColor,
   createCryptoPaymentIntent,
   recordCryptoTx,
@@ -121,7 +120,6 @@ export default function Donate() {
   // ── Token wallet ─────────────────────────────────────────────────────────
   const [tokenBalance, setTokenBalance] = useState<number | null>(null);
   const [showBuyTokens, setShowBuyTokens] = useState(false);
-  const [submittingRush, setSubmittingRush] = useState(false);
 
   const stopPoll = useCallback(() => {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
@@ -263,40 +261,6 @@ export default function Donate() {
   const resetPay = useCallback(() => {
     stopPoll(); setPayStatus("idle"); setActivePlanId(null); setActiveToken(null); setPayError(null); setTxHash(null);
   }, [stopPoll]);
-
-  // ── Ru$h pay ─────────────────────────────────────────────────────────────
-  const handleRushPay = useCallback(async (plan: SubscriptionPlan) => {
-    const cost = Math.round(parseFloat(String(plan.price)) * 6);
-    if (tokenBalance !== null && tokenBalance < cost) {
-      setActivePlanId(plan.id);
-      setActiveToken(null);
-      setPayStatus("error");
-      setPayError(es ? `Ru$h insuficiente. Tienes ${tokenBalance.toLocaleString()}, necesitas ${cost.toLocaleString()}.` : `Not enough Ru$h. You have ${tokenBalance?.toLocaleString() ?? 0}, need ${cost.toLocaleString()}.`);
-      return;
-    }
-    setActivePlanId(plan.id);
-    setActiveToken(null);
-    setPayStatus("creating");
-    setPayError(null);
-    setSubmittingRush(true);
-    try {
-      const result = await paySubscriptionWithTokens(plan.id);
-      if (!result.success) {
-        setPayStatus("error");
-        setPayError(result.error || "Failed.");
-        return;
-      }
-      if (result.newBalance !== undefined) setTokenBalance(result.newBalance);
-      setPayStatus("done");
-      await refreshUser();
-      setTimeout(() => setPaymentSuccess(true), 400);
-    } catch (err: any) {
-      setPayStatus("error");
-      setPayError(err.message || "Error.");
-    } finally {
-      setSubmittingRush(false);
-    }
-  }, [tokenBalance, es, refreshUser]);
 
   // ── Success screen ────────────────────────────────────────────────────────
   if (paymentSuccess) {
@@ -443,7 +407,6 @@ export default function Donate() {
                   const label = planTierLabel(plan);
                   const planDays = plan.duration_days || plan.duration || 30;
                   const price = parseFloat(String(plan.price));
-                  const rushCost = Math.round(price * 6);
                   const ethCost = ethPrice ? (price / ethPrice).toFixed(5) : null;
                   const isThisPlan = activePlanId === plan.id;
                   const busy = isThisPlan && (payStatus === "creating" || payStatus === "signing" || payStatus === "waiting");
@@ -529,17 +492,6 @@ export default function Donate() {
                           <span className="text-base">⟠</span>
                           <span className="text-[10px] font-bold text-blue-300">ETH</span>
                           <span className="text-[9px] text-blue-300/60">{ethCost ? `${ethCost} ETH` : (es ? "no disp." : "unavail.")}</span>
-                        </button>
-
-                        {/* Ru$h tokens */}
-                        <button
-                          disabled={submittingRush && isThisPlan}
-                          onClick={() => handleRushPay(plan)}
-                          className="flex flex-col items-center gap-1 py-3 rounded-xl border border-[#D4007A]/40 bg-[#D4007A]/8 hover:bg-[#D4007A]/15 active:scale-[0.97] transition-all disabled:opacity-40"
-                        >
-                          <span className="text-base">💎</span>
-                          <span className="text-[10px] font-bold text-[#FF69B4]">Ru$h</span>
-                          <span className="text-[9px] text-[#FF69B4]/60">{rushCost.toLocaleString()}</span>
                         </button>
 
                       </div>

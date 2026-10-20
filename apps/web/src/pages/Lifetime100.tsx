@@ -11,7 +11,6 @@ import {
   isMetaMaskCompatible,
   WalletPayCard,
 } from "@/components/payments/PayInWalletChips";
-import { NpAppPickerSheet } from "@/components/payments/NowPaymentsWaitingPanel";
 import { useAuth } from "@/hooks/useAuth";
 import { magicLinkStart } from "@/lib/api";
 
@@ -36,13 +35,6 @@ const PlanConfigContext = React.createContext<PlanPageConfig>(PLAN_CONFIGS.lifet
 function usePlanConfig(): PlanPageConfig { return React.useContext(PlanConfigContext); }
 
 // Crypto currencies accepted — mirrors the backend allow-list.
-const CRYPTO_CURRENCIES = [
-  { code: "usdcbase", labelKey: "cryptoUsdcLabel" as const, chain: "Base" },
-  { code: "usdterc20", labelKey: "cryptoUsdtLabel" as const, chain: "ERC-20" },
-  { code: "eth", labelKey: "cryptoEthLabel" as const, chain: "Ethereum" },
-  { code: "btc", labelKey: "cryptoBtcLabel" as const, chain: "Bitcoin" },
-];
-
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 function getInitialLang(): string {
@@ -215,425 +207,6 @@ function ModalOverlay({
   );
 }
 
-// ── Crypto payment modal (USDC / USDT / ETH / BTC via NowPayments) ────────────
-//
-// Two-step flow inside one modal:
-//   1. Email + currency picker → POST /api/public/lifetime100/np-invoice
-//   2. On success, open NowPayments payment widget in a popup window.
-//      MetaMask/Trust Wallet deep-link chips are shown as alternatives.
-//
-// PRIME activates automatically via the shared NP IPN webhook once payment
-// confirms — no code, no activation step.
-
-interface CryptoPaymentModalProps {
-  s: Lifetime100Strings;
-  lang: string;
-  onClose: () => void;
-}
-
-interface InvoiceState {
-  invoiceUrl: string;
-  nowpaymentsInvoiceId: string;
-  payCurrency: string;
-}
-
-function CryptoPaymentModal({ s, lang, onClose }: CryptoPaymentModalProps) {
-  const cfg = usePlanConfig();
-  const [email, setEmail] = useState("");
-  const [payCurrency, setPayCurrency] = useState<string>("usdcbase");
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [invoice, setInvoice] = useState<InvoiceState | null>(null);
-  const [popupOpen, setPopupOpen] = useState(false);
-  const popupRef = useRef<Window | null>(null);
-  const emailInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (invoice) return;
-    const id = setTimeout(() => emailInputRef.current?.focus(), 80);
-    return () => clearTimeout(id);
-  }, [invoice]);
-
-  // Listen for NowPayments success postMessage from the popup window
-  useEffect(() => {
-    if (!invoice) return;
-    const onMessage = (ev: MessageEvent) => {
-      try {
-        const data = typeof ev.data === "string" ? JSON.parse(ev.data) : ev.data;
-        if (data?.status === "success" || data?.type === "payment_success" || data?.eventType === "payment_status_changed") {
-          popupRef.current?.close();
-          setPopupOpen(false);
-        }
-      } catch { /* ignore non-JSON */ }
-    };
-    window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
-  }, [invoice]);
-
-  // Poll every 2 s to detect if the popup was manually closed
-  useEffect(() => {
-    if (!popupOpen) return;
-    const id = window.setInterval(() => {
-      if (popupRef.current?.closed) {
-        setPopupOpen(false);
-      }
-    }, 2000);
-    return () => window.clearInterval(id);
-  }, [popupOpen]);
-
-  const handleContinue = useCallback(async () => {
-    const trimmed = email.trim().toLowerCase();
-    if (!isValidEmail(trimmed)) {
-      setError(s.invalidEmail);
-      return;
-    }
-    setSubmitting(true);
-    setError(null);
-    try {
-      const res = await fetch(`${API_BASE}/api/public/${cfg.apiSlug}/np-invoice`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: trimmed, payCurrency, language: lang }),
-        credentials: "include",
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        setError(data.error || s.errorGeneric);
-        return;
-      }
-      setInvoice({
-        invoiceUrl: String(data.invoiceUrl),
-        nowpaymentsInvoiceId: String(data.nowpaymentsInvoiceId),
-        payCurrency: String(data.payCurrency || payCurrency),
-      });
-    } catch {
-      setError(s.errorGeneric);
-    } finally {
-      setSubmitting(false);
-    }
-  }, [email, payCurrency, lang, s]);
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !invoice) handleContinue();
-  };
-
-  // ── Step 2 — invoice created, show widget + wallet chips ─────────────────
-  if (invoice) {
-    const widgetSrc = `https://nowpayments.io/embeds/payment-widget?iid=${encodeURIComponent(invoice.nowpaymentsInvoiceId)}`;
-    const showMetaMask = isMetaMaskCompatible(invoice.payCurrency);
-    const tw = trustWalletDeepLink(invoice.invoiceUrl, invoice.payCurrency);
-    const mm = metaMaskDeepLink(invoice.invoiceUrl);
-
-    return (
-      <ModalOverlay onClose={onClose}>
-        <div style={{ maxHeight: "85dvh", overflowY: "auto" }}>
-          <h2 style={{ margin: "0 0 8px", fontSize: 18, fontWeight: 700, color: "#ffffff" }}>
-            {s.cryptoPayHere}
-          </h2>
-          <p style={{ margin: "0 0 14px", fontSize: 12, color: "#8E8E93", lineHeight: 1.5 }}>
-            {s.cryptoAfterPay}
-          </p>
-
-          {invoice.payCurrency === "btc" && (
-            <div
-              style={{
-                margin: "0 0 12px",
-                padding: "12px 14px",
-                background: "rgba(255,180,84,0.12)",
-                border: "1px solid rgba(255,180,84,0.35)",
-                borderRadius: 12,
-              }}
-            >
-              <p style={{ margin: "0 0 6px", fontSize: 13, fontWeight: 700, color: "#ffb454" }}>
-                {s.banxaHintTitle}
-              </p>
-              <p style={{ margin: "0 0 8px", fontSize: 12, color: "#e5e5ea", lineHeight: 1.5 }}>
-                {s.banxaHintBody}
-              </p>
-              <a
-                href="https://checkout.banxa.com/"
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{
-                  display: "inline-block",
-                  padding: "8px 14px",
-                  fontSize: 12,
-                  fontWeight: 700,
-                  color: "#0d0510",
-                  background: "#ffb454",
-                  borderRadius: 8,
-                  textDecoration: "none",
-                }}
-              >
-                {s.banxaHintCta}
-              </a>
-            </div>
-          )}
-
-          <a
-            href={invoice.invoiceUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{
-              display: "block",
-              margin: "0 0 10px",
-              padding: "10px 12px",
-              fontSize: 12,
-              color: "#93c5fd",
-              textDecoration: "none",
-              background: "rgba(59,153,252,0.08)",
-              border: "1px solid rgba(59,153,252,0.25)",
-              borderRadius: 10,
-              textAlign: "center",
-            }}
-          >
-            🔗 {s.widgetFallbackCta}
-          </a>
-
-          {popupOpen ? (
-            <div style={{
-              margin: "0 0 12px", padding: "20px 16px",
-              borderRadius: 14, background: "#0d0510",
-              border: "1px solid rgba(255,180,84,0.25)",
-              display: "flex", flexDirection: "column",
-              alignItems: "center", gap: 12, textAlign: "center",
-            }}>
-              <div style={{
-                width: 36, height: 36, borderRadius: "50%",
-                border: "3px solid rgba(255,180,84,0.25)",
-                borderTopColor: "#ffb454",
-                animation: "spin 0.8s linear infinite",
-              }} />
-              <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-              <p style={{ margin: 0, fontSize: 13, color: "#c7c7cc", lineHeight: 1.5 }}>
-                {s.widgetLoading}
-              </p>
-              <button
-                type="button"
-                onClick={() => {
-                  const popup = window.open(widgetSrc, "pnp_np_wallet", "width=540,height=700,left=200,top=100");
-                  if (popup) { popupRef.current = popup; setPopupOpen(true); }
-                }}
-                style={{
-                  padding: "8px 14px", fontSize: 12, fontWeight: 600,
-                  color: "#93c5fd", background: "rgba(59,153,252,0.08)",
-                  border: "1px solid rgba(59,153,252,0.25)",
-                  borderRadius: 10, cursor: "pointer",
-                }}
-              >
-                🔄 {s.widgetReload}
-              </button>
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => {
-                const popup = window.open(widgetSrc, "pnp_np_wallet", "width=540,height=700,left=200,top=100");
-                if (popup) { popupRef.current = popup; setPopupOpen(true); }
-              }}
-              style={{
-                display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-                width: "100%", marginBottom: 12, padding: "14px 20px",
-                borderRadius: 12, border: "none",
-                background: "linear-gradient(90deg, #ff3377, #ff9933)",
-                color: "#ffffff", fontSize: 14, fontWeight: 700,
-                cursor: "pointer", minHeight: 48,
-              }}
-            >
-              {s.cryptoOpenInNewTab}
-            </button>
-          )}
-
-          <p style={{ margin: "16px 0 8px", fontSize: 11, fontWeight: 600, color: "#8E8E93" }}>
-            {s.cryptoOpenWallet}
-          </p>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: showMetaMask ? "repeat(3, minmax(0,1fr))" : "repeat(2, minmax(0,1fr))",
-              gap: 8,
-            }}
-          >
-            {showMetaMask && (
-              <a
-                href={mm}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{
-                  display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
-                  padding: "12px 6px", borderRadius: 12,
-                  border: "1px solid rgba(249,115,22,0.3)",
-                  background: "rgba(249,115,22,0.08)",
-                  textDecoration: "none",
-                }}
-              >
-                <MetaMaskIcon />
-                <span style={{ fontSize: 10, fontWeight: 700, color: "#fdba74" }}>MetaMask</span>
-              </a>
-            )}
-            <a
-              href={tw}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{
-                display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
-                padding: "12px 6px", borderRadius: 12,
-                border: "1px solid rgba(59,153,252,0.3)",
-                background: "rgba(37,99,235,0.1)",
-                textDecoration: "none",
-              }}
-            >
-              <TrustWalletIcon />
-              <span style={{ fontSize: 10, fontWeight: 700, color: "#93c5fd" }}>Trust Wallet</span>
-            </a>
-            <a
-              href={invoice.invoiceUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{
-                display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
-                padding: "12px 6px", borderRadius: 12,
-                border: "1px solid rgba(59,153,252,0.3)",
-                background: "rgba(59,153,252,0.08)",
-                textDecoration: "none",
-              }}
-            >
-              <WalletConnectIcon />
-              <span style={{ fontSize: 10, fontWeight: 700, color: "#93c5fd" }}>
-                {s.cryptoOpenInNewTab}
-              </span>
-            </a>
-          </div>
-
-          <button
-            onClick={onClose}
-            style={{
-              display: "block", width: "100%", marginTop: 16, padding: "10px",
-              background: "none", border: "none", color: "#8E8E93",
-              fontSize: 13, cursor: "pointer", minHeight: 44,
-            }}
-          >
-            {s.cryptoCancel}
-          </button>
-        </div>
-      </ModalOverlay>
-    );
-  }
-
-  // ── Step 1 — email + currency picker ─────────────────────────────────────
-  return (
-    <ModalOverlay onClose={!submitting ? onClose : undefined}>
-      <h2 style={{ margin: "0 0 8px", fontSize: 20, fontWeight: 700, color: "#ffffff" }}>
-        {s.cryptoModalTitle}
-      </h2>
-      <p style={{ margin: "0 0 18px", fontSize: 13, color: "#8E8E93", lineHeight: 1.5 }}>
-        {s.cryptoModalSubtitle}
-      </p>
-
-      <label
-        htmlFor="lt100-email"
-        style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#8E8E93", marginBottom: 6 }}
-      >
-        {s.emailLabel}
-      </label>
-      <input
-        id="lt100-email"
-        ref={emailInputRef}
-        type="email"
-        autoComplete="email"
-        inputMode="email"
-        value={email}
-        onChange={(e) => { setEmail(e.target.value); setError(null); }}
-        onKeyDown={handleKeyDown}
-        placeholder={s.emailPlaceholder}
-        disabled={submitting}
-        style={{
-          display: "block", width: "100%", boxSizing: "border-box",
-          padding: "12px 14px", borderRadius: 12,
-          border: "1px solid rgba(255,255,255,0.15)",
-          background: "rgba(0,0,0,0.3)", color: "#ffffff",
-          fontSize: 16, marginBottom: 16, outline: "none",
-          opacity: submitting ? 0.6 : 1,
-        }}
-        aria-invalid={!!error}
-      />
-
-      <p style={{ margin: "0 0 8px", fontSize: 12, fontWeight: 600, color: "#8E8E93" }}>
-        {s.cryptoPickCurrency}
-      </p>
-      <div
-        role="radiogroup"
-        aria-label={s.cryptoPickCurrency}
-        style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 8, marginBottom: 18 }}
-      >
-        {CRYPTO_CURRENCIES.map((c) => {
-          const selected = payCurrency === c.code;
-          return (
-            <button
-              key={c.code}
-              type="button"
-              role="radio"
-              aria-checked={selected}
-              onClick={() => setPayCurrency(c.code)}
-              disabled={submitting}
-              style={{
-                display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
-                padding: "12px 4px", borderRadius: 12,
-                border: selected ? "1.5px solid #ff9933" : "1px solid rgba(255,255,255,0.15)",
-                background: selected ? "rgba(255,153,51,0.12)" : "rgba(0,0,0,0.3)",
-                color: "#ffffff", fontSize: 13, fontWeight: 700, cursor: "pointer",
-                minHeight: 56, transition: "all 0.15s",
-                boxShadow: selected ? "0 0 12px rgba(255,153,51,0.25)" : "none",
-              }}
-            >
-              <span>{s[c.labelKey]}</span>
-              <span style={{ fontSize: 9, fontWeight: 500, color: selected ? "#ffb454" : "#8E8E93" }}>
-                {c.chain}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-
-      {error && (
-        <p role="alert" style={{ margin: "0 0 12px", fontSize: 13, color: "#FF453A" }}>
-          {error}
-        </p>
-      )}
-
-      <button
-        onClick={handleContinue}
-        disabled={submitting || !email.trim()}
-        style={{
-          display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-          width: "100%", padding: "14px 20px", borderRadius: 12, border: "none",
-          background: submitting || !email.trim()
-            ? "rgba(255,51,119,0.4)"
-            : "linear-gradient(90deg, #ff3377, #ff9933)",
-          color: "#ffffff", fontSize: 14, fontWeight: 700,
-          textTransform: "uppercase", letterSpacing: "0.05em",
-          cursor: submitting || !email.trim() ? "not-allowed" : "pointer",
-          minHeight: 48, transition: "opacity 0.15s",
-        }}
-      >
-        {submitting && <Spinner size={16} />}
-        {submitting ? s.cryptoOpeningInvoice : s.cryptoContinue}
-      </button>
-
-      <button
-        onClick={onClose}
-        disabled={submitting}
-        style={{
-          display: "block", width: "100%", marginTop: 10, padding: "10px",
-          background: "none", border: "none", color: "#8E8E93",
-          fontSize: 13, cursor: submitting ? "not-allowed" : "pointer", minHeight: 44,
-        }}
-      >
-        {s.modalCancel}
-      </button>
-    </ModalOverlay>
-  );
-}
 
 // ── Activate view ──────────────────────────────────────────────────────────────
 
@@ -903,9 +476,7 @@ interface HeroViewProps {
 
 function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpenSheet }: HeroViewProps) {
   const cfg = usePlanConfig();
-  const [modalOpen, setModalOpen] = useState(false);
   const [walletModalOpen, setWalletModalOpen] = useState(false);
-  const [showCrypto, setShowCrypto] = useState(false);
   const [signupPanelOpen, setSignupPanelOpen] = useState(false);
   const { isAuthenticated, refreshUser } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1003,10 +574,6 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
     }
   }, [emailValue]);
 
-  const handleCtaClick = () => {
-    if (isClosed) return;
-    setModalOpen(true);
-  };
 
   const handleWalletClick = () => {
     if (isClosed) return;
@@ -1427,7 +994,7 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
           ))}
         </div>
 
-        {/* CTA buttons — stacked: Privy/USDC (primary) + NowPayments (secondary) */}
+        {/* CTA buttons */}
         <div style={{ padding: "4px 20px 0", display: "flex", flexDirection: "column", gap: 10, maxWidth: 500, margin: "0 auto" }}>
 
           {/* ── PRIMARY: Privy / USDC on Base ── */}
@@ -1513,55 +1080,6 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
             </button>
           )}
 
-          {/* ── SECONDARY: NowPayments (any crypto) ── */}
-          <button
-            onClick={handleCtaClick}
-            disabled={availabilityLoading || isClosed}
-            aria-disabled={availabilityLoading || isClosed}
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 2,
-              width: "100%",
-              padding: "14px 24px",
-              borderRadius: 16,
-              border: isClosed ? "none" : "1.5px solid rgba(255,51,119,0.35)",
-              background: isClosed
-                ? "rgba(255,255,255,0.08)"
-                : "rgba(255,51,119,0.08)",
-              color: isClosed ? "#8E8E93" : "#ff6699",
-              fontSize: 13,
-              fontWeight: 700,
-              textTransform: "uppercase",
-              letterSpacing: "0.08em",
-              cursor: availabilityLoading || isClosed ? "not-allowed" : "pointer",
-              minHeight: 48,
-              boxShadow: "none",
-              transition: "opacity 0.15s, transform 0.1s",
-            }}
-            onMouseDown={(e) => {
-              if (!isClosed) (e.currentTarget as HTMLButtonElement).style.transform = "scale(0.98)";
-            }}
-            onMouseUp={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.transform = "scale(1)";
-            }}
-            onTouchStart={(e) => {
-              if (!isClosed) (e.currentTarget as HTMLButtonElement).style.transform = "scale(0.98)";
-            }}
-            onTouchEnd={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.transform = "scale(1)";
-            }}
-          >
-            {availabilityLoading && <Spinner size={14} />}
-            {availabilityLoading
-              ? s.ctaLoading
-              : isClosed
-              ? s.ctaSoldOut
-              : <><span>{s.ctaPayWithCrypto}</span><span style={{ fontSize: 10, fontWeight: 400, opacity: 0.6, letterSpacing: "0.02em", textTransform: "none" }}>BTC · ETH · USDC · USDT · etc.</span></>}
-          </button>
-
         </div>
 
         {/* Secondary option — annual plan upsell, only shown on the lifetime page */}
@@ -1583,33 +1101,14 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
         )}
       </div>
 
-      {/* Crypto payment modal — USDC / USDT / ETH / BTC via NowPayments */}
-      {modalOpen && (
-        <CryptoPaymentModal
-          s={s}
-          lang={lang}
-          onClose={() => setModalOpen(false)}
-        />
-      )}
-
       {/* Wallet payment modal — USDC on Base via Privy (card / connect wallet) */}
       {walletModalOpen && (
         <WalletPaymentModal
           s={s}
           lang={lang}
           onClose={() => setWalletModalOpen(false)}
-          onCryptoFallback={() => { setWalletModalOpen(false); setShowCrypto(true); }}
         />
       )}
-
-      <NpAppPickerSheet
-        isOpen={showCrypto}
-        onClose={() => setShowCrypto(false)}
-        planId={showCrypto ? cfg.planId : null}
-        lang={lang}
-        planLabel={`${cfg.planId} · $${cfg.priceUsd}`}
-        onSuccess={() => { setShowCrypto(false); setTimeout(() => { window.location.href = "/"; }, 1200); }}
-      />
 
       {/* Inline signup panel — shown to unauth users who tap "Pay with card".
           Telegram runs entirely on this page (no navigation). X uses OAuth
@@ -1822,10 +1321,9 @@ interface WalletPaymentModalProps {
   s: Lifetime100Strings;
   lang: string;
   onClose: () => void;
-  onCryptoFallback?: () => void;
 }
 
-function WalletPaymentModal({ s, lang, onClose, onCryptoFallback }: WalletPaymentModalProps) {
+function WalletPaymentModal({ s, lang, onClose }: WalletPaymentModalProps) {
   const cfg = usePlanConfig();
   const uiLang: "es" | "en" = lang.toLowerCase().startsWith("en") ? "en" : "es";
   return (
@@ -1848,7 +1346,6 @@ function WalletPaymentModal({ s, lang, onClose, onCryptoFallback }: WalletPaymen
             onClose();
             setTimeout(() => { window.location.href = "/"; }, 1200);
           }}
-          onCryptoFallback={onCryptoFallback}
           compact
         />
         <button
