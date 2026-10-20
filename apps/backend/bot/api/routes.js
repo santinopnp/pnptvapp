@@ -450,13 +450,13 @@ app.use(ipTracker); // Log every authenticated request IP for security
 // /blocked-jurisdiction page on browser navigation. Admins bypass for debug.
 // Cached per-IP in Redis 1h to avoid the geoip lookup on every request.
 // (geoip module is already required at the top of the file — reuse it.)
-// US states with adult-site age-verification laws in force (Oct 2026).
-const BLOCKED_US_REGIONS = new Set([
-  'AL', 'AR', 'AZ', 'FL', 'GA', 'ID', 'IN', 'KS', 'KY', 'LA', 'MO', 'MS', 'MT',
-  'NC', 'ND', 'NE', 'OH', 'OK', 'SC', 'SD', 'TN', 'TX', 'UT', 'VA', 'WY',
-]);
-// Countries whose age-verification regimes require more than self-declaration.
-const AGE_VERIFICATION_COUNTRIES = new Set(['GB']);
+// US states (ISO subdivision codes, e.g. 'TX') to hard-block for
+// age-verification laws. Empty by operator decision (2026-10-20): no
+// jurisdictions are blocked. Adding a code here enables the hard block.
+const BLOCKED_US_REGIONS = new Set();
+// Countries to hard-block for age-verification laws (e.g. 'GB'). Empty by
+// operator decision (2026-10-20).
+const AGE_VERIFICATION_COUNTRIES = new Set();
 // CO + VE geo-blocks lifted 2026-06-18 — full open access.
 // CO re-blocked 2026-07-21 per operator instruction, then lifted again
 // 2026-07-23 per operator instruction — full open access restored.
