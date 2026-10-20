@@ -912,7 +912,7 @@ export default function Checkout() {
           loginMethodsAndOrder: {
             primary: ["email"],
           },
-          embeddedWallets: { ethereum: { createOnLogin: "users-without-wallets" } },
+          embeddedWallets: { ethereum: { createOnLogin: "off" } },
           appearance: {
             theme: "dark",
             accentColor: "#D4007A",
