@@ -1350,6 +1350,55 @@ async function _fulfillCallBooking(client, { userId, entitlementSpec, provider, 
     });
   }
 
+  // Creator revenue split — 70% of the call package price goes to the creator.
+  // Uses the same hold-window as entitlement purchases (EARNINGS_HOLD_HOURS).
+  // Wrapped in try/catch so a failed DB write never rolls back the booking.
+  let earningsId = null;
+  try {
+    const {
+      CREATOR_REVENUE_RATE, EARNINGS_HOLD_HOURS,
+    } = require('../config/monetizationConfig');
+    const gross = Number(amountUsd);
+    const amountCreator = Math.round(gross * CREATOR_REVENUE_RATE * 100) / 100;
+    const amountPlatform = Math.round((gross - amountCreator) * 100) / 100;
+    const earningsRes = await client.query(
+      `INSERT INTO creator_earnings
+         (creator_id, amount_gross, amount_creator, amount_platform, status,
+          available_at, source_payment_id, period_month)
+       VALUES ($1, $2, $3, $4, 'holding', NOW() + ($5 || ' hours')::interval, $6,
+               date_trunc('month', CURRENT_DATE))
+       ON CONFLICT (source_payment_id, creator_id) WHERE source_payment_id IS NOT NULL
+         DO NOTHING
+       RETURNING id`,
+      [String(pkg.creator_id), gross, amountCreator, amountPlatform,
+       String(EARNINGS_HOLD_HOURS), `call_booking:${paymentId}`]
+    );
+    earningsId = earningsRes.rows[0]?.id || null;
+  } catch (e) {
+    logger.warn('[walletCheckout] creator_earnings insert failed for call_booking', {
+      creatorId: pkg.creator_id, paymentId, amountUsd, err: e.message,
+    });
+  }
+
+  // Fire-and-forget push to the creator — deliberately outside the transaction
+  // so a failed push never rolls back the booking credit.
+  if (earningsId) {
+    setImmediate(() => {
+      try {
+        const { CREATOR_REVENUE_RATE } = require('../config/monetizationConfig');
+        const net = Math.round(Number(amountUsd) * CREATOR_REVENUE_RATE * 100) / 100;
+        const push = require('./pushNotificationService');
+        push.sendToUser(String(pkg.creator_id), {
+          title: `📞 Call booked: $${net.toFixed(2)} earned`,
+          body: 'A member just purchased a call package with you — tap to view.',
+          url: '/creator/payouts',
+          icon: '/app-icon-192.png',
+          tag: `call-booking-${paymentId}`,
+        }, { notifType: 'call_booking_earned' }).catch(() => {});
+      } catch { /* push service optional */ }
+    });
+  }
+
   return {
     entitlementId: null,
     rushCredited: 0,

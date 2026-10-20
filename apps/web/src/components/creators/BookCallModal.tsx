@@ -36,7 +36,6 @@ import {
   type MyCallCredit,
 } from "@/lib/api";
 import type { CreatorCardCreator } from "./CreatorCard";
-import { WalletPayCard } from "@/components/payments/PayInWalletChips";
 import { BuyTokensModal } from "@/components/BuyTokensModal";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -1279,28 +1278,31 @@ export function BookCallModal({
           );
         })()}
         {provider === "wallet" && activePackage && (
-          <div className="mt-3">
-            <WalletPayCard
-              surface="call"
-              amountUsd={effectivePriceUsd}
-              entitlementSpec={{
+          <button
+            type="button"
+            onClick={() => {
+              const intent = {
+                creatorId: creator.id,
                 packageId: activePackage.id,
-                creator_id: creator.id,
-                startAt: selectedSlot?.startUtc,
-                endAt: selectedSlot?.endUtc,
-                clientNotes: clientNotes.trim() || undefined,
-              }}
-              metadata={{ source: "book_call_modal" }}
-              label={t.lang === "es" ? `Pagar $${effectivePriceUsd.toFixed(2)}` : `Pay $${effectivePriceUsd.toFixed(2)}`}
-              lang={t.lang as "es" | "en"}
-              onSuccess={({ bookingId }) => {
-                setConfirmedStartAt(selectedSlot?.startUtc ?? null);
-                if (bookingId) setConfirmedBookingId(bookingId);
-                setStep("SUCCESS");
-              }}
-              onCryptoFallback={undefined}
-            />
-          </div>
+                packageLabel: `${activePackage.duration_minutes ?? duration} min call`,
+                priceUsd: effectivePriceUsd,
+                creatorName: creator.username,
+                creatorHandle: creator.username,
+                startAt: selectedSlot?.startUtc ?? null,
+                endAt: selectedSlot?.endUtc ?? null,
+                clientNotes: clientNotes.trim() || null,
+              };
+              try { sessionStorage.setItem('pnptv:call_intent', JSON.stringify(intent)); } catch {}
+              window.location.href = '/checkout?type=call';
+            }}
+            className="w-full min-h-[52px] rounded-2xl font-bold text-sm text-white mt-3 transition-all duration-150 active:scale-[0.98] focus-visible:outline-none flex items-center justify-center gap-2"
+            style={{
+              background: "linear-gradient(135deg, #D4007A, #9B00B0)",
+              boxShadow: "0 4px 24px rgba(212,0,122,0.35)",
+            }}
+          >
+            💳 Pay ${effectivePriceUsd.toFixed(2)} with card
+          </button>
         )}
 
         {/* No matching package for the picked duration — surface a clear

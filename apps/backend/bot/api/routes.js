@@ -24642,6 +24642,332 @@ app.post('/api/checkout/verify', checkoutVerifyLimiter, asyncHandler(async (req,
   });
 }));
 
+/**
+ * POST /api/checkout/tokens/verify
+ *
+ * Called by the frontend after Meld on-ramp resolves for a Ru$h token
+ * purchase. Validates the package, resolves the PNPtv user, credits tokens
+ * via tokenLedgerService, and writes a token_purchases record.
+ *
+ * Auth: Bearer JWT from the checkout Privy app (requireCheckoutPrivyAuth).
+ * Body: { packageId, privyUserId, email? }
+ */
+app.post('/api/checkout/tokens/verify', checkoutVerifyLimiter, requireCheckoutPrivyAuth, asyncHandler(async (req, res) => {
+  const DashTokenService   = require('../../services/dashTokenService');
+  const tokenLedgerService = require('../../services/tokenLedgerService');
+
+  const rawPackageId    = req.body?.packageId;
+  const rawPrivyUserId  = req.body?.privyUserId;
+  const rawEmail        = req.body?.email;
+
+  const packageId   = typeof rawPackageId   === 'string' ? rawPackageId.trim()             : '';
+  const privyUserId = typeof rawPrivyUserId  === 'string' ? rawPrivyUserId.trim()           : (req.checkoutPrivy?.userId || '');
+  const email       = typeof rawEmail        === 'string' ? rawEmail.trim().toLowerCase()   : '';
+
+  if (!packageId) {
+    return res.status(400).json({ ok: false, error: 'package_id_required' });
+  }
+
+  // Validate packageId against known TOKEN_PACKAGES
+  const pkg = DashTokenService.TOKEN_PACKAGES.find(p => p.id === packageId);
+  if (!pkg) {
+    return res.status(400).json({ ok: false, error: 'invalid_package_id', message: `Unknown token package: ${packageId}` });
+  }
+
+  // Resolve pnptvUserId: (1) session, (2) email lookup
+  let pnptvUserId = req.session?.user?.id || null;
+  if (!pnptvUserId && email && /.+@.+\..+/.test(email)) {
+    try {
+      const { rows } = await query(
+        'SELECT id FROM users WHERE lower(email) = $1 LIMIT 1',
+        [email]
+      );
+      if (rows[0]?.id) pnptvUserId = String(rows[0].id);
+    } catch (err) {
+      logger.warn('[checkout/tokens/verify] email lookup failed', { err: err.message });
+    }
+  }
+  if (!pnptvUserId) {
+    return res.status(409).json({ ok: false, error: 'user_not_found', message: 'Log in to PNPtv to credit tokens.' });
+  }
+
+  // 5-minute idempotency window: one credit per (privyUserId, packageId) per 5 min.
+  // Insert token_purchases FIRST — its unique constraint on btcpay_invoice_id is
+  // the guard. If rowCount === 0 the window already fired; skip re-crediting.
+  const sourceKey = `checkout_meld:${privyUserId}:${packageId}:${Math.floor(Date.now() / 300000)}`;
+
+  let purchaseInserted = false;
+  try {
+    const { rowCount } = await query(
+      `INSERT INTO token_purchases
+         (user_id, tokens_credited, usd_amount, btcpay_invoice_id, status, payment_method)
+       VALUES ($1, $2, $3, $4, 'settled', 'usdc')
+       ON CONFLICT (btcpay_invoice_id) DO NOTHING`,
+      [pnptvUserId, pkg.tokens, pkg.usd, sourceKey]
+    );
+    purchaseInserted = rowCount > 0;
+  } catch (err) {
+    logger.error('[checkout/tokens/verify] token_purchases insert failed', {
+      pnptvUserId, packageId, sourceKey, err: err.message,
+    });
+    return res.status(500).json({ ok: false, error: 'token_purchase_record_failed' });
+  }
+
+  if (!purchaseInserted) {
+    return res.json({ ok: true, alreadyProcessed: true, tokensCredited: pkg.tokens });
+  }
+
+  // Credit tokens via ledger (handles wallet upsert + ledger row)
+  let creditResult;
+  try {
+    creditResult = await tokenLedgerService.credit({
+      userId:       pnptvUserId,
+      reason:       'purchase',
+      balanceDelta: pkg.tokens,
+      sourceType:   'checkout_meld',
+      sourceId:     sourceKey,
+      actorId:      'user',
+      metadata:     { packageId, source: 'meld_checkout', privyUserId },
+    });
+  } catch (err) {
+    logger.error('[checkout/tokens/verify] tokenLedger.credit failed', { pnptvUserId, packageId, err: err.message });
+    return res.status(500).json({ ok: false, error: 'token_credit_failed' });
+  }
+
+  logger.info('[checkout/tokens/verify] tokens credited', {
+    pnptvUserId, packageId, tokens: pkg.tokens, usd: pkg.usd, sourceKey,
+  });
+
+  return res.json({
+    ok: true,
+    tokensCredited: pkg.tokens,
+    newBalance:     creditResult.balance_after ?? null,
+  });
+}));
+
+/**
+ * POST /api/checkout/calls/verify
+ *
+ * Called by the frontend after Meld on-ramp resolves for a call package
+ * purchase. Validates the package, resolves the PNPtv user, creates a
+ * payments row, grants call_credits, optionally inserts a booking, and
+ * writes a creator_earnings row at CREATOR_REVENUE_RATE.
+ *
+ * Auth: Bearer JWT from the checkout Privy app (requireCheckoutPrivyAuth).
+ * Body: { packageId, creatorId, startAt?, endAt?, clientNotes?, privyUserId, email? }
+ */
+app.post('/api/checkout/calls/verify', checkoutVerifyLimiter, requireCheckoutPrivyAuth, asyncHandler(async (req, res) => {
+  const { v4: uuidv4 } = require('uuid');
+  const { CREATOR_REVENUE_RATE, EARNINGS_HOLD_HOURS } = require('../../config/monetizationConfig');
+
+  const rawPackageId   = req.body?.packageId;
+  const rawCreatorId   = req.body?.creatorId;
+  const rawStartAt     = req.body?.startAt   || null;
+  const rawEndAt       = req.body?.endAt     || null;
+  const rawNotes       = req.body?.clientNotes || null;
+  const rawPrivyUserId = req.body?.privyUserId;
+  const rawEmail       = req.body?.email;
+
+  const packageId   = typeof rawPackageId   === 'string' ? rawPackageId.trim()           : '';
+  const creatorId   = typeof rawCreatorId    === 'string' ? rawCreatorId.trim()           : '';
+  const privyUserId = typeof rawPrivyUserId  === 'string' ? rawPrivyUserId.trim()         : (req.checkoutPrivy?.userId || '');
+  const email       = typeof rawEmail        === 'string' ? rawEmail.trim().toLowerCase() : '';
+  const startAt     = typeof rawStartAt      === 'string' ? rawStartAt.trim()             : null;
+  const endAt       = typeof rawEndAt        === 'string' ? rawEndAt.trim()               : null;
+  const clientNotes = rawNotes ? String(rawNotes).slice(0, 1000)                          : null;
+
+  if (!packageId) {
+    return res.status(400).json({ ok: false, error: 'package_id_required' });
+  }
+  if (!creatorId) {
+    return res.status(400).json({ ok: false, error: 'creator_id_required' });
+  }
+
+  // Resolve pnptvUserId: (1) session, (2) email lookup
+  let pnptvUserId = req.session?.user?.id || null;
+  if (!pnptvUserId && email && /.+@.+\..+/.test(email)) {
+    try {
+      const { rows } = await query(
+        'SELECT id FROM users WHERE lower(email) = $1 LIMIT 1',
+        [email]
+      );
+      if (rows[0]?.id) pnptvUserId = String(rows[0].id);
+    } catch (err) {
+      logger.warn('[checkout/calls/verify] email lookup failed', { err: err.message });
+    }
+  }
+  if (!pnptvUserId) {
+    return res.status(409).json({ ok: false, error: 'user_not_found', message: 'Log in to PNPtv to credit tokens.' });
+  }
+
+  // 5-minute idempotency key stored in payments.reference
+  const referenceKey = `checkout_call_meld:${privyUserId}:${packageId}:${Math.floor(Date.now() / 300000)}`;
+
+  // Pre-check idempotency before opening a transaction — payments.reference has
+  // no unique index so ON CONFLICT cannot be used. A SELECT check here is
+  // sufficient for a 5-minute window; race conditions are extremely unlikely.
+  {
+    const { rows: existingRows } = await query(
+      'SELECT id FROM payments WHERE reference = $1 LIMIT 1',
+      [referenceKey]
+    );
+    if (existingRows.length > 0) {
+      return res.json({ ok: true, alreadyProcessed: true });
+    }
+  }
+
+  const pool = getPool();
+  const client = await pool.connect();
+  let paymentId  = null;
+  let creditId   = null;
+  let bookingId  = null;
+  let priceUsd   = 0;
+  let pkgCreator = creatorId;
+
+  try {
+    await client.query('BEGIN');
+
+    // Load and validate the call package
+    const pkgRes = await client.query(
+      `SELECT id, sku, quantity, duration_minutes, price_usd, creator_id, is_active
+         FROM call_packages WHERE id = $1`,
+      [packageId]
+    );
+    if (pkgRes.rows.length === 0) {
+      await client.query('ROLLBACK');
+      client.release();
+      return res.status(400).json({ ok: false, error: 'package_not_found' });
+    }
+    const pkg = pkgRes.rows[0];
+    if (!pkg.is_active) {
+      await client.query('ROLLBACK');
+      client.release();
+      return res.status(410).json({ ok: false, error: 'package_inactive' });
+    }
+    if (String(pkg.creator_id) !== String(creatorId)) {
+      await client.query('ROLLBACK');
+      client.release();
+      return res.status(400).json({ ok: false, error: 'package_creator_mismatch' });
+    }
+
+    // Capture for use after the transaction scope
+    priceUsd   = Number(pkg.price_usd);
+    pkgCreator = String(pkg.creator_id);
+
+    paymentId = uuidv4();
+    const meta = {
+      type: 'call_package',
+      packageId: pkg.id,
+      packageSku: pkg.sku,
+      creatorId: pkg.creator_id,
+      privyUserId,
+      email: email || null,
+      ...(startAt && endAt ? { startTimeUtc: startAt, endTimeUtc: endAt, clientNotes } : {}),
+    };
+    await client.query(
+      `INSERT INTO payments (id, reference, user_id, plan_id, provider, amount, currency, status, metadata, created_at, updated_at)
+         VALUES ($1::uuid, $2::text, $3::text, NULL, 'meld_onramp', $4, 'USD', 'completed', $5::jsonb, NOW(), NOW())`,
+      [paymentId, referenceKey, String(pnptvUserId), Number(pkg.price_usd), JSON.stringify(meta)]
+    );
+
+    // call_credits
+    const creditRes = await client.query(
+      `INSERT INTO call_credits (member_id, creator_id, package_id, quantity_total, payment_id)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (payment_id) DO NOTHING
+         RETURNING id`,
+      [String(pnptvUserId), pkg.creator_id, pkg.id, pkg.quantity, paymentId]
+    );
+    creditId = creditRes.rows[0]?.id || null;
+
+    // bookings (only when time slot provided)
+    if (startAt && endAt) {
+      const performerRes = await client.query(
+        `SELECT id FROM performers WHERE user_id = $1 LIMIT 1`,
+        [String(pkg.creator_id)]
+      );
+      const performerId = performerRes.rows[0]?.id;
+      if (performerId) {
+        const priceCents = Math.round(Number(pkg.price_usd) * 100);
+        const bookingRes = await client.query(
+          `INSERT INTO bookings
+             (user_id, performer_id, package_id, payment_id, credit_id,
+              start_time_utc, end_time_utc, status, call_type,
+              duration_minutes, price_cents, currency, client_notes)
+           VALUES ($1,$2,$3,$4,$5,$6::timestamptz,$7::timestamptz,
+                   'confirmed','video',$8,$9,'USD',$10::text)
+           ON CONFLICT DO NOTHING
+           RETURNING id`,
+          [
+            String(pnptvUserId), performerId, pkg.id, paymentId, creditId,
+            startAt, endAt, pkg.duration_minutes, priceCents,
+            clientNotes,
+          ]
+        );
+        bookingId = bookingRes.rows[0]?.id || null;
+      }
+    }
+
+    // creator_earnings — 70% at EARNINGS_HOLD_HOURS hold
+    const gross         = Number(pkg.price_usd);
+    const amountCreator = Math.round(gross * CREATOR_REVENUE_RATE * 100) / 100;
+    const amountPlatform = Math.round((gross - amountCreator) * 100) / 100;
+    await client.query(
+      `INSERT INTO creator_earnings
+         (creator_id, amount_gross, amount_creator, amount_platform, status,
+          available_at, source_payment_id, period_month)
+       VALUES ($1, $2, $3, $4, 'holding', NOW() + ($5 || ' hours')::interval, $6,
+               date_trunc('month', CURRENT_DATE))
+       ON CONFLICT (source_payment_id, creator_id) WHERE source_payment_id IS NOT NULL
+         DO NOTHING`,
+      [String(pkg.creator_id), gross, amountCreator, amountPlatform,
+       String(EARNINGS_HOLD_HOURS), `call_booking:${paymentId}`]
+    );
+
+    await client.query('COMMIT');
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch (_) {}
+    client.release();
+    logger.error('[checkout/calls/verify] transaction failed', { pnptvUserId, packageId, err: err.message });
+    return res.status(500).json({ ok: false, error: 'call_booking_failed' });
+  }
+
+  client.release();
+
+  // Fire-and-forget waitlist miss notification (no slot chosen)
+  if (creditId && !bookingId) {
+    setImmediate(() => {
+      try {
+        require('../../services/callWaitlistService').recordMiss({
+          memberId: String(pnptvUserId),
+          creatorId: pkgCreator,
+        }).catch(() => {});
+      } catch { /* optional */ }
+    });
+  }
+
+  // Fire-and-forget push to the creator
+  setImmediate(() => {
+    try {
+      const push = require('../../services/pushNotificationService');
+      const net = Math.round(priceUsd * CREATOR_REVENUE_RATE * 100) / 100;
+      push.sendToUser(pkgCreator, {
+        title: `📞 Call booked: $${net.toFixed(2)} earned`,
+        body: 'A member just purchased a call package with you via checkout — tap to view.',
+        url: '/creator/payouts',
+        icon: '/app-icon-192.png',
+        tag: `call-booking-meld-${paymentId}`,
+      }, { notifType: 'call_booking_earned' }).catch(() => {});
+    } catch { /* push service optional */ }
+  });
+
+  logger.info('[checkout/calls/verify] call booking completed', {
+    pnptvUserId, packageId, creatorId, paymentId, creditId, bookingId,
+  });
+
+  return res.json({ ok: true, bookingId, creditId, paymentId });
+}));
+
 // ── End Checkout Experiment ───────────────────────────────────────────────────
 
 // Export app WITHOUT 404/error handlers
