@@ -1243,7 +1243,13 @@ export function getWalletBalance(): Promise<{ success: boolean; balance: number;
 }
 
 export function getTokenPackages(): Promise<{ success: boolean; packages: TokenPackage[] }> {
-  return request("/api/wallet/packages");
+  return request("/api/checkout/token-packages").then((r) => {
+    const res = r as { ok?: boolean; success?: boolean; packages?: TokenPackage[] };
+    return {
+      success: Boolean(res.ok ?? res.success),
+      packages: Array.isArray(res.packages) ? res.packages : [],
+    };
+  });
 }
 
 export function buyTokens(packageId: string): Promise<{ success: boolean; invoiceId: string; checkoutUrl: string; tokens: number; usd: number }> {

@@ -760,6 +760,23 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
         {/* Body — scrollable */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
 
+          {/* ── Buy with card via Checkout ──────────────────────────────────── */}
+          <button
+            type="button"
+            onClick={() => { onClose(); window.location.href = "/checkout?type=tokens"; }}
+            className="w-full rounded-xl px-4 py-3 text-left flex items-center justify-between gap-2 transition-all active:scale-[0.99]"
+            style={{ background: "linear-gradient(135deg, rgba(212,0,122,0.18), rgba(155,0,176,0.18))", border: "1px solid rgba(212,0,122,0.4)" }}
+          >
+            <div className="flex items-center gap-2">
+              <span className="text-lg leading-none">💳</span>
+              <div>
+                <p className="text-sm font-bold text-white">{es ? "Pagar con tarjeta" : "Pay with card"}</p>
+                <p className="text-[11px] text-white/50">{es ? "Rápido · sin wallet · vía checkout" : "Fast · no wallet needed · via checkout"}</p>
+              </div>
+            </div>
+            <span className="text-white/40 text-lg">›</span>
+          </button>
+
           {/* ── Embedded-wallet sweep pill ──────────────────────────────────────
               Shown when the user has ≥ $0.10 USDC stranded in their deprecated
               Privy embedded wallet. Disappears instantly after a successful
