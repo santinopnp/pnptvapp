@@ -1,5 +1,15 @@
 import React, { lazy, useEffect, useState } from "react";
-import { createBrowserRouter, Navigate, useLocation, useNavigate, useParams, useRouteError } from "react-router-dom";
+import { createBrowserRouter, Navigate, useLocation, useNavigate, useParams, useRouteError, useSearchParams } from "react-router-dom";
+
+// Hard-redirect /subscribe → /checkout so Checkout's own PrivyProvider mounts cleanly.
+function SubscribeRedirect() {
+  const [params] = useSearchParams();
+  useEffect(() => {
+    const plan = params.get("plan");
+    window.location.replace(plan ? `/checkout?plan=${encodeURIComponent(plan)}` : "/checkout");
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  return null;
+}
 import { useI18n } from "@/lib/i18n";
 import { joinHangoutByInvite, ApiError, getEvent, type EventItem } from "@/lib/api";
 import { EventDetailModal } from "@/components/events/EventDetailModal";
@@ -748,13 +758,7 @@ export const router = createBrowserRouter([
       },
       {
         path: "subscribe",
-        element: (
-          <ModuleLoader>
-            <VerificationGate>
-              <Subscribe />
-            </VerificationGate>
-          </ModuleLoader>
-        ),
+        element: <SubscribeRedirect />,
       },
       {
         // Sunday Spun Days — hidden promo landing. Only reachable via DM/TG
