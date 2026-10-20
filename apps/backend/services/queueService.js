@@ -285,6 +285,13 @@ async function initializeQueues() {
     jobId: 'cron-monetization-daily-report',
   });
 
+  // Policy scanner (off-platform payments, scams, contact sharing, blasts) — every 5 min
+  await cronQueue.add('policy-scan', {}, {
+    repeat: { pattern: '*/5 * * * *', tz: 'UTC' },
+    attempts: 1, removeOnFail: false,
+    jobId: 'cron-policy-scan',
+  });
+
   // Video leak detector — every hour at :17
   await cronQueue.add('video-leak-detector', {}, {
     repeat: { pattern: '17 * * * *', tz: 'UTC' },

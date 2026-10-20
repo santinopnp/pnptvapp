@@ -1,5 +1,6 @@
 'use strict';
 
+const { checkOutgoingText } = require('../../../services/antiLeakageGuard');
 const { query } = require('../../../config/postgres');
 const logger = require('../../../utils/logger');
 const { getRedis } = require('../../../config/redis');
@@ -73,6 +74,12 @@ const sendMessage = async (req, res) => {
   if (!content?.trim()) return res.status(400).json({ error: 'Content required' });
   try {
     const text = content.trim().slice(0, 2000);
+    const role = user.role || '';
+    const guard = await checkOutgoingText({
+      userId: user.id, text, sourceType: 'chat_room', sourceRef: room,
+      isAdmin: role === 'admin' || role === 'superadmin',
+    });
+    if (!guard.ok) return res.status(guard.status).json(guard.body);
     const { rows } = await query(
       `INSERT INTO chat_messages
          (room, user_id, username, first_name, photo_url, content)
@@ -112,6 +119,15 @@ const sendMediaMessage = async (req, res) => {
   const room = await validateRoomAccess(req.params.room, user.id);
   if (!room) return res.status(403).json({ error: 'Access denied to this room' });
   const caption = (req.body?.content || '').trim().slice(0, 500);
+
+  const guard = await checkOutgoingText({
+    userId: user.id, text: caption, sourceType: 'chat_room', sourceRef: room,
+    isAdmin: user.role === 'admin' || user.role === 'superadmin',
+  });
+  if (!guard.ok) {
+    if (req.file?.path) require('fs').promises.unlink(req.file.path).catch(() => {});
+    return res.status(guard.status).json(guard.body);
+  }
 
   try {
     const mediaResult = await processChatMedia(req.file, user.id);

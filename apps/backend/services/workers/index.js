@@ -597,6 +597,12 @@ async function cronProcessor(job) {
       return;
     }
 
+    case 'policy-scan': {
+      const PolicyScanService = require('../policyScanService');
+      await PolicyScanService.runScan();
+      return;
+    }
+
     case 'video-log-cleanup': {
       const result = await pgQuery(`DELETE FROM video_fetch_log WHERE fetched_at < NOW() - INTERVAL '14 days'`);
       logger.info('Video fetch log retention sweep completed', { deleted: result.rowCount });

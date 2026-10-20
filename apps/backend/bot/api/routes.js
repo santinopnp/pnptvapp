@@ -12950,6 +12950,11 @@ app.post('/api/webapp/admin/ncmec-cases/:id', adminGuard, asyncHandler(complianc
 app.get('/api/webapp/admin/content-reviews', adminGuard, asyncHandler(complianceController.listContentReviews));
 app.post('/api/webapp/admin/content-reviews/:id/approve', adminGuard, asyncHandler(complianceController.approveContentReview));
 app.post('/api/webapp/admin/content-reviews/:id/reject', adminGuard, asyncHandler(complianceController.rejectContentReview));
+// Policy flags from the background scanner (off-platform payments, scams, contact sharing, blasts).
+app.get('/api/webapp/admin/policy-flags', adminGuard, asyncHandler(complianceController.listPolicyFlags));
+app.post('/api/webapp/admin/policy-flags/:id/dismiss', adminGuard, asyncHandler(complianceController.dismissPolicyFlag));
+app.post('/api/webapp/admin/policy-flags/:id/confirm', adminGuard, asyncHandler(complianceController.confirmPolicyFlag));
+app.post('/api/webapp/admin/policy-flags/user/:userId/dismiss', adminGuard, asyncHandler(complianceController.dismissUserPolicyFlags));
 
 // GET /api/proxy/live/performers — List performers from Directus for tip picker
 app.get('/api/proxy/live/performers', requireSessionAuth, livePerformersLimiter, asyncHandler(async (req, res) => {

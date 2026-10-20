@@ -11,6 +11,7 @@
  * PG is only used for metadata (dm_threads for DMs).
  */
 
+const { checkOutgoingText } = require('../../../services/antiLeakageGuard');
 const { query } = require('../../../config/postgres');
 const logger = require('../../../utils/logger');
 const { processChatMedia } = require('../../../services/chatMediaService');
@@ -43,6 +44,17 @@ const sendDmMediaMessage = async (req, res) => {
   }
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
+  }
+
+  {
+    const guard = await checkOutgoingText({
+      userId: user.id, text: (req.body?.content || '').trim().slice(0, 500), sourceType: 'dm', sourceRef: recipientId,
+      isAdmin: user.role === 'admin' || user.role === 'superadmin',
+    });
+    if (!guard.ok) {
+      if (req.file?.path) require('fs').promises.unlink(req.file.path).catch(() => {});
+      return res.status(guard.status).json(guard.body);
+    }
   }
 
   try {
