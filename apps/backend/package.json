@@ -23,7 +23,7 @@
     "@noble/hashes": "^2.4.0",
     "@privy-io/server-auth": "^1.32.5",
     "@sentry/node": "^11.8.0",
-    "@simplewebauthn/server": "^13.3.2",
+    "@simplewebauthn/server": "^14.0.3",
     "@tus/file-store": "^2.1.1",
     "@tus/server": "^2.4.6",
     "axios": "^1.17.0",
