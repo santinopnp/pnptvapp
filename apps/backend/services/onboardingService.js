@@ -364,7 +364,8 @@ async function grantOnboardingBonus(userId) {
 async function getPolicyUpdateStatus(userId) {
   const { rows } = await query(
     'SELECT terms_accepted, terms_accepted_at, privacy_accepted_at FROM users WHERE id = $1',
-    [userId]
+    [userId],
+    { cache: false }
   );
   const u = rows[0];
   if (!u) throw Object.assign(new Error('User not found'), { status: 404 });

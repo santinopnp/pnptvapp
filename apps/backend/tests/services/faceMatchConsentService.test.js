@@ -4,6 +4,7 @@ const mockClient = { query: jest.fn(), release: jest.fn() };
 jest.mock('../../config/postgres', () => ({
   query: jest.fn(),
   getPool: () => ({ connect: jest.fn().mockResolvedValue(mockClient) }),
+  invalidateCacheForTables: jest.fn(),
 }));
 jest.mock('../../utils/logger', () => ({
   info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn(),
@@ -26,7 +27,7 @@ function mockRes() {
 }
 
 describe('faceMatchConsentService', () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => { jest.clearAllMocks(); query.mockReset(); mockClient.query.mockReset(); mockClient.query.mockResolvedValue({}); });
 
   it('has no consent by default', async () => {
     query.mockResolvedValueOnce({ rows: [{ face_match_consent: false, face_match_consent_version: null }] });
@@ -80,7 +81,7 @@ describe('faceMatchConsentService', () => {
 });
 
 describe('requireFaceMatchConsent middleware', () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => { jest.clearAllMocks(); query.mockReset(); });
 
   it('blocks uploads without consent', async () => {
     query.mockResolvedValueOnce({ rows: [{ face_match_consent: false }] });

@@ -12,7 +12,7 @@
  * face_match_consent_events is the append-only proof of each grant/withdraw.
  */
 
-const { query, getPool } = require('../config/postgres');
+const { query, getPool, invalidateCacheForTables } = require('../config/postgres');
 const logger = require('../utils/logger');
 
 // Bump when the face matching wording in the Privacy Policy changes materially.
@@ -29,7 +29,8 @@ async function getStatus(userId) {
   const { rows } = await query(
     `SELECT face_match_consent, face_match_consented_at, face_match_consent_version
        FROM users WHERE id = $1`,
-    [userId]
+    [userId],
+    { cache: false }
   );
   const u = rows[0];
   if (!u) throw Object.assign(new Error('User not found'), { status: 404 });
@@ -54,7 +55,9 @@ async function hasConsent(userId) {
   if (!userId) return false;
   const { rows } = await query(
     'SELECT face_match_consent, face_match_consent_version FROM users WHERE id = $1',
-    [userId]
+    [userId],
+    // Never cached: the gate must see a grant/withdrawal immediately, on every process.
+    { cache: false }
   );
   return hasCurrentConsent(rows[0]);
 }
@@ -84,6 +87,7 @@ async function _record(userId, action, { ip, userAgent } = {}) {
       [userId, action, FACE_MATCH_CONSENT_VERSION, ip || null, userAgent ? String(userAgent).slice(0, 512) : null]
     );
     await client.query('COMMIT');
+    invalidateCacheForTables(['users']);
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     throw err;
