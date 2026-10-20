@@ -12,7 +12,6 @@ import {
   redeemActivationCode,
   getWalletBalance,
   paySubscriptionWithTokens,
-  prepareUsdcSubscription,
   getOnlineStats,
   logSubscribeVisit,
   type SubscriptionPlan,
@@ -24,7 +23,6 @@ import { useI18n } from "@/lib/i18n";
 import {
   WalletPayCard,
 } from "@/components/payments/PayInWalletChips";
-import { PANEL_APPS, PANEL_STEPS_EN, PANEL_STEPS_ES, NpAppPickerSheet } from "@/components/payments/NowPaymentsWaitingPanel";
 import { connectSocket } from "@/lib/socket";
 
 const MEMBER_PLAN_IDS = new Set(["member_monthly"]);
@@ -35,10 +33,6 @@ const HIDDEN_PLAN_IDS = new Set(["prime-trial-3d", "lifetime80", "monthly-pass-p
 const RECURRING_PLANS = new Set(["prime-week-pass-7d", "monthly-pass", "prime-diamond-pass-365d"]);
 
 const RECOMMENDED_PLAN_FALLBACK = "prime-diamond-pass-365d";
-
-// NowPayments floor is enforced server-side; show the button for any amount
-// and let the backend reject if below their minimum for the chosen currency.
-const NOWPAYMENTS_MINIMUM_USD = 0;
 
 function formatPrice(amount: number, currency: string): string {
   if (currency === "COP") {
@@ -210,16 +204,6 @@ export default function Subscribe() {
     // Clean up any stale BTC session storage from before retirement
     sessionStorage.removeItem("pnp_pending_btc_order");
     sessionStorage.removeItem("pnp_pending_dash_order");
-
-    // Handle ?nowpayments=success&order=<id> from hosted checkout return
-    const nowpResult = searchParams.get("nowpayments");
-    const nowpOrderId = searchParams.get("order");
-    if (nowpResult === "success" && nowpOrderId && /^pnptv-nowp-[A-Za-z0-9_-]+-\d+$/.test(nowpOrderId)) {
-      window.history.replaceState({}, "", window.location.pathname);
-      // The hook will pick up the pending order from sessionStorage if it exists,
-      // but if the user is returning from a redirect, we might need to trigger polling
-      // if it wasn't already in storage (though it should be).
-    }
 
     // Resume polling if returning from crypto checkout
     try {
@@ -484,18 +468,6 @@ export default function Subscribe() {
 
   // BTC polling effect removed 2026-07-31 — BTCPay retired.
   // Dash polling effect removed 2026-07-31 — Dash/BTCPay retired.
-
-  // "Pay with any crypto" — opens NowPaymentsWidgetModal (popup flow,
-  // same pattern as BookCallModal). Invoice created via prepareUsdcSubscription;
-  // user opens window.open popup; polling + socket handle confirmation.
-  const [npPickerPlanId, setNpPickerPlanId] = useState<string | null>(null);
-  const [npPickerLabel, setNpPickerLabel] = useState<string | undefined>(undefined);
-  const openAppSheet = useCallback((planId: string, label: string) => {
-    setError(null);
-    setNpPickerPlanId(planId);
-    setNpPickerLabel(label);
-    trackEvent("payment_started", { plan: planId, provider: "nowpayments_popup" });
-  }, []);
 
   // Derive current tier display from user object
   function renderTierBanner() {
@@ -769,23 +741,6 @@ export default function Subscribe() {
                     >
                       {t.lang === "es" ? "💳 Tarjeta · Apple Pay · Wallet" : "💳 Card · Apple Pay · Wallet"}
                     </button>
-                    {parseFloat(String(plan.price)) >= NOWPAYMENTS_MINIMUM_USD ? (
-                      <button
-                        type="button"
-                        onClick={() => openAppSheet(plan.id, isLifetime
-                          ? (t.lang === "es" ? "Membresía Founders" : "Founders Membership")
-                          : (t.lang === "es" ? "PRIME anual" : "PRIME Annual"))}
-                        className="w-full py-2.5 rounded-xl text-[11px] font-black transition-all active:scale-[0.97] leading-tight"
-                        style={{
-                          border: "1.5px solid rgba(255,183,0,0.45)",
-                          background: "rgba(255,183,0,0.07)",
-                          color: "rgba(255,183,0,0.80)",
-                        }}
-                      >
-                        <span className="block">₿ {t.lang === "es" ? "Apps y wallets" : "Apps & wallets"}</span>
-                        <span className="block text-[9px] font-normal opacity-50 mt-0.5">BTC · ETH · USDC · USDT · etc.</span>
-                      </button>
-                    ) : null}
                   </div>
 
                   {/* Inline wallet checkout panel */}
@@ -806,9 +761,6 @@ export default function Subscribe() {
                           setWalletPanelPlanId(null);
                           setTimeout(() => navigate("/"), 1200);
                         }}
-                        onCryptoFallback={parseFloat(String(plan.price)) >= NOWPAYMENTS_MINIMUM_USD
-                          ? () => openAppSheet(plan.id, `${plan.name || plan.id} · $${parseFloat(String(plan.price)).toFixed(2)}`)
-                          : undefined}
                         compact
                       />
                     </div>
@@ -988,9 +940,8 @@ export default function Subscribe() {
               )}
 
               {/* Quick-pay buttons — Wallet USDC (Base) is primary, then
-                  any-crypto via NowPayments popup, then Ru$h if the user has
-                  balance. WalletPayCard handles card + Privy-wallet cases
-                  inline. */}
+                  Ru$h if the user has balance. WalletPayCard handles card +
+                  Privy-wallet cases inline. */}
               <div className="mt-3 pt-3 border-t border-white/5 space-y-2" onClick={(e) => e.stopPropagation()}>
                 <div className="flex gap-2">
                   <button
@@ -1001,21 +952,6 @@ export default function Subscribe() {
                   >
                     {t.lang === "es" ? "💳 Tarjeta · Apple Pay · Wallet" : "💳 Card · Apple Pay · Wallet"}
                   </button>
-                  {parseFloat(String(plan.price)) >= NOWPAYMENTS_MINIMUM_USD && (
-                    <button
-                      type="button"
-                      onClick={(e) => { e.stopPropagation(); openAppSheet(plan.id, plan.display_name || plan.name || plan.id); }}
-                      className="flex-1 py-3 rounded-lg font-bold text-xs transition-all leading-tight"
-                      style={{
-                        border: "1.5px solid rgba(255,183,0,0.50)",
-                        background: "rgba(255,183,0,0.08)",
-                        color: "rgba(255,183,0,0.85)",
-                      }}
-                    >
-                      <span className="block">₿ {t.lang === "es" ? "Apps y wallets" : "Apps & wallets"}</span>
-                      <span className="block text-[9px] font-normal opacity-60 mt-0.5">BTC · ETH · USDC…</span>
-                    </button>
-                  )}
                 </div>
                 {(() => {
                   const cost = Math.round(parseFloat(String(plan.price)) * 6);
@@ -1057,9 +993,6 @@ export default function Subscribe() {
                             setWalletPanelPlanId(null);
                             setTimeout(() => navigate("/"), 1200);
                           }}
-                          onCryptoFallback={parseFloat(String(plan.price)) >= NOWPAYMENTS_MINIMUM_USD
-                            ? () => openAppSheet(plan.id, `${plan.name || plan.id} · $${parseFloat(String(plan.price)).toFixed(2)}`)
-                            : undefined}
                           compact
                         />
                       );
@@ -1192,9 +1125,8 @@ export default function Subscribe() {
               )}
 
               {/* Quick-pay buttons — Wallet USDC (Base) is primary, then
-                  any-crypto via NowPayments popup, then Ru$h if the user has
-                  balance. WalletPayCard handles card + Privy-wallet cases
-                  inline. */}
+                  Ru$h if the user has balance. WalletPayCard handles card +
+                  Privy-wallet cases inline. */}
               <div className="mt-3 pt-3 border-t border-white/5 space-y-2" onClick={(e) => e.stopPropagation()}>
                 <div className="flex gap-2">
                   <button
@@ -1205,21 +1137,6 @@ export default function Subscribe() {
                   >
                     {t.lang === "es" ? "💳 Tarjeta · Apple Pay · Wallet" : "💳 Card · Apple Pay · Wallet"}
                   </button>
-                  {parseFloat(String(plan.price)) >= NOWPAYMENTS_MINIMUM_USD && (
-                    <button
-                      type="button"
-                      onClick={(e) => { e.stopPropagation(); openAppSheet(plan.id, plan.display_name || plan.name || plan.id); }}
-                      className="flex-1 py-3 rounded-lg font-bold text-xs transition-all leading-tight"
-                      style={{
-                        border: "1.5px solid rgba(255,183,0,0.50)",
-                        background: "rgba(255,183,0,0.08)",
-                        color: "rgba(255,183,0,0.85)",
-                      }}
-                    >
-                      <span className="block">₿ {t.lang === "es" ? "Apps y wallets" : "Apps & wallets"}</span>
-                      <span className="block text-[9px] font-normal opacity-60 mt-0.5">BTC · ETH · USDC…</span>
-                    </button>
-                  )}
                 </div>
                 {(() => {
                   const cost = Math.round(parseFloat(String(plan.price)) * 6);
@@ -1261,9 +1178,6 @@ export default function Subscribe() {
                             setWalletPanelPlanId(null);
                             setTimeout(() => navigate("/"), 1200);
                           }}
-                          onCryptoFallback={parseFloat(String(plan.price)) >= NOWPAYMENTS_MINIMUM_USD
-                            ? () => openAppSheet(plan.id, `${plan.name || plan.id} · $${parseFloat(String(plan.price)).toFixed(2)}`)
-                            : undefined}
                           compact
                         />
                       );
@@ -1315,18 +1229,6 @@ export default function Subscribe() {
       )}
 
       {/* Crypto nudge removed 2026-08-09 — Wallet is now the only crypto path. */}
-
-      <NpAppPickerSheet
-        isOpen={!!npPickerPlanId}
-        onClose={() => { setNpPickerPlanId(null); setNpPickerLabel(undefined); }}
-        planId={npPickerPlanId}
-        lang={t.lang}
-        planLabel={npPickerLabel}
-        onSuccess={(orderId) => {
-          setPollingPaymentId(orderId);
-          try { sessionStorage.setItem("pnp_pending_payment", orderId); } catch {}
-        }}
-      />
 
       {/* Error banner */}
       {error && (
