@@ -366,6 +366,18 @@ const hardDeleteUser = async (userId, actorId) => {
   }
   const userRecord = rows[0];
 
+  // 1b. Legal hold: 2257 records (7 years) and NCMEC evidence (1 year after
+  //     reporting) must survive erasure requests. Ban/deactivate instead.
+  const holds = await require('../../../services/complianceService').getLegalHolds(userId);
+  if (holds.length) {
+    logger.warn('hardDeleteUser: blocked by legal hold', { erasureId, userId, actorId, holds });
+    const err = new Error(`Account is under legal hold (${holds.join(', ')}) and cannot be erased yet`);
+    err.statusCode = 409;
+    err.code = 'LEGAL_HOLD';
+    err.holds = holds;
+    throw err;
+  }
+
   // 2. PostgreSQL hard delete — FK CASCADE takes care of all child rows.
   //    The cascade relationships confirmed in migration 139 cover:
   //    user_entitlements, payments, social_posts, chat_messages (where user_id),
@@ -456,6 +468,9 @@ const adminEraseUser = async (req, res) => {
     if (err.statusCode === 404) {
       return res.status(404).json({ error: 'User not found' });
     }
+    if (err.code === 'LEGAL_HOLD') {
+      return res.status(409).json({ error: err.message, code: err.code, holds: err.holds });
+    }
     logger.error('adminEraseUser error', { userId, actorId: actor.id, err: err.message });
     return res.status(500).json({ error: 'Erasure failed' });
   }
@@ -512,6 +527,14 @@ const selfEraseAccount = async (req, res) => {
   } catch (err) {
     if (err.statusCode === 404) {
       return res.status(404).json({ error: 'User not found' });
+    }
+    if (err.code === 'LEGAL_HOLD') {
+      // Erasure rights yield to legal retention duties (GDPR art. 17(3)(b),
+      // Ley 1581 art. 9). Tell the member why and how to follow up.
+      return res.status(409).json({
+        error: 'Some of your records must be kept by law for a limited time, so your account cannot be fully erased yet. Contact legal@pnptv.app for details.',
+        code: err.code,
+      });
     }
     logger.error('selfEraseAccount error', { userId: user.id, err: err.message });
     return res.status(500).json({ error: 'Erasure failed' });

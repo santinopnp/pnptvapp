@@ -24,6 +24,7 @@ import { FeaturedModelInterstitial, PnpFamWelcomeGate } from "@/components/badge
 import { Toast } from "@/components/Toast";
 import { FaceMatchConsentHost } from "@/components/safety/FaceMatchConsentHost";
 import { PolicyUpdateModal } from "@/components/safety/PolicyUpdateModal";
+import { ContentReviewNotice } from "@/components/safety/ContentReviewNotice";
 import { useNearbyToggle } from "@/components/NearbyBadge";
 import { getMessageThreads, getHangoutGroups, markThreadAsRead, getProfile, getForYouRecommendations, followUser, getCryptoGuideStatus, getPublicCreatorProfile, toggleSuperGod, getWalletUsdcBalance, getSubscriptionPlans, getWalletBalance, getTokenPackages, updateProfile, getExchangeRates, type MessageThread, type HangoutGroup, type ForYouRecommendations, type ForYouSuggestedCreator, type ForYouSuggestedFollow, type ForYouContextHint, type CryptoGuideStatus, type CreatorPublicProfile, type SubscriptionPlan, type TokenPackage } from "@/lib/api";
 import { useTier } from "@/hooks/useTier";
@@ -2138,6 +2139,7 @@ export function Layout() {
         <>
           <PolicyUpdateModal />
           <FaceMatchConsentHost />
+          <ContentReviewNotice />
         </>
       )}
 

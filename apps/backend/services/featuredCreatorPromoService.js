@@ -70,7 +70,7 @@ async function pickAlbumPhotos(userId, max = 6) {
   const s1 = await pool.query(
     `SELECT COALESCE(thumb_url, url) AS url
        FROM creator_media
-      WHERE creator_id = $1 AND is_premium = FALSE
+      WHERE creator_id = $1 AND is_premium = FALSE AND review_status = 'approved'
       ORDER BY sort_order ASC, created_at DESC
       LIMIT $2`,
     [uid, max]

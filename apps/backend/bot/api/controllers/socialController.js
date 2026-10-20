@@ -16,6 +16,7 @@ const axios = require('axios');
 
 const { query: dbQuery } = require('../../../config/postgres');
 const NotificationEmitter = require('../../../services/notificationEmitter');
+const ContentReviewService = require('../../../services/contentReviewService');
 const mentionService = require('../../../services/mentionService');
 const { validateTierFresh } = require('../../../services/accessService');
 const { resolveUserId } = require('../../utils/helpers');
@@ -1333,7 +1334,12 @@ const createPostWithMedia = async (req, res) => {
       post.channel_id = channelId;
     }
 
-    if (!replyToId && !repostOfId && !exclusive) {
+    // Pre-publication review (card-network rules): media posts from active
+    // creators stay hidden (is_deleted) until a moderator approves them.
+    const heldForReview = !!mediaUrl && ContentReviewService.requiresReview(user);
+    if (heldForReview) await ContentReviewService.holdSocialPost(post.id, user.id);
+
+    if (!replyToId && !repostOfId && !exclusive && !heldForReview) {
       SocialPostService.mirrorToMastodon(content.toString().trim(), post.id);
     }
 
@@ -1374,8 +1380,8 @@ const createPostWithMedia = async (req, res) => {
     };
 
     setImmediate(() => {
-      if (content) mentionService.createPostMentions(post.id, user.id, content.toString().trim()).catch(() => {});
-      if (taggedPerformerIds.length) {
+      if (content && !heldForReview) mentionService.createPostMentions(post.id, user.id, content.toString().trim()).catch(() => {});
+      if (taggedPerformerIds.length && !heldForReview) {
         mentionService.createPostTags(post.id, user.id, taggedPerformerIds).catch(() => {});
       }
       // Hashtag extraction — fire-and-forget
@@ -1383,12 +1389,12 @@ const createPostWithMedia = async (req, res) => {
     });
 
     const io = req.app.get('io');
-    emitNewPost(io, fullPost, user.id);
+    if (!heldForReview) emitNewPost(io, fullPost, user.id);
 
     // Bust profile cache so the new media post appears immediately on the profile wall
     setImmediate(() => bustProfileCache(user.id));
 
-    return res.json({ success: true, post: fullPost });
+    return res.json({ success: true, post: fullPost, pendingReview: heldForReview });
   } catch (err) {
     logger.error('createPostWithMedia error', err);
     // Clean up both the multer temp file (in case sharp/watermark/thumb crashed
@@ -1731,6 +1737,11 @@ const createPostWithMultiMedia = async (req, res) => {
 
     const post = result.rows[0];
 
+    // Pre-publication review (card-network rules): media posts from active
+    // creators stay hidden (is_deleted) until a moderator approves them.
+    const heldForReview = ContentReviewService.requiresReview(user);
+    if (heldForReview) await ContentReviewService.holdSocialPost(post.id, user.id);
+
     // Set video_thumbnail_url from the first video item that has a thumbnail
     const firstVideoThumb = mediaItems.find(m => m.type === 'video' && m.thumbUrl)?.thumbUrl || null;
     if (firstVideoThumb) {
@@ -1748,7 +1759,7 @@ const createPostWithMultiMedia = async (req, res) => {
       await dbQuery('UPDATE creator_channels SET post_count = (SELECT COUNT(*) FROM social_posts WHERE channel_id = $1 AND is_deleted = false) WHERE id = $1', [channelId]);
     }
 
-    if (!replyToId && !repostOfId && !exclusive) {
+    if (!replyToId && !repostOfId && !exclusive && !heldForReview) {
       SocialPostService.mirrorToMastodon(content.toString().trim(), post.id);
     }
 
@@ -1792,8 +1803,8 @@ const createPostWithMultiMedia = async (req, res) => {
     };
 
     setImmediate(() => {
-      if (content) mentionService.createPostMentions(post.id, user.id, content.toString().trim()).catch(() => {});
-      if (taggedPerformerIds.length) {
+      if (content && !heldForReview) mentionService.createPostMentions(post.id, user.id, content.toString().trim()).catch(() => {});
+      if (taggedPerformerIds.length && !heldForReview) {
         mentionService.createPostTags(post.id, user.id, taggedPerformerIds).catch(() => {});
       }
       // Hashtag extraction — fire-and-forget
@@ -1801,12 +1812,12 @@ const createPostWithMultiMedia = async (req, res) => {
     });
 
     const io = req.app.get('io');
-    emitNewPost(io, fullPost, user.id);
+    if (!heldForReview) emitNewPost(io, fullPost, user.id);
 
     // Bust profile cache so the new media post appears immediately on the profile wall
     setImmediate(() => bustProfileCache(user.id));
 
-    return res.json({ success: true, post: fullPost });
+    return res.json({ success: true, post: fullPost, pendingReview: heldForReview });
   } catch (err) {
     logger.error('createPostWithMultiMedia error', err);
     // Clean up multer temp files (multi-file uploads land in req.files) plus

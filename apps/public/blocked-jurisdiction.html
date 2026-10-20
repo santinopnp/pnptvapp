@@ -145,11 +145,19 @@
         }
 
         var stateNames = {
-            TX: 'Texas', TN: 'Tennessee', FL: 'Florida', LA: 'Louisiana',
-            UT: 'Utah', VA: 'Virginia', IN: 'Indiana', AR: 'Arkansas',
-            MS: 'Mississippi', NC: 'North Carolina', GB: 'the United Kingdom',
+            AL: 'Alabama', AR: 'Arkansas', AZ: 'Arizona', FL: 'Florida', GA: 'Georgia',
+            ID: 'Idaho', IN: 'Indiana', KS: 'Kansas', KY: 'Kentucky', LA: 'Louisiana',
+            MO: 'Missouri', MS: 'Mississippi', MT: 'Montana', NC: 'North Carolina',
+            ND: 'North Dakota', NE: 'Nebraska', OH: 'Ohio', OK: 'Oklahoma',
+            SC: 'South Carolina', SD: 'South Dakota', TN: 'Tennessee', TX: 'Texas',
+            UT: 'Utah', VA: 'Virginia', WY: 'Wyoming', GB: 'the United Kingdom',
             CO: 'Colombia', VE: 'Venezuela'
         };
+
+        // Age-verification blocks cannot be bypassed by self-certification.
+        if (reason === 'age_verification') {
+            document.getElementById('bypass-card-self').style.display = 'none';
+        }
 
         if (j) {
             currentCountry = j;
@@ -166,6 +174,7 @@
                 document.getElementById('bypass-card-self').style.display = 'none';
             } else {
                 if (subtitle) subtitle.textContent = 'Our records show your connection is routing through ' + displayName + ', which has active age-verification laws that prevent us from serving users there.';
+                if (reason === 'age_verification' && whyText) whyText.insertAdjacentText('beforeend', ' If your mobile carrier routes your connection through ' + displayName + ' but you are physically somewhere else, try again on a home or Wi-Fi connection. Using a VPN or proxy to get around this restriction violates our Terms.');
             }
         }
 

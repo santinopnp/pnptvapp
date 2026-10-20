@@ -15,6 +15,21 @@ const JURISDICTION_LABELS: Record<string, string> = {
   NC: "North Carolina",
   TN: "Tennessee",
   FL: "Florida",
+  AL: "Alabama",
+  AZ: "Arizona",
+  GA: "Georgia",
+  ID: "Idaho",
+  KS: "Kansas",
+  KY: "Kentucky",
+  MO: "Missouri",
+  MT: "Montana",
+  ND: "North Dakota",
+  NE: "Nebraska",
+  OH: "Ohio",
+  OK: "Oklahoma",
+  SC: "South Carolina",
+  SD: "South Dakota",
+  WY: "Wyoming",
   GB: "the United Kingdom",
 };
 
@@ -23,6 +38,8 @@ export default function BlockedJurisdictionPage() {
   const navigate = useNavigate();
   const jurisdiction = searchParams.get("j");
   const isColombia = searchParams.get("reason") === "colombia" || jurisdiction === "CO";
+  // Age-verification blocks cannot be bypassed by self-certification.
+  const isAgeVerification = searchParams.get("reason") === "age_verification";
   const jurisdictionLabel = jurisdiction ? (JURISDICTION_LABELS[jurisdiction] || jurisdiction) : null;
 
   const [bypassing, setBypassing] = useState(false);
@@ -80,6 +97,13 @@ export default function BlockedJurisdictionPage() {
             </p>
           )}
 
+          {isAgeVerification ? (
+            <p className="text-xs text-left" style={{ color: "rgba(255,255,255,0.55)" }}>
+              If your mobile carrier routes your connection through a restricted region but you are
+              physically somewhere else, try again on a home or Wi-Fi connection. Using a VPN or
+              proxy to get around this restriction violates our Terms.
+            </p>
+          ) : (
           <div
             className="rounded-2xl p-4 space-y-3 text-left"
             style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}
@@ -100,6 +124,7 @@ export default function BlockedJurisdictionPage() {
               <p className="text-xs" style={{ color: "#FF453A" }}>{bypassError}</p>
             )}
           </div>
+          )}
 
           <button
             onClick={() => navigate("/login")}
