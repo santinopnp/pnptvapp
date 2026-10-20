@@ -142,20 +142,28 @@ async function findOrLinkUser({ telegramId, twitterHandle, xId, email, firstName
 
   // 1. Lookup priority: telegramId > xId > twitterHandle > email
   if (telegramId) {
-    // First: look up by telegram column (new-style users)
+    // First: look up by telegram column (new-style users) — include soft-deleted so returning users can log back in
     const { rows: byTelegram } = await query(
-      `SELECT ${RETURN_COLS} FROM users WHERE telegram = $1 AND is_deleted = false LIMIT 1`,
+      `SELECT ${RETURN_COLS}, is_deleted FROM users WHERE telegram = $1 LIMIT 1`,
       [String(telegramId)]
     );
     if (byTelegram.length > 0) {
+      if (byTelegram[0].is_deleted) {
+        await query(`UPDATE users SET is_deleted = false, updated_at = NOW() WHERE id = $1`, [byTelegram[0].id]).catch(() => {});
+        byTelegram[0].is_deleted = false;
+      }
       user = byTelegram[0];
     } else {
       // Legacy: old bot users had the Telegram numeric ID as their primary key (id column)
       const { rows: byId } = await query(
-        `SELECT ${RETURN_COLS} FROM users WHERE id = $1 AND is_deleted = false LIMIT 1`,
+        `SELECT ${RETURN_COLS}, is_deleted FROM users WHERE id = $1 LIMIT 1`,
         [String(telegramId)]
       );
       if (byId.length > 0) {
+        if (byId[0].is_deleted) {
+          await query(`UPDATE users SET is_deleted = false, updated_at = NOW() WHERE id = $1`, [byId[0].id]).catch(() => {});
+          byId[0].is_deleted = false;
+        }
         user = byId[0];
         // Migrate: backfill telegram column so future lookups are consistent
         if (!user.telegram) {
@@ -259,10 +267,16 @@ async function findOrLinkUser({ telegramId, twitterHandle, xId, email, firstName
     if (err.code === '23505') {
       if (telegramId) {
         const { rows: racedUser } = await query(
-          `SELECT ${RETURN_COLS} FROM users WHERE telegram = $1 AND is_deleted = false LIMIT 1`,
+          `SELECT ${RETURN_COLS} FROM users WHERE telegram = $1 LIMIT 1`,
           [String(telegramId)]
         );
-        if (racedUser.length > 0) return { user: racedUser[0], isNew: false };
+        if (racedUser.length > 0) {
+          if (racedUser[0].is_deleted) {
+            await query(`UPDATE users SET is_deleted = false, updated_at = NOW() WHERE id = $1`, [racedUser[0].id]).catch(() => {});
+            racedUser[0].is_deleted = false;
+          }
+          return { user: racedUser[0], isNew: false };
+        }
       }
       if (xId) {
         // x_id or x_user_id already exists — could be soft-deleted or a race condition.
