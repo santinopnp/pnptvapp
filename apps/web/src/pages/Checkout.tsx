@@ -503,7 +503,7 @@ function TokenPackageStep({ initialPkgId, onSelect }: TokenPackageStepProps) {
       <button
         type="button"
         onClick={() => onSelect(selectedPkg)}
-        className="w-full min-h-[52px] mt-2 rounded-2xl font-bold text-sm text-white transition-all duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-pnp-background focus-visible:ring-pnp-accent"
+        className="w-full h-12 mt-2 rounded-xl font-bold text-sm text-white transition-all duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-pnp-background focus-visible:ring-pnp-accent"
         style={{
           background: "linear-gradient(135deg, #D4007A, #9B00B0)",
           boxShadow: "0 4px 24px rgba(212,0,122,0.35)",
@@ -631,7 +631,7 @@ function AccountStep({ onDone, onEmailCapture }: AccountStepProps) {
             autoComplete="email"
             required
             className="w-full h-12 px-4 rounded-xl border text-pnp-textPrimary text-sm bg-pnp-surface placeholder:text-pnp-textSecondary/50 focus:outline-none focus:ring-2 focus:ring-pnp-accent transition-all"
-            style={{ borderColor: "rgba(255,255,255,0.12)" }}
+            style={{ borderColor: "#707076" }}
             aria-label="Email address"
           />
           {localError && (
@@ -643,7 +643,7 @@ function AccountStep({ onDone, onEmailCapture }: AccountStepProps) {
           <button
             type="submit"
             disabled={isSending || !email}
-            className="w-full min-h-[52px] rounded-2xl font-bold text-sm text-white transition-all duration-150 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-pnp-background focus-visible:ring-pnp-accent"
+            className="w-full h-12 rounded-xl font-bold text-sm text-white transition-all duration-150 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-pnp-background focus-visible:ring-pnp-accent"
             style={{
               background: "linear-gradient(135deg, #D4007A, #9B00B0)",
               boxShadow: "0 4px 24px rgba(212,0,122,0.35)",
@@ -670,7 +670,7 @@ function AccountStep({ onDone, onEmailCapture }: AccountStepProps) {
             autoFocus
             autoComplete="one-time-code"
             className="w-full h-14 px-4 rounded-xl border text-pnp-textPrimary text-center text-2xl font-bold tracking-widest bg-pnp-surface placeholder:text-pnp-textSecondary/30 focus:outline-none focus:ring-2 focus:ring-pnp-accent"
-            style={{ borderColor: "rgba(255,255,255,0.12)" }}
+            style={{ borderColor: "#707076" }}
             aria-label="Verification code"
           />
           {localError && (
@@ -682,7 +682,7 @@ function AccountStep({ onDone, onEmailCapture }: AccountStepProps) {
           <button
             type="submit"
             disabled={isSubmitting || code.length < 4}
-            className="w-full min-h-[52px] rounded-2xl font-bold text-sm text-white transition-all duration-150 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-pnp-background focus-visible:ring-pnp-accent"
+            className="w-full h-12 rounded-xl font-bold text-sm text-white transition-all duration-150 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-pnp-background focus-visible:ring-pnp-accent"
             style={{
               background: "linear-gradient(135deg, #D4007A, #9B00B0)",
               boxShadow: "0 4px 24px rgba(212,0,122,0.35)",
@@ -840,7 +840,7 @@ function PayStep({ label, sublabel, amountUsd, email, receiverAddress, onBack, o
           type="button"
           onClick={handlePay}
           disabled={paying}
-          className="w-full min-h-[56px] rounded-2xl font-bold text-base text-white transition-all duration-150 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-pnp-background focus-visible:ring-pnp-accent"
+          className="w-full h-12 rounded-xl font-bold text-base text-white transition-all duration-150 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-pnp-background focus-visible:ring-pnp-accent"
           style={{
             background: "linear-gradient(135deg, #D4007A, #9B00B0)",
             boxShadow: "0 4px 24px rgba(212,0,122,0.35)",
@@ -912,7 +912,7 @@ function SuccessStep({
       </div>
       <a
         href={returnUrl}
-        className="w-full min-h-[52px] rounded-2xl font-bold text-sm text-white flex items-center justify-center transition-all duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-pnp-background focus-visible:ring-pnp-accent"
+        className="w-full h-12 rounded-xl font-bold text-sm text-white flex items-center justify-center transition-all duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-pnp-background focus-visible:ring-pnp-accent"
         style={{
           background: "linear-gradient(135deg, #D4007A, #9B00B0)",
           boxShadow: "0 4px 24px rgba(212,0,122,0.35)",
@@ -1166,7 +1166,7 @@ function CheckoutInner() {
       <div
         className="w-full max-w-md rounded-2xl overflow-hidden shadow-2xl"
         style={{
-          background: "#1C1C1E",
+          background: "#181818",
           border: "1px solid rgba(255,255,255,0.08)",
           boxShadow: "0 24px 80px rgba(0,0,0,0.6), 0 0 0 1px rgba(212,0,122,0.06)",
         }}

@@ -150,6 +150,19 @@ const strings = {
     npPaymentFailed: "Payment failed. Please try again.",
     npCouldNotCreatePayment: "Could not create payment.",
     priceUnavailableReload: "Price unavailable. Please reload.",
+
+    // ── Hero banner & feature checklist (Phase 4 redesign) ───────────────────
+    heroPrimary: "Go PRIME",
+    heroSubtext: "Premium content, Prime channels and private creator calls.",
+    heroSubtextMember: "Social features, Hangouts, Nearby & community access.",
+    featFeedHangouts: "Feed, Hangouts & Explore",
+    featDm: "Direct Messages",
+    featPremiumContent: "Premium content & Prime channels",
+    featPrivateCalls: "Private calls with creators",
+    featMainStage: "Main Stage live",
+    renewsMonthly: "Renews every month. Cancel anytime.",
+    mostPopular: "Most popular",
+    saveBadge: "Save",
   },
 
   es: {
@@ -287,6 +300,19 @@ const strings = {
     npPaymentFailed: "El pago falló. Intenta de nuevo.",
     npCouldNotCreatePayment: "No se pudo crear el pago.",
     priceUnavailableReload: "Precio no disponible. Recarga la página.",
+
+    // ── Hero banner & feature checklist (Phase 4 redesign) ───────────────────
+    heroPrimary: "Hazte Prime",
+    heroSubtext: "Contenido premium, canales Prime y llamadas privadas con creadores.",
+    heroSubtextMember: "Funciones sociales, Hangouts, Nearby y acceso a la comunidad.",
+    featFeedHangouts: "Feed, Hangouts & Explore",
+    featDm: "Mensajes directos",
+    featPremiumContent: "Contenido premium y canales Prime",
+    featPrivateCalls: "Llamadas privadas con creadores",
+    featMainStage: "Main Stage en vivo",
+    renewsMonthly: "Se renueva cada mes. Cancela cuando quieras.",
+    mostPopular: "Más elegido",
+    saveBadge: "Ahorra",
   },
 
   pt: {

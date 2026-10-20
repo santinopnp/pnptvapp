@@ -543,6 +543,12 @@ export default function Subscribe() {
   const primePlans = plans.filter((p) => !MEMBER_PLAN_IDS.has(p.id) && !HIDDEN_PLAN_IDS.has(p.id));
   const promoPlans: typeof plans = [];
 
+  // Derived: is the currently selected plan a member (non-prime) tier?
+  const selectedPlanObj = plans.find((p) => p.id === selectedPlan);
+  const selectedPlanIsMember = selectedPlanObj
+    ? MEMBER_PLAN_IDS.has(selectedPlanObj.id) || (selectedPlanObj.tier || "").toLowerCase() === "member"
+    : false;
+
   return (
     <div className="page-container py-6 px-4 max-w-2xl mx-auto">
       {showTutorial && <TutorialOverlay section="subscribe" onDismiss={dismissTutorial} onDismissForever={dismissForever} />}
@@ -740,40 +746,62 @@ export default function Subscribe() {
         </details>
       )}
 
-      {/* Plan cards */}
-      <div className="space-y-3 mb-6">
+      {/* ── Hero gradient banner ─────────────────────────────────────────────── */}
+      {(primePlans.length > 0 || memberPlans.length > 0) && (
+        <div
+          className="mb-5 rounded-[20px] px-5 py-6"
+          style={{ background: "linear-gradient(115deg, #0B1436 0%, #D4007A 58%, #E69138 100%)" }}
+        >
+          <p
+            className="uppercase text-white font-bold mb-1 leading-tight"
+            style={{ fontFamily: "'Ethnocentric Rg', sans-serif", fontSize: 26 }}
+          >
+            {s.heroPrimary}
+          </p>
+          <p className="text-sm text-white leading-snug" style={{ opacity: 0.92 }}>
+            {selectedPlanIsMember ? s.heroSubtextMember : s.heroSubtext}
+          </p>
+        </div>
+      )}
+
+      {/* ── Plan cards — radio-button selector style ─────────────────────────── */}
+      <div className="space-y-3 mb-5">
 
         {memberPlans.map((plan) => {
           const isSelected = selectedPlan === plan.id;
-          const features = getPlanFeatures(plan, true);
-          const displayPrice = formatPrice(plan.price, "USD");
           const planLabel = getPlanLabel(plan, true);
           const hasAddOns = plan.addOns && plan.addOns.length > 0;
-          const cryptoDisplayPrice = formatPrice(plan.price, "USD");
-
           const planDays = plan.duration_days || plan.duration || 30;
-          const isPanelActive = false;
-          const isDimmed = false;
+
           return (
-            <div key={plan.id} className={`transition-all duration-200 ${isDimmed ? "opacity-50 pointer-events-none" : ""}`}>
             <div
+              key={plan.id}
               role="button"
               tabIndex={0}
+              aria-pressed={isSelected}
               onClick={() => setSelectedPlan(plan.id)}
               onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelectedPlan(plan.id); } }}
-              className={`w-full text-left p-4 border-2 transition-all duration-200 cursor-pointer ${
-                isPanelActive ? "rounded-t-xl rounded-b-none" : "rounded-xl"
-              } ${
+              className={`w-full text-left p-4 rounded-xl border-2 transition-all duration-200 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pnp-accent focus-visible:ring-offset-2 focus-visible:ring-offset-pnp-background ${
                 isSelected
-                  ? `border-[#D4007A] bg-[#D4007A]/10${isPanelActive ? " border-b-transparent" : ""}`
-                  : "border-white/10 bg-white/5 hover:border-white/20"
+                  ? "bg-pnp-surfaceRaised border-pnp-accent"
+                  : "bg-pnp-surface border-pnp-border hover:border-pnp-controlBorder"
               }`}
               style={{ touchAction: "manipulation", WebkitTapHighlightColor: "transparent" }}
             >
-              <div className="flex items-start justify-between mb-2">
-                <div>
+              <div className="flex items-center gap-3">
+                {/* Radio dot */}
+                <div
+                  className={`flex-shrink-0 w-[22px] h-[22px] rounded-full border-2 flex items-center justify-center transition-all ${
+                    isSelected ? "border-pnp-accent bg-pnp-accent" : "border-pnp-controlBorder bg-transparent"
+                  }`}
+                >
+                  {isSelected && <div className="w-2 h-2 rounded-full bg-white" />}
+                </div>
+
+                {/* Plan info */}
+                <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-semibold text-pnp-textPrimary">
+                    <span className="text-[15px] font-bold text-pnp-textPrimary leading-tight">
                       {plan.display_name || plan.name}
                     </span>
                     <span className={`inline-flex items-center text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${getLabelColor(planLabel)}`}>
@@ -784,74 +812,33 @@ export default function Subscribe() {
                         {s.lifetime}
                       </span>
                     )}
-                    <span className="text-[10px] font-medium tracking-wide bg-white/5 text-pnp-textSecondary border border-white/10 px-2 py-0.5 rounded-full">
-                      {s.launchRate}
-                    </span>
                   </div>
-                  <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                    <span className="text-xs text-pnp-textSecondary">{durationLabel(planDays)}</span>
-                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">{s.oneTimePayment}</span>
+                  <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                    <span className="text-xs text-pnp-textTertiary">{durationLabel(planDays)}</span>
+                    <span className="text-pnp-textTertiary text-[10px]">·</span>
+                    <span className="text-[10px] text-pnp-textTertiary">{s.oneTimePayment}</span>
                   </div>
+                  {hasAddOns && (
+                    <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[10px] text-pnp-textSecondary/70">{s.includesAddOns}</span>
+                      {plan.addOns!.map((ao) => (
+                        <span
+                          key={ao.id || ao.add_on_id}
+                          className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-white/10 text-pnp-textSecondary border border-white/10"
+                        >
+                          {addOnLabel(ao.id || ao.add_on_id, ao.name)}
+                          {ao.is_lifetime && " ∞"}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
-                <span className="flex flex-col items-end">
-                  <PriceDisplay amount={plan.price} className="text-pnp-textPrimary" />
-                </span>
-              </div>
-              <span
-                role="button"
-                tabIndex={0}
-                onClick={(e) => { e.stopPropagation(); togglePlanBenefits(plan.id); }}
-                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.stopPropagation(); e.preventDefault(); togglePlanBenefits(plan.id); } }}
-                className="inline-flex items-center gap-1 mt-1 text-xs font-semibold text-[#D4007A] hover:text-[#E69138] transition-colors cursor-pointer"
-                aria-expanded={expandedPlans.has(plan.id)}
-              >
-                {expandedPlans.has(plan.id) ? s.hideBenefits : s.showBenefits}
-                <svg
-                  className={`w-3 h-3 transition-transform ${expandedPlans.has(plan.id) ? "rotate-180" : ""}`}
-                  fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}
-                >
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                </svg>
-              </span>
-              {expandedPlans.has(plan.id) && (
-                <ul className="space-y-1 mt-2">
-                  {features.map((f, i) => (
-                    <li key={i} className="flex items-center gap-2 text-xs text-pnp-textSecondary">
-                      <svg className="w-3 h-3 text-[#D4007A] flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                      </svg>
-                      {f}
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {hasAddOns && (
-                <div className="mt-2 pt-2 border-t border-white/5 flex items-center gap-1.5 flex-wrap">
-                  <span className="text-[10px] text-pnp-textSecondary/70">{s.includesAddOns}</span>
-                  {plan.addOns!.map((ao) => (
-                    <span
-                      key={ao.id || ao.add_on_id}
-                      className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-white/10 text-pnp-textSecondary border border-white/10"
-                    >
-                      {addOnLabel(ao.id || ao.add_on_id, ao.name)}
-                      {ao.is_lifetime && " ∞"}
-                    </span>
-                  ))}
-                </div>
-              )}
 
-              {/* Quick-pay buttons */}
-              <div className="mt-3 pt-3 border-t border-white/5 space-y-2" onClick={(e) => e.stopPropagation()}>
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); window.location.href = `/checkout?plan=${plan.id}`; }}
-                  className="w-full py-3 rounded-xl font-bold text-sm text-white transition-all active:scale-[0.98]"
-                  style={{ background: "linear-gradient(135deg, #D4007A, #9B00B0)", minHeight: 48 }}
-                >
-                  Pay with card
-                </button>
+                {/* Price */}
+                <div className="flex-shrink-0 text-right">
+                  <PriceDisplay amount={plan.price} className="text-pnp-textPrimary" />
+                </div>
               </div>
-            </div>
             </div>
           );
         })}
@@ -859,45 +846,64 @@ export default function Subscribe() {
         {primePlans.map((plan) => {
           const isSelected = selectedPlan === plan.id;
           const isRecommended = plan.id === recommendedPlanId || plan.sku === recommendedPlanId;
-          const features = getPlanFeatures(plan, false);
-          const displayPrice = formatPrice(plan.price, "USD");
           const planLabel = getPlanLabel(plan, false);
           const hasAddOns = plan.addOns && plan.addOns.length > 0;
           const planDays = plan.duration_days || plan.duration || 30;
-          const cryptoDisplayPrice = formatPrice(plan.price, "USD");
 
-          const isPanelActive = false;
-          const isDimmed = false;
-          const primeBtnClass = [
-            "w-full text-left p-4 border-2 transition-all duration-200",
-            isPanelActive ? "rounded-t-xl rounded-b-none" : "rounded-xl",
-            isSelected
-              ? "border-[#D4007A] bg-[#D4007A]/10" + (isPanelActive ? " border-b-transparent" : "")
-              : "border-white/10 bg-white/5 hover:border-white/20",
-            isRecommended ? "ring-1 ring-[#FFB454]/40" : "",
-          ].join(" ");
+          // Compute per-month price for multi-month plans
+          const perMonthPrice = (planDays >= 60 && planDays < 36500)
+            ? formatPrice(plan.price / Math.max(1, Math.round(planDays / 30)), "USD")
+            : null;
+
+          // Savings tag: compare to monthly prime plan price if we can find it
+          const monthlyPrimePlan = primePlans.find((p) => {
+            const d = p.duration_days || p.duration || 0;
+            return d >= 25 && d <= 40;
+          });
+          const monthlyEquivalent = monthlyPrimePlan && planDays >= 60 && planDays < 36500
+            ? monthlyPrimePlan.price * Math.round(planDays / 30)
+            : null;
+          const savings = monthlyEquivalent && monthlyEquivalent > plan.price
+            ? formatPrice(monthlyEquivalent - plan.price, "USD")
+            : null;
+
           return (
-            <div key={plan.id} className={`transition-all duration-200 ${isDimmed ? "opacity-50 pointer-events-none" : ""}`}>
             <div
+              key={plan.id}
               role="button"
               tabIndex={0}
+              aria-pressed={isSelected}
               onClick={() => setSelectedPlan(plan.id)}
               onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelectedPlan(plan.id); } }}
-              className={`cursor-pointer ${primeBtnClass}`}
+              className={`w-full text-left p-4 rounded-xl border-2 transition-all duration-200 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pnp-accent focus-visible:ring-offset-2 focus-visible:ring-offset-pnp-background ${
+                isSelected
+                  ? "bg-pnp-surfaceRaised border-pnp-accent"
+                  : "bg-pnp-surface border-pnp-border hover:border-pnp-controlBorder"
+              }`}
               style={{ touchAction: "manipulation", WebkitTapHighlightColor: "transparent" }}
             >
-              <div className="flex items-start justify-between mb-2">
-                <div>
+              <div className="flex items-center gap-3">
+                {/* Radio dot */}
+                <div
+                  className={`flex-shrink-0 w-[22px] h-[22px] rounded-full border-2 flex items-center justify-center transition-all ${
+                    isSelected ? "border-pnp-accent bg-pnp-accent" : "border-pnp-controlBorder bg-transparent"
+                  }`}
+                >
+                  {isSelected && <div className="w-2 h-2 rounded-full bg-white" />}
+                </div>
+
+                {/* Plan info */}
+                <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-semibold text-pnp-textPrimary">
+                    <span className="text-[15px] font-bold text-pnp-textPrimary leading-tight">
                       {plan.display_name || plan.name}
                     </span>
                     <span className={`inline-flex items-center text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${getLabelColor(planLabel)}`}>
                       {planLabel}
                     </span>
                     {isRecommended && (
-                      <span className="text-[10px] font-bold uppercase tracking-wider bg-[#FFB454] text-[#1C1C1E] px-2 py-0.5 rounded-full">
-                        {s.bestValue}
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-pnp-accent text-white">
+                        {s.mostPopular}
                       </span>
                     )}
                     {isLifetimePlan(plan) && !isRecommended && (
@@ -905,92 +911,107 @@ export default function Subscribe() {
                         {s.lifetime}
                       </span>
                     )}
-                    <span className="text-[10px] font-medium tracking-wide bg-white/5 text-pnp-textSecondary border border-white/10 px-2 py-0.5 rounded-full">
-                      {s.launchRate}
-                    </span>
+                    {savings && !isRecommended && (
+                      <span
+                        className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+                        style={{ background: "rgba(52,199,89,0.14)", color: "#34C759" }}
+                      >
+                        {s.saveBadge} {savings}
+                      </span>
+                    )}
                   </div>
-                  <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                    <span className="text-xs text-pnp-textSecondary">{durationLabel(planDays)}</span>
-                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">{s.oneTimePayment}</span>
+                  <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                    <span className="text-xs text-pnp-textTertiary">{durationLabel(planDays)}</span>
+                    {perMonthPrice && (
+                      <>
+                        <span className="text-pnp-textTertiary text-[10px]">·</span>
+                        <span className="text-[10px] text-pnp-textTertiary">{perMonthPrice}{s.perMonth}</span>
+                      </>
+                    )}
+                    <span className="text-pnp-textTertiary text-[10px]">·</span>
+                    <span className="text-[10px] text-pnp-textTertiary">{s.oneTimePayment}</span>
                   </div>
-                </div>
-                <div className="text-right">
-                  <div className="flex flex-col items-end">
-                    <PriceDisplay amount={plan.price} className="text-pnp-textPrimary" />
-                  </div>
-                  {planDays >= 30 && planDays < 36500 && (
-                    <div className="text-[10px] text-pnp-textSecondary">
-                      {formatPrice(plan.price / Math.max(1, Math.round(planDays / 30)), "USD")}{s.perMonth}
+                  {hasAddOns && (
+                    <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[10px] text-pnp-textSecondary/70">{s.includesAddOns}</span>
+                      {plan.addOns!.map((ao) => (
+                        <span
+                          key={ao.id || ao.add_on_id}
+                          className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-white/10 text-pnp-textSecondary border border-white/10"
+                        >
+                          {addOnLabel(ao.id || ao.add_on_id, ao.name)}
+                          {ao.is_lifetime && " ∞"}
+                        </span>
+                      ))}
                     </div>
                   )}
                 </div>
-              </div>
 
-              <span
-                role="button"
-                tabIndex={0}
-                onClick={(e) => { e.stopPropagation(); togglePlanBenefits(plan.id); }}
-                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.stopPropagation(); e.preventDefault(); togglePlanBenefits(plan.id); } }}
-                className="inline-flex items-center gap-1 mt-1 text-xs font-semibold text-[#D4007A] hover:text-[#E69138] transition-colors cursor-pointer"
-                aria-expanded={expandedPlans.has(plan.id)}
-              >
-                {expandedPlans.has(plan.id) ? s.hideBenefits : s.showBenefits}
-                <svg
-                  className={`w-3 h-3 transition-transform ${expandedPlans.has(plan.id) ? "rotate-180" : ""}`}
-                  fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}
-                >
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                </svg>
-              </span>
-              {expandedPlans.has(plan.id) && (
-                <>
-                  {/* "Everything in Member plus:" header for PRIME plans */}
-                  <p className="text-[10px] text-pnp-textSecondary/70 mt-2 mb-1.5">{s.everythingInMemberPlus}</p>
-
-                  <ul className="space-y-1">
-                    {features.map((f, i) => (
-                      <li key={i} className="flex items-center gap-2 text-xs text-pnp-textSecondary">
-                        <svg className="w-3 h-3 text-[#D4007A] flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                        </svg>
-                        {f}
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              )}
-
-              {hasAddOns && (
-                <div className="mt-2 pt-2 border-t border-white/5 flex items-center gap-1.5 flex-wrap">
-                  <span className="text-[10px] text-pnp-textSecondary/70">{s.includesAddOns}</span>
-                  {plan.addOns!.map((ao) => (
-                    <span
-                      key={ao.id || ao.add_on_id}
-                      className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-white/10 text-pnp-textSecondary border border-white/10"
-                    >
-                      {addOnLabel(ao.id || ao.add_on_id, ao.name)}
-                      {ao.is_lifetime && " ∞"}
-                    </span>
-                  ))}
+                {/* Price */}
+                <div className="flex-shrink-0 text-right">
+                  <PriceDisplay amount={plan.price} className="text-pnp-textPrimary" />
                 </div>
-              )}
-
-              {/* Quick-pay buttons */}
-              <div className="mt-3 pt-3 border-t border-white/5 space-y-2" onClick={(e) => e.stopPropagation()}>
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); window.location.href = `/checkout?plan=${plan.id}`; }}
-                  className="w-full py-3 rounded-xl font-bold text-sm text-white transition-all active:scale-[0.98]"
-                  style={{ background: "linear-gradient(135deg, #D4007A, #9B00B0)", minHeight: 48 }}
-                >
-                  Pay with card
-                </button>
               </div>
-            </div>
             </div>
           );
         })}
       </div>
+
+      {/* ── Feature checklist ────────────────────────────────────────────────── */}
+      {(memberPlans.length > 0 || primePlans.length > 0) && (() => {
+        const isPrime = !selectedPlanIsMember;
+        const features: Array<{ label: string; included: boolean }> = [
+          { label: s.featFeedHangouts, included: true },
+          { label: s.featDm, included: true },
+          { label: s.featPremiumContent, included: isPrime },
+          { label: s.featPrivateCalls, included: isPrime },
+          { label: s.featMainStage, included: isPrime },
+        ];
+        return (
+          <div className="mb-5 rounded-xl bg-pnp-surface border border-pnp-border p-4 space-y-3">
+            {features.map(({ label, included }) => (
+              <div key={label} className="flex items-center gap-3">
+                {included ? (
+                  <svg className="w-[18px] h-[18px] flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="#34C759" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M5 12.5l4.5 4.5L19 7.5" />
+                  </svg>
+                ) : (
+                  <svg className="w-[18px] h-[18px] flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="#707076" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M7 7l10 10M17 7L7 17" />
+                  </svg>
+                )}
+                <span
+                  className={`text-sm leading-tight ${
+                    included ? "text-pnp-textPrimary" : "text-pnp-controlBorder line-through"
+                  }`}
+                >
+                  {label}
+                </span>
+              </div>
+            ))}
+          </div>
+        );
+      })()}
+
+      {/* ── Footer CTA — single pay button for selected plan ─────────────────── */}
+      {selectedPlan && (() => {
+        const plan = plans.find((p) => p.id === selectedPlan);
+        if (!plan) return null;
+        return (
+          <div className="mb-5">
+            <button
+              type="button"
+              onClick={() => { window.location.href = `/checkout?plan=${plan.id}`; }}
+              className="w-full h-12 rounded-xl bg-pnp-accent hover:bg-pnp-accentHover active:scale-[0.98] transition-all duration-150 font-semibold text-base text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pnp-accent focus-visible:ring-offset-2 focus-visible:ring-offset-pnp-background"
+            >
+              {t.lang === "es" ? "Continuar" : "Continue"}
+            </button>
+            <p className="mt-2 text-center text-xs text-pnp-textTertiary">
+              {s.renewsMonthly}
+            </p>
+          </div>
+        );
+      })()}
 
       {/* Payment polling indicator */}
       {pollingPaymentId && (

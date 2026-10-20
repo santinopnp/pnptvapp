@@ -1097,7 +1097,7 @@ export default function Profile() {
   const accentBorder = customTheme?.border ?? (isFounder ? "rgba(255,180,84,0.4)" : isPerformer ? "rgba(94,209,196,0.35)" : "rgba(255,255,255,0.1)");
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-6">
+    <div className="max-w-2xl mx-auto px-4 pb-6">
       <Helmet>
         <title>{profile ? `${profile.display_name || profile.username} — PNPtv!` : "Profile — PNPtv!"}</title>
         <meta name="description" content={profile ? `${profile.display_name || profile.username}'s profile on PNPtv.` : "User profile on PNPtv."} />
@@ -1108,6 +1108,29 @@ export default function Profile() {
         <div className="my-3 flex justify-center"><AdSlot slot="sidebar_desktop" /></div>
       )}
       {!isOwnProfile && showCreatorTutorial && <TutorialOverlay section="creatorProfile" onDismiss={dismissCreatorTutorial} onDismissForever={dismissCreatorForever} />}
+      {/* ── "Tú" sticky page header — own profile only, matches redesign spec ── */}
+      {isOwnProfile && !effectiveParamId && (
+        <div
+          className="sticky top-0 z-30 -mx-4 px-3 mb-4 flex items-center h-[60px] gap-3 border-b border-pnp-border"
+          style={{ background: "var(--pnp-background)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)" }}
+        >
+          <button
+            onClick={() => navigate(-1)}
+            className="flex items-center justify-center w-9 h-9 rounded-full transition-colors hover:bg-pnp-surface active:scale-95"
+            aria-label={p.back}
+            style={{ color: "var(--pnp-text-secondary)", flexShrink: 0 }}
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+            </svg>
+          </button>
+          <h1 className="flex-1 text-base font-bold tracking-widest uppercase text-pnp-textPrimary text-center" style={{ letterSpacing: "0.12em" }}>
+            {t.nav.you}
+          </h1>
+          {/* Spacer to keep title visually centered */}
+          <div className="w-9 h-9 flex-shrink-0" aria-hidden="true" />
+        </div>
+      )}
       {/* ── Back button for public profiles — sticky so it stays visible while scrolling ── */}
       {effectiveParamId && (
         <div className="sticky top-0 z-30 -mx-4 px-4 py-2 mb-2 backdrop-blur-sm" style={{ background: "var(--pnp-background)" }}>
@@ -1609,8 +1632,8 @@ export default function Profile() {
               <div className="flex gap-2">
                 <button
                   onClick={() => setEditOpen(true)}
-                  className="flex-1 min-h-[40px] py-2 rounded-lg text-sm font-semibold text-white transition-opacity hover:opacity-90"
-                  style={{ background: accentGradient }}
+                  className="flex-1 h-9 rounded-xl text-sm font-semibold text-pnp-textPrimary transition-colors hover:bg-pnp-surfaceHover active:scale-[0.98]"
+                  style={{ background: "#1F1F1F", border: "1px solid #707076" }}
                 >
                   {p.editProfile}
                 </button>

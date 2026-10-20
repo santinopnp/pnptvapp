@@ -1477,7 +1477,7 @@ export function Layout() {
       {/* ── Desktop sidebar ─────────────────────────────────────────────────── */}
       <aside className="hidden lg:fixed lg:inset-y-0 lg:left-0 lg:flex lg:w-72 lg:flex-col border-r border-pnp-border glass-nav">
         {/* Sidebar header */}
-        <div className="flex items-center justify-between px-5 h-16 border-b border-pnp-border">
+        <div className="flex items-center justify-between px-5 h-[60px] border-b border-pnp-border">
           <div className="flex items-center gap-2 shrink-0">
             <img src="/logo-lockup.webp" alt="PNPtv!" className="h-9 w-auto shrink-0 object-contain" />
           </div>
@@ -1726,7 +1726,7 @@ export function Layout() {
       </aside>
 
       {/* ── Mobile topbar ────────────────────────────────────────────────────── */}
-      <header className="lg:hidden sticky top-0 z-40 h-14 flex items-center justify-between px-3 glass-nav border-b border-pnp-border">
+      <header className="lg:hidden sticky top-0 z-40 h-[60px] flex items-center justify-between px-3 glass-nav border-b border-pnp-border">
         {/* Left: logo + optional GOD MODE badge (click to toggle) */}
         <div className="flex items-center gap-2">
           <img src="/logo-lockup.webp" alt="PNPtv!" className="h-8 w-auto max-w-[110px] object-contain" />
@@ -1789,12 +1789,11 @@ export function Layout() {
             <LanguageSelector position="topbar" variant="chip" />
           </div>
 
-          {/* Avatar — opens profile/settings menu */}
+          {/* Avatar — navigates to profile ("Tú") screen */}
           <button
-            onClick={() => setMobileMenuOpen(true)}
+            onClick={() => navigate("/profile")}
             className="relative ml-1 rounded-full transition-transform active:scale-95"
-            aria-label="Open profile menu"
-            aria-expanded={mobileMenuOpen}
+            aria-label="View your profile"
           >
             {user?.photoUrl && (user.photoUrl.startsWith("/") || user.photoUrl.startsWith("http")) ? (
               <img

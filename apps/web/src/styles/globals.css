@@ -36,22 +36,31 @@
    packages/ui-kit/src/theme.ts. Default values match the dark theme. The
    `[data-theme="light"]` block overrides them when the user opts in. */
 :root {
-  --pnp-background:    #121212;
-  --pnp-surface:       #1E1E1E;
-  --pnp-surface-hover: #2A2A2A;
-  --pnp-text-primary:  #FFFFFF;
-  --pnp-text-secondary:#A1A1A3;
-  --pnp-border:        #2A2A2A;
+  --pnp-background:     #121212;
+  --pnp-surface:        #181818;
+  --pnp-surface-raised: #1F1F1F;
+  --pnp-surface-hover:  #2A2A2A;
+  --pnp-text-primary:   #F5F5F5;
+  --pnp-text-secondary: #A1A1A3;
+  --pnp-text-tertiary:  #8A8A8E;
+  --pnp-border:         #2A2A2A;
+  --pnp-control-border: #707076;
+  --pnp-night:          #0B1436;
+  --pnp-gradient-hero:  linear-gradient(115deg, #0B1436 0%, #D4007A 58%, #E69138 100%);
+  --pnp-gradient-brand: linear-gradient(135deg, #D4007A, #E69138);
   color-scheme: dark;
 }
 
 :root[data-theme="light"] {
-  --pnp-background:    #FFFFFF;
-  --pnp-surface:       #F5F5F7;
-  --pnp-surface-hover: #E8E8EB;
-  --pnp-text-primary:  #1C1C1E;
-  --pnp-text-secondary:#5A5A60;
-  --pnp-border:        #D7D7DC;
+  --pnp-background:     #FFFFFF;
+  --pnp-surface:        #F7F7F8;
+  --pnp-surface-raised: #EFEFF1;
+  --pnp-surface-hover:  #E8E8EB;
+  --pnp-text-primary:   #111113;
+  --pnp-text-secondary: #5C5C63;
+  --pnp-text-tertiary:  #62626A;
+  --pnp-border:         #E2E2E6;
+  --pnp-control-border: #8A8A90;
   color-scheme: light;
 }
 
@@ -107,7 +116,7 @@
 
   body {
     @apply bg-pnp-background text-pnp-textPrimary;
-    font-family: "Roboto Mono", monospace;
+    font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
     -webkit-user-select: none;
     user-select: none;
     -webkit-touch-callout: none;
@@ -223,7 +232,7 @@
 
   /* Glassmorphism utilities */
   .glass-card {
-    background: rgba(30, 30, 30, 0.7);
+    background: rgba(24, 24, 24, 0.7);
     border: 1px solid rgba(212, 0, 122, 0.3);
     border-radius: 24px;
     backdrop-filter: blur(20px);
@@ -249,7 +258,7 @@
   }
 
   .glass-card-sm {
-    background: rgba(30, 30, 30, 0.5);
+    background: rgba(24, 24, 24, 0.8);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 16px;
     backdrop-filter: blur(12px);
