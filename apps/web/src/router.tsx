@@ -406,7 +406,6 @@ const Onboarding = lazy(() => import("@/pages/Onboarding"));
 const Models = lazy(() => import("@/pages/Models"));
 const BookCreator = lazy(() => import("@/pages/BookCreator"));
 const BookParche = lazy(() => import("@/pages/BookParche"));
-const Checkout = lazy(() => import("@/pages/Checkout"));
 
 export const router = createBrowserRouter([
   {
@@ -1456,8 +1455,6 @@ export const router = createBrowserRouter([
       </ModuleLoader>
     ),
   },
-  // NOTE: /checkout is NOT in this router — it's handled by the App() early-exit
-  // before the main PrivyProvider mounts (Checkout has its own PrivyProvider).
   { path: "/lifetime80", element: <Navigate to="/yearly50" replace /> },
   // /lifetime100 consolidated into /yearly50 (same $50, cleaner funnel).
   // Kept as a client-side Navigate so SPA deep-links still land correctly;

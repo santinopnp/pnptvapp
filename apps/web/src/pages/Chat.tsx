@@ -3,12 +3,15 @@ import React, {
   useEffect,
   useRef,
   useCallback,
+  useMemo,
 } from "react";
 import { createPortal } from "react-dom";
 import { Helmet } from "react-helmet-async";
 import { useNavigate, useParams } from "react-router-dom";
 import { PreJoin, type LocalUserChoices } from "@livekit/components-react";
 import "@livekit/components-styles";
+import Picker from "@emoji-mart/react";
+import data from "@emoji-mart/data";
 import { useAuth } from "@/hooks/useAuth";
 import { useTier } from "@/hooks/useTier";
 import { useTutorial } from "@/hooks/useTutorial";
@@ -148,6 +151,322 @@ const UX_STYLES = `
   animation: slideUpSheet 0.22s cubic-bezier(0.32, 0.72, 0, 1);
 }
 `;
+
+// ─── Poll types ──────────────────────────────────────────────────────────────
+
+interface PollOption { id: string; text: string; }
+interface PollResult { optionId: string; count: number; }
+interface PollData {
+  id: string;
+  question: string;
+  options: PollOption[];
+  allow_multiple: boolean;
+  closes_at?: string | null;
+  results: PollResult[];
+  totalVotes: number;
+  userVote: string[] | null;
+}
+
+// ─── PollMessage ─────────────────────────────────────────────────────────────
+
+function PollMessage({
+  poll,
+  onVote,
+  isMe,
+}: {
+  poll: PollData;
+  onVote: (pollId: string, optionIds: string[]) => void;
+  isMe: boolean;
+}) {
+  const isClosed = !!poll.closes_at && new Date(poll.closes_at) < new Date();
+  const hasVoted = Array.isArray(poll.userVote) && poll.userVote.length > 0;
+  const showResults = hasVoted || isClosed;
+
+  const [localSelected, setLocalSelected] = React.useState<string[]>([]);
+
+  const handleOptionClick = (optionId: string) => {
+    if (showResults || isClosed) return;
+    if (poll.allow_multiple) {
+      setLocalSelected((prev) =>
+        prev.includes(optionId) ? prev.filter((id) => id !== optionId) : [...prev, optionId]
+      );
+    } else {
+      onVote(poll.id, [optionId]);
+    }
+  };
+
+  const handleSubmitMultiple = () => {
+    if (localSelected.length === 0) return;
+    onVote(poll.id, localSelected);
+  };
+
+  const totalVotes = poll.totalVotes || 0;
+
+  return (
+    <div
+      className="rounded-xl overflow-hidden"
+      style={{
+        background: isMe ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.06)",
+        border: "1px solid rgba(255,255,255,0.10)",
+        minWidth: 200,
+        maxWidth: 320,
+      }}
+    >
+      {/* Header */}
+      <div
+        className="px-3 pt-2.5 pb-1.5 flex items-center gap-2"
+        style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}
+      >
+        <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: "#7B61FF" }}>Poll</span>
+        {isClosed && (
+          <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold uppercase" style={{ background: "rgba(142,142,147,0.2)", color: "#8E8E93" }}>Closed</span>
+        )}
+      </div>
+      {/* Question */}
+      <div className="px-3 pt-2 pb-1">
+        <p className="text-sm font-semibold text-white leading-snug">{poll.question}</p>
+      </div>
+      {/* Options */}
+      <div className="px-3 pb-2 space-y-1.5">
+        {poll.options.map((opt) => {
+          const result = poll.results.find((r) => r.optionId === opt.id);
+          const count = result?.count ?? 0;
+          const pct = totalVotes > 0 ? Math.round((count / totalVotes) * 100) : 0;
+          const isUserChoice = (poll.userVote || []).includes(opt.id);
+          const isLocalSelected = localSelected.includes(opt.id);
+
+          if (showResults) {
+            return (
+              <div key={opt.id} className="relative rounded-lg overflow-hidden" style={{ background: "rgba(255,255,255,0.05)" }}>
+                {/* Progress bar */}
+                <div
+                  className="absolute inset-y-0 left-0 transition-all duration-700"
+                  style={{
+                    width: `${pct}%`,
+                    background: isUserChoice
+                      ? "linear-gradient(90deg, rgba(212,0,122,0.35), rgba(123,97,255,0.25))"
+                      : "rgba(255,255,255,0.07)",
+                  }}
+                />
+                <div className="relative flex items-center justify-between px-2.5 py-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    {isUserChoice && (
+                      <svg className="w-3 h-3 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20" style={{ color: "#D4007A" }}>
+                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                      </svg>
+                    )}
+                    <span className={`text-xs leading-snug ${isUserChoice ? "font-semibold text-white" : "text-white/80"}`}>{opt.text}</span>
+                  </div>
+                  <span className="text-[11px] font-bold tabular-nums ml-2 flex-shrink-0" style={{ color: isUserChoice ? "#D4007A" : "#8E8E93" }}>{pct}%</span>
+                </div>
+              </div>
+            );
+          }
+
+          // Voting UI
+          return (
+            <button
+              key={opt.id}
+              type="button"
+              onClick={() => handleOptionClick(opt.id)}
+              className="w-full rounded-lg px-3 py-2 text-left text-xs font-medium transition-all active:scale-[0.98] flex items-center gap-2"
+              style={{
+                background: isLocalSelected
+                  ? "linear-gradient(135deg, rgba(212,0,122,0.25), rgba(123,97,255,0.20))"
+                  : "rgba(255,255,255,0.06)",
+                border: isLocalSelected
+                  ? "1px solid rgba(212,0,122,0.5)"
+                  : "1px solid rgba(255,255,255,0.08)",
+                color: isLocalSelected ? "#fff" : "rgba(255,255,255,0.80)",
+              }}
+            >
+              {poll.allow_multiple && (
+                <span
+                  className="w-4 h-4 rounded flex-shrink-0 flex items-center justify-center"
+                  style={{
+                    background: isLocalSelected ? "#D4007A" : "rgba(255,255,255,0.08)",
+                    border: isLocalSelected ? "1px solid #D4007A" : "1px solid rgba(255,255,255,0.2)",
+                  }}
+                >
+                  {isLocalSelected && (
+                    <svg className="w-2.5 h-2.5 text-white" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                    </svg>
+                  )}
+                </span>
+              )}
+              {!poll.allow_multiple && (
+                <span
+                  className="w-4 h-4 rounded-full flex-shrink-0"
+                  style={{
+                    border: isLocalSelected ? "4px solid #D4007A" : "2px solid rgba(255,255,255,0.25)",
+                  }}
+                />
+              )}
+              {opt.text}
+            </button>
+          );
+        })}
+        {/* Submit button for multiple-choice */}
+        {poll.allow_multiple && !showResults && !isClosed && (
+          <button
+            type="button"
+            onClick={handleSubmitMultiple}
+            disabled={localSelected.length === 0}
+            className="w-full rounded-lg py-2 text-xs font-bold text-white transition-all active:scale-[0.98] disabled:opacity-30 mt-1"
+            style={{ background: "linear-gradient(135deg, #D4007A, #7B61FF)" }}
+          >
+            Vote
+          </button>
+        )}
+      </div>
+      {/* Footer */}
+      <div className="px-3 pb-2.5">
+        <p className="text-[10px]" style={{ color: "#8E8E93" }}>
+          {totalVotes} {totalVotes === 1 ? "vote" : "votes"}
+          {poll.allow_multiple && !hasVoted && !isClosed && " · multiple answers allowed"}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ─── PollComposer ─────────────────────────────────────────────────────────────
+
+function PollComposer({
+  onSubmit,
+  onClose,
+}: {
+  onSubmit: (question: string, options: string[], allowMultiple: boolean) => void;
+  onClose: () => void;
+}) {
+  const [question, setQuestion] = React.useState("");
+  const [options, setOptions] = React.useState(["", ""]);
+  const [allowMultiple, setAllowMultiple] = React.useState(false);
+
+  const addOption = () => {
+    if (options.length < 4) setOptions((prev) => [...prev, ""]);
+  };
+  const removeOption = (idx: number) => {
+    if (options.length <= 2) return;
+    setOptions((prev) => prev.filter((_, i) => i !== idx));
+  };
+  const updateOption = (idx: number, val: string) => {
+    setOptions((prev) => prev.map((o, i) => (i === idx ? val : o)));
+  };
+
+  const canSubmit = question.trim().length >= 1 && options.filter((o) => o.trim()).length >= 2;
+
+  const handleSubmit = () => {
+    if (!canSubmit) return;
+    onSubmit(
+      question.trim(),
+      options.filter((o) => o.trim()),
+      allowMultiple
+    );
+  };
+
+  return (
+    <div
+      className="mx-2 mb-1 rounded-2xl p-3 flex-shrink-0"
+      style={{ background: "rgba(0,0,0,0.88)", border: "1px solid rgba(123,97,255,0.35)" }}
+    >
+      <div className="flex items-center justify-between mb-2.5">
+        <p className="text-[11px] font-bold uppercase tracking-wide" style={{ color: "#7B61FF" }}>New Poll</p>
+        <button
+          type="button"
+          onClick={onClose}
+          className="w-6 h-6 flex items-center justify-center rounded-full hover:bg-white/10 text-white/40 hover:text-white/70 transition-colors"
+          aria-label="Close poll composer"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+      {/* Question */}
+      <input
+        type="text"
+        value={question}
+        onChange={(e) => setQuestion(e.target.value.slice(0, 200))}
+        placeholder="Ask a question…"
+        className="w-full text-sm text-white placeholder-white/30 rounded-xl px-3 py-2 mb-2 outline-none focus:ring-1"
+        style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.10)", focusRingColor: "#7B61FF" }}
+        maxLength={200}
+        autoFocus
+      />
+      {/* Options */}
+      <div className="space-y-1.5 mb-2">
+        {options.map((opt, idx) => (
+          <div key={idx} className="flex items-center gap-1.5">
+            <span className="w-5 h-5 rounded-full flex-shrink-0 flex items-center justify-center text-[10px] font-bold" style={{ background: "rgba(123,97,255,0.2)", color: "#7B61FF" }}>{idx + 1}</span>
+            <input
+              type="text"
+              value={opt}
+              onChange={(e) => updateOption(idx, e.target.value.slice(0, 80))}
+              placeholder={`Option ${idx + 1}`}
+              className="flex-1 text-sm text-white placeholder-white/30 rounded-lg px-2.5 py-1.5 outline-none"
+              style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.08)" }}
+              maxLength={80}
+            />
+            {options.length > 2 && (
+              <button
+                type="button"
+                onClick={() => removeOption(idx)}
+                className="w-6 h-6 flex items-center justify-center rounded-full hover:bg-red-500/20 text-white/30 hover:text-red-400 transition-colors flex-shrink-0"
+                aria-label={`Remove option ${idx + 1}`}
+              >
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
+          </div>
+        ))}
+        {options.length < 4 && (
+          <button
+            type="button"
+            onClick={addOption}
+            className="flex items-center gap-1.5 text-[11px] font-semibold transition-colors"
+            style={{ color: "#7B61FF" }}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+            </svg>
+            Add option
+          </button>
+        )}
+      </div>
+      {/* Allow multiple toggle */}
+      <button
+        type="button"
+        onClick={() => setAllowMultiple((v) => !v)}
+        className="flex items-center gap-2 mb-3 w-full"
+        aria-pressed={allowMultiple}
+      >
+        <span
+          className="relative w-8 h-4 rounded-full flex-shrink-0 transition-colors"
+          style={{ background: allowMultiple ? "#7B61FF" : "rgba(255,255,255,0.12)" }}
+        >
+          <span
+            className="absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform"
+            style={{ left: allowMultiple ? "calc(100% - 14px)" : "2px" }}
+          />
+        </span>
+        <span className="text-[11px] text-white/60">Allow multiple answers</span>
+      </button>
+      <button
+        type="button"
+        onClick={handleSubmit}
+        disabled={!canSubmit}
+        className="w-full rounded-xl py-2 text-xs font-bold text-white transition-all active:scale-[0.98] disabled:opacity-30"
+        style={{ background: "linear-gradient(135deg, #7B61FF, #D4007A)" }}
+      >
+        Create Poll
+      </button>
+    </div>
+  );
+}
 
 // ─── HangoutChatPanel (PostgreSQL + Socket.IO) ──────────────────────────────
 
@@ -326,6 +645,62 @@ function HangoutChatPanel({
   const [tipNeedsTopUp, setTipNeedsTopUp] = useState(false);
   const [showTopUpModal, setShowTopUpModal] = useState(false);
 
+  // Poll state
+  const [showPollComposer, setShowPollComposer] = useState(false);
+  const [pollSending, setPollSending] = useState(false);
+
+  // Composer emoji picker (emoji-mart) state
+  const [showComposerEmoji, setShowComposerEmoji] = useState(false);
+  const composerEmojiRef = useRef<HTMLDivElement>(null);
+
+  // Text formatting
+  const handleFormatText = useCallback((marker: string, closeMarker?: string) => {
+    const el = inputRef.current;
+    if (!el) return;
+    const start = el.selectionStart ?? 0;
+    const end = el.selectionEnd ?? 0;
+    const close = closeMarker ?? marker;
+    const before = inputText.slice(0, start);
+    const selected = inputText.slice(start, end);
+    const after = inputText.slice(end);
+    if (selected.length > 0) {
+      const newText = before + marker + selected + close + after;
+      setInputText(newText);
+      setTimeout(() => {
+        el.focus();
+        el.setSelectionRange(start + marker.length, end + marker.length);
+      }, 0);
+    } else {
+      const newText = before + marker + close + after;
+      setInputText(newText);
+      setTimeout(() => {
+        el.focus();
+        const pos = start + marker.length;
+        el.setSelectionRange(pos, pos);
+      }, 0);
+    }
+  }, [inputText]);
+
+  const handleComposerEmojiSelect = useCallback((emoji: any) => {
+    const native: string = emoji.native || emoji.id || "";
+    if (!native) return;
+    const el = inputRef.current;
+    if (el) {
+      const start = el.selectionStart ?? inputText.length;
+      const end = el.selectionEnd ?? inputText.length;
+      const newText = inputText.slice(0, start) + native + inputText.slice(end);
+      setInputText(newText);
+      setTimeout(() => {
+        el.focus();
+        const pos = start + native.length;
+        el.setSelectionRange(pos, pos);
+      }, 0);
+    } else {
+      setInputText((prev) => prev + native);
+    }
+    setShowComposerEmoji(false);
+  }, [inputText]);
+
   // Persist the draft as the user types, keyed by room. Skip while editing an
   // existing message — inputText is repurposed for edit text in that mode and
   // must not clobber the real unsent draft.
@@ -341,6 +716,18 @@ function HangoutChatPanel({
       // localStorage unavailable (private browsing, quota) — draft persistence is best-effort
     }
   }, [inputText, groupId, editingMsg]);
+
+  // Close composer emoji picker on outside click
+  useEffect(() => {
+    if (!showComposerEmoji) return;
+    const onDown = (e: MouseEvent) => {
+      if (composerEmojiRef.current && !composerEmojiRef.current.contains(e.target as Node)) {
+        setShowComposerEmoji(false);
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [showComposerEmoji]);
 
   // Inject UX polish styles
   useEffect(() => {
@@ -704,6 +1091,21 @@ function HangoutChatPanel({
       } : m));
     };
 
+    const onPollUpdate = (data: { messageId: number; pollId: string; results: PollResult[]; totalVotes: number; userVote: string[] }) => {
+      setMessages((prev) => prev.map((m) => {
+        if (m.id !== data.messageId || !m.poll) return m;
+        return {
+          ...m,
+          poll: {
+            ...(m.poll as PollData),
+            results: data.results,
+            totalVotes: data.totalVotes,
+            userVote: data.userVote ?? (m.poll as PollData).userVote,
+          } as PollData,
+        };
+      }));
+    };
+
     socket.on("chat:message", onChatMessage);
     socket.on("hangout:typing", onTyping);
     socket.on("hangout:message:edited", onMessageEdited);
@@ -711,6 +1113,7 @@ function HangoutChatPanel({
     socket.on("hangout:reaction:updated", onReactionUpdated);
     socket.on("hangout:error", onHangoutError);
     socket.on("hangout:media:ready", onMediaReady);
+    socket.on("hangout:poll:update", onPollUpdate);
     return () => {
       socket.off("chat:message", onChatMessage);
       socket.off("hangout:typing", onTyping);
@@ -719,6 +1122,7 @@ function HangoutChatPanel({
       socket.off("hangout:reaction:updated", onReactionUpdated);
       socket.off("hangout:error", onHangoutError);
       socket.off("hangout:media:ready", onMediaReady);
+      socket.off("hangout:poll:update", onPollUpdate);
       // Clear pending typing timers + reset the list so we don't ghost across group/topic switch
       typingTimers.forEach((t) => clearTimeout(t));
       setTypingNames([]);
@@ -742,6 +1146,32 @@ function HangoutChatPanel({
     if (now - lastTypingEmit.current < 2000) return;
     lastTypingEmit.current = now;
     connectSocket().emit("hangout:typing", { groupId });
+  };
+
+  const handleSendPoll = async (question: string, options: string[], allowMultiple: boolean) => {
+    if (pollSending) return;
+    setPollSending(true);
+    try {
+      connectSocket().emit("hangout:poll:create", {
+        hangoutId: groupId,
+        question,
+        options,
+        allowMultiple,
+      });
+      setShowPollComposer(false);
+    } catch {
+      setChatError("Failed to create poll. Try again.");
+    } finally {
+      setPollSending(false);
+    }
+  };
+
+  const handlePollVote = (pollId: string, optionIds: string[]) => {
+    connectSocket().emit("hangout:poll:vote", {
+      pollId,
+      hangoutId: groupId,
+      optionIds,
+    });
   };
 
   const handleSend = async () => {
@@ -1418,7 +1848,13 @@ function HangoutChatPanel({
                               )}
                             </div>
                           )}
-                          {msg.message_type === "post_card" && msg.meta?.kind === "forward" ? (() => {
+                          {msg.message_type === "poll" && (msg as any).poll ? (
+                            <PollMessage
+                              poll={(msg as any).poll as PollData}
+                              onVote={handlePollVote}
+                              isMe={isMe}
+                            />
+                          ) : msg.message_type === "post_card" && msg.meta?.kind === "forward" ? (() => {
                             const src: ForwardSource = msg.meta.source || ({} as ForwardSource);
                             const author = src.authorUsername
                               ? `@${src.authorUsername}`
@@ -2117,6 +2553,38 @@ function HangoutChatPanel({
             </div>
           )}
 
+          {/* Poll composer — slides in above the input bar */}
+          {showPollComposer && !editingMsg && (
+            <PollComposer onSubmit={handleSendPoll} onClose={() => setShowPollComposer(false)} />
+          )}
+
+          {/* Formatting toolbar */}
+          {!editingMsg && (
+            <div className="flex items-center gap-0.5 px-3 pb-0.5 flex-shrink-0">
+              <button
+                type="button"
+                onMouseDown={(e) => { e.preventDefault(); handleFormatText("**"); }}
+                className="w-7 h-7 flex items-center justify-center rounded-lg text-[13px] font-bold text-white/40 hover:text-white/80 hover:bg-white/08 active:scale-90 transition-all"
+                aria-label="Bold"
+                title="Bold (**)"
+              >B</button>
+              <button
+                type="button"
+                onMouseDown={(e) => { e.preventDefault(); handleFormatText("_"); }}
+                className="w-7 h-7 flex items-center justify-center rounded-lg text-[13px] italic text-white/40 hover:text-white/80 hover:bg-white/08 active:scale-90 transition-all"
+                aria-label="Italic"
+                title="Italic (_)"
+              >I</button>
+              <button
+                type="button"
+                onMouseDown={(e) => { e.preventDefault(); handleFormatText("`"); }}
+                className="w-7 h-7 flex items-center justify-center rounded-lg text-[11px] font-mono text-white/40 hover:text-white/80 hover:bg-white/08 active:scale-90 transition-all"
+                aria-label="Code"
+                title="Code (`)"
+              >&lt;/&gt;</button>
+            </div>
+          )}
+
           <div className="relative z-30 flex items-end gap-1.5 px-2 py-1.5 border-t border-pnp-border flex-shrink-0 bg-pnp-background" style={{ paddingBottom: "max(0.375rem, env(safe-area-inset-bottom))" }}>
           {!editingMsg && (
             <div className="flex items-end gap-1 mb-0.5">
@@ -2127,6 +2595,22 @@ function HangoutChatPanel({
                 onVideoNoteRecord={handleVideoNoteRecorded}
                 disabled={sending}
               />
+              {/* Poll button */}
+              <button
+                type="button"
+                onClick={() => { setShowPollComposer((v) => !v); setTipPickerOpen(false); }}
+                className="w-9 h-9 flex items-center justify-center rounded-full transition-all active:scale-90 flex-shrink-0"
+                style={{
+                  background: showPollComposer ? "linear-gradient(135deg, #7B61FF, #D4007A)" : "rgba(255,255,255,0.08)",
+                  touchAction: "manipulation",
+                }}
+                aria-label="Create poll"
+                title="Create poll"
+              >
+                <svg className="w-4 h-4 text-white/70" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                </svg>
+              </button>
               {activeGroup.creatorId && String(activeGroup.creatorId) !== String(myId) && (
                 <button
                   type="button"
@@ -2157,6 +2641,7 @@ function HangoutChatPanel({
             onKeyDown={(e) => {
               if (e.key === "Escape" && editingMsg) cancelEdit();
               if (e.key === "Escape" && replyTo) setReplyTo(null);
+              if (e.key === "Escape") setShowComposerEmoji(false);
             }}
             onPaste={handlePasteImage}
             placeholder={editingMsg ? "Edit message..." : mediaFiles.length > 0 ? "Add a caption... (optional)" : "Type a message..."}
@@ -2164,6 +2649,35 @@ function HangoutChatPanel({
             rows={1}
             style={{ fontSize: "16px", minHeight: "40px", maxHeight: "120px" }}
           />
+          {/* Emoji-mart composer picker button */}
+          <div className="relative mb-0.5 flex-shrink-0" ref={composerEmojiRef}>
+            <button
+              type="button"
+              onClick={() => setShowComposerEmoji((v) => !v)}
+              className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-white/10 active:scale-90 transition-all"
+              aria-label="Emoji"
+              title="Emoji"
+              style={{ touchAction: "manipulation" }}
+            >
+              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} style={{ color: showComposerEmoji ? "#D4007A" : "rgba(255,255,255,0.45)" }}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </button>
+            {showComposerEmoji && (
+              <div
+                className="absolute z-[90]"
+                style={{ bottom: "calc(100% + 8px)", right: 0 }}
+              >
+                <Picker
+                  data={data}
+                  onEmojiSelect={handleComposerEmojiSelect}
+                  theme="dark"
+                  previewPosition="none"
+                  skinTonePosition="none"
+                />
+              </div>
+            )}
+          </div>
           <button
             type="button"
             onClick={handleSend}
