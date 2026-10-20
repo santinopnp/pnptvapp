@@ -11,7 +11,6 @@ import {
   trackEvent,
   redeemActivationCode,
   getWalletBalance,
-  paySubscriptionWithTokens,
   getOnlineStats,
   logSubscribeVisit,
   type SubscriptionPlan,
@@ -89,7 +88,6 @@ export default function Subscribe() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedPlan, setSelectedPlan] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
   // Meru state removed 2026-08-08 with the Card button.
   // Per-plan benefits expand state — plans start collapsed (N-06)
   const [expandedPlans, setExpandedPlans] = useState<Set<string>>(new Set());
@@ -129,11 +127,6 @@ export default function Subscribe() {
   // Wallet-USDC-on-Base checkout — expands the WalletPayCard for the picked plan.
   // Server resolves canonical price + duration via planId — client just passes it.
   const [walletPanelPlanId, setWalletPanelPlanId] = useState<string | null>(null);
-  const [tokenBalance, setTokensBalance] = useState<number | null>(null);
-  // Gifted balance is spendable on member/prime plans (safe: tier unlock, no external payout).
-  // See feedback_gifted_tokens_santino_lex_only.md for the scope rules.
-  const [giftedBalance, setGiftedBalance] = useState<number>(0);
-  const [tokenSuccess, setTokensSuccess] = useState<string | null>(null);
 
   // Activation code
   const [activationExpanded, setActivationExpanded] = useState(false);
@@ -187,16 +180,6 @@ export default function Subscribe() {
       .then((res) => setUsdcAvailable(res.available === true && res.configured === true))
       .catch(() => setUsdcAvailable(false));
 
-    if (user) {
-      getWalletBalance()
-        .then((res) => {
-          if (res.success) {
-            setTokensBalance(res.balance);
-            setGiftedBalance(res.giftedBalance || 0);
-          }
-        })
-        .catch(() => {});
-    }
 
     getOnlineStats().then(setOnlineStats).catch(() => {});
     if (user) logSubscribeVisit().catch(() => {});
@@ -419,52 +402,6 @@ export default function Subscribe() {
   // handleQuickCheckout + handleCryptoSubscribe removed 2026-08-09 — NP retired.
   // handleBitcoinCheckout, handleDashCheckout removed 2026-07-31 — BTCPay/Dash retired.
 
-  async function handleTokensSubscribe(planId: string, planPrice: number) {
-    if (submitting) return;
-    const tokenCost = Math.round(planPrice * 6);
-    // Member/prime plans allow gifted; other plans (creator subs, add-ons)
-    // only accept regular. Server enforces this — client mirrors for the check.
-    const isPlatformTier = MEMBER_PLAN_IDS.has(planId) || String(planId).startsWith("prime");
-    const spendable = isPlatformTier ? ((tokenBalance ?? 0) + giftedBalance) : (tokenBalance ?? 0);
-    if (spendable < tokenCost) {
-      setError(t.lang === "es" ? `Ru$h ⚡💲 insuficiente. Necesitas ${tokenCost.toLocaleString()} Ru$h — tienes ${spendable.toLocaleString()} Ru$h.` : `Not enough Ru$h ⚡💲. Need ${tokenCost.toLocaleString()} Ru$h — you have ${spendable.toLocaleString()} Ru$h.`);
-      return;
-    }
-    setSelectedPlan(planId);
-    setError(null);
-    setSubmitting(true);
-    setTokensSuccess(null);
-    try {
-      const result = await paySubscriptionWithTokens(planId);
-      if (!result.success) {
-        if (result.code === "INSUFFICIENT_TOKENS") {
-          // Server returns currentBalance + currentGifted separately so we can
-          // show both when relevant (e.g. "you have 50 Ru$h + 30 gifted").
-          const req = (result.required ?? 0).toLocaleString();
-          const regBal = (result.currentBalance ?? result.current ?? 0);
-          const giftBal = (result.currentGifted ?? 0);
-          const showGifted = isPlatformTier && giftBal > 0;
-          const balanceStr = showGifted
-            ? `${regBal.toLocaleString()} Ru$h + ${giftBal.toLocaleString()} bonus`
-            : `${regBal.toLocaleString()} Ru$h`;
-          setError(t.lang === "es"
-            ? `Ru$h ⚡💲 insuficiente. Necesitas ${req} Ru$h — tienes ${balanceStr}.`
-            : `Not enough Ru$h ⚡💲. Need ${req} Ru$h — you have ${balanceStr}.`);
-        } else {
-          setError(result.error || (t.lang === "es" ? "No se pudo activar el plan." : "Failed to activate plan."));
-        }
-        return;
-      }
-      if (result.newBalance !== undefined) setTokensBalance(result.newBalance);
-      setTokensSuccess(planId);
-      await refreshUser();
-      setTimeout(() => { setPaymentSuccess(true); trackEvent("payment_success", { plan: planId, provider: "tokens" }); }, 400);
-    } catch (err: any) {
-      setError(err.message || (t.lang === "es" ? "Error al pagar con Ru$h." : "Ru$h payment error."));
-    } finally {
-      setSubmitting(false);
-    }
-  }
 
   // BTC polling effect removed 2026-07-31 — BTCPay retired.
   // Dash polling effect removed 2026-07-31 — Dash/BTCPay retired.
@@ -939,9 +876,7 @@ export default function Subscribe() {
                 </div>
               )}
 
-              {/* Quick-pay buttons — Wallet USDC (Base) is primary, then
-                  Ru$h if the user has balance. WalletPayCard handles card +
-                  Privy-wallet cases inline. */}
+              {/* Quick-pay buttons — WalletPayCard handles card + Privy-wallet inline. */}
               <div className="mt-3 pt-3 border-t border-white/5 space-y-2" onClick={(e) => e.stopPropagation()}>
                 <div className="flex gap-2">
                   <button
@@ -953,27 +888,6 @@ export default function Subscribe() {
                     {t.lang === "es" ? "💳 Tarjeta · Apple Pay · Wallet" : "💳 Card · Apple Pay · Wallet"}
                   </button>
                 </div>
-                {(() => {
-                  const cost = Math.round(parseFloat(String(plan.price)) * 6);
-                  const isPlatform = MEMBER_PLAN_IDS.has(plan.id) || String(plan.id).startsWith("prime");
-                  const spendable = isPlatform ? ((tokenBalance ?? 0) + giftedBalance) : (tokenBalance ?? 0);
-                  const usesGifted = isPlatform && giftedBalance > 0 && (tokenBalance ?? 0) < cost;
-                  if (spendable < cost) return null;
-                  return (
-                    <button
-                      disabled={submitting}
-                      onClick={(e) => { e.stopPropagation(); handleTokensSubscribe(plan.id, parseFloat(String(plan.price))); }}
-                      className="w-full flex items-center justify-center gap-2 py-2 rounded-lg border border-[#D4007A]/40 bg-[#D4007A]/10 hover:bg-[#D4007A]/20 disabled:opacity-50 transition-colors"
-                    >
-                      <span className="text-xs font-semibold text-[#FF69B4]">🎫 Ru$h 💎 · {cost.toLocaleString()} 💎</span>
-                      {usesGifted && (
-                        <span className="text-[9px] font-medium text-[#FF69B4]/70">
-                          ({t.lang === "es" ? "usa bonus" : "uses starter"})
-                        </span>
-                      )}
-                    </button>
-                  );
-                })()}
                 {walletPanelPlanId === plan.id && usdcAvailable !== false && (
                   <div className="w-full mt-2" onClick={(e) => e.stopPropagation()}>
                     {(() => {
@@ -1124,9 +1038,7 @@ export default function Subscribe() {
                 </div>
               )}
 
-              {/* Quick-pay buttons — Wallet USDC (Base) is primary, then
-                  Ru$h if the user has balance. WalletPayCard handles card +
-                  Privy-wallet cases inline. */}
+              {/* Quick-pay buttons — WalletPayCard handles card + Privy-wallet inline. */}
               <div className="mt-3 pt-3 border-t border-white/5 space-y-2" onClick={(e) => e.stopPropagation()}>
                 <div className="flex gap-2">
                   <button
@@ -1138,27 +1050,6 @@ export default function Subscribe() {
                     {t.lang === "es" ? "💳 Tarjeta · Apple Pay · Wallet" : "💳 Card · Apple Pay · Wallet"}
                   </button>
                 </div>
-                {(() => {
-                  const cost = Math.round(parseFloat(String(plan.price)) * 6);
-                  const isPlatform = MEMBER_PLAN_IDS.has(plan.id) || String(plan.id).startsWith("prime");
-                  const spendable = isPlatform ? ((tokenBalance ?? 0) + giftedBalance) : (tokenBalance ?? 0);
-                  const usesGifted = isPlatform && giftedBalance > 0 && (tokenBalance ?? 0) < cost;
-                  if (spendable < cost) return null;
-                  return (
-                    <button
-                      disabled={submitting}
-                      onClick={(e) => { e.stopPropagation(); handleTokensSubscribe(plan.id, parseFloat(String(plan.price))); }}
-                      className="w-full flex items-center justify-center gap-2 py-2 rounded-lg border border-[#D4007A]/40 bg-[#D4007A]/10 hover:bg-[#D4007A]/20 disabled:opacity-50 transition-colors"
-                    >
-                      <span className="text-xs font-semibold text-[#FF69B4]">🎫 Ru$h 💎 · {cost.toLocaleString()} 💎</span>
-                      {usesGifted && (
-                        <span className="text-[9px] font-medium text-[#FF69B4]/70">
-                          ({t.lang === "es" ? "usa bonus" : "uses starter"})
-                        </span>
-                      )}
-                    </button>
-                  );
-                })()}
                 {walletPanelPlanId === plan.id && usdcAvailable !== false && (
                   <div className="w-full mt-2" onClick={(e) => e.stopPropagation()}>
                     {(() => {
