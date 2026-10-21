@@ -54,3 +54,15 @@ updates:
       - dependency-name: "@walletconnect/ethereum-provider"
       - dependency-name: "@walletconnect/universal-provider"
       - dependency-name: "x402"
+      # React 19 caused a black-screen hydration failure on Android
+      # browsers and was reverted to an exact 18.3.1 pin. Block major bumps
+      # until the upgrade is retried with real Android device testing;
+      # 18.x patch/minor updates still come through.
+      - dependency-name: "react"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react-dom"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/react"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/react-dom"
+        update-types: ["version-update:semver-major"]
