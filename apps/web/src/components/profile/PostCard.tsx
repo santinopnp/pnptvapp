@@ -531,9 +531,10 @@ export default function PostCard({
       setTranslatedContent(null);
       return;
     }
-    if (!post.content) return;
+    const textToTranslate = post.content || (post.repost_of_id ? post.repost_content : undefined);
+    if (!textToTranslate) return;
     setIsTranslating(true);
-    const result = await translateText(post.content, userLang || "en");
+    const result = await translateText(textToTranslate, userLang || "en");
     if (result) setTranslatedContent(result);
     setIsTranslating(false);
   }, [isTranslating, translatedContent, post.content, userLang]);
@@ -1099,7 +1100,7 @@ export default function PostCard({
             </div>
           ) : (
             <MentionText
-              text={translatedContent ?? localContent ?? post.content}
+              text={translatedContent ?? localContent ?? (post.content || (post.repost_of_id ? post.repost_content : undefined))}
               className="text-sm text-white/90 mt-1.5 whitespace-pre-wrap leading-relaxed block"
               maxLength={200}
               resolvedMentions={post.resolved_mentions}
@@ -1144,7 +1145,7 @@ export default function PostCard({
 
           {/* Link preview card — only when post has no attached media */}
           {!isEditing && !post.media_url && (() => {
-            const contentStr = translatedContent ?? localContent ?? post.content ?? "";
+            const contentStr = translatedContent ?? localContent ?? (post.content || (post.repost_of_id ? post.repost_content : undefined)) ?? "";
             const urlMatch = contentStr.match(/https?:\/\/[^\s<>"]+/);
             if (!urlMatch) return null;
             const rawUrl = urlMatch[0].replace(/[.,;:!?)\]]+$/, "");

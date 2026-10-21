@@ -1795,8 +1795,9 @@ const limiter = rateLimit({
     // user watches a live stream — otherwise watchers exhaust their 600/15min
     // quota and get 429 on unrelated page requests (schedule, performers).
     const skipPrefixes = [
-      '/api/proxy/live/hls/',   // HLS segment/manifest (~every 2-3s)
-      '/api/webapp/streams/',   // stream health checks (~every 5s)
+      '/api/proxy/live/hls/',        // HLS segment/manifest (~every 2-3s)
+      '/api/webapp/streams/',        // stream health checks (~every 5s)
+      '/api/webapp/dm/conversation/', // DM conversation — loaded on every open/reply
     ];
     const pathOnly = (req.originalUrl || req.url || '').split('?')[0];
     if (skipPaths.includes(pathOnly) || skipPrefixes.some((p) => pathOnly.startsWith(p))) return true;
