@@ -72,7 +72,7 @@
     "redis": "^6.2.1",
     "sanitize-html": "^2.18.0",
     "sharp": "^0.35.5",
-    "socket.io": "^4.8.3",
+    "socket.io": "^4.8.4",
     "socket.io-parser": "4.2.7",
     "swagger-ui-express": "^5.0.0",
     "telegraf": "^4.16.3",
