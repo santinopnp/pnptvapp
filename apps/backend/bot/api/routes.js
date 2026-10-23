@@ -1188,9 +1188,7 @@ app.get('/subscription', (req, res) => {
   res.redirect(301, '/suscripcion');
 });
 
-// /lifetime100 consolidated into /yearly50 — both now $50, cleaner funnel.
-// Shorthand aliases redirect to the yearly50 SPA page preserving query string.
-app.get('/lifetime', (req, res) => res.redirect(302, 'https://app.pnptv.app/yearly50'));
+app.get('/lifetime', (req, res) => res.redirect(302, 'https://app.pnptv.app/lifetime100'));
 
 app.get('/lifetime100', (req, res) => {
   const host = req.get('host') || '';
@@ -1198,7 +1196,7 @@ app.get('/lifetime100', (req, res) => {
     return res.status(404).send('Not found');
   }
   const qs = req.url.includes('?') ? '?' + req.url.split('?')[1] : '';
-  return res.redirect(302, 'https://app.pnptv.app/yearly50' + qs);
+  return res.redirect(302, 'https://app.pnptv.app/lifetime100' + qs);
 });
 
 // YEARLY50 — redirect to the React SPA, preserving any query string
@@ -20522,6 +20520,11 @@ app.delete('/api/webapp/creator/call-packages/:packageId',
 
 // ── Book a Call: Checkout, Booking Management & Creator Availability ─────────
 const callBookingController = require('./controllers/callBookingController');
+
+// Member: initiate call package checkout (wallet_usdc / Privy)
+app.post('/api/webapp/book-call/checkout',
+  requireSessionAuth, bookCallLimiter,
+  asyncHandler(callBookingController.createCheckout));
 
 // ── Parche public info — MUST come before /book/:handle/info ─────────────────
 // The :handle pattern would otherwise swallow "parche" as a username.

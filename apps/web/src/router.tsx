@@ -1480,13 +1480,8 @@ export const router = createBrowserRouter([
     ),
   },
   { path: "/lifetime80", element: <Navigate to="/yearly50" replace /> },
-  // /lifetime100 consolidated into /yearly50 (same $50, cleaner funnel).
-  // Kept as a client-side Navigate so SPA deep-links still land correctly;
-  // the main redirect lives at the nginx + backend layer for 302 at the
-  // edge. SPA fallback only fires if nginx config misses the path.
-  { path: "/lifetime100", element: <Navigate to="/yearly50" replace /> },
   {
-    path: "/_lifetime100_legacy_hidden",
+    path: "/lifetime100",
     element: (
       <ModuleLoader>
         <Lifetime100 />

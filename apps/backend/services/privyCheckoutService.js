@@ -295,10 +295,10 @@ async function _grantEntitlements({ pnptvUserId, plan, txHash, checkoutPaymentId
     // highest-tier add-on. Same approach as entitlementAccessService.
     const tierAddOn = addOns.find(a => a.id === 'prime') || addOns.find(a => a.id === 'pnp-member');
     if (tierAddOn) {
-      const tierValue = tierAddOn.id === 'prime' ? 'prime' : 'member';
+      const tierValue = tierAddOn.id === 'prime' ? 'PRIME' : 'member';
       await client.query(
-        `UPDATE users SET tier = $1, updated_at = NOW() WHERE id = $2
-           AND tier NOT IN ('prime', 'banned')`,
+        `UPDATE users SET tier = $1, subscription_status = 'active', updated_at = NOW() WHERE id = $2
+           AND tier NOT IN ('PRIME', 'banned')`,
         [tierValue, String(pnptvUserId)]
       );
     }
