@@ -425,6 +425,13 @@ class SocialPostService {
               EXISTS(SELECT 1 FROM social_post_likes l WHERE l.post_id=sp.id AND l.user_id=$1) as liked_by_me,
               COALESCE(sp.hype_score, 0) AS hype_score,
               EXISTS(SELECT 1 FROM post_hypes ph WHERE ph.post_id=sp.id AND ph.user_id=$1::text AND ph.expires_at > NOW()) AS hyped_by_me,
+              EXISTS(
+                SELECT 1 FROM social_posts rme
+                 WHERE rme.user_id = $1::text
+                   AND rme.repost_of_id = sp.id
+                   AND (rme.content IS NULL OR rme.content = '')
+                   AND rme.is_deleted = false
+              ) AS is_reposted_by_me,
               rp.content as repost_content, rp.created_at as repost_created_at,
               ru.username as repost_author_username, ru.first_name as repost_author_first_name,
               rp.media_url as repost_media_url, rp.media_type as repost_media_type,
@@ -1149,6 +1156,13 @@ class SocialPostService {
               EXISTS(SELECT 1 FROM social_post_likes l WHERE l.post_id=sp.id AND l.user_id=$1) as liked_by_me,
               COALESCE(sp.hype_score, 0) AS hype_score,
               EXISTS(SELECT 1 FROM post_hypes ph WHERE ph.post_id=sp.id AND ph.user_id=$1::text AND ph.expires_at > NOW()) AS hyped_by_me,
+              EXISTS(
+                SELECT 1 FROM social_posts rme
+                 WHERE rme.user_id = $1::text
+                   AND rme.repost_of_id = sp.id
+                   AND (rme.content IS NULL OR rme.content = '')
+                   AND rme.is_deleted = false
+              ) AS is_reposted_by_me,
               rp.content as repost_content, rp.created_at as repost_created_at,
               ru.username as repost_author_username, ru.first_name as repost_author_first_name,
               rp.media_url as repost_media_url, rp.media_type as repost_media_type,
@@ -1226,6 +1240,13 @@ class SocialPostService {
               EXISTS(SELECT 1 FROM social_post_likes l WHERE l.post_id=sp.id AND l.user_id=$1) as liked_by_me,
               COALESCE(sp.hype_score, 0) AS hype_score,
               EXISTS(SELECT 1 FROM post_hypes ph WHERE ph.post_id=sp.id AND ph.user_id=$1::text AND ph.expires_at > NOW()) AS hyped_by_me,
+              EXISTS(
+                SELECT 1 FROM social_posts rme
+                 WHERE rme.user_id = $1::text
+                   AND rme.repost_of_id = sp.id
+                   AND (rme.content IS NULL OR rme.content = '')
+                   AND rme.is_deleted = false
+              ) AS is_reposted_by_me,
               rp.content as repost_content, rp.created_at as repost_created_at,
               ru.username as repost_author_username, ru.first_name as repost_author_first_name,
               rp.media_url as repost_media_url, rp.media_type as repost_media_type,
@@ -1294,6 +1315,13 @@ class SocialPostService {
                 EXISTS(SELECT 1 FROM social_post_likes l WHERE l.post_id=sp.id AND l.user_id=$1) as liked_by_me,
                 COALESCE(sp.hype_score, 0) AS hype_score,
                 EXISTS(SELECT 1 FROM post_hypes ph WHERE ph.post_id=sp.id AND ph.user_id=$1::text AND ph.expires_at > NOW()) AS hyped_by_me,
+                EXISTS(
+                  SELECT 1 FROM social_posts rme
+                   WHERE rme.user_id = $1::text
+                     AND rme.repost_of_id = sp.id
+                     AND (rme.content IS NULL OR rme.content = '')
+                     AND rme.is_deleted = false
+                ) AS is_reposted_by_me,
                 cc_gate.access_type AS channel_access_type,
                 cc_gate.creator_id  AS channel_creator_id,
                 rp.content as repost_content, rp.created_at as repost_created_at,
@@ -2270,6 +2298,13 @@ class SocialPostService {
               EXISTS(SELECT 1 FROM social_post_likes l WHERE l.post_id=sp.id AND l.user_id=$1) as liked_by_me,
               COALESCE(sp.hype_score, 0) AS hype_score,
               EXISTS(SELECT 1 FROM post_hypes ph WHERE ph.post_id=sp.id AND ph.user_id=$1::text AND ph.expires_at > NOW()) AS hyped_by_me,
+              EXISTS(
+                SELECT 1 FROM social_posts rme
+                 WHERE rme.user_id = $1::text
+                   AND rme.repost_of_id = sp.id
+                   AND (rme.content IS NULL OR rme.content = '')
+                   AND rme.is_deleted = false
+              ) AS is_reposted_by_me,
               rp.content as repost_content, rp.created_at as repost_created_at,
               ru.username as repost_author_username, ru.first_name as repost_author_first_name,
               rp.media_url as repost_media_url, rp.media_type as repost_media_type,
@@ -2448,7 +2483,7 @@ class SocialPostService {
       `SELECT id FROM social_posts
         WHERE user_id = $1
           AND repost_of_id = $2
-          AND content IS NULL
+          AND (content IS NULL OR content = '')
           AND quoted_post_id IS NULL
           AND is_deleted = false
         LIMIT 1`,
@@ -2614,11 +2649,19 @@ class SocialPostService {
                       WHERE l.post_id = sp.id AND l.user_id = $1) AS liked_by_me,
               true AS bookmarked_by_me,
               COALESCE(sp.hype_score, 0) AS hype_score,
-              b.created_at AS bookmark_created_at
+              b.created_at AS bookmark_created_at,
+              rp.content as repost_content, rp.created_at as repost_created_at,
+              ru.username as repost_author_username, ru.first_name as repost_author_first_name,
+              rp.media_url as repost_media_url, rp.media_type as repost_media_type,
+              rp.video_thumbnail_url as repost_video_thumbnail_url, rp.mux_playback_id as repost_mux_playback_id,
+              rp.media_urls as repost_media_urls, rp.is_exclusive as repost_is_exclusive,
+              COALESCE(rp.content_tier, 'free') as repost_content_tier
          FROM social_post_bookmarks b
          JOIN social_posts sp ON sp.id = b.post_id
          JOIN users u ON u.id = sp.user_id
          LEFT JOIN creator_channels cc_gate ON cc_gate.id = sp.channel_id
+         LEFT JOIN social_posts rp ON sp.repost_of_id = rp.id
+         LEFT JOIN users ru ON rp.user_id = ru.id
         WHERE b.user_id = $1
           AND sp.is_deleted = false
           ${cursorClause}

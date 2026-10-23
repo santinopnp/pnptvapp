@@ -1661,8 +1661,7 @@ export default function PostCard({
             </button>
 
             {/* Repost */}
-            {!post.repost_of_id && (
-              <div className="relative">
+            <div className="relative">
                 <button
                   onClick={() => setShowRepostPopover(v => !v)}
                   disabled={repostInFlight}
@@ -1700,7 +1699,6 @@ export default function PostCard({
                   </div>
                 )}
               </div>
-            )}
 
             {/* Share — always visible; disclaimer modal gates first share. */}
             <button
