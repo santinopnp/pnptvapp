@@ -24,6 +24,9 @@ import {
   searchCreators,
   getCreatorCallPackages,
   ApiError,
+  pinPost,
+  unpinPost,
+  togglePostRepost,
   type SocialPostItem,
   type MentionUser,
 } from "@/lib/api";
@@ -448,6 +451,17 @@ export default function PostCard({
   const hypeInFlight = useRef(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
+  // Pin state
+  const [isPinned, setIsPinned] = useState<boolean>(Boolean((post as SocialPostItem & { pinned_at?: string | null }).pinned_at));
+  const [pinInFlight, setPinInFlight] = useState(false);
+  // Repost state
+  const [isReposted, setIsReposted] = useState<boolean>(Boolean(post.is_reposted_by_me));
+  const [repostCount, setRepostCount] = useState<number>(Math.max(0, post.reposts_count || 0));
+  const [repostInFlight, setRepostInFlight] = useState(false);
+  const [showRepostPopover, setShowRepostPopover] = useState(false);
+  const [showQuoteComposer, setShowQuoteComposer] = useState(false);
+  const [quoteText, setQuoteText] = useState('');
+
   useEffect(() => {
     if (!showMenu) return;
     const handler = (e: MouseEvent) => {
@@ -538,6 +552,40 @@ export default function PostCard({
     if (result) setTranslatedContent(result);
     setIsTranslating(false);
   }, [isTranslating, translatedContent, post.content, userLang]);
+
+  const handlePinToggle = useCallback(async () => {
+    if (pinInFlight) return;
+    setPinInFlight(true);
+    const wasPin = isPinned;
+    setIsPinned(!isPinned);
+    try {
+      if (wasPin) await unpinPost();
+      else await pinPost(String(post.id));
+    } catch {
+      setIsPinned(wasPin);
+    } finally {
+      setPinInFlight(false);
+    }
+  }, [pinInFlight, isPinned, post.id]);
+
+  const handleRepost = useCallback(async () => {
+    if (repostInFlight) return;
+    setRepostInFlight(true);
+    const prev = isReposted;
+    setIsReposted(!isReposted);
+    setRepostCount(c => Math.max(0, c + (isReposted ? -1 : 1)));
+    try {
+      const res = await togglePostRepost(String(post.id));
+      setIsReposted(res.reposted);
+      setRepostCount(Math.max(0, res.reposts_count));
+    } catch {
+      setIsReposted(prev);
+      setRepostCount(c => Math.max(0, c + (prev ? 1 : -1)));
+    } finally {
+      setRepostInFlight(false);
+      setShowRepostPopover(false);
+    }
+  }, [repostInFlight, isReposted, post.id]);
 
   const loadReplies = useCallback(async () => {
     if (loadingReplies) return;
@@ -788,7 +836,7 @@ export default function PostCard({
           </svg>
           <span className="truncate">
             <span className="text-white/70 font-medium">{post.author_first_name || post.author_username || 'Someone'}</span>{' '}
-            reposted{post.repost_author_username && <> from <span className="text-white/70">@{post.repost_author_username}</span></>}
+            reposted
           </span>
         </div>
       )}
@@ -943,6 +991,16 @@ export default function PostCard({
                           <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125" />
                         </svg>
                         Edit
+                      </button>
+                    )}
+                    {/* Pin */}
+                    {isOwn && (
+                      <button
+                        className="w-full text-left px-4 py-2.5 text-sm font-medium transition-colors hover:bg-white/5"
+                        style={{ color: "#A78BFA" }}
+                        onClick={() => { setShowMenu(false); void handlePinToggle(); }}
+                      >
+                        {pinInFlight ? '…' : isPinned ? 'Unpin from profile' : 'Pin to profile'}
                       </button>
                     )}
                     {canDelete && (
@@ -1100,12 +1158,72 @@ export default function PostCard({
             </div>
           ) : (
             <MentionText
-              text={translatedContent ?? localContent ?? (post.content || (post.repost_of_id ? post.repost_content : undefined))}
+              text={translatedContent ?? localContent ?? post.content ?? undefined}
               className="text-sm text-white/90 mt-1.5 whitespace-pre-wrap leading-relaxed block"
               maxLength={200}
               resolvedMentions={post.resolved_mentions}
             />
           )}
+          {/* Original post — nested card for pure and quote reposts */}
+          {post.repost_of_id && (post.repost_content || post.repost_author_username || (post as SocialPostItem & { repost_media_url?: string | null }).repost_media_url) && (
+            <div
+              className="mt-2 rounded-xl overflow-hidden"
+              style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Media preview — image */}
+              {post.repost_media_url && !post.repost_mux_playback_id && post.repost_media_type !== 'video' && (
+                <img
+                  src={post.repost_media_url}
+                  alt=""
+                  className="w-full max-h-52 object-cover"
+                  loading="lazy"
+                  onError={(e) => { (e.target as HTMLImageElement).parentElement!.style.display = 'none'; }}
+                />
+              )}
+              {/* Media preview — video thumbnail */}
+              {(post.repost_video_thumbnail_url || post.repost_media_type === 'video') && (
+                <div className="relative">
+                  <img
+                    src={post.repost_video_thumbnail_url || post.repost_media_url || undefined}
+                    alt=""
+                    className="w-full max-h-52 object-cover"
+                    loading="lazy"
+                    onError={(e) => { (e.target as HTMLImageElement).parentElement!.style.display = 'none'; }}
+                  />
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+                    <div className="w-10 h-10 rounded-full bg-black/60 flex items-center justify-center">
+                      <svg className="w-5 h-5 text-white ml-0.5" fill="currentColor" viewBox="0 0 20 20"><path d="M6.3 4.7l8 5.3-8 5.3z"/></svg>
+                    </div>
+                  </div>
+                </div>
+              )}
+              {/* Author + text */}
+              <div className="p-3">
+                {post.repost_author_username && (
+                  <div className="flex items-center gap-1.5 mb-1.5">
+                    <div
+                      className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0"
+                      style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+                      aria-hidden
+                    >
+                      {(post.repost_author_first_name || post.repost_author_username).charAt(0).toUpperCase()}
+                    </div>
+                    {post.repost_author_first_name && (
+                      <span className="text-xs font-semibold text-white/80">{post.repost_author_first_name}</span>
+                    )}
+                    <span className="text-[11px]" style={{ color: "#8E8E93" }}>@{post.repost_author_username}</span>
+                  </div>
+                )}
+                {post.repost_content && (
+                  <p className="text-sm text-white/75 whitespace-pre-wrap leading-relaxed line-clamp-6">
+                    {post.repost_content}
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+
           {translatedContent && !isEditing && (
             <button
               onClick={() => setTranslatedContent(null)}
@@ -1145,7 +1263,7 @@ export default function PostCard({
 
           {/* Link preview card — only when post has no attached media */}
           {!isEditing && !post.media_url && (() => {
-            const contentStr = translatedContent ?? localContent ?? (post.content || (post.repost_of_id ? post.repost_content : undefined)) ?? "";
+            const contentStr = translatedContent ?? localContent ?? post.content ?? "";
             const urlMatch = contentStr.match(/https?:\/\/[^\s<>"]+/);
             if (!urlMatch) return null;
             const rawUrl = urlMatch[0].replace(/[.,;:!?)\]]+$/, "");
@@ -1542,6 +1660,48 @@ export default function PostCard({
               {localReplyCount > 0 && <span>{localReplyCount}</span>}
             </button>
 
+            {/* Repost */}
+            {!post.repost_of_id && (
+              <div className="relative">
+                <button
+                  onClick={() => setShowRepostPopover(v => !v)}
+                  disabled={repostInFlight}
+                  className="flex items-center gap-1.5 text-xs transition-all hover:text-green-400 active:scale-95 disabled:opacity-50 min-h-[44px] min-w-[44px]"
+                  style={isReposted ? { color: "#34D399" } : undefined}
+                  aria-label="Repost"
+                >
+                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill={isReposted ? "currentColor" : "none"} stroke="currentColor" strokeWidth={isReposted ? 0 : 1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M17 1l4 4-4 4V6H7v4H5V4h12V1zM7 23l-4-4 4-4v3h10v-4h2v6H7v3z" />
+                  </svg>
+                  {repostCount > 0 && <span>{repostCount}</span>}
+                </button>
+                {showRepostPopover && (
+                  <div
+                    className="absolute bottom-full left-0 mb-1 z-50 rounded-xl shadow-xl overflow-hidden"
+                    style={{ background: "#1C1C1E", border: "1px solid rgba(255,255,255,0.12)", minWidth: "140px" }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <button
+                      className="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors hover:bg-white/5"
+                      style={{ color: "#34D399" }}
+                      onClick={() => { setShowRepostPopover(false); void handleRepost(); }}
+                    >
+                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M17 1l4 4-4 4V6H7v4H5V4h12V1zM7 23l-4-4 4-4v3h10v-4h2v6H7v3z"/></svg>
+                      Repost
+                    </button>
+                    <button
+                      className="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors hover:bg-white/5"
+                      style={{ color: "#60A5FA" }}
+                      onClick={() => { setShowRepostPopover(false); setShowQuoteComposer(true); }}
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z"/></svg>
+                      Quote
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Share — always visible; disclaimer modal gates first share. */}
             <button
               onClick={() => {
@@ -1712,6 +1872,51 @@ export default function PostCard({
                   HOT
                 </span>
               )}
+            </div>
+          )}
+
+          {/* Quote composer */}
+          {showQuoteComposer && (
+            <div
+              className="mt-2 p-3 rounded-xl space-y-2"
+              style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="text-xs text-white/50 p-2 rounded-lg border border-white/10 truncate" style={{ background: "rgba(0,0,0,0.25)" }}>
+                <span className="font-medium text-white/70">@{post.author_username || post.author_first_name}</span>
+                {' · '}{(post.content || '').slice(0, 80)}{(post.content || '').length > 80 ? '…' : ''}
+              </div>
+              <textarea
+                value={quoteText}
+                onChange={(e) => setQuoteText(e.target.value)}
+                placeholder="Add your comment…"
+                rows={2}
+                maxLength={500}
+                className="w-full rounded-lg px-3 py-2 text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-pink-500 resize-none placeholder:text-white/30"
+              />
+              <div className="flex items-center gap-2 justify-end">
+                <button
+                  type="button"
+                  onClick={() => { setShowQuoteComposer(false); setQuoteText(''); }}
+                  className="text-xs text-white/40 hover:text-white/70 transition-colors px-2 py-1"
+                >Cancel</button>
+                <button
+                  type="button"
+                  disabled={!quoteText.trim()}
+                  onClick={async () => {
+                    if (!quoteText.trim()) return;
+                    const text = quoteText.trim();
+                    setShowQuoteComposer(false);
+                    setQuoteText('');
+                    try {
+                      const { createQuotePost } = await import('@/lib/api');
+                      await createQuotePost(String(post.id), { content: text });
+                    } catch { /* ignore */ }
+                  }}
+                  className="text-xs font-semibold px-3 py-1.5 rounded-md disabled:opacity-40 text-white"
+                  style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+                >Quote</button>
+              </div>
             </div>
           )}
 

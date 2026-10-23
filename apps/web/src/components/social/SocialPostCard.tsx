@@ -63,7 +63,7 @@ import {
   togglePostLike,
   togglePostHype,
   togglePostRepost,
-  togglePostBookmark,
+
   createQuotePost,
   pinPost,
   unpinPost,
@@ -467,9 +467,7 @@ export default function SocialPostCard({
   const [isReposted, setIsReposted] = useState<boolean>(Boolean(post.is_reposted_by_me));
   const [repostCount, setRepostCount] = useState<number>(Math.max(0, post.reposts_count || 0));
   const [repostInFlight, setRepostInFlight] = useState(false);
-  const [isBookmarked, setIsBookmarked] = useState<boolean>(Boolean(post.is_bookmarked));
-  const [bookmarkCount, setBookmarkCount] = useState<number>(Math.max(0, post.bookmarks_count || 0));
-  const [bookmarkInFlight, setBookmarkInFlight] = useState(false);
+
   const [showRepostPopover, setShowRepostPopover] = useState(false);
   const [showQuoteComposer, setShowQuoteComposer] = useState(false);
   const [quoteText, setQuoteText] = useState('');
@@ -826,25 +824,6 @@ export default function SocialPostCard({
     }
   }, [repostInFlight, isReposted, repostCount, post.id]);
 
-  const handleBookmark = useCallback(async () => {
-    if (bookmarkInFlight) return;
-    setBookmarkInFlight(true);
-    const prevBookmarked = isBookmarked;
-    const prevCount = bookmarkCount;
-    setIsBookmarked(!isBookmarked);
-    setBookmarkCount(c => Math.max(0, c + (isBookmarked ? -1 : 1)));
-    void hapticImpact('Light');
-    try {
-      const res = await togglePostBookmark(String(post.id));
-      setIsBookmarked(res.bookmarked);
-      setBookmarkCount(Math.max(0, res.bookmarks_count));
-    } catch {
-      setIsBookmarked(prevBookmarked);
-      setBookmarkCount(prevCount);
-    } finally {
-      setBookmarkInFlight(false);
-    }
-  }, [bookmarkInFlight, isBookmarked, bookmarkCount, post.id]);
 
   const handleSendQuote = useCallback(async () => {
     const text = quoteText.trim();
@@ -1041,7 +1020,7 @@ export default function SocialPostCard({
           </svg>
           <span className="truncate">
             <span className="text-white/70 font-medium">{post.author_first_name || post.author_username || 'Someone'}</span>{' '}
-            reposted{post.repost_author_username && <> from <span className="text-white/70">@{post.repost_author_username}</span></>}
+            reposted
           </span>
         </div>
       )}
@@ -1686,6 +1665,71 @@ export default function SocialPostCard({
                 </button>
               )}
 
+              {/* Original post — nested card for pure and quote reposts */}
+              {post.repost_of_id && (post.repost_content || post.repost_author_username || post.repost_media_url) && (
+                <div
+                  className="mt-2 rounded-xl overflow-hidden"
+                  style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {/* Media preview — image */}
+                  {post.repost_media_url && (post.repost_media_type === 'image' || post.repost_media_type === 'photo' || (!post.repost_media_type && post.repost_media_url)) && !post.repost_mux_playback_id && (
+                    <img
+                      src={post.repost_media_url}
+                      alt=""
+                      className="w-full max-h-52 object-cover"
+                      loading="lazy"
+                      onError={(e) => { (e.target as HTMLImageElement).parentElement!.style.display = 'none'; }}
+                    />
+                  )}
+                  {/* Media preview — video thumbnail */}
+                  {(post.repost_video_thumbnail_url || (post.repost_media_type === 'video' && post.repost_media_url)) && (
+                    <div className="relative">
+                      <img
+                        src={post.repost_video_thumbnail_url || post.repost_media_url || undefined}
+                        alt=""
+                        className="w-full max-h-52 object-cover"
+                        loading="lazy"
+                        onError={(e) => { (e.target as HTMLImageElement).parentElement!.style.display = 'none'; }}
+                      />
+                      <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+                        <div className="w-10 h-10 rounded-full bg-black/60 flex items-center justify-center">
+                          <svg className="w-5 h-5 text-white ml-0.5" fill="currentColor" viewBox="0 0 20 20">
+                            <path d="M6.3 4.7l8 5.3-8 5.3z" />
+                          </svg>
+                        </div>
+                      </div>
+                      {post.repost_is_exclusive && (
+                        <div className="absolute top-2 right-2 px-2 py-0.5 rounded-full text-[10px] font-semibold" style={{ background: "rgba(212,0,122,0.85)", color: "#fff" }}>PRIME</div>
+                      )}
+                    </div>
+                  )}
+                  {/* Author + text */}
+                  <div className="p-3">
+                    {post.repost_author_username && (
+                      <div className="flex items-center gap-1.5 mb-1.5">
+                        <div
+                          className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0"
+                          style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+                          aria-hidden
+                        >
+                          {(post.repost_author_first_name || post.repost_author_username).charAt(0).toUpperCase()}
+                        </div>
+                        {post.repost_author_first_name && (
+                          <span className="text-xs font-semibold text-white/80">{post.repost_author_first_name}</span>
+                        )}
+                        <span className="text-[11px]" style={{ color: "#8E8E93" }}>@{post.repost_author_username}</span>
+                      </div>
+                    )}
+                    {post.repost_content && (
+                      <p className="text-sm text-white/75 whitespace-pre-wrap leading-relaxed line-clamp-6">
+                        {post.repost_content}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* Promoted PRIME video carousel (auto-injected synthetic post) */}
               {post.is_promoted && post.is_carousel && Array.isArray(post.carousel_items) && post.carousel_items.length > 0 && (
                 <div className="mt-3 -mx-2" onClick={(e) => e.stopPropagation()}>
@@ -2304,26 +2348,6 @@ export default function SocialPostCard({
               {(post.likes_count || 0) > 0 && <AnimatedCounter value={post.likes_count || 0} />}
             </button>
 
-            {/* Bookmark */}
-            <button
-              onClick={handleBookmark}
-              disabled={bookmarkInFlight}
-              className="flex items-center gap-1.5 text-xs transition-all hover:text-amber-400 active:scale-95 disabled:opacity-50 min-h-[44px] min-w-[44px]"
-              style={isBookmarked ? { color: "#F59E0B" } : undefined}
-              aria-label={isBookmarked ? "Remove bookmark" : "Bookmark"}
-              aria-pressed={isBookmarked}
-            >
-              <svg
-                className="w-4 h-4"
-                fill={isBookmarked ? "currentColor" : "none"}
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                strokeWidth={isBookmarked ? 0 : 1.5}
-              >
-                <path strokeLinecap="round" strokeLinejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0111.186 0z" />
-              </svg>
-              {bookmarkCount > 0 && <AnimatedCounter value={bookmarkCount} />}
-            </button>
 
             {/* Hype — viewer-cast boost vote (post_hypes, migration 347).
                 Toggles a 7-day vote that shows as attribution on the ORIGINAL

@@ -1592,6 +1592,13 @@ export interface SocialPostItem {
   repost_created_at?: string;
   repost_author_username?: string;
   repost_author_first_name?: string;
+  repost_media_url?: string | null;
+  repost_media_type?: string | null;
+  repost_video_thumbnail_url?: string | null;
+  repost_mux_playback_id?: string | null;
+  repost_media_urls?: string[] | null;
+  repost_is_exclusive?: boolean;
+  repost_content_tier?: string;
   is_wof?: boolean;
   // Self-declared (or admin-flagged) that this post contains AI-generated
   // content. Renders a 🤖 AI badge on the card. Never inferred — only true

@@ -427,6 +427,10 @@ class SocialPostService {
               EXISTS(SELECT 1 FROM post_hypes ph WHERE ph.post_id=sp.id AND ph.user_id=$1::text AND ph.expires_at > NOW()) AS hyped_by_me,
               rp.content as repost_content, rp.created_at as repost_created_at,
               ru.username as repost_author_username, ru.first_name as repost_author_first_name,
+              rp.media_url as repost_media_url, rp.media_type as repost_media_type,
+              rp.video_thumbnail_url as repost_video_thumbnail_url, rp.mux_playback_id as repost_mux_playback_id,
+              rp.media_urls as repost_media_urls, rp.is_exclusive as repost_is_exclusive,
+              COALESCE(rp.content_tier, 'free') as repost_content_tier,
               hg.name as hangout_group_name, hg.avatar_url as hangout_group_avatar,
               (SELECT COALESCE(JSON_AGG(JSON_BUILD_OBJECT('id', u2.id::text, 'username', u2.username, 'avatar_url', u2.photo_file_id) ORDER BY pm2.created_at), '[]'::json) FROM post_mentions pm2 JOIN users u2 ON u2.id = pm2.mentioned_user_id WHERE pm2.post_id = sp.id AND pm2.mention_type = 'tag') AS tagged_performers
        FROM social_posts sp
@@ -674,6 +678,10 @@ class SocialPostService {
                 EXISTS(SELECT 1 FROM post_hypes ph WHERE ph.post_id=sp.id AND ph.user_id=$1::text AND ph.expires_at > NOW()) AS hyped_by_me,
                 rp.content as repost_content, rp.created_at as repost_created_at,
                 ru.username as repost_author_username, ru.first_name as repost_author_first_name,
+                rp.media_url as repost_media_url, rp.media_type as repost_media_type,
+                rp.video_thumbnail_url as repost_video_thumbnail_url, rp.mux_playback_id as repost_mux_playback_id,
+                rp.media_urls as repost_media_urls, rp.is_exclusive as repost_is_exclusive,
+                COALESCE(rp.content_tier, 'free') as repost_content_tier,
                 hg.name as hangout_group_name, hg.avatar_url as hangout_group_avatar,
                 (SELECT COALESCE(JSON_AGG(JSON_BUILD_OBJECT('id', u2.id::text, 'username', u2.username, 'avatar_url', u2.photo_file_id) ORDER BY pm2.created_at), '[]'::json) FROM post_mentions pm2 JOIN users u2 ON u2.id = pm2.mentioned_user_id WHERE pm2.post_id = sp.id AND pm2.mention_type = 'tag') AS tagged_performers
          FROM social_posts sp
@@ -1049,7 +1057,11 @@ class SocialPostService {
               u.city as author_city, u.country as author_country,
               false as liked_by_me,
               rp.content as repost_content, rp.created_at as repost_created_at,
-              ru.username as repost_author_username, ru.first_name as repost_author_first_name
+              ru.username as repost_author_username, ru.first_name as repost_author_first_name,
+              rp.media_url as repost_media_url, rp.media_type as repost_media_type,
+              rp.video_thumbnail_url as repost_video_thumbnail_url, rp.mux_playback_id as repost_mux_playback_id,
+              rp.media_urls as repost_media_urls, rp.is_exclusive as repost_is_exclusive,
+              COALESCE(rp.content_tier, 'free') as repost_content_tier
        FROM social_posts sp
        JOIN users u ON sp.user_id = u.id
        LEFT JOIN social_posts rp ON sp.repost_of_id = rp.id
@@ -1139,6 +1151,10 @@ class SocialPostService {
               EXISTS(SELECT 1 FROM post_hypes ph WHERE ph.post_id=sp.id AND ph.user_id=$1::text AND ph.expires_at > NOW()) AS hyped_by_me,
               rp.content as repost_content, rp.created_at as repost_created_at,
               ru.username as repost_author_username, ru.first_name as repost_author_first_name,
+              rp.media_url as repost_media_url, rp.media_type as repost_media_type,
+              rp.video_thumbnail_url as repost_video_thumbnail_url, rp.mux_playback_id as repost_mux_playback_id,
+              rp.media_urls as repost_media_urls, rp.is_exclusive as repost_is_exclusive,
+              COALESCE(rp.content_tier, 'free') as repost_content_tier,
               hg.name as hangout_group_name, hg.avatar_url as hangout_group_avatar,
               cc_gate.access_type AS channel_access_type,
               cc_gate.creator_id  AS channel_creator_id
@@ -1212,6 +1228,10 @@ class SocialPostService {
               EXISTS(SELECT 1 FROM post_hypes ph WHERE ph.post_id=sp.id AND ph.user_id=$1::text AND ph.expires_at > NOW()) AS hyped_by_me,
               rp.content as repost_content, rp.created_at as repost_created_at,
               ru.username as repost_author_username, ru.first_name as repost_author_first_name,
+              rp.media_url as repost_media_url, rp.media_type as repost_media_type,
+              rp.video_thumbnail_url as repost_video_thumbnail_url, rp.mux_playback_id as repost_mux_playback_id,
+              rp.media_urls as repost_media_urls, rp.is_exclusive as repost_is_exclusive,
+              COALESCE(rp.content_tier, 'free') as repost_content_tier,
               cc_gate.access_type AS channel_access_type,
               cc_gate.creator_id  AS channel_creator_id
        FROM social_posts sp
@@ -1275,10 +1295,18 @@ class SocialPostService {
                 COALESCE(sp.hype_score, 0) AS hype_score,
                 EXISTS(SELECT 1 FROM post_hypes ph WHERE ph.post_id=sp.id AND ph.user_id=$1::text AND ph.expires_at > NOW()) AS hyped_by_me,
                 cc_gate.access_type AS channel_access_type,
-                cc_gate.creator_id  AS channel_creator_id
+                cc_gate.creator_id  AS channel_creator_id,
+                rp.content as repost_content, rp.created_at as repost_created_at,
+                ru.username as repost_author_username, ru.first_name as repost_author_first_name,
+                rp.media_url as repost_media_url, rp.media_type as repost_media_type,
+                rp.video_thumbnail_url as repost_video_thumbnail_url, rp.mux_playback_id as repost_mux_playback_id,
+                rp.media_urls as repost_media_urls, rp.is_exclusive as repost_is_exclusive,
+                COALESCE(rp.content_tier, 'free') as repost_content_tier
          FROM social_posts sp
          JOIN users u ON sp.user_id = u.id
          LEFT JOIN creator_channels cc_gate ON cc_gate.id = sp.channel_id
+         LEFT JOIN social_posts rp ON sp.repost_of_id = rp.id
+         LEFT JOIN users ru ON rp.user_id = ru.id
          WHERE sp.is_deleted = false
            AND (
              sp.user_id = $2
@@ -2244,6 +2272,10 @@ class SocialPostService {
               EXISTS(SELECT 1 FROM post_hypes ph WHERE ph.post_id=sp.id AND ph.user_id=$1::text AND ph.expires_at > NOW()) AS hyped_by_me,
               rp.content as repost_content, rp.created_at as repost_created_at,
               ru.username as repost_author_username, ru.first_name as repost_author_first_name,
+              rp.media_url as repost_media_url, rp.media_type as repost_media_type,
+              rp.video_thumbnail_url as repost_video_thumbnail_url, rp.mux_playback_id as repost_mux_playback_id,
+              rp.media_urls as repost_media_urls, rp.is_exclusive as repost_is_exclusive,
+              COALESCE(rp.content_tier, 'free') as repost_content_tier,
               hg.name as hangout_group_name, hg.avatar_url as hangout_group_avatar,
               (SELECT COALESCE(JSON_AGG(JSON_BUILD_OBJECT('id', u2.id::text, 'username', u2.username, 'avatar_url', u2.photo_file_id) ORDER BY pm2.created_at), '[]'::json) FROM post_mentions pm2 JOIN users u2 ON u2.id = pm2.mentioned_user_id WHERE pm2.post_id = sp.id AND pm2.mention_type = 'tag') AS tagged_performers`;
 
