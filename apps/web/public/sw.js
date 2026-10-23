@@ -3,7 +3,7 @@
 // CACHE_NAME is auto-bumped on every build by scripts/build-web.sh — never
 // edit by hand. Contains a git short SHA so each deploy invalidates every
 // previously-cached asset (image, font, app shell).
-const CACHE_NAME = 'pnptv-d1729028';
+const CACHE_NAME = 'pnptv-60ce7cc1';
 const APP_SHELL = [
   '/Logo2-50.png',
   '/badge-diamond-v3.png',
