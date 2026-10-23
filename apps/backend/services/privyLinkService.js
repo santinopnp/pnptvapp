@@ -149,6 +149,17 @@ function getPrivyClient() {
   return _privyClient;
 }
 
+let _privyCheckoutClient = null;
+function getPrivyCheckoutClient() {
+  if (_privyCheckoutClient) return _privyCheckoutClient;
+  const appId = process.env.VITE_PRIVY_CHECKOUT_APP_ID;
+  const appSecret = process.env.PRIVY_CHECKOUT_APP_SECRET;
+  if (!appId || !appSecret) return null;
+  const { PrivyClient } = require('@privy-io/server-auth');
+  _privyCheckoutClient = new PrivyClient(appId, appSecret);
+  return _privyCheckoutClient;
+}
+
 /**
  * Strict Privy-only: we return an address ONLY when it's an embedded wallet
  * provisioned by Privy. External wallets (MetaMask / Coinbase / WalletConnect
@@ -208,14 +219,28 @@ async function verifyAndLink({ pnptvUserId, privyToken }) {
     const privyUser = await client.getUserById(privyId);
     walletAddress = extractWalletAddress(privyUser);
   } catch (err) {
-    logger.warn('[privy-link] getUserById failed — aborting link', {
-      privyId,
-      err: err.message,
-    });
-    const e = new Error('privy_get_user_failed');
-    e.code = 'privy_get_user_failed';
-    e.cause = err;
-    throw e;
+    const isAppMismatch = /invalid app id or app secret/i.test(err.message);
+    if (isAppMismatch) {
+      // privyId belongs to a different Privy app (e.g. CHECKOUT app).
+      // Try the checkout client before giving up.
+      try {
+        const checkoutClient = getPrivyCheckoutClient();
+        if (checkoutClient) {
+          const privyUser = await checkoutClient.getUserById(privyId);
+          walletAddress = extractWalletAddress(privyUser);
+        } else {
+          logger.warn('[privy-link] CHECKOUT client unavailable — proceeding without wallet', { privyId });
+        }
+      } catch (err2) {
+        logger.warn('[privy-link] getUserById failed on both AUTH and CHECKOUT clients — proceeding without wallet', {
+          privyId, err: err2.message,
+        });
+      }
+    } else {
+      logger.warn('[privy-link] getUserById failed — proceeding without wallet', {
+        privyId, err: err.message,
+      });
+    }
   }
 
   // Refuse to steal a Privy id already linked to a different pnptv user.
